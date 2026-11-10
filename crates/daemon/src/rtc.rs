@@ -607,9 +607,9 @@ impl Driver {
             }
             Signal::Selected { local, remote } => tracing::info!(
                 client = self.client,
-                %local,
-                %remote,
-                "webrtc client selected pair (client side, host side)"
+                browser_side = %local,
+                host_side = %remote,
+                "webrtc selected candidate pair, as the browser reports it"
             ),
             Signal::Failed { reason } => {
                 tracing::warn!(client = self.client, reason, "webrtc client gave up");
