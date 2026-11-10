@@ -1,0 +1,7522 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
+use std::fmt;
+use uuid::Uuid;
+
+use super::claude_output::ClaudeOutput;
+use super::content_blocks::{deserialize_content_blocks, ContentBlock};
+use super::rate_limit::RateLimitInfo;
+
+/// Known system message subtypes.
+///
+/// The Claude CLI emits system messages with a `subtype` field indicating what
+/// kind of system event occurred. This enum captures the known subtypes while
+/// preserving unknown values via the `Unknown` variant for forward compatibility.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SystemSubtype {
+    Init,
+    Status,
+    CompactBoundary,
+    ThinkingTokens,
+    TaskStarted,
+    TaskProgress,
+    TaskUpdated,
+    TaskNotification,
+    ApiRetry,
+    ControlRequestProgress,
+    ModelRefusalFallback,
+    ModelRefusalNoFallback,
+    LocalCommandOutput,
+    HookStarted,
+    HookProgress,
+    HookResponse,
+    PluginInstall,
+    BackgroundTasksChanged,
+    SessionStateChanged,
+    WorkerShuttingDown,
+    CommandsChanged,
+    Notification,
+    FilesPersisted,
+    MemoryRecall,
+    ElicitationComplete,
+    PermissionDenied,
+    MirrorError,
+    Informational,
+    CodeChangePublished,
+    VcsStateChanged,
+    FeedbackDraftQueued,
+    CloudSessionDelta,
+    DevIntent,
+    TurnHandoffAvailable,
+    TurnPreempted,
+    PeerMessageHold,
+    PerTurnEffortChanged,
+    SessionTitleChanged,
+    SessionWritesLost,
+    InstructionSizeWarning,
+    FileAttachmentsMissing,
+    PermissionCheckStatus,
+    InheritedAsksSettled,
+    UiFocus,
+    UiInvalidate,
+    UiLog,
+    UiNotify,
+    UiNotifyCancel,
+    UiPanes,
+    UiPlaced,
+    UiScroll,
+    UiStatus,
+    UiToast,
+    /// A subtype not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl SystemSubtype {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Init => "init",
+            Self::Status => "status",
+            Self::CompactBoundary => "compact_boundary",
+            Self::ThinkingTokens => "thinking_tokens",
+            Self::TaskStarted => "task_started",
+            Self::TaskProgress => "task_progress",
+            Self::TaskUpdated => "task_updated",
+            Self::TaskNotification => "task_notification",
+            Self::ApiRetry => "api_retry",
+            Self::ControlRequestProgress => "control_request_progress",
+            Self::ModelRefusalFallback => "model_refusal_fallback",
+            Self::ModelRefusalNoFallback => "model_refusal_no_fallback",
+            Self::LocalCommandOutput => "local_command_output",
+            Self::HookStarted => "hook_started",
+            Self::HookProgress => "hook_progress",
+            Self::HookResponse => "hook_response",
+            Self::PluginInstall => "plugin_install",
+            Self::BackgroundTasksChanged => "background_tasks_changed",
+            Self::SessionStateChanged => "session_state_changed",
+            Self::WorkerShuttingDown => "worker_shutting_down",
+            Self::CommandsChanged => "commands_changed",
+            Self::Notification => "notification",
+            Self::FilesPersisted => "files_persisted",
+            Self::MemoryRecall => "memory_recall",
+            Self::ElicitationComplete => "elicitation_complete",
+            Self::PermissionDenied => "permission_denied",
+            Self::MirrorError => "mirror_error",
+            Self::Informational => "informational",
+            Self::CodeChangePublished => "code_change_published",
+            Self::VcsStateChanged => "vcs_state_changed",
+            Self::FeedbackDraftQueued => "feedback_draft_queued",
+            Self::CloudSessionDelta => "cloud_session_delta",
+            Self::DevIntent => "dev_intent",
+            Self::TurnHandoffAvailable => "turn_handoff_available",
+            Self::TurnPreempted => "turn_preempted",
+            Self::PeerMessageHold => "peer_message_hold",
+            Self::PerTurnEffortChanged => "per_turn_effort_changed",
+            Self::SessionTitleChanged => "session_title_changed",
+            Self::SessionWritesLost => "session_writes_lost",
+            Self::InstructionSizeWarning => "instruction_size_warning",
+            Self::FileAttachmentsMissing => "file_attachments_missing",
+            Self::PermissionCheckStatus => "permission_check_status",
+            Self::InheritedAsksSettled => "inherited_asks_settled",
+            Self::UiFocus => "ui_focus",
+            Self::UiInvalidate => "ui_invalidate",
+            Self::UiLog => "ui_log",
+            Self::UiNotify => "ui_notify",
+            Self::UiNotifyCancel => "ui_notify_cancel",
+            Self::UiPanes => "ui_panes",
+            Self::UiPlaced => "ui_placed",
+            Self::UiScroll => "ui_scroll",
+            Self::UiStatus => "ui_status",
+            Self::UiToast => "ui_toast",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for SystemSubtype {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for SystemSubtype {
+    fn from(s: &str) -> Self {
+        match s {
+            "init" => Self::Init,
+            "status" => Self::Status,
+            "compact_boundary" => Self::CompactBoundary,
+            "thinking_tokens" => Self::ThinkingTokens,
+            "task_started" => Self::TaskStarted,
+            "task_progress" => Self::TaskProgress,
+            "task_updated" => Self::TaskUpdated,
+            "task_notification" => Self::TaskNotification,
+            "api_retry" => Self::ApiRetry,
+            "control_request_progress" => Self::ControlRequestProgress,
+            "model_refusal_fallback" => Self::ModelRefusalFallback,
+            "model_refusal_no_fallback" => Self::ModelRefusalNoFallback,
+            "local_command_output" => Self::LocalCommandOutput,
+            "hook_started" => Self::HookStarted,
+            "hook_progress" => Self::HookProgress,
+            "hook_response" => Self::HookResponse,
+            "plugin_install" => Self::PluginInstall,
+            "background_tasks_changed" => Self::BackgroundTasksChanged,
+            "session_state_changed" => Self::SessionStateChanged,
+            "worker_shutting_down" => Self::WorkerShuttingDown,
+            "commands_changed" => Self::CommandsChanged,
+            "notification" => Self::Notification,
+            "files_persisted" => Self::FilesPersisted,
+            "memory_recall" => Self::MemoryRecall,
+            "elicitation_complete" => Self::ElicitationComplete,
+            "permission_denied" => Self::PermissionDenied,
+            "mirror_error" => Self::MirrorError,
+            "informational" => Self::Informational,
+            "code_change_published" => Self::CodeChangePublished,
+            "vcs_state_changed" => Self::VcsStateChanged,
+            "feedback_draft_queued" => Self::FeedbackDraftQueued,
+            "cloud_session_delta" => Self::CloudSessionDelta,
+            "dev_intent" => Self::DevIntent,
+            "turn_handoff_available" => Self::TurnHandoffAvailable,
+            "turn_preempted" => Self::TurnPreempted,
+            "peer_message_hold" => Self::PeerMessageHold,
+            "per_turn_effort_changed" => Self::PerTurnEffortChanged,
+            "session_title_changed" => Self::SessionTitleChanged,
+            "session_writes_lost" => Self::SessionWritesLost,
+            "instruction_size_warning" => Self::InstructionSizeWarning,
+            "file_attachments_missing" => Self::FileAttachmentsMissing,
+            "permission_check_status" => Self::PermissionCheckStatus,
+            "inherited_asks_settled" => Self::InheritedAsksSettled,
+            "ui_focus" => Self::UiFocus,
+            "ui_invalidate" => Self::UiInvalidate,
+            "ui_log" => Self::UiLog,
+            "ui_notify" => Self::UiNotify,
+            "ui_notify_cancel" => Self::UiNotifyCancel,
+            "ui_panes" => Self::UiPanes,
+            "ui_placed" => Self::UiPlaced,
+            "ui_scroll" => Self::UiScroll,
+            "ui_status" => Self::UiStatus,
+            "ui_toast" => Self::UiToast,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for SystemSubtype {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SystemSubtype {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Known message roles.
+///
+/// Used in `MessageContent` and `AssistantMessageContent` to indicate the
+/// speaker of a message.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MessageRole {
+    User,
+    Assistant,
+    /// A role not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl MessageRole {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for MessageRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for MessageRole {
+    fn from(s: &str) -> Self {
+        match s {
+            "user" => Self::User,
+            "assistant" => Self::Assistant,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for MessageRole {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageRole {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// What triggered a context compaction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CompactionTrigger {
+    /// Automatic compaction triggered by token limit.
+    Auto,
+    /// User-initiated compaction (e.g., /compact command).
+    Manual,
+    /// A trigger not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl CompactionTrigger {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Auto => "auto",
+            Self::Manual => "manual",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for CompactionTrigger {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for CompactionTrigger {
+    fn from(s: &str) -> Self {
+        match s {
+            "auto" => Self::Auto,
+            "manual" => Self::Manual,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for CompactionTrigger {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CompactionTrigger {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Reason why the assistant stopped generating.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StopReason {
+    /// The assistant reached a natural end of its turn.
+    EndTurn,
+    /// The response hit the maximum token limit.
+    MaxTokens,
+    /// The assistant wants to use a tool.
+    ToolUse,
+    /// A stop reason not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl StopReason {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::EndTurn => "end_turn",
+            Self::MaxTokens => "max_tokens",
+            Self::ToolUse => "tool_use",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for StopReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for StopReason {
+    fn from(s: &str) -> Self {
+        match s {
+            "end_turn" => Self::EndTurn,
+            "max_tokens" => Self::MaxTokens,
+            "tool_use" => Self::ToolUse,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for StopReason {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for StopReason {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// How the API key was sourced for the session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ApiKeySource {
+    /// No API key provided.
+    None,
+    User,
+    Project,
+    Org,
+    Temporary,
+    Oauth,
+    /// A source not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ApiKeySource {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::None => "none",
+            Self::User => "user",
+            Self::Project => "project",
+            Self::Org => "org",
+            Self::Temporary => "temporary",
+            Self::Oauth => "oauth",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ApiKeySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ApiKeySource {
+    fn from(s: &str) -> Self {
+        match s {
+            "none" => Self::None,
+            "user" => Self::User,
+            "project" => Self::Project,
+            "org" => Self::Org,
+            "temporary" => Self::Temporary,
+            "oauth" => Self::Oauth,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ApiKeySource {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiKeySource {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Output formatting style for the session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum OutputStyle {
+    /// Default output style.
+    Default,
+    /// A style not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl OutputStyle {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for OutputStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for OutputStyle {
+    fn from(s: &str) -> Self {
+        match s {
+            "default" => Self::Default,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for OutputStyle {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for OutputStyle {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Permission mode reported in init messages.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InitPermissionMode {
+    /// Default permission mode.
+    Default,
+    AcceptEdits,
+    BypassPermissions,
+    Plan,
+    DontAsk,
+    Auto,
+    /// A mode not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl InitPermissionMode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::BypassPermissions => "bypassPermissions",
+            Self::Plan => "plan",
+            Self::DontAsk => "dontAsk",
+            Self::Auto => "auto",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for InitPermissionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for InitPermissionMode {
+    fn from(s: &str) -> Self {
+        match s {
+            "default" => Self::Default,
+            "acceptEdits" => Self::AcceptEdits,
+            "bypassPermissions" => Self::BypassPermissions,
+            "plan" => Self::Plan,
+            "dontAsk" => Self::DontAsk,
+            "auto" => Self::Auto,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for InitPermissionMode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for InitPermissionMode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Status of an ongoing operation (e.g., context compaction).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StatusMessageStatus {
+    /// Context compaction is in progress.
+    Compacting,
+    /// The CLI is issuing a request.
+    Requesting,
+    /// A status not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl StatusMessageStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Compacting => "compacting",
+            Self::Requesting => "requesting",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for StatusMessageStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for StatusMessageStatus {
+    fn from(s: &str) -> Self {
+        match s {
+            "compacting" => Self::Compacting,
+            "requesting" => Self::Requesting,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for StatusMessageStatus {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for StatusMessageStatus {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Serialize an optional UUID as a string
+pub(crate) fn serialize_optional_uuid<S>(
+    uuid: &Option<Uuid>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match uuid {
+        Some(id) => serializer.serialize_str(&id.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Deserialize an optional UUID from a string
+pub(crate) fn deserialize_optional_uuid<'de, D>(deserializer: D) -> Result<Option<Uuid>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt_str: Option<String> = Option::deserialize(deserializer)?;
+    match opt_str {
+        Some(s) => Uuid::parse_str(&s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        None => Ok(None),
+    }
+}
+
+/// Message provenance. The `kind` field is the stable discriminator; variant
+/// specific fields are preserved in `extra` for forward-compatible access.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MessageOrigin {
+    pub kind: String,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// Metadata attached when user-visible transcript content summarizes prior messages.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SummarizeMetadata {
+    pub messages_summarized: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+}
+
+/// MCP metadata passed through on user-message wrappers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "_meta")]
+    pub meta: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<Value>,
+    /// The `resource_link` content blocks the MCP tool returned, collected
+    /// from the raw result before the CLI rewrites each into the
+    /// `[Resource link: NAME] URI` text line the model reads. At most 50
+    /// links and 64 KiB serialized; absent when the result had none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_links: Vec<ResourceLink>,
+}
+
+/// A file an MCP tool returned by reference — a `resource_link` content block
+/// as carried on [`McpMeta::resource_links`] and
+/// [`TaskNotificationMessage::resource_links`] (CLI 2.1.259+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResourceLink {
+    pub uri: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "mimeType")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
+}
+
+/// Display metadata for a `tool_result` block carried on the user wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolResultMeta {
+    /// The `tool_use_id` of the matching `tool_result` block.
+    pub id: String,
+    /// Harness-stamped reason an `is_error: true` result did not carry the
+    /// tool's own execution output (`user-rejected`, `permission-rule`,
+    /// `automode-*`, `interrupted`, `cancelled`). Open set — treat
+    /// unrecognized values as valid reasons; absent means the tool ran to
+    /// completion. Optional since CLI 2.1.276, when an entry may carry a
+    /// [`remedy`](Self::remedy) alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub non_execution_kind: Option<String>,
+    /// The deny comment a human typed at a permission prompt, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_feedback: Option<String>,
+    /// The fix a host can offer for what the result reports (CLI 2.1.276+).
+    /// May be present on a result that did run (a staged settings write, a
+    /// sandbox violation on exit 0), so read whether the call ran from
+    /// [`non_execution_kind`](Self::non_execution_kind), not from this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<ToolResultRemedy>,
+    /// How the call's permission check ended (CLI 2.1.293+). On a
+    /// subagent's messages (`parent_tool_use_id` set) entries carry only
+    /// this, so those messages do not say whether a call ran. Absent when
+    /// the call ended before its permission check, and on some results
+    /// built apart from the call's own run (a plugin hook's refusal, a
+    /// hook's rewrite of a denied result, a queued call a stop cancelled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_decision: Option<ToolPermissionDecision>,
+    /// The name of the Claude Code built-in tool whose own completed run, in
+    /// the process that wrote this message, made the result. Stamped for
+    /// the few built-ins a host acts on; absent once a hook rewrote the
+    /// result, on a message read from a session file or taken from another
+    /// frame (a resumed session), on a result a client wrote (a handed-over
+    /// turn), and on a subagent's messages (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built_in_tool: Option<String>,
+}
+
+/// [`ToolResultMeta::permission_decision`] — how a tool call's permission
+/// check ended, as Claude Code's `claude_code.tool.blocked_on_user` trace
+/// span reports it (CLI 2.1.293+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolPermissionDecision {
+    /// The outcome.
+    pub decision: PermissionDecisionOutcome,
+    /// What decided: `config`, `classifier`, `hook`, `user_temporary`,
+    /// `user_permanent`, `user_reject`, `user_abort`, or `invalid_input`,
+    /// `permission_updated_input_invalid` or `server_fallback_tombstone`
+    /// when bad input or the server ended the wait. In SDK sessions a rule
+    /// for this session or in the user's own settings reports
+    /// `user_temporary`, `user_permanent` or `user_reject` and other rules
+    /// report `config`; interactive sessions report every rule as `config`.
+    pub source: String,
+    /// The kind of reason the check gave when it decided by itself, such as
+    /// `rule` whenever a rule decided, or `classifier` for an auto-mode
+    /// allow (which reports source `config`). Absent when a person or the
+    /// SDK host answered, when the outcome was still a question, and for
+    /// `user_abort` and the last three sources above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_type: Option<PermissionDecisionReasonType>,
+    /// Beside a `classifier` [`reason_type`](Self::reason_type): the
+    /// server-side auto-mode classifier named an entry in the session's
+    /// auto-mode settings — an `allow` exception for an accept, a
+    /// `soft_deny` entry for a reject — and this is that entry
+    /// (CLI 2.1.319+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_mode_rule: Option<AutoModeRule>,
+}
+
+/// [`ToolPermissionDecision::auto_mode_rule`] — the auto-mode settings entry
+/// the classifier named (CLI 2.1.319+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoModeRule {
+    /// Which list the entry is on.
+    pub list: AutoModeRuleList,
+    /// The entry's name.
+    pub name: String,
+}
+
+/// [`AutoModeRule::list`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AutoModeRuleList {
+    /// An `allow` exception.
+    Allow,
+    /// A `soft_deny` entry.
+    SoftDeny,
+    /// A list not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl AutoModeRuleList {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Allow => "allow",
+            Self::SoftDeny => "soft_deny",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for AutoModeRuleList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for AutoModeRuleList {
+    fn from(s: &str) -> Self {
+        match s {
+            "allow" => Self::Allow,
+            "soft_deny" => Self::SoftDeny,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for AutoModeRuleList {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AutoModeRuleList {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// [`ToolPermissionDecision::decision`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PermissionDecisionOutcome {
+    /// The call was allowed.
+    Accept,
+    /// The call was denied.
+    Reject,
+    /// The permission wait was cancelled.
+    Cancelled,
+    /// An outcome not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PermissionDecisionOutcome {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Accept => "accept",
+            Self::Reject => "reject",
+            Self::Cancelled => "cancelled",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PermissionDecisionOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PermissionDecisionOutcome {
+    fn from(s: &str) -> Self {
+        match s {
+            "accept" => Self::Accept,
+            "reject" => Self::Reject,
+            "cancelled" => Self::Cancelled,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PermissionDecisionOutcome {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PermissionDecisionOutcome {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// [`ToolPermissionDecision::reason_type`] — the kind of reason a
+/// self-decided permission check gave.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PermissionDecisionReasonType {
+    /// A permission rule decided.
+    Rule,
+    /// The permission mode decided.
+    Mode,
+    /// The results of a compound command's subcommands decided.
+    SubcommandResults,
+    /// The `--permission-prompt-tool` decided.
+    PermissionPromptTool,
+    /// A hook decided.
+    Hook,
+    /// An async agent's permission handling decided.
+    AsyncAgent,
+    /// A sandbox override decided.
+    SandboxOverride,
+    /// The working-directory check decided.
+    WorkingDir,
+    /// A safety check decided.
+    SafetyCheck,
+    /// The auto-mode classifier decided.
+    Classifier,
+    /// Some other reason.
+    Other,
+    /// A reason type not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PermissionDecisionReasonType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Rule => "rule",
+            Self::Mode => "mode",
+            Self::SubcommandResults => "subcommandResults",
+            Self::PermissionPromptTool => "permissionPromptTool",
+            Self::Hook => "hook",
+            Self::AsyncAgent => "asyncAgent",
+            Self::SandboxOverride => "sandboxOverride",
+            Self::WorkingDir => "workingDir",
+            Self::SafetyCheck => "safetyCheck",
+            Self::Classifier => "classifier",
+            Self::Other => "other",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PermissionDecisionReasonType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PermissionDecisionReasonType {
+    fn from(s: &str) -> Self {
+        match s {
+            "rule" => Self::Rule,
+            "mode" => Self::Mode,
+            "subcommandResults" => Self::SubcommandResults,
+            "permissionPromptTool" => Self::PermissionPromptTool,
+            "hook" => Self::Hook,
+            "asyncAgent" => Self::AsyncAgent,
+            "sandboxOverride" => Self::SandboxOverride,
+            "workingDir" => Self::WorkingDir,
+            "safetyCheck" => Self::SafetyCheck,
+            "classifier" => Self::Classifier,
+            "other" => Self::Other,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PermissionDecisionReasonType {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PermissionDecisionReasonType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The fix a host can offer for what a `tool_result` reports, stamped from
+/// structured producer state (never parsed from the result text), carried
+/// as [`ToolResultMeta::remedy`] (CLI 2.1.276+). Only the parameters the
+/// [`kind`](Self::kind) needs are present.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolResultRemedy {
+    /// What the host can fix. New kinds are additive — treat
+    /// [`ToolResultRemedyKind::Unknown`] as no remedy.
+    pub kind: ToolResultRemedyKind,
+    /// `mcp_needs_auth` / `mcp_disabled`: the server names as configured.
+    /// `mcp_required_missing`: the name patterns the agent definition
+    /// requires that no connected server matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<String>>,
+    /// `auth_expired` / `auth_overridden` / `auth_missing_scope` /
+    /// `design_needs_authorization`: whose login the fix names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<RemedyLoginProvider>,
+    /// `outside_reads_blocked`: the path the read block refused, when the
+    /// refusal names one. `staged_for_review`: the settings file the write
+    /// was held for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// `outside_reads_blocked`: an organization policy sets the block, so
+    /// the user cannot remove it. `auth_overridden`: the overriding
+    /// credential was injected by the host environment, so nothing in this
+    /// session can unset it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<bool>,
+    /// `feature_disabled` / `policy_denied`: the feature that is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<RemedyFeature>,
+    /// `feature_disabled`: why the feature is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<RemedyFeatureCause>,
+    /// `policy_denied`: the verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_kind: Option<RemedyPolicyKind>,
+}
+
+/// What a host can fix for a tool result ([`ToolResultRemedy::kind`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ToolResultRemedyKind {
+    /// An MCP server needs its login completed.
+    McpNeedsAuth,
+    /// An MCP server is disabled in settings.
+    McpDisabled,
+    /// The agent definition requires MCP servers that are not connected.
+    McpRequiredMissing,
+    /// The named login has expired.
+    AuthExpired,
+    /// A host-injected credential overrides the named login.
+    AuthOverridden,
+    /// The named login lacks a scope the call needed.
+    AuthMissingScope,
+    /// Claude Design needs its own authorization.
+    DesignNeedsAuthorization,
+    /// The command violated the sandbox policy.
+    SandboxViolation,
+    /// A read outside the working directories was refused.
+    OutsideReadsBlocked,
+    /// Memory is paused by `/pause-memory`.
+    MemoryPaused,
+    /// A feature is switched off; see [`ToolResultRemedy::cause`].
+    FeatureDisabled,
+    /// An organization policy denies a feature; see
+    /// [`ToolResultRemedy::policy_kind`].
+    PolicyDenied,
+    /// The command's exec image exceeded the OS argument limit.
+    SpawnArgLimit,
+    /// A settings-file write was held for the machine owner's review.
+    StagedForReview,
+    /// A remedy kind not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ToolResultRemedyKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::McpNeedsAuth => "mcp_needs_auth",
+            Self::McpDisabled => "mcp_disabled",
+            Self::McpRequiredMissing => "mcp_required_missing",
+            Self::AuthExpired => "auth_expired",
+            Self::AuthOverridden => "auth_overridden",
+            Self::AuthMissingScope => "auth_missing_scope",
+            Self::DesignNeedsAuthorization => "design_needs_authorization",
+            Self::SandboxViolation => "sandbox_violation",
+            Self::OutsideReadsBlocked => "outside_reads_blocked",
+            Self::MemoryPaused => "memory_paused",
+            Self::FeatureDisabled => "feature_disabled",
+            Self::PolicyDenied => "policy_denied",
+            Self::SpawnArgLimit => "spawn_arg_limit",
+            Self::StagedForReview => "staged_for_review",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ToolResultRemedyKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ToolResultRemedyKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "mcp_needs_auth" => Self::McpNeedsAuth,
+            "mcp_disabled" => Self::McpDisabled,
+            "mcp_required_missing" => Self::McpRequiredMissing,
+            "auth_expired" => Self::AuthExpired,
+            "auth_overridden" => Self::AuthOverridden,
+            "auth_missing_scope" => Self::AuthMissingScope,
+            "design_needs_authorization" => Self::DesignNeedsAuthorization,
+            "sandbox_violation" => Self::SandboxViolation,
+            "outside_reads_blocked" => Self::OutsideReadsBlocked,
+            "memory_paused" => Self::MemoryPaused,
+            "feature_disabled" => Self::FeatureDisabled,
+            "policy_denied" => Self::PolicyDenied,
+            "spawn_arg_limit" => Self::SpawnArgLimit,
+            "staged_for_review" => Self::StagedForReview,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ToolResultRemedyKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolResultRemedyKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Whose login a remedy names ([`ToolResultRemedy::provider`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RemedyLoginProvider {
+    /// The claude.ai account (`/login`).
+    ClaudeAi,
+    /// Claude Design's own authorization (`/design login`).
+    ClaudeDesign,
+    /// A provider not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl RemedyLoginProvider {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ClaudeAi => "claude_ai",
+            Self::ClaudeDesign => "claude_design",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for RemedyLoginProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RemedyLoginProvider {
+    fn from(s: &str) -> Self {
+        match s {
+            "claude_ai" => Self::ClaudeAi,
+            "claude_design" => Self::ClaudeDesign,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for RemedyLoginProvider {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RemedyLoginProvider {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The feature a `feature_disabled` / `policy_denied` remedy names
+/// ([`ToolResultRemedy::feature`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RemedyFeature {
+    Workflows,
+    Artifacts,
+    /// A feature not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl RemedyFeature {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Workflows => "workflows",
+            Self::Artifacts => "artifacts",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for RemedyFeature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RemedyFeature {
+    fn from(s: &str) -> Self {
+        match s {
+            "workflows" => Self::Workflows,
+            "artifacts" => Self::Artifacts,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for RemedyFeature {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RemedyFeature {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Why a feature is off for a `feature_disabled` remedy
+/// ([`ToolResultRemedy::cause`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RemedyFeatureCause {
+    /// `CLAUDE_CODE_DISABLE_WORKFLOWS`, or `disableWorkflows` set by a
+    /// settings layer above the user's own.
+    ManagedSettings,
+    /// An organization policy.
+    OrgPolicy,
+    /// Not launched for this account.
+    Unavailable,
+    /// The user's own `/config` setting is off (including a
+    /// `disableWorkflows` in their own settings).
+    UserSetting,
+    /// This Claude Code process is not running on Bun, the runtime its
+    /// binary is built with, and workflow scripts run only there
+    /// (CLI 2.1.307+).
+    UnsupportedRuntime,
+    /// A cause not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl RemedyFeatureCause {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ManagedSettings => "managed_settings",
+            Self::OrgPolicy => "org_policy",
+            Self::Unavailable => "unavailable",
+            Self::UserSetting => "user_setting",
+            Self::UnsupportedRuntime => "unsupported_runtime",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for RemedyFeatureCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RemedyFeatureCause {
+    fn from(s: &str) -> Self {
+        match s {
+            "managed_settings" => Self::ManagedSettings,
+            "org_policy" => Self::OrgPolicy,
+            "unavailable" => Self::Unavailable,
+            "user_setting" => Self::UserSetting,
+            "unsupported_runtime" => Self::UnsupportedRuntime,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for RemedyFeatureCause {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RemedyFeatureCause {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The verdict behind a `policy_denied` remedy
+/// ([`ToolResultRemedy::policy_kind`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RemedyPolicyKind {
+    /// The organization's policy turns the feature off.
+    OrgDenied,
+    /// A HIPAA-regulated organization signed in earlier in this process;
+    /// restarting clears it.
+    Latched,
+    /// A verdict not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl RemedyPolicyKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::OrgDenied => "org_denied",
+            Self::Latched => "latched",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for RemedyPolicyKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RemedyPolicyKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "org_denied" => Self::OrgDenied,
+            "latched" => Self::Latched,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for RemedyPolicyKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RemedyPolicyKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// User message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserMessage {
+    pub message: MessageContent,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "sessionId")]
+    #[serde(
+        serialize_with = "serialize_optional_uuid",
+        deserialize_with = "deserialize_optional_uuid"
+    )]
+    pub session_id: Option<Uuid>,
+    /// Parent tool use ID for nested agent messages
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_use_id: Option<String>,
+    /// Message-level unique identifier
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    /// CLI-emitted ISO-8601 timestamp for the message (present on echoed tool results).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Structured tool result data echoed by the CLI alongside the `tool_result`
+    /// content block. The shape depends on which tool produced it (e.g. for
+    /// `AskUserQuestion` it is `{ questions, answers }`; for `Bash` it is
+    /// `{ stdout, stderr, exit_code, ... }`). Stored as raw JSON to preserve
+    /// wire fidelity; use [`UserMessage::tool_use_result_as`] to parse into a
+    /// typed shape when you know which tool was invoked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_result: Option<serde_json::Value>,
+    /// ID of the subagent this user message belongs to (the `task_id` of its
+    /// task events), on the prompt echoed into a `local_agent` subagent.
+    /// Seen on the wire from CLI 2.1.292, where it is not part of the
+    /// published user-message schema. Not settable by clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Subagent type, when this user message is the prompt echoed into a
+    /// `local_agent` subagent (e.g. `general-purpose`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    /// Short description of the subagent task, present alongside `subagent_type`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<MessageOrigin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "isSynthetic")]
+    pub is_synthetic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "shouldQuery")]
+    pub should_query: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_meta: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_visible_in_transcript_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_virtual: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_compact_summary: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarize_metadata: Option<SummarizeMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_meta: Option<McpMeta>,
+    /// Display metadata for this message's `tool_result` blocks, keyed by
+    /// `tool_use_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_result_meta: Option<Vec<ToolResultMeta>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_tool_use_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_tool_assistant_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_paste_ids: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_platform: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inbound_origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "isReplay")]
+    pub is_replay: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_attachments: Option<Vec<Value>>,
+    /// Desktop host only: the host's own seeded summon (CLI 2.1.239+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeded_summon: Option<bool>,
+    /// True when the client composed this turn from content the user did not
+    /// type; its text is delivered as written (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_composed: Option<bool>,
+    /// True when no person typed this message's text in this session (a
+    /// server or an app composed it). The text is delivered as written: no
+    /// slash-command dispatch, no at-mention expansion beyond the message's
+    /// own uploaded files, no keyword reminders or commands, and a skill it
+    /// names does not count as typed by the user. Unlike
+    /// [`client_composed`](Self::client_composed), the turn-start attachment
+    /// pass still runs. Who sent it stays with [`origin`](Self::origin)
+    /// (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_not_typed: Option<bool>,
+    /// The host's own label for what started this turn (e.g. the desktop
+    /// app's `scheduled-task`, `sleep-auto-resume`); `user`, an empty string
+    /// or absent means a person sent it. For usage attribution; on CLI
+    /// 2.1.317+ any other label also keeps a message with no origin, sent
+    /// while a turn is running, from going out as the user's words
+    /// (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiator: Option<String>,
+    /// Content the user pasted into the prompt rather than typed: each entry
+    /// a string or an array of content blocks. The CLI appends the text of
+    /// each entry after the typed text, in order, and may wrap it in
+    /// `<pasted_content>` tags. Blocks other than text are ignored; send
+    /// images and documents in `message.content` (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pasted_content: Option<Vec<Value>>,
+    /// Replayed history rather than a live message: the Remote Control
+    /// bridge stamps it on the messages it flushes to the session server,
+    /// which also stamps it on deliveries it replays (CLI 2.1.266+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub historical: Option<bool>,
+    /// Epoch milliseconds on the session server's clock when it received the
+    /// HTTP request that delivered this message. Written by the session
+    /// server; the CLI copies it to the turn's result as
+    /// [`user_message_server_received_wall_ms`](crate::io::ResultMessage::user_message_server_received_wall_ms)
+    /// (CLI 2.1.286+). Not settable by clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_received_wall_ms: Option<f64>,
+    /// Only on the synthetic message that re-asks the same model after a
+    /// refusal: the API `msg_*` id of the refused response. Absent when the
+    /// CLI has no well-formed id for it (CLI 2.1.290+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_message_id: Option<String>,
+    /// Input only: asks the CLI to put this prompt back at the front of its
+    /// queue, under the same uuid, when an interrupt without `cancel_queued`
+    /// stops the turn taking it in within this many milliseconds (counted
+    /// from the turn's `system/status` `requesting` frame) and before the
+    /// model's reply begins. Values above 10000 count as 10000
+    /// (CLI 2.1.307+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requeue_if_interrupted_within_ms: Option<u64>,
+    /// Input only: the sender's statement that the person typed `ultrathink`
+    /// in this prompt and was shown the word colored before sending, and
+    /// that nothing in the prompt arrived whole (no paste, no share, no
+    /// prompt the sender suggested). Send it only as `Some(true)`, and only
+    /// while the session's newest `system/init` carried
+    /// [`ultrathink_typed_raises`](crate::io::InitMessage::ultrathink_typed_raises)
+    /// `true`. The turn then runs at `xhigh` effort if the CLI's own checks
+    /// agree; it is the sender's claim, not proof (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultrathink_typed: Option<bool>,
+    /// Input only: the MCP App views' states a remote client sent with this
+    /// prompt, replacing the set the worker holds (`[]` clears it). Entries
+    /// are opaque (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_states: Option<Vec<Value>>,
+    /// Output only, and to be read only on a message the CLI wrote (on a
+    /// session event, only where its `source` is `worker`). On a message a
+    /// plugin sent, what a host can show under the plugin's name in place
+    /// of `message`. Absent on any other message, and on a prompt sent as
+    /// the person's own words; there, show `message` (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_prompt: Option<PluginPrompt>,
+}
+
+/// [`UserMessage::plugin_prompt`]: what a host can show for a message a
+/// plugin sent (CLI 2.1.317+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginPrompt {
+    /// The plugin's name as the wrapper the model reads prints it, on one
+    /// line and scrubbed; `origin.name` holds it raw.
+    pub name: String,
+    /// The prompt as hooks left it (prompts merged into one turn joined by
+    /// newlines) when `message` is exactly the wrapper the model reads
+    /// around that prompt; or the command the plugin ran as a person would
+    /// type it, such as `/review 12`, when `message` is only that command's
+    /// tags. Can be more than one line; show all of it.
+    pub text: String,
+}
+
+impl UserMessage {
+    /// Parse the `tool_use_result` field into a caller-specified type.
+    ///
+    /// Returns `None` if `tool_use_result` is absent, otherwise returns the
+    /// deserialization result. The caller must know which tool produced the
+    /// result and supply a matching type — e.g. for `AskUserQuestion` use
+    /// [`AskUserQuestionInput`](crate::AskUserQuestionInput), whose
+    /// `questions` + `answers` fields match the wire result shape.
+    pub fn tool_use_result_as<T: serde::de::DeserializeOwned>(
+        &self,
+    ) -> Option<Result<T, serde_json::Error>> {
+        self.tool_use_result
+            .as_ref()
+            .map(|v| serde_json::from_value(v.clone()))
+    }
+
+    /// Parse the `tool_use_result` as a subagent (`Task`) run result.
+    ///
+    /// When this user message echoes the result of a `Task` tool call, the CLI
+    /// attaches a structured `tool_use_result` carrying the subagent's token,
+    /// timing, and tool-use accounting. Returns `None` when the field is absent
+    /// or does not parse as a [`SubagentResult`].
+    ///
+    /// Summing [`SubagentResult::total_tokens`] across every `Task` result in a
+    /// session yields the subagent token rollup the CLI renders as
+    /// `subagent_tokens` in its terminal `<usage>` block.
+    pub fn subagent_result(&self) -> Option<SubagentResult> {
+        self.tool_use_result
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+}
+
+/// Token, timing, and tool-use accounting for a completed subagent (`Task`) run.
+///
+/// The Claude CLI echoes this object in the `tool_use_result` of a `Task` tool's
+/// result message. It is the typed source of truth for subagent token
+/// attribution: the per-run [`total_tokens`](Self::total_tokens),
+/// [`total_duration_ms`](Self::total_duration_ms), and
+/// [`total_tool_use_count`](Self::total_tool_use_count) correspond to the
+/// `subagent_tokens` / `duration_ms` / `tool_uses` line items the CLI renders in
+/// its human-readable `<usage>` block, and [`usage`](Self::usage) carries the
+/// full per-model token breakdown for the run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentResult {
+    /// Completion status of the subagent run (e.g. `"completed"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// The prompt the subagent was launched with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Stable identifier of the spawned subagent.
+    #[serde(rename = "agentId", skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Subagent type that ran (e.g. `general-purpose`, `Explore`).
+    #[serde(rename = "agentType", skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    /// Final content blocks the subagent returned.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_content_blocks",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub content: Vec<ContentBlock>,
+    /// Model the subagent actually resolved to (e.g. `claude-sonnet-4-6`).
+    #[serde(rename = "resolvedModel", skip_serializing_if = "Option::is_none")]
+    pub resolved_model: Option<String>,
+    /// Wall-clock duration of the subagent run, in milliseconds.
+    #[serde(rename = "totalDurationMs", skip_serializing_if = "Option::is_none")]
+    pub total_duration_ms: Option<u64>,
+    /// Total tokens consumed by the subagent — the `subagent_tokens` rollup line.
+    #[serde(rename = "totalTokens", skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    /// Number of tool invocations the subagent made.
+    #[serde(rename = "totalToolUseCount", skip_serializing_if = "Option::is_none")]
+    pub total_tool_use_count: Option<u64>,
+    /// Detailed token / cache usage for the subagent run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<super::result::UsageInfo>,
+    /// Per-category tool-use counts, present for some agent types (e.g. `Explore`).
+    #[serde(rename = "toolStats", skip_serializing_if = "Option::is_none")]
+    pub tool_stats: Option<SubagentToolStats>,
+}
+
+/// Per-category tool-use counts for a subagent run, from `tool_use_result.toolStats`.
+///
+/// The `extra` field captures any counters the CLI adds that aren't modeled here,
+/// so new wire fields deserialize without error.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentToolStats {
+    #[serde(default)]
+    pub read_count: u64,
+    #[serde(default)]
+    pub search_count: u64,
+    #[serde(default)]
+    pub bash_count: u64,
+    #[serde(default)]
+    pub edit_file_count: u64,
+    #[serde(default)]
+    pub lines_added: u64,
+    #[serde(default)]
+    pub lines_removed: u64,
+    #[serde(default)]
+    pub other_tool_count: u64,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// Session-level subagent token rollup — the `<subagent_tokens>` /
+/// `<agent_count>` line items the Claude CLI renders in its terminal
+/// `<usage>` block.
+///
+/// The `stream-json` protocol does **not** carry this rollup on the `result`
+/// frame's `usage` (confirmed against the CLI binary — the terminal renderer
+/// computes it from `Task` tool results). Consumers that need it must
+/// accumulate it the same way: feed every session message through
+/// [`observe`](Self::observe) and read the totals at any point.
+///
+/// A `Task` result observed twice under the same `agentId` (e.g. a replayed
+/// frame on resume) is counted once. Results with no `agentId` are counted
+/// every time they are observed.
+///
+/// # Example
+///
+/// ```
+/// use claude_codes::{ClaudeOutput, SubagentUsageRollup};
+///
+/// let mut rollup = SubagentUsageRollup::default();
+/// let json = r#"{"type":"user","message":{"role":"user","content":[]},"session_id":"7fbc568e-2bd6-45aa-b217-a1cf80004ba1","tool_use_result":{"status":"completed","agentId":"ab52f22445470d454","totalDurationMs":1853,"totalTokens":10201,"totalToolUseCount":0}}"#;
+/// let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+/// rollup.observe(&output);
+/// assert_eq!(rollup.subagent_tokens, 10201);
+/// assert_eq!(rollup.agent_count, 1);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubagentUsageRollup {
+    /// Total tokens consumed by subagents — sum of
+    /// [`SubagentResult::total_tokens`] over every observed `Task` result.
+    pub subagent_tokens: u64,
+    /// Number of subagent runs observed (`<agent_count>`).
+    pub agent_count: u32,
+    /// Total subagent tool invocations — sum of `total_tool_use_count`.
+    pub tool_uses: u64,
+    /// Total subagent wall-clock milliseconds — sum of `total_duration_ms`.
+    pub duration_ms: u64,
+    seen_agent_ids: std::collections::BTreeSet<String>,
+}
+
+impl SubagentUsageRollup {
+    /// Accumulate `output` into the rollup if it is a `Task` tool result.
+    ///
+    /// Returns `true` when the message contributed to the totals. Non-user
+    /// messages, user messages without a `tool_use_result`, results from
+    /// other tools, and duplicate `agentId`s are all ignored.
+    pub fn observe(&mut self, output: &ClaudeOutput) -> bool {
+        match output {
+            ClaudeOutput::User(user) => self.observe_user(user),
+            _ => false,
+        }
+    }
+
+    /// Accumulate a user message's `Task` tool result, if it carries one.
+    ///
+    /// Every [`SubagentResult`] field is optional, so any JSON object in
+    /// `tool_use_result` parses as one (e.g. a `Bash` or `ToolSearch`
+    /// result). Only results carrying an `agentId` or a `totalTokens`
+    /// line item are treated as genuine `Task` results.
+    pub fn observe_user(&mut self, user: &UserMessage) -> bool {
+        let Some(result) = user.subagent_result() else {
+            return false;
+        };
+        if result.total_tokens.is_none() && result.agent_id.is_none() {
+            return false;
+        }
+        if let Some(agent_id) = &result.agent_id {
+            if !self.seen_agent_ids.insert(agent_id.clone()) {
+                return false;
+            }
+        }
+        self.agent_count += 1;
+        self.subagent_tokens += result.total_tokens.unwrap_or(0);
+        self.tool_uses += result.total_tool_use_count.unwrap_or(0);
+        self.duration_ms += result.total_duration_ms.unwrap_or(0);
+        true
+    }
+}
+
+/// Message content with role
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageContent {
+    pub role: MessageRole,
+    #[serde(deserialize_with = "deserialize_content_blocks")]
+    pub content: Vec<ContentBlock>,
+}
+
+/// System message with metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemMessage {
+    pub subtype: SystemSubtype,
+    #[serde(flatten)]
+    pub data: Value, // Captures all other fields
+}
+
+impl SystemMessage {
+    /// Check if this is an init message
+    pub fn is_init(&self) -> bool {
+        self.subtype == SystemSubtype::Init
+    }
+
+    /// Check if this is a status message
+    pub fn is_status(&self) -> bool {
+        self.subtype == SystemSubtype::Status
+    }
+
+    /// Check if this is a compact_boundary message
+    pub fn is_compact_boundary(&self) -> bool {
+        self.subtype == SystemSubtype::CompactBoundary
+    }
+
+    /// Try to parse as an init message
+    pub fn as_init(&self) -> Option<InitMessage> {
+        if self.subtype != SystemSubtype::Init {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Try to parse as a status message
+    pub fn as_status(&self) -> Option<StatusMessage> {
+        if self.subtype != SystemSubtype::Status {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Try to parse as a compact_boundary message
+    pub fn as_compact_boundary(&self) -> Option<CompactBoundaryMessage> {
+        if self.subtype != SystemSubtype::CompactBoundary {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a task_started message
+    pub fn is_task_started(&self) -> bool {
+        self.subtype == SystemSubtype::TaskStarted
+    }
+
+    /// Check if this is a task_progress message
+    pub fn is_task_progress(&self) -> bool {
+        self.subtype == SystemSubtype::TaskProgress
+    }
+
+    /// Check if this is a task_notification message
+    pub fn is_task_notification(&self) -> bool {
+        self.subtype == SystemSubtype::TaskNotification
+    }
+
+    /// Try to parse as a task_started message
+    pub fn as_task_started(&self) -> Option<TaskStartedMessage> {
+        if self.subtype != SystemSubtype::TaskStarted {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Try to parse as a task_progress message
+    pub fn as_task_progress(&self) -> Option<TaskProgressMessage> {
+        if self.subtype != SystemSubtype::TaskProgress {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Try to parse as a task_notification message
+    pub fn as_task_notification(&self) -> Option<TaskNotificationMessage> {
+        if self.subtype != SystemSubtype::TaskNotification {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a task_updated message
+    pub fn is_task_updated(&self) -> bool {
+        self.subtype == SystemSubtype::TaskUpdated
+    }
+
+    /// Try to parse as a task_updated message
+    pub fn as_task_updated(&self) -> Option<TaskUpdatedMessage> {
+        if self.subtype != SystemSubtype::TaskUpdated {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a thinking_tokens message
+    pub fn is_thinking_tokens(&self) -> bool {
+        self.subtype == SystemSubtype::ThinkingTokens
+    }
+
+    /// Try to parse as a thinking_tokens message
+    pub fn as_thinking_tokens(&self) -> Option<ThinkingTokensMessage> {
+        if self.subtype != SystemSubtype::ThinkingTokens {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a code_change_published message
+    pub fn is_code_change_published(&self) -> bool {
+        self.subtype == SystemSubtype::CodeChangePublished
+    }
+
+    /// Try to parse as a code_change_published message
+    pub fn as_code_change_published(&self) -> Option<CodeChangePublishedMessage> {
+        if self.subtype != SystemSubtype::CodeChangePublished {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a vcs_state_changed message
+    pub fn is_vcs_state_changed(&self) -> bool {
+        self.subtype == SystemSubtype::VcsStateChanged
+    }
+
+    /// Try to parse as a vcs_state_changed message
+    pub fn as_vcs_state_changed(&self) -> Option<VcsStateChangedMessage> {
+        if self.subtype != SystemSubtype::VcsStateChanged {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a feedback_draft_queued message.
+    pub fn is_feedback_draft_queued(&self) -> bool {
+        self.subtype == SystemSubtype::FeedbackDraftQueued
+    }
+
+    /// Try to parse as a feedback_draft_queued message.
+    pub fn as_feedback_draft_queued(&self) -> Option<FeedbackDraftQueuedMessage> {
+        if self.subtype != SystemSubtype::FeedbackDraftQueued {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a cloud_session_delta message.
+    pub fn is_cloud_session_delta(&self) -> bool {
+        self.subtype == SystemSubtype::CloudSessionDelta
+    }
+
+    /// Try to parse as a cloud_session_delta message.
+    pub fn as_cloud_session_delta(&self) -> Option<CloudSessionDeltaMessage> {
+        if self.subtype != SystemSubtype::CloudSessionDelta {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a dev_intent message.
+    pub fn is_dev_intent(&self) -> bool {
+        self.subtype == SystemSubtype::DevIntent
+    }
+
+    /// Try to parse as a dev_intent message.
+    pub fn as_dev_intent(&self) -> Option<DevIntentMessage> {
+        if self.subtype != SystemSubtype::DevIntent {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a turn_handoff_available message.
+    pub fn is_turn_handoff_available(&self) -> bool {
+        self.subtype == SystemSubtype::TurnHandoffAvailable
+    }
+
+    /// Try to parse as a turn_handoff_available message.
+    pub fn as_turn_handoff_available(&self) -> Option<TurnHandoffAvailableMessage> {
+        if self.subtype != SystemSubtype::TurnHandoffAvailable {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a turn_preempted message.
+    pub fn is_turn_preempted(&self) -> bool {
+        self.subtype == SystemSubtype::TurnPreempted
+    }
+
+    /// Try to parse as a turn_preempted message.
+    pub fn as_turn_preempted(&self) -> Option<TurnPreemptedMessage> {
+        if self.subtype != SystemSubtype::TurnPreempted {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a peer_message_hold message.
+    pub fn is_peer_message_hold(&self) -> bool {
+        self.subtype == SystemSubtype::PeerMessageHold
+    }
+
+    /// Try to parse as a peer_message_hold message.
+    pub fn as_peer_message_hold(&self) -> Option<PeerMessageHoldMessage> {
+        if self.subtype != SystemSubtype::PeerMessageHold {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a per_turn_effort_changed message.
+    pub fn is_per_turn_effort_changed(&self) -> bool {
+        self.subtype == SystemSubtype::PerTurnEffortChanged
+    }
+
+    /// Try to parse as a per_turn_effort_changed message.
+    pub fn as_per_turn_effort_changed(&self) -> Option<PerTurnEffortChangedMessage> {
+        if self.subtype != SystemSubtype::PerTurnEffortChanged {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a session_title_changed message.
+    pub fn is_session_title_changed(&self) -> bool {
+        self.subtype == SystemSubtype::SessionTitleChanged
+    }
+
+    /// Try to parse as a session_title_changed message.
+    pub fn as_session_title_changed(&self) -> Option<SessionTitleChangedMessage> {
+        if self.subtype != SystemSubtype::SessionTitleChanged {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a session_writes_lost message.
+    pub fn is_session_writes_lost(&self) -> bool {
+        self.subtype == SystemSubtype::SessionWritesLost
+    }
+
+    /// Try to parse as a session_writes_lost message.
+    pub fn as_session_writes_lost(&self) -> Option<SessionWritesLostMessage> {
+        if self.subtype != SystemSubtype::SessionWritesLost {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is an instruction_size_warning message.
+    pub fn is_instruction_size_warning(&self) -> bool {
+        self.subtype == SystemSubtype::InstructionSizeWarning
+    }
+
+    /// Try to parse as an instruction_size_warning message.
+    pub fn as_instruction_size_warning(&self) -> Option<InstructionSizeWarningMessage> {
+        if self.subtype != SystemSubtype::InstructionSizeWarning {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a permission_check_status message.
+    pub fn is_permission_check_status(&self) -> bool {
+        self.subtype == SystemSubtype::PermissionCheckStatus
+    }
+
+    /// Try to parse as a permission_check_status message.
+    pub fn as_permission_check_status(&self) -> Option<PermissionCheckStatusMessage> {
+        if self.subtype != SystemSubtype::PermissionCheckStatus {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is an inherited_asks_settled message.
+    pub fn is_inherited_asks_settled(&self) -> bool {
+        self.subtype == SystemSubtype::InheritedAsksSettled
+    }
+
+    /// Try to parse as an inherited_asks_settled message.
+    pub fn as_inherited_asks_settled(&self) -> Option<InheritedAsksSettledMessage> {
+        if self.subtype != SystemSubtype::InheritedAsksSettled {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a file_attachments_missing message.
+    pub fn is_file_attachments_missing(&self) -> bool {
+        self.subtype == SystemSubtype::FileAttachmentsMissing
+    }
+
+    /// Try to parse as a file_attachments_missing message.
+    pub fn as_file_attachments_missing(&self) -> Option<FileAttachmentsMissingMessage> {
+        if self.subtype != SystemSubtype::FileAttachmentsMissing {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_focus message.
+    pub fn is_ui_focus(&self) -> bool {
+        self.subtype == SystemSubtype::UiFocus
+    }
+
+    /// Try to parse as a ui_focus message.
+    pub fn as_ui_focus(&self) -> Option<UiFocusMessage> {
+        if self.subtype != SystemSubtype::UiFocus {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_invalidate message.
+    pub fn is_ui_invalidate(&self) -> bool {
+        self.subtype == SystemSubtype::UiInvalidate
+    }
+
+    /// Try to parse as a ui_invalidate message.
+    pub fn as_ui_invalidate(&self) -> Option<UiInvalidateMessage> {
+        if self.subtype != SystemSubtype::UiInvalidate {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_log message.
+    pub fn is_ui_log(&self) -> bool {
+        self.subtype == SystemSubtype::UiLog
+    }
+
+    /// Try to parse as a ui_log message.
+    pub fn as_ui_log(&self) -> Option<UiLogMessage> {
+        if self.subtype != SystemSubtype::UiLog {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_notify message.
+    pub fn is_ui_notify(&self) -> bool {
+        self.subtype == SystemSubtype::UiNotify
+    }
+
+    /// Try to parse as a ui_notify message.
+    pub fn as_ui_notify(&self) -> Option<UiNotifyMessage> {
+        if self.subtype != SystemSubtype::UiNotify {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_notify_cancel message.
+    pub fn is_ui_notify_cancel(&self) -> bool {
+        self.subtype == SystemSubtype::UiNotifyCancel
+    }
+
+    /// Try to parse as a ui_notify_cancel message.
+    pub fn as_ui_notify_cancel(&self) -> Option<UiNotifyCancelMessage> {
+        if self.subtype != SystemSubtype::UiNotifyCancel {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_panes message.
+    pub fn is_ui_panes(&self) -> bool {
+        self.subtype == SystemSubtype::UiPanes
+    }
+
+    /// Try to parse as a ui_panes message.
+    pub fn as_ui_panes(&self) -> Option<UiPanesMessage> {
+        if self.subtype != SystemSubtype::UiPanes {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_placed message.
+    pub fn is_ui_placed(&self) -> bool {
+        self.subtype == SystemSubtype::UiPlaced
+    }
+
+    /// Try to parse as a ui_placed message.
+    pub fn as_ui_placed(&self) -> Option<UiPlacedMessage> {
+        if self.subtype != SystemSubtype::UiPlaced {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_scroll message.
+    pub fn is_ui_scroll(&self) -> bool {
+        self.subtype == SystemSubtype::UiScroll
+    }
+
+    /// Try to parse as a ui_scroll message.
+    pub fn as_ui_scroll(&self) -> Option<UiScrollMessage> {
+        if self.subtype != SystemSubtype::UiScroll {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_status message.
+    pub fn is_ui_status(&self) -> bool {
+        self.subtype == SystemSubtype::UiStatus
+    }
+
+    /// Try to parse as a ui_status message.
+    pub fn as_ui_status(&self) -> Option<UiStatusMessage> {
+        if self.subtype != SystemSubtype::UiStatus {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Check if this is a ui_toast message.
+    pub fn is_ui_toast(&self) -> bool {
+        self.subtype == SystemSubtype::UiToast
+    }
+
+    /// Try to parse as a ui_toast message.
+    pub fn as_ui_toast(&self) -> Option<UiToastMessage> {
+        if self.subtype != SystemSubtype::UiToast {
+            return None;
+        }
+        serde_json::from_value(self.data.clone()).ok()
+    }
+
+    /// Parse any typed system subtype known to this crate version.
+    pub fn as_known_system_event(&self) -> Option<KnownSystemEvent> {
+        macro_rules! parse {
+            ($variant:ident, $ty:ty) => {
+                serde_json::from_value::<$ty>(self.data.clone())
+                    .ok()
+                    .map(KnownSystemEvent::$variant)
+            };
+        }
+
+        match self.subtype {
+            SystemSubtype::Init => parse!(Init, InitMessage),
+            SystemSubtype::Status => parse!(Status, StatusMessage),
+            SystemSubtype::CompactBoundary => parse!(CompactBoundary, CompactBoundaryMessage),
+            SystemSubtype::ThinkingTokens => parse!(ThinkingTokens, ThinkingTokensMessage),
+            SystemSubtype::TaskStarted => parse!(TaskStarted, TaskStartedMessage),
+            SystemSubtype::TaskProgress => parse!(TaskProgress, TaskProgressMessage),
+            SystemSubtype::TaskUpdated => parse!(TaskUpdated, TaskUpdatedMessage),
+            SystemSubtype::TaskNotification => parse!(TaskNotification, TaskNotificationMessage),
+            SystemSubtype::ApiRetry => parse!(ApiRetry, ApiRetryMessage),
+            SystemSubtype::ControlRequestProgress => {
+                parse!(ControlRequestProgress, ControlRequestProgressMessage)
+            }
+            SystemSubtype::ModelRefusalFallback => {
+                parse!(ModelRefusalFallback, ModelRefusalFallbackMessage)
+            }
+            SystemSubtype::ModelRefusalNoFallback => {
+                parse!(ModelRefusalNoFallback, ModelRefusalNoFallbackMessage)
+            }
+            SystemSubtype::LocalCommandOutput => {
+                parse!(LocalCommandOutput, LocalCommandOutputMessage)
+            }
+            SystemSubtype::HookStarted => parse!(HookStarted, HookStartedMessage),
+            SystemSubtype::HookProgress => parse!(HookProgress, HookProgressMessage),
+            SystemSubtype::HookResponse => parse!(HookResponse, HookResponseMessage),
+            SystemSubtype::PluginInstall => parse!(PluginInstall, PluginInstallMessage),
+            SystemSubtype::BackgroundTasksChanged => {
+                parse!(BackgroundTasksChanged, BackgroundTasksChangedMessage)
+            }
+            SystemSubtype::SessionStateChanged => {
+                parse!(SessionStateChanged, SessionStateChangedMessage)
+            }
+            SystemSubtype::WorkerShuttingDown => {
+                parse!(WorkerShuttingDown, WorkerShuttingDownMessage)
+            }
+            SystemSubtype::CommandsChanged => parse!(CommandsChanged, CommandsChangedMessage),
+            SystemSubtype::Notification => parse!(Notification, NotificationMessage),
+            SystemSubtype::FilesPersisted => parse!(FilesPersisted, FilesPersistedMessage),
+            SystemSubtype::MemoryRecall => parse!(MemoryRecall, MemoryRecallMessage),
+            SystemSubtype::ElicitationComplete => {
+                parse!(ElicitationComplete, ElicitationCompleteMessage)
+            }
+            SystemSubtype::PermissionDenied => parse!(PermissionDenied, PermissionDeniedMessage),
+            SystemSubtype::MirrorError => parse!(MirrorError, MirrorErrorMessage),
+            SystemSubtype::Informational => parse!(Informational, InformationalMessage),
+            SystemSubtype::CodeChangePublished => {
+                parse!(CodeChangePublished, CodeChangePublishedMessage)
+            }
+            SystemSubtype::VcsStateChanged => parse!(VcsStateChanged, VcsStateChangedMessage),
+            SystemSubtype::FeedbackDraftQueued => {
+                parse!(FeedbackDraftQueued, FeedbackDraftQueuedMessage)
+            }
+            SystemSubtype::CloudSessionDelta => {
+                parse!(CloudSessionDelta, CloudSessionDeltaMessage)
+            }
+            SystemSubtype::DevIntent => parse!(DevIntent, DevIntentMessage),
+            SystemSubtype::TurnHandoffAvailable => {
+                parse!(TurnHandoffAvailable, TurnHandoffAvailableMessage)
+            }
+            SystemSubtype::TurnPreempted => parse!(TurnPreempted, TurnPreemptedMessage),
+            SystemSubtype::PeerMessageHold => parse!(PeerMessageHold, PeerMessageHoldMessage),
+            SystemSubtype::PerTurnEffortChanged => {
+                parse!(PerTurnEffortChanged, PerTurnEffortChangedMessage)
+            }
+            SystemSubtype::SessionTitleChanged => {
+                parse!(SessionTitleChanged, SessionTitleChangedMessage)
+            }
+            SystemSubtype::SessionWritesLost => {
+                parse!(SessionWritesLost, SessionWritesLostMessage)
+            }
+            SystemSubtype::InstructionSizeWarning => {
+                parse!(InstructionSizeWarning, InstructionSizeWarningMessage)
+            }
+            SystemSubtype::FileAttachmentsMissing => {
+                parse!(FileAttachmentsMissing, FileAttachmentsMissingMessage)
+            }
+            SystemSubtype::PermissionCheckStatus => {
+                parse!(PermissionCheckStatus, PermissionCheckStatusMessage)
+            }
+            SystemSubtype::InheritedAsksSettled => {
+                parse!(InheritedAsksSettled, InheritedAsksSettledMessage)
+            }
+            SystemSubtype::UiFocus => parse!(UiFocus, UiFocusMessage),
+            SystemSubtype::UiInvalidate => parse!(UiInvalidate, UiInvalidateMessage),
+            SystemSubtype::UiLog => parse!(UiLog, UiLogMessage),
+            SystemSubtype::UiNotify => parse!(UiNotify, UiNotifyMessage),
+            SystemSubtype::UiNotifyCancel => parse!(UiNotifyCancel, UiNotifyCancelMessage),
+            SystemSubtype::UiPanes => parse!(UiPanes, UiPanesMessage),
+            SystemSubtype::UiPlaced => parse!(UiPlaced, UiPlacedMessage),
+            SystemSubtype::UiScroll => parse!(UiScroll, UiScrollMessage),
+            SystemSubtype::UiStatus => parse!(UiStatus, UiStatusMessage),
+            SystemSubtype::UiToast => parse!(UiToast, UiToastMessage),
+            SystemSubtype::Unknown(_) => None,
+        }
+    }
+
+    /// Re-serialize this system message's payload through the typed view that
+    /// matches its `subtype`, returning the result as JSON.
+    ///
+    /// Used by the wrapping audit ([`crate::io::audit_frame`]) to verify that a
+    /// subtype's dedicated struct captures every wire field: the audit compares
+    /// this against the raw [`SystemMessage::data`]. Returns `None` for subtypes
+    /// this crate version has no dedicated struct for (including
+    /// [`SystemSubtype::Unknown`]) — those are reported as not fully wrapped.
+    pub fn typed_value(&self) -> Option<Value> {
+        fn reserialize<T: Serialize>(parsed: Option<T>) -> Option<Value> {
+            parsed.and_then(|v| serde_json::to_value(v).ok())
+        }
+        match self.subtype {
+            SystemSubtype::Init => reserialize(self.as_init()),
+            SystemSubtype::Status => reserialize(self.as_status()),
+            SystemSubtype::CompactBoundary => reserialize(self.as_compact_boundary()),
+            SystemSubtype::ThinkingTokens => reserialize(self.as_thinking_tokens()),
+            SystemSubtype::TaskStarted => reserialize(self.as_task_started()),
+            SystemSubtype::TaskProgress => reserialize(self.as_task_progress()),
+            SystemSubtype::TaskUpdated => reserialize(self.as_task_updated()),
+            SystemSubtype::TaskNotification => reserialize(self.as_task_notification()),
+            SystemSubtype::ApiRetry => reserialize(parse_system::<ApiRetryMessage>(self)),
+            SystemSubtype::ControlRequestProgress => {
+                reserialize(parse_system::<ControlRequestProgressMessage>(self))
+            }
+            SystemSubtype::ModelRefusalFallback => {
+                reserialize(parse_system::<ModelRefusalFallbackMessage>(self))
+            }
+            SystemSubtype::ModelRefusalNoFallback => {
+                reserialize(parse_system::<ModelRefusalNoFallbackMessage>(self))
+            }
+            SystemSubtype::LocalCommandOutput => {
+                reserialize(parse_system::<LocalCommandOutputMessage>(self))
+            }
+            SystemSubtype::HookStarted => reserialize(parse_system::<HookStartedMessage>(self)),
+            SystemSubtype::HookProgress => reserialize(parse_system::<HookProgressMessage>(self)),
+            SystemSubtype::HookResponse => reserialize(parse_system::<HookResponseMessage>(self)),
+            SystemSubtype::PluginInstall => reserialize(parse_system::<PluginInstallMessage>(self)),
+            SystemSubtype::BackgroundTasksChanged => {
+                reserialize(parse_system::<BackgroundTasksChangedMessage>(self))
+            }
+            SystemSubtype::SessionStateChanged => {
+                reserialize(parse_system::<SessionStateChangedMessage>(self))
+            }
+            SystemSubtype::WorkerShuttingDown => {
+                reserialize(parse_system::<WorkerShuttingDownMessage>(self))
+            }
+            SystemSubtype::CommandsChanged => {
+                reserialize(parse_system::<CommandsChangedMessage>(self))
+            }
+            SystemSubtype::Notification => reserialize(parse_system::<NotificationMessage>(self)),
+            SystemSubtype::FilesPersisted => {
+                reserialize(parse_system::<FilesPersistedMessage>(self))
+            }
+            SystemSubtype::MemoryRecall => reserialize(parse_system::<MemoryRecallMessage>(self)),
+            SystemSubtype::ElicitationComplete => {
+                reserialize(parse_system::<ElicitationCompleteMessage>(self))
+            }
+            SystemSubtype::PermissionDenied => {
+                reserialize(parse_system::<PermissionDeniedMessage>(self))
+            }
+            SystemSubtype::MirrorError => reserialize(parse_system::<MirrorErrorMessage>(self)),
+            SystemSubtype::Informational => reserialize(parse_system::<InformationalMessage>(self)),
+            SystemSubtype::CodeChangePublished => {
+                reserialize(parse_system::<CodeChangePublishedMessage>(self))
+            }
+            SystemSubtype::VcsStateChanged => {
+                reserialize(parse_system::<VcsStateChangedMessage>(self))
+            }
+            SystemSubtype::FeedbackDraftQueued => {
+                reserialize(parse_system::<FeedbackDraftQueuedMessage>(self))
+            }
+            SystemSubtype::CloudSessionDelta => {
+                reserialize(parse_system::<CloudSessionDeltaMessage>(self))
+            }
+            SystemSubtype::DevIntent => reserialize(parse_system::<DevIntentMessage>(self)),
+            SystemSubtype::TurnHandoffAvailable => {
+                reserialize(parse_system::<TurnHandoffAvailableMessage>(self))
+            }
+            SystemSubtype::TurnPreempted => reserialize(parse_system::<TurnPreemptedMessage>(self)),
+            SystemSubtype::PeerMessageHold => {
+                reserialize(parse_system::<PeerMessageHoldMessage>(self))
+            }
+            SystemSubtype::PerTurnEffortChanged => {
+                reserialize(parse_system::<PerTurnEffortChangedMessage>(self))
+            }
+            SystemSubtype::SessionTitleChanged => {
+                reserialize(parse_system::<SessionTitleChangedMessage>(self))
+            }
+            SystemSubtype::SessionWritesLost => {
+                reserialize(parse_system::<SessionWritesLostMessage>(self))
+            }
+            SystemSubtype::InstructionSizeWarning => {
+                reserialize(parse_system::<InstructionSizeWarningMessage>(self))
+            }
+            SystemSubtype::FileAttachmentsMissing => {
+                reserialize(parse_system::<FileAttachmentsMissingMessage>(self))
+            }
+            SystemSubtype::PermissionCheckStatus => {
+                reserialize(parse_system::<PermissionCheckStatusMessage>(self))
+            }
+            SystemSubtype::InheritedAsksSettled => {
+                reserialize(parse_system::<InheritedAsksSettledMessage>(self))
+            }
+            SystemSubtype::UiFocus => reserialize(parse_system::<UiFocusMessage>(self)),
+            SystemSubtype::UiInvalidate => reserialize(parse_system::<UiInvalidateMessage>(self)),
+            SystemSubtype::UiLog => reserialize(parse_system::<UiLogMessage>(self)),
+            SystemSubtype::UiNotify => reserialize(parse_system::<UiNotifyMessage>(self)),
+            SystemSubtype::UiNotifyCancel => {
+                reserialize(parse_system::<UiNotifyCancelMessage>(self))
+            }
+            SystemSubtype::UiPanes => reserialize(parse_system::<UiPanesMessage>(self)),
+            SystemSubtype::UiPlaced => reserialize(parse_system::<UiPlacedMessage>(self)),
+            SystemSubtype::UiScroll => reserialize(parse_system::<UiScrollMessage>(self)),
+            SystemSubtype::UiStatus => reserialize(parse_system::<UiStatusMessage>(self)),
+            SystemSubtype::UiToast => reserialize(parse_system::<UiToastMessage>(self)),
+            SystemSubtype::Unknown(_) => None,
+        }
+    }
+}
+
+fn parse_system<T: serde::de::DeserializeOwned>(message: &SystemMessage) -> Option<T> {
+    serde_json::from_value(message.data.clone()).ok()
+}
+
+/// Owned typed view over any known system message subtype.
+// `InitMessage` outgrew clippy's variant-size threshold when CLI 2.1.232
+// added fields. This enum is a transient per-parse classification (never
+// stored in bulk), so boxing would break every match site for no retained-
+// memory win.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum KnownSystemEvent {
+    Init(InitMessage),
+    Status(StatusMessage),
+    CompactBoundary(CompactBoundaryMessage),
+    ThinkingTokens(ThinkingTokensMessage),
+    TaskStarted(TaskStartedMessage),
+    TaskProgress(TaskProgressMessage),
+    TaskUpdated(TaskUpdatedMessage),
+    TaskNotification(TaskNotificationMessage),
+    ApiRetry(ApiRetryMessage),
+    ControlRequestProgress(ControlRequestProgressMessage),
+    ModelRefusalFallback(ModelRefusalFallbackMessage),
+    ModelRefusalNoFallback(ModelRefusalNoFallbackMessage),
+    LocalCommandOutput(LocalCommandOutputMessage),
+    HookStarted(HookStartedMessage),
+    HookProgress(HookProgressMessage),
+    HookResponse(HookResponseMessage),
+    PluginInstall(PluginInstallMessage),
+    BackgroundTasksChanged(BackgroundTasksChangedMessage),
+    SessionStateChanged(SessionStateChangedMessage),
+    WorkerShuttingDown(WorkerShuttingDownMessage),
+    CommandsChanged(CommandsChangedMessage),
+    Notification(NotificationMessage),
+    FilesPersisted(FilesPersistedMessage),
+    MemoryRecall(MemoryRecallMessage),
+    ElicitationComplete(ElicitationCompleteMessage),
+    PermissionDenied(PermissionDeniedMessage),
+    MirrorError(MirrorErrorMessage),
+    Informational(InformationalMessage),
+    CodeChangePublished(CodeChangePublishedMessage),
+    VcsStateChanged(VcsStateChangedMessage),
+    FeedbackDraftQueued(FeedbackDraftQueuedMessage),
+    CloudSessionDelta(CloudSessionDeltaMessage),
+    DevIntent(DevIntentMessage),
+    TurnHandoffAvailable(TurnHandoffAvailableMessage),
+    TurnPreempted(TurnPreemptedMessage),
+    PeerMessageHold(PeerMessageHoldMessage),
+    PerTurnEffortChanged(PerTurnEffortChangedMessage),
+    SessionTitleChanged(SessionTitleChangedMessage),
+    SessionWritesLost(SessionWritesLostMessage),
+    InstructionSizeWarning(InstructionSizeWarningMessage),
+    FileAttachmentsMissing(FileAttachmentsMissingMessage),
+    PermissionCheckStatus(PermissionCheckStatusMessage),
+    InheritedAsksSettled(InheritedAsksSettledMessage),
+    UiFocus(UiFocusMessage),
+    UiInvalidate(UiInvalidateMessage),
+    UiLog(UiLogMessage),
+    UiNotify(UiNotifyMessage),
+    UiNotifyCancel(UiNotifyCancelMessage),
+    UiPanes(UiPanesMessage),
+    UiPlaced(UiPlacedMessage),
+    UiScroll(UiScrollMessage),
+    UiStatus(UiStatusMessage),
+    UiToast(UiToastMessage),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRetryMessage {
+    pub attempt: u64,
+    pub max_retries: u64,
+    pub retry_delay_ms: u64,
+    pub error_status: Option<u16>,
+    pub error: String,
+    /// Present only when the API sent no response headers within the
+    /// first-byte window (`CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS`). For this
+    /// cause `max_retries` is its own cap (normally one retry), not the
+    /// session budget (CLI 2.1.261+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_response: Option<ApiRetryNoResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// Timing of a first-byte-timeout retry, carried as
+/// [`ApiRetryMessage::no_response`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApiRetryNoResponse {
+    /// How long the failed attempt waited for response headers.
+    pub waited_ms: u64,
+    /// How long the retry will wait for them.
+    pub retry_wait_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlRequestProgressMessage {
+    pub request_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_delay_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRefusalFallbackMessage {
+    pub trigger: String,
+    pub direction: String,
+    /// `"session"`: the main thread fell back and the session model is
+    /// swapped. `"local"`: a subagent / side-question (`/btw`) / background
+    /// fork fell back — only that response came from the fallback model and
+    /// the session model is unchanged. Absent from CLIs before 2.1.222
+    /// (treat as `"session"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<RefusalFallbackScope>,
+    pub original_model: String,
+    pub fallback_model: String,
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_refusal_category: Option<String>,
+    /// Present when any hop of this banner's multi-hop episode was a cyber
+    /// refusal — not only the origin hop `api_refusal_category` describes.
+    /// Re-arm evidence for the CLI's cyber-exclusion header on session
+    /// restore; absent on cyber-free episodes and older CLIs (2.1.239+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saw_cyber_refusal: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_refusal_explanation: Option<String>,
+    /// Cyber Verification Program status of the account that made the
+    /// request, as the API gave it for `original_model` (`stop_details.
+    /// cyber_verification`). Only on session-scope notices whose
+    /// `api_refusal_category` is `cyber`; it may not belong to `request_id`
+    /// when the switch went through several hops. Absent, or `{type:
+    /// "inactive"}` with no reason, means unknown, not "no access". Map
+    /// known values to your own text; never display them (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_refusal_cyber_verification: Option<CyberVerificationStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retracted_message_uuids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_user_message_uuid: Option<String>,
+    pub content: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// [`ModelRefusalFallbackMessage::api_refusal_cyber_verification`]: the
+/// account's Cyber Verification Program status as the API reported it
+/// (CLI 2.1.317+). All three values are opaque API strings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CyberVerificationStatus {
+    #[serde(rename = "type")]
+    pub verification_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Scope of a refusal-fallback model swap, carried by
+/// [`ModelRefusalFallbackMessage::scope`]. Open — new scopes may ship on the
+/// wire ahead of schema updates.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RefusalFallbackScope {
+    /// The main thread fell back; the session model is swapped.
+    Session,
+    /// A subagent / side-question / background fork fell back; only that
+    /// response used the fallback model, the session model is unchanged.
+    Local,
+    /// A scope not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl RefusalFallbackScope {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Session => "session",
+            Self::Local => "local",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for RefusalFallbackScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RefusalFallbackScope {
+    fn from(s: &str) -> Self {
+        match s {
+            "session" => Self::Session,
+            "local" => Self::Local,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for RefusalFallbackScope {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RefusalFallbackScope {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRefusalNoFallbackMessage {
+    pub original_model: String,
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_refusal_category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_refusal_explanation: Option<String>,
+    pub content: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalCommandOutputMessage {
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookStartedMessage {
+    pub hook_id: String,
+    pub hook_name: String,
+    pub hook_event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookProgressMessage {
+    pub hook_id: String,
+    pub hook_name: String,
+    pub hook_event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookResponseMessage {
+    pub hook_id: String,
+    pub hook_name: String,
+    pub hook_event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInstallMessage {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundTasksChangedMessage {
+    pub tasks: Vec<BackgroundTaskInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundTaskInfo {
+    pub task_id: String,
+    /// Id of the task's current run; see [`TaskStartedMessage::run_id`]
+    /// (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub task_type: String,
+    /// Agent type of a `local_agent` task, such as `general-purpose` or a
+    /// custom agent's name; `main-session` for a backgrounded main session.
+    /// Not set on other tasks (CLI 2.1.293+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    pub description: String,
+    /// `task_id` of the subagent task that launched this one; see
+    /// [`TaskStartedMessage::parent_task_id`] (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    /// True for housekeeping tasks the CLI does not surface as user work;
+    /// hosts should exclude them from activity indicators (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient: Option<bool>,
+    /// True for an awaited run of a resumed subagent; see
+    /// [`TaskStartedMessage::awaited`] (CLI 2.1.293+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awaited: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStateChangedMessage {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerShuttingDownMessage {
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandsChangedMessage {
+    pub commands: Vec<CommandInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "argumentHint")]
+    pub argument_hint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<Vec<String>>,
+    /// True when the command is Claude Code's own; absent for a command
+    /// defined by a user, project, plugin or MCP server. Rows can share a
+    /// name: when a marked row carries it, `/name` runs that one, and an
+    /// unmarked row is the one `/name` runs only when no marked row shares
+    /// its name (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationMessage {
+    pub key: String,
+    pub text: String,
+    pub priority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesPersistedMessage {
+    pub files: Vec<PersistedFile>,
+    pub failed: Vec<FailedPersistedFile>,
+    pub processed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedFile {
+    pub filename: String,
+    pub file_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailedPersistedFile {
+    pub filename: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRecallMessage {
+    pub mode: String,
+    pub memories: Vec<MemoryRecallItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRecallItem {
+    pub path: String,
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElicitationCompleteMessage {
+    pub mcp_server_name: String,
+    pub elicitation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionDeniedMessage {
+    pub tool_name: String,
+    pub tool_use_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason_type: Option<String>,
+    /// A closed-set code for a reason a host can act on, beside
+    /// `decision_reason_type` (whose values are unchanged). Absent for
+    /// every other reason; new values are additive (CLI 2.1.276+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason_code: Option<PermissionDeniedReasonCode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// An actionable reason behind a `system/permission_denied` frame
+/// ([`PermissionDeniedMessage::decision_reason_code`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PermissionDeniedReasonCode {
+    /// The auto-mode classifier's transcript exceeded its context window.
+    ClassifierTranscriptTooLong,
+    /// `permissions.blockReadsOutsideWorkingDirectories` refused the path.
+    OutsideReadsBlocked,
+    /// `/pause-memory` has memory paused.
+    MemoryPaused,
+    /// Auto mode's safety check does not run for this session, so calls
+    /// that need it are refused. Another permission mode can run such a
+    /// call unless only the check may allow the tool; the check can come
+    /// back (CLI 2.1.319+).
+    AutoModeNoCheckInSession,
+    /// The denial that ended a turn or subagent run after ten responses in
+    /// a row with no verdict: the check does not run for this session
+    /// (CLI 2.1.319+).
+    AutoModeStopNoCheckInSession,
+    /// As [`AutoModeStopNoCheckInSession`](Self::AutoModeStopNoCheckInSession),
+    /// but the call got no result from the check (CLI 2.1.319+).
+    AutoModeStopNoResultForCalls,
+    /// As [`AutoModeStopNoCheckInSession`](Self::AutoModeStopNoCheckInSession),
+    /// but the server returned no usable verdict, as in an outage
+    /// (CLI 2.1.319+).
+    AutoModeStopNoVerdict,
+    /// A code not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PermissionDeniedReasonCode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ClassifierTranscriptTooLong => "classifier_transcript_too_long",
+            Self::OutsideReadsBlocked => "outside_reads_blocked",
+            Self::MemoryPaused => "memory_paused",
+            Self::AutoModeNoCheckInSession => "auto_mode_no_check_in_session",
+            Self::AutoModeStopNoCheckInSession => "auto_mode_stop_no_check_in_session",
+            Self::AutoModeStopNoResultForCalls => "auto_mode_stop_no_result_for_calls",
+            Self::AutoModeStopNoVerdict => "auto_mode_stop_no_verdict",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PermissionDeniedReasonCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PermissionDeniedReasonCode {
+    fn from(s: &str) -> Self {
+        match s {
+            "classifier_transcript_too_long" => Self::ClassifierTranscriptTooLong,
+            "outside_reads_blocked" => Self::OutsideReadsBlocked,
+            "memory_paused" => Self::MemoryPaused,
+            "auto_mode_no_check_in_session" => Self::AutoModeNoCheckInSession,
+            "auto_mode_stop_no_check_in_session" => Self::AutoModeStopNoCheckInSession,
+            "auto_mode_stop_no_result_for_calls" => Self::AutoModeStopNoResultForCalls,
+            "auto_mode_stop_no_verdict" => Self::AutoModeStopNoVerdict,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PermissionDeniedReasonCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PermissionDeniedReasonCode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MirrorErrorMessage {
+    pub error: String,
+    pub key: MirrorErrorKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MirrorErrorKey {
+    #[serde(rename = "projectKey")]
+    pub project_key: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subpath: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InformationalMessage {
+    pub content: String,
+    pub level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prevent_continuation: Option<bool>,
+    /// Opaque feature tag on a line a host may treat specially; absent on
+    /// ordinary lines. Hosts ignore values they do not know (CLI 2.1.288+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// Present on the line that ends a submitted prompt before a model call:
+    /// how the prompt ended, so a host can write its own message or count
+    /// endings without matching `content`. A follow-up a hook blocks while a
+    /// turn runs carries it too, so read it as the end of a turn only when
+    /// the next result has `num_turns` 0 (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_submit_outcome: Option<PromptSubmitOutcome>,
+    /// Present on the warning that says a requested model was refused and
+    /// the session uses another, so a host can word the notice itself
+    /// instead of reading `content` (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_restriction: Option<ModelRestriction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// [`InformationalMessage::model_restriction`]: a requested model was
+/// refused and the session uses another. Both names are cleaned as they
+/// are in `content` (model-id characters only, cut to 128 with a trailing
+/// `…`, or `(unrecognized model name)` when none are left) but are still
+/// untrusted text: render them as plain text (CLI 2.1.317+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelRestriction {
+    /// The refused model as it was asked for, or the id that a refused
+    /// Default pick stood for.
+    pub requested_model: String,
+    /// The model in use when the line was built; a later switch can
+    /// outdate it.
+    pub effective_model: String,
+    /// `start` for the model the process chose when it started (from
+    /// `--model`, the environment, settings or `--agent`'s frontmatter);
+    /// `switch` for anything later. The CLI reads an unknown value as
+    /// absent, so treat one that way too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+}
+
+/// How a submitted prompt ended before a model call, carried as
+/// [`InformationalMessage::prompt_submit_outcome`] (CLI 2.1.300+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptSubmitOutcome {
+    /// What ended the prompt. The CLI drops a kind it does not know, so the
+    /// key can be absent; treat [`PromptSubmitOutcomeKind::Other`] as absent
+    /// too, and ignore [`reason`](Self::reason) beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PromptSubmitOutcomeKind>,
+    /// Sent with kind `no_verdict`, and says why: `remote_run_failed`,
+    /// `remote_run_timed_out`, `interrupted`, `remote_runner_refused`,
+    /// `unsupported_in_cloud_session`, `output_distrusted`,
+    /// `callback_timed_out`, `hook_failed`, `hook_timed_out`,
+    /// `hooks_never_ran`, `personal_config_refused` or
+    /// `rewrite_unplaceable`. Open set — treat an unknown value as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_verdict_kind: Option<String>,
+    /// True when the prompt stays in the conversation, where the model reads
+    /// it on the next turn. Do not infer it from `kind`.
+    pub prompt_kept: bool,
+    /// The hook's text as Claude Code got it, sanitized and possibly cut.
+    /// Never sent with `no_verdict`; absent when Claude Code got no text.
+    /// Untrusted and can quote the prompt, so render it as plain text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// [`PromptSubmitOutcome::kind`] — what ended a submitted prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PromptSubmitOutcomeKind {
+    /// A hook answered with a block.
+    BlockedByHook,
+    /// A hook answered `continue: false`.
+    StoppedByHook,
+    /// A plugin's code module dropped the prompt.
+    DroppedByHook,
+    /// A plugin's code module answered and did not pass the prompt on.
+    NotPassedOn,
+    /// No hook gave a verdict, and Claude Code ended the prompt itself; see
+    /// [`PromptSubmitOutcome::no_verdict_kind`].
+    NoVerdict,
+    /// A kind not yet known to this version of the crate.
+    Other(String),
+}
+
+impl PromptSubmitOutcomeKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::BlockedByHook => "blocked_by_hook",
+            Self::StoppedByHook => "stopped_by_hook",
+            Self::DroppedByHook => "dropped_by_hook",
+            Self::NotPassedOn => "not_passed_on",
+            Self::NoVerdict => "no_verdict",
+            Self::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PromptSubmitOutcomeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PromptSubmitOutcomeKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "blocked_by_hook" => Self::BlockedByHook,
+            "stopped_by_hook" => Self::StoppedByHook,
+            "dropped_by_hook" => Self::DroppedByHook,
+            "not_passed_on" => Self::NotPassedOn,
+            "no_verdict" => Self::NoVerdict,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PromptSubmitOutcomeKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PromptSubmitOutcomeKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Plugin info from the init message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInfo {
+    /// Plugin name
+    pub name: String,
+    /// Path to the plugin on disk
+    pub path: String,
+    /// Plugin registry source (e.g., "rust-analyzer-lsp@claude-plugins-official")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Installed plugin version (e.g., "1.0.0"). Added in CLI 2.1.219.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// Plugin load diagnostic reported by system init.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginDiagnostic {
+    pub plugin: String,
+    #[serde(rename = "type")]
+    pub diagnostic_type: String,
+    pub message: String,
+}
+
+/// Memory paths reported by system init.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryPaths {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// An MCP server config entry that failed validation, reported by system
+/// init (e.g. a `url` entry with no `type`). The affected server is skipped
+/// and absent from `InitMessage::mcp_servers`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpServerError {
+    pub name: String,
+    /// Stable error category.
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub message: String,
+}
+
+/// Init system message data - sent at session start
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitMessage {
+    /// Session identifier
+    pub session_id: String,
+    /// Current working directory
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Model being used
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// List of available tools
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// MCP servers configured
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<Value>,
+    /// Available slash commands (e.g., "compact", "cost", "review")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slash_commands: Vec<String>,
+    /// Slash commands only meaningful in a terminal context (CLI 2.1.232+,
+    /// e.g. "doctor", "color")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal_slash_commands: Vec<String>,
+    /// Available agent types (e.g., "Bash", "Explore", "Plan")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<String>,
+    /// Installed plugins
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PluginInfo>,
+    /// Installed skills
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<Value>,
+    /// Claude Code CLI version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_code_version: Option<String>,
+    /// Unix socket path for the harness's inter-session messaging bridge
+    /// (new in CLI 2.1.232; absent on older CLIs and non-bridged runs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub messaging_socket_path: Option<String>,
+    /// How the API key was sourced
+    #[serde(skip_serializing_if = "Option::is_none", rename = "apiKeySource")]
+    pub api_key_source: Option<ApiKeySource>,
+    /// Output style
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_style: Option<OutputStyle>,
+    /// Permission mode
+    #[serde(skip_serializing_if = "Option::is_none", rename = "permissionMode")]
+    pub permission_mode: Option<InitPermissionMode>,
+
+    /// Message-level unique identifier
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+
+    /// Memory storage paths (e.g., {"auto": "/path/to/memory/"})
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_paths: Option<MemoryPaths>,
+
+    /// Absolute path of this session's scratchpad directory, for clients
+    /// that read files from the session. Omitted when the scratchpad is
+    /// disabled, and from the redacted init sent over the Remote Control
+    /// bridge and by the hosted worker (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratchpad_path: Option<String>,
+
+    /// Fast mode toggle state (e.g., "off")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_mode_state: Option<String>,
+
+    /// Why fast mode can't serve right now. Absent when nothing blocks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode_disabled_reason: Option<super::result::FastModeDisabledReason>,
+
+    /// MCP server config entries (from `--mcp-config`) that failed validation
+    /// and were skipped. Affected servers are absent from `mcp_servers`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server_errors: Option<Vec<McpServerError>>,
+
+    /// Whether analytics collection is disabled for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analytics_disabled: Option<bool>,
+
+    /// Whether product-feedback prompts are disabled for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_feedback_disabled: Option<bool>,
+
+    /// API beta flags active for the session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub betas: Vec<String>,
+
+    /// Open-set protocol capability names supported by this CLI.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+
+    /// Plugin load errors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_errors: Vec<PluginDiagnostic>,
+
+    /// Plugin load warnings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_warnings: Vec<PluginDiagnostic>,
+
+    /// The effort level the session will send on its next request — after env
+    /// overrides, session state, org caps, and model-support downgrades
+    /// (`"low"` | `"medium"` | `"high"` | `"xhigh"` | `"max"`). `None` when no
+    /// effort parameter will be sent, or on CLIs before 2.1.239.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+
+    /// Only on init frames written by the headless stream-json client of a
+    /// cloud-hosted session: a per-frame snapshot of the cloud session's id,
+    /// view URL, device binding, and directory-sync state. Absent in every
+    /// other mode. Stored as raw JSON (the shape is internal and evolving).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_session: Option<Value>,
+
+    /// The terminal's server-configured `◆ <text>` footer pill, carried so a
+    /// host UI can render the same pill. Absent when nothing is configured
+    /// (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_indicator: Option<FooterIndicator>,
+
+    /// This cloud worker's life (`CLAUDE_CODE_WORKER_EPOCH`): a new number
+    /// each time the session's worker is started. Absent outside cloud
+    /// workers and on CLIs before 2.1.259.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_epoch: Option<u64>,
+
+    /// Windows only: the absolute path of the PowerShell binary this session
+    /// runs PowerShell commands with, or `Some(None)` (wire `null`) when
+    /// none was found. Absent on other platforms and on CLIs before 2.1.259.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub powershell_path: Option<Option<String>>,
+
+    /// Cold-start telemetry for hosted (CCR) sessions: named startup phases
+    /// and resume-hydration counters. Absent elsewhere. Stored as raw JSON
+    /// (the shape is internal and evolving) (CLI 2.1.266+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_timing: Option<serde_json::Map<String, Value>>,
+
+    /// Whether per-turn effort is active for this frame's `model`. `true`:
+    /// an effort change keeps the prompt cache, because the effort is sent
+    /// inside the conversation at the turn where it changes. `false`: the
+    /// effort is sent only as the top-level parameter, so a change rewrites
+    /// the cached prefix. Mid-session the CLI reports only a change to
+    /// `false` (`system/per_turn_effort_changed`); `true` comes only from an
+    /// init and is provisional after a fresh process or once the
+    /// conversation's refusals are cleared, so keep listening all session.
+    /// Absent means unknown (CLI 2.1.281+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_turn_effort_active: Option<bool>,
+
+    /// Whether typing `ultrathink` runs the turn at `xhigh` effort on this
+    /// frame's `model` (and, when the session is already at `xhigh` or
+    /// `max`, leaves the turn as it is); a host highlights the word only
+    /// while this is `true`. After `system/per_turn_effort_changed`, treat it
+    /// as `false` until the next init. The same answer as `get_settings`'
+    /// `applied.ultrathinkAvailable`. Sent by the stream-json (Agent SDK)
+    /// host; absent means unknown (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultrathink_available: Option<bool>,
+
+    /// `true` when a user message carrying
+    /// [`UserMessage::ultrathink_typed`] that passes that field's checks runs
+    /// its turn at `xhigh` effort on this frame's `model` (and, when the
+    /// session is already at `xhigh` or `max`, leaves the turn as it is). A
+    /// client colors the word and sends the statement only while this is
+    /// `true`. After `system/per_turn_effort_changed`, treat it as `false`
+    /// until the next init. Absent means unknown: color nothing and send no
+    /// statement. Sent by the stream-json (Agent SDK) host and on Remote
+    /// Control bridge init frames (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultrathink_typed_raises: Option<bool>,
+
+    /// Only on a Cowork cloud worker's init: the thinking this turn runs
+    /// with. Absent when a request changed the session's thinking after the
+    /// turn's start, or the session has no thinking setting of its own
+    /// (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_thinking: Option<ClientThinking>,
+
+    /// Only on a Cowork cloud worker's init: `Some(true)` when an
+    /// `apply_flag_settings` of exactly `{switchModelsOnFlag: true}` would add
+    /// nothing now (the session holds the value, and no fast mode resync or
+    /// auto mode check is due). Absent: send the request (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag_restate_noop: Option<bool>,
+
+    /// Absolute path of the one folder of synced skills whose files
+    /// `read_file` serves in this session; a client may admit paths below it
+    /// as it admits paths below [`scratchpad_path`](Self::scratchpad_path).
+    /// Read only; a symbolic link, a dot-named part or a file at its top is
+    /// refused. Sent by a self-hosted runner's session alone; omitted where
+    /// the session serves no such folder, and wherever `original_cwd` is
+    /// withheld (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synced_skills_path: Option<String>,
+
+    /// Whether the session's transcript is in focus view. Toggled by
+    /// `/focus`, including over Remote Control. Present on Remote Control
+    /// bridge init frames and on the per-turn init of headless stream-json
+    /// runs; absent on hosts that do not publish it and on CLIs before
+    /// 2.1.281. Re-emitted inits carry the current value — the newest frame
+    /// wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_mode: Option<ViewMode>,
+
+    /// Absolute path of the folder the session's file permission checks are
+    /// anchored at, for clients that read files from the session. Unlike
+    /// `cwd` it does not follow the shell: it moves only on `/cd`, on
+    /// entering or leaving a worktree, and on a session restore. Omitted on
+    /// the redacted Remote Control / hosted-worker inits, in a session with
+    /// no directory, for HIPAA organizations, and on CLIs before 2.1.301.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_cwd: Option<String>,
+
+    /// Absolute paths of the folders added to the session (`--add-dir`, the
+    /// SDK `additionalDirectories` option, settings, a grant, or a host's
+    /// mid-session request), in no particular order; `Some(vec![])` when
+    /// there are none. Folders added only by repository-delivered settings
+    /// files are left out. Grants nothing: the CLI's own check decides every
+    /// read. `None` means not told (not "none"): omitted on the same lanes as
+    /// [`original_cwd`](Self::original_cwd), by hosts that have not wired it,
+    /// and on CLIs before 2.1.301.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additional_directories: Option<Vec<String>>,
+}
+
+/// [`InitMessage::client_thinking`]: the thinking a Cowork cloud worker's
+/// turn runs with (CLI 2.1.317+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClientThinking {
+    /// `0` with thinking off, the fixed budget, or `None` (wire `null`) with
+    /// no fixed budget.
+    #[serde(default)]
+    pub max_thinking_tokens: Option<u64>,
+    /// `summarized`, `omitted` or `highlights`; `None` (wire `null`) with
+    /// none, with thinking off, and for a `highlights` this session cannot
+    /// send.
+    #[serde(default)]
+    pub thinking_display: Option<String>,
+}
+
+/// The server-configured session indicator that the terminal renders as a
+/// `◆ <text>` pill in the prompt footer, carried on `system/init` and the
+/// `initialize` response (CLI 2.1.259+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FooterIndicator {
+    /// The label to show — already sanitized to a single line of plain text,
+    /// exactly as the terminal footer renders it after its `◆` glyph.
+    pub text: String,
+}
+
+/// The session's transcript view, carried as [`InitMessage::view_mode`]
+/// (CLI 2.1.281+).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ViewMode {
+    /// The model is told the user sees only its final message per turn, so
+    /// clients may collapse each turn to the prompt and the final response.
+    Focus,
+    /// The ordinary full transcript.
+    Default,
+    /// A mode not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ViewMode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Focus => "focus",
+            Self::Default => "default",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ViewMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ViewMode {
+    fn from(s: &str) -> Self {
+        match s {
+            "focus" => Self::Focus,
+            "default" => Self::Default,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ViewMode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ViewMode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Status system message - sent during operations like context compaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusMessage {
+    /// Session identifier
+    pub session_id: String,
+    /// Current status (e.g., compacting) or null when complete
+    pub status: Option<StatusMessageStatus>,
+    /// Unique identifier for this message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    /// Current permission mode when changed mid-session.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "permissionMode")]
+    pub permission_mode: Option<InitPermissionMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_error: Option<String>,
+    /// On the `compacting` statuses of an automatic compaction (absent on a
+    /// typed `/compact`): characters of the summary streamed so far (text
+    /// and tool-input deltas, not thinking). Returns to 0 at each new attempt
+    /// and stays 0 while a background summary is awaited. A rising count
+    /// shows progress; it is not a share of the final length. Absent from
+    /// CLIs before 2.1.295. Marked `@internal` upstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_output_chars: Option<u64>,
+    /// Present, and true, once at start-up when
+    /// `CLAUDE_CODE_RESUME_INTERRUPTED_TURN` asked for the interrupted turn
+    /// to be re-run and this process did not re-run it: the turn ran in plan
+    /// mode and the process came back in another mode, where the re-run
+    /// could carry out a plan nobody approved. Marked `@internal` upstream
+    /// (CLI 2.1.319+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_held_for_plan: Option<bool>,
+}
+
+/// Compact boundary message - marks where context compaction occurred
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactBoundaryMessage {
+    /// Session identifier
+    pub session_id: String,
+    /// Metadata about the compaction
+    pub compact_metadata: CompactMetadata,
+    /// Human-readable summary of what was compacted, when the CLI emits one.
+    ///
+    /// Also accepted under the `content` / `text` wire keys.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "content",
+        alias = "text"
+    )]
+    pub summary: Option<String>,
+    /// Number of messages summarized in this compaction pass, when present.
+    ///
+    /// Also accepted under the `message_count` wire key.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "message_count"
+    )]
+    pub leaf_message_count: Option<u32>,
+    /// Wall-clock duration of the compaction pass in milliseconds, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Unique identifier for this message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    /// Logical parent across the compaction boundary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logical_parent_uuid: Option<Option<String>>,
+    /// Replayed history rather than a live message, stamped by the Remote
+    /// Control bridge when it flushes history to the session server
+    /// (CLI 2.1.266+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub historical: Option<bool>,
+}
+
+/// Metadata about context compaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactMetadata {
+    /// Number of tokens before compaction
+    pub pre_tokens: u64,
+    /// What triggered the compaction
+    pub trigger: CompactionTrigger,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cumulative_dropped_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages_summarized: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precomputed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_compact_discovered_tools: Option<Vec<String>>,
+    /// The artifact versions the conversation held before this compaction,
+    /// most recently changed first; empty when it held none. A resumed
+    /// session replays these so it can update those artifacts without
+    /// reading them again (CLI 2.1.285+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_compact_artifact_read_versions: Option<Vec<ArtifactReadVersion>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preserved_segment: Option<PreservedSegment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preserved_messages: Option<PreservedMessages>,
+}
+
+/// One artifact version a conversation held before a compaction, carried in
+/// [`CompactMetadata::pre_compact_artifact_read_versions`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArtifactReadVersion {
+    /// The artifact id.
+    pub slug: String,
+    /// The version read or published.
+    pub ver: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreservedSegment {
+    pub head_uuid: String,
+    pub anchor_uuid: String,
+    pub tail_uuid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreservedMessages {
+    pub anchor_uuid: String,
+    pub uuids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_uuids: Option<Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Task system message types (task_started, task_progress, task_notification)
+// ---------------------------------------------------------------------------
+
+/// Cumulative usage statistics for a background task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskUsage {
+    /// Wall-clock milliseconds since the task started.
+    pub duration_ms: u64,
+    /// Total number of tool calls made so far.
+    pub tool_uses: u64,
+    /// Total tokens consumed so far.
+    pub total_tokens: u64,
+}
+
+/// The kind of background task.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TaskType {
+    /// A sub-agent task (e.g., Explore, Plan).
+    LocalAgent,
+    /// A background bash command.
+    LocalBash,
+    /// A local workflow task.
+    LocalWorkflow,
+    /// A task type not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl TaskType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::LocalAgent => "local_agent",
+            Self::LocalBash => "local_bash",
+            Self::LocalWorkflow => "local_workflow",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for TaskType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for TaskType {
+    fn from(s: &str) -> Self {
+        match s {
+            "local_agent" => Self::LocalAgent,
+            "local_bash" => Self::LocalBash,
+            "local_workflow" => Self::LocalWorkflow,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for TaskType {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Completion status of a background task.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Killed,
+    Paused,
+    Stopped,
+    Unknown(String),
+}
+
+impl TaskStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Killed => "killed",
+            Self::Paused => "paused",
+            Self::Stopped => "stopped",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for TaskStatus {
+    fn from(s: &str) -> Self {
+        match s {
+            "pending" => Self::Pending,
+            "running" => Self::Running,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "killed" => Self::Killed,
+            "paused" => Self::Paused,
+            "stopped" => Self::Stopped,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for TaskStatus {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskStatus {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// `task_started` system message — emitted once when a background task begins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStartedMessage {
+    pub session_id: String,
+    pub task_id: String,
+    /// Id of one run of the task: equal on every `task_*` event and
+    /// `background_tasks_changed` entry of that run. A resumed task keeps its
+    /// `task_id` and gets a new `run_id`; the run ids of one task sort, by
+    /// plain string comparison, in the order the runs opened. Absent for a
+    /// task this process did not register (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    /// `task_id` of the subagent (`local_agent`) task whose agent launched
+    /// this task. Absent when the launcher is the main thread, has no
+    /// `task_id` of its own, or is no longer tracked. The parent may be a
+    /// foreground or already-ended task, so treat an unknown id as no parent
+    /// (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<TaskType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    pub description: String,
+    /// The subagent type for `local_agent` tasks (e.g. `general-purpose`,
+    /// `Explore`). Absent for `local_bash` tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    /// Whether the task was registered in the background (`true`) or in the
+    /// foreground with the spawning tool call blocking on it (`false`). A
+    /// later move to the background arrives as `task_updated`
+    /// `patch.is_backgrounded`. Set for `local_agent` and `local_bash` tasks
+    /// (CLI 2.1.239+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_backgrounded: Option<bool>,
+    /// True for a run of a resumed subagent (`local_agent`) that the tool
+    /// call which resumed it waits for, as `SendMessage` does when
+    /// background tasks are disabled; [`tool_use_id`](Self::tool_use_id)
+    /// then names that call. The run has ended by the time that call
+    /// returns, and its report goes into that call's result, so expect no
+    /// follow-up turn when it ends. A later resume that nothing waits for
+    /// starts a new run without the field (CLI 2.1.293+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awaited: Option<bool>,
+    /// Nesting depth of a spawned subagent (`local_agent`) task: 1 for a
+    /// top-level spawn, N+1 when spawned from inside a depth-N agent. Not set
+    /// on other tasks (CLI 2.1.239+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_depth: Option<u32>,
+    /// The prompt handed to the subagent. Present for `local_agent` tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_transcript: Option<bool>,
+    /// True for housekeeping tasks the CLI does not surface as user work
+    /// (every `skip_transcript` task, plus auto-started live-update
+    /// watchers); hosts should exclude them from activity indicators
+    /// (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient: Option<bool>,
+    pub uuid: String,
+}
+
+/// `task_updated` system message — emitted when a background task's state
+/// changes (e.g. transitions to `completed`). Carries a partial `patch` of the
+/// fields that changed rather than the full task record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskUpdatedMessage {
+    pub session_id: String,
+    pub task_id: String,
+    /// Id of the task run this update belongs to; see
+    /// [`TaskStartedMessage::run_id`] (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub patch: TaskPatch,
+    pub uuid: String,
+}
+
+/// The partial update carried by a [`TaskUpdatedMessage`]. Every field is
+/// optional because the CLI only sends the keys that changed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TaskStatus>,
+    /// Wall-clock epoch milliseconds when the task finished, when the patch
+    /// reports completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_paused_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_backgrounded: Option<bool>,
+}
+
+/// `thinking_tokens` system message — emitted as the model streams extended
+/// thinking, reporting the running estimate of thinking tokens consumed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingTokensMessage {
+    pub session_id: String,
+    /// Running estimate of total thinking tokens for the current turn.
+    pub estimated_tokens: u64,
+    /// Increase in the estimate since the previous `thinking_tokens` event.
+    pub estimated_tokens_delta: u64,
+    /// Client uuid of the user message that triggered this turn, stamped on
+    /// every `thinking_tokens` frame of a headless turn so a consumer can
+    /// attribute thinking progress to the send it answers before any reply
+    /// frame arrives. Absent on synthetic/scheduled (meta) turns, on turns
+    /// without a client uuid, on Remote Control sessions, and from CLIs
+    /// before 2.1.261.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_uuid: Option<String>,
+    pub uuid: String,
+}
+
+/// `task_progress` system message — emitted periodically as a background
+/// agent task executes tools. Not emitted for `local_bash` tasks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskProgressMessage {
+    pub session_id: String,
+    pub task_id: String,
+    /// Id of the task run this progress belongs to; see
+    /// [`TaskStartedMessage::run_id`] (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_tool_name: Option<String>,
+    pub usage: TaskUsage,
+    /// Subagent type for `local_agent` tasks (e.g. `Explore`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub uuid: String,
+}
+
+/// `task_notification` system message — emitted once when a background
+/// task completes or fails.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskNotificationMessage {
+    pub session_id: String,
+    pub task_id: String,
+    /// Id of the task run this notification closes; see
+    /// [`TaskStartedMessage::run_id`] (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub status: TaskStatus,
+    /// Machine-readable cause, set only when the task did not end through an
+    /// ordinary completion, failure, or stop (CLI 2.1.273+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<TaskEndReason>,
+    pub summary: String,
+    pub output_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TaskUsage>,
+    /// For a backgrounded MCP task that completed, the `resource_link`
+    /// content blocks of its final result — the files it returned by
+    /// reference — collected from the raw result before the CLI renders it
+    /// as text. Join to the originating call via `tool_use_id`. Absent when
+    /// the result had none or the task is any other type (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_links: Vec<ResourceLink>,
+    /// On a `completed` notification of a subagent that reports through the
+    /// SubagentHandback tool: how its report reached its caller. Left out
+    /// when the subagent failed, was stopped, or is still waiting on work;
+    /// `summary` is then not a report. When present, `summary` holds harness
+    /// notes written for the model. A later notification for the same
+    /// `task_id` replaces what an earlier one showed (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handback: Option<TaskHandback>,
+    /// The report a `send` or `flagged` hand-back delivered: when present,
+    /// render it instead of `summary`, with its `warning`, if any, above its
+    /// `text`. Absent for `withheld` (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handback_report: Option<HandbackReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_transcript: Option<bool>,
+    /// True for housekeeping tasks the CLI does not surface as user work;
+    /// hosts should exclude them from activity indicators (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+}
+
+/// How a subagent's hand-back report reached its caller
+/// ([`TaskNotificationMessage::handback`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TaskHandback {
+    /// The report was delivered.
+    Send,
+    /// The report was delivered with an auto-mode warning.
+    Flagged,
+    /// The report was held back; no `handback_report` is sent.
+    Withheld,
+    /// A value not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl TaskHandback {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Send => "send",
+            Self::Flagged => "flagged",
+            Self::Withheld => "withheld",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for TaskHandback {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for TaskHandback {
+    fn from(s: &str) -> Self {
+        match s {
+            "send" => Self::Send,
+            "flagged" => Self::Flagged,
+            "withheld" => Self::Withheld,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for TaskHandback {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskHandback {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// A subagent's delivered hand-back report
+/// ([`TaskNotificationMessage::handback_report`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandbackReport {
+    /// The subagent's whole report, never truncated, with a backslash
+    /// inserted into text that imitates harness markup.
+    pub text: String,
+    /// Auto mode's warning to show above `text`: a security warning, or a
+    /// note that the review could not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// API error category attached to assistant wrapper frames.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AssistantErrorKind {
+    AuthenticationFailed,
+    OauthOrgNotAllowed,
+    AccountOnHold,
+    BillingError,
+    RateLimit,
+    Overloaded,
+    InvalidRequest,
+    ModelNotFound,
+    ServerError,
+    UnknownError,
+    MaxOutputTokens,
+    Unknown(String),
+}
+
+impl AssistantErrorKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::OauthOrgNotAllowed => "oauth_org_not_allowed",
+            Self::AccountOnHold => "account_on_hold",
+            Self::BillingError => "billing_error",
+            Self::RateLimit => "rate_limit",
+            Self::Overloaded => "overloaded",
+            Self::InvalidRequest => "invalid_request",
+            Self::ModelNotFound => "model_not_found",
+            Self::ServerError => "server_error",
+            Self::UnknownError => "unknown",
+            Self::MaxOutputTokens => "max_output_tokens",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for AssistantErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for AssistantErrorKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "authentication_failed" => Self::AuthenticationFailed,
+            "oauth_org_not_allowed" => Self::OauthOrgNotAllowed,
+            "account_on_hold" => Self::AccountOnHold,
+            "billing_error" => Self::BillingError,
+            "rate_limit" => Self::RateLimit,
+            "overloaded" => Self::Overloaded,
+            "invalid_request" => Self::InvalidRequest,
+            "model_not_found" => Self::ModelNotFound,
+            "server_error" => Self::ServerError,
+            "unknown" => Self::UnknownError,
+            "max_output_tokens" => Self::MaxOutputTokens,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for AssistantErrorKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AssistantErrorKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// `code_change_published` system message — the session is now associated
+/// with a published code change (a pull/merge request). Fires on creation and
+/// whenever the session contributes to an existing one, so bind on every
+/// event; re-emission for the same URL is possible and idempotent. Values are
+/// scraped from captured command output — treat them as a binding hint and
+/// verify against the forge before routing authenticated requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeChangePublishedMessage {
+    /// Forge classification derived from the URL's shape (`github`,
+    /// `github-enterprise`, `gitlab`, `bitbucket`, `gerrit` today). Open set
+    /// — treat an unknown value as a valid provider, never as an error.
+    pub provider: String,
+    /// Web URL of the pull/merge request. Unverified.
+    pub url: String,
+    /// Repository path from the URL (`owner/name` on GitHub; may carry more
+    /// segments on GitLab).
+    pub repo: String,
+    /// Provider-native change identifier — the PR/MR number as a string.
+    pub identifier: String,
+    /// What the session did that produced this announcement: the flag-aware
+    /// `gh pr` verb it ran (`"created"`, `"edited"`, `"merged"`,
+    /// `"commented"`, `"closed"`, `"reopened"`, `"ready"`, `"draft"`,
+    /// `"auto-merge-enabled"`, `"auto-merge-disabled"`), `"pushed"` for a
+    /// push to a branch that has a PR, `"checked-out"` for `gh pr checkout`,
+    /// or `"started"` for the open change on the branch a Claude Desktop
+    /// session began on. Always sent by current producers (CLI 2.1.239+),
+    /// absent only from older ones. Open set — treat unknown values as valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// The session's working branch when it produced the change. Sent for
+    /// providers whose changes have no head branch of their own (`gerrit`),
+    /// so a host can place the change on that checkout, and with `created`
+    /// on any provider: the branch the create was opened from (its `--head`
+    /// / `--source-branch` flag, else the working branch), so a host can show
+    /// the new change before its own forge lookup answers (CLI 2.1.273+).
+    /// Absent otherwise (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `vcs_state_changed` system message — a harness-observed shell command
+/// mutated repository state. A cache-invalidation signal, deliberately
+/// payload-free beyond classification: consumers re-read state (branch, head,
+/// PR status) instead of decoding the event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VcsStateChangedMessage {
+    /// What class of mutation was observed. New kinds may be added — treat an
+    /// unrecognized kind exactly like a recognized one (something changed).
+    pub kind: VcsMutationKind,
+    /// The session's working directory — a hint, not necessarily the mutated
+    /// repo's path (`git -C` or an inner `cd` mutates elsewhere).
+    pub cwd: String,
+    /// The branch a commit landed on or a push updated. Commit and push
+    /// events carry it; a command that pushed several branches emits one push
+    /// event per branch. A best-effort hint: absent whenever attribution is
+    /// uncertain, and never a required key (CLI 2.1.239+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// Mutation class carried by a [`VcsStateChangedMessage`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VcsMutationKind {
+    Commit,
+    Push,
+    Merge,
+    Rebase,
+    /// A kind not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl VcsMutationKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Commit => "commit",
+            Self::Push => "push",
+            Self::Merge => "merge",
+            Self::Rebase => "rebase",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for VcsMutationKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for VcsMutationKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "commit" => Self::Commit,
+            "push" => Self::Push,
+            "merge" => Self::Merge,
+            "rebase" => Self::Rebase,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for VcsMutationKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for VcsMutationKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// `system/feedback_draft_queued` — a feedback draft was queued for submission.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackDraftQueuedMessage {
+    pub draft_id: String,
+    pub draft_type: String,
+    pub title: String,
+    pub details_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// `system/cloud_session_delta` — written only by the headless stream-json
+/// client of a cloud-hosted session (the same client that puts
+/// `cloud_session` on its init frames): the session's status changed between
+/// two inits. Only after the first init; at most a few per second; none when
+/// nothing differs. An init is always a complete snapshot, so a host that
+/// (re)attaches resynchronises from the first init it reads and applies
+/// these on top. Display-only (CLI 2.1.260+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudSessionDeltaMessage {
+    /// Rises by one with each of these frames this client writes (1 for the
+    /// first); never reset by an init. A reader keeps the highest it has
+    /// applied and drops a lower one.
+    pub seq: u64,
+    /// The top-level keys of `cloud_session` whose value differs from the
+    /// last block this client wrote, e.g. `["serving"]`; never empty. A hint
+    /// for what to redraw — the block is complete either way.
+    pub changed: Vec<String>,
+    /// The whole block exactly as the next init would carry it (see
+    /// [`InitMessage::cloud_session`]): replace the held copy, do not merge.
+    /// Stored as raw JSON (the shape is internal and evolving).
+    pub cloud_session: Value,
+    pub uuid: String,
+    pub session_id: String,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// `system/dev_intent` — the conversation, or the git repository it runs in,
+/// shows a known kind of development work, for hosts that key tooling on it
+/// (Claude Code Desktop opens its iOS Simulator entry point on `ios_app`).
+/// Sent with `trigger` as its only other payload. Per conversation per
+/// process, each kind is sent at most once from conversation evidence and at
+/// most once from the project scan: conversation evidence when it first
+/// completes, or at startup when a resumed conversation already has it;
+/// project evidence (print-mode CLIs only, which is how the Agent SDK starts
+/// it) at startup, after each `conversation_reset`, and at the first message
+/// of a conversation whose earlier scan did not find every kind. Either can
+/// arrive before `system/init`. A rewind or compaction never retracts it and
+/// only a `conversation_reset` starts over, so treat each kind as a sticky
+/// fact about the conversation: a client that needs only the kind can ignore
+/// repeats, and one that needs to know what set it off reads `trigger`
+/// (CLI 2.1.266+; `trigger` and the project scan from 2.1.273).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevIntentMessage {
+    /// What kind of development the evidence shows.
+    pub kind: DevIntentKind,
+    /// The evidence the detection fired on, for a host's own analytics. From
+    /// the conversation it is the first platform-specific evidence seen;
+    /// [`DevIntentTrigger::ProjectScan`] marks a scan of the session's git
+    /// repository. Absent from CLIs before 2.1.273, which send only
+    /// conversation evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<DevIntentTrigger>,
+    pub uuid: String,
+    pub session_id: String,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// The kind of development a [`DevIntentMessage`] reports. Open set: the CLI
+/// says "more kinds will be added; ignore a kind you do not recognize", so
+/// unrecognized values deserialize to [`DevIntentKind::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DevIntentKind {
+    /// From the conversation: Claude wrote or edited a `.swift` file and
+    /// something it wrote, read, or ran is iOS-specific (a macOS-only app or
+    /// server-side Swift package never qualifies). From the project scan: the
+    /// session's git repository has an Xcode project whose build settings
+    /// name an iOS SDK or target iPhone or iPad.
+    IosApp,
+    /// From the conversation: Claude wrote or edited a `.kt`, `.kts` or
+    /// `.java` file and something it wrote, read, or ran is Android-specific
+    /// (a Kotlin server or a multiplatform module with no Android target
+    /// never qualifies). From the project scan: the repository has an
+    /// `AndroidManifest.xml` or the Android Gradle plugin in a build script
+    /// or version catalog (CLI 2.1.273+).
+    AndroidApp,
+    /// A kind not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl DevIntentKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::IosApp => "ios_app",
+            Self::AndroidApp => "android_app",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for DevIntentKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for DevIntentKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "ios_app" => Self::IosApp,
+            "android_app" => Self::AndroidApp,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for DevIntentKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for DevIntentKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The evidence a [`DevIntentMessage`] detection fired on. Open set: the CLI
+/// says "more values will be added; ignore one you do not recognize", so
+/// unrecognized values deserialize to [`DevIntentTrigger::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DevIntentTrigger {
+    /// Reserved for rules that need no other evidence; no rule sends it yet.
+    SwiftEdit,
+    /// `import UIKit` or `.iOS(` in text Claude wrote.
+    UikitImport,
+    /// iOS build settings written, or seen in a tool result such as a
+    /// pbxproj read.
+    XcodeProject,
+    /// `simctl`, an iOS SDK or a Simulator destination in a command Claude
+    /// ran.
+    IosCommand,
+    /// Reserved for rules that need no other evidence; no rule sends it yet.
+    KotlinEdit,
+    /// Reserved for rules that need no other evidence; no rule sends it yet.
+    JavaEdit,
+    /// `import android.` in text Claude wrote.
+    AndroidImport,
+    /// A manifest path or body written, or seen in a tool result.
+    AndroidManifest,
+    /// The Android Gradle plugin written, or seen in a tool result.
+    GradlePlugin,
+    /// `adb`, the emulator, `sdkmanager`, `avdmanager`,
+    /// `react-native run-android` or a Gradle variant task.
+    AndroidCommand,
+    /// For any kind: a scan of the session's git repository rather than
+    /// conversation evidence.
+    ProjectScan,
+    /// A trigger not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl DevIntentTrigger {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::SwiftEdit => "swift_edit",
+            Self::UikitImport => "uikit_import",
+            Self::XcodeProject => "xcode_project",
+            Self::IosCommand => "ios_command",
+            Self::KotlinEdit => "kotlin_edit",
+            Self::JavaEdit => "java_edit",
+            Self::AndroidImport => "android_import",
+            Self::AndroidManifest => "android_manifest",
+            Self::GradlePlugin => "gradle_plugin",
+            Self::AndroidCommand => "android_command",
+            Self::ProjectScan => "project_scan",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for DevIntentTrigger {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for DevIntentTrigger {
+    fn from(s: &str) -> Self {
+        match s {
+            "swift_edit" => Self::SwiftEdit,
+            "uikit_import" => Self::UikitImport,
+            "xcode_project" => Self::XcodeProject,
+            "ios_command" => Self::IosCommand,
+            "kotlin_edit" => Self::KotlinEdit,
+            "java_edit" => Self::JavaEdit,
+            "android_import" => Self::AndroidImport,
+            "android_manifest" => Self::AndroidManifest,
+            "gradle_plugin" => Self::GradlePlugin,
+            "android_command" => Self::AndroidCommand,
+            "project_scan" => Self::ProjectScan,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for DevIntentTrigger {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for DevIntentTrigger {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Why a [`TaskNotificationMessage`] ended other than through an ordinary
+/// completion, failure, or stop. Open set: unrecognized values deserialize
+/// to [`TaskEndReason::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TaskEndReason {
+    /// The worker process restarted and the resumed process found the task
+    /// orphaned (always with status `stopped`).
+    WorkerRestart,
+    /// A reason not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl TaskEndReason {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::WorkerRestart => "worker_restart",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for TaskEndReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for TaskEndReason {
+    fn from(s: &str) -> Self {
+        match s {
+            "worker_restart" => Self::WorkerRestart,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for TaskEndReason {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskEndReason {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// `system/turn_handoff_available` — emitted once by a cloud worker that
+/// accepts the `turn_handoff` control request, right after it registers,
+/// carrying what its registration wrote to `external_metadata.turn_handoff`.
+/// Lets a session client learn the capability from the event stream instead
+/// of reading worker state. Durable in the stream: a reader keeps the entry
+/// with the newest `worker_epoch` it has seen and ignores older ones; a
+/// worker life that does not accept `turn_handoff` emits nothing
+/// (CLI 2.1.273+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnHandoffAvailableMessage {
+    /// Contract version of the handoff registration (currently `1`).
+    pub v: u64,
+    /// The tools whose calls this worker would accept.
+    pub tools: Vec<String>,
+    /// The worker life announcing it.
+    pub worker_epoch: u64,
+    /// Present, and true, only when this worker uses the `relay_marker`
+    /// member of a `turn_handoff` request; a client sends that member to no
+    /// other worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_marker: Option<bool>,
+    /// Present, and true, when this worker starts a handed-off turn's calls
+    /// only after every `stage_file` control request it received earlier has
+    /// finished or failed, or a wait limit has passed; a worker that omits
+    /// it may start them while files are still downloading (CLI 2.1.278+).
+    /// Exception: a request with `filestore_path` set (a synced file) is not
+    /// waited for, so a call that names that file may start before it is
+    /// synced (CLI 2.1.287+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_files: Option<bool>,
+    /// True when user messages with `shouldQuery` false that reach this
+    /// worker before a `turn_handoff` request are appended, and
+    /// acknowledged, before the handed-off turn produces any output.
+    /// Exception: a request that continues a turn whose leading lines an
+    /// earlier request appended; that turn goes first. A worker that omits
+    /// it may run the turn first (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_query_first: Option<bool>,
+    /// Present, and true, only on a worker that takes a `stage_file` control
+    /// request whose `mount_path` is `/uploads/.home/<path>` as a file for
+    /// `/home/claude/<path>`: it writes the file there, answers ok with a
+    /// noop (`already_present`, `path_occupied`, `refused_name`,
+    /// `home_files_off`, `unchecked_announcement`, `resent_announcement`)
+    /// and writes nothing, or answers an error. Any other worker treats that
+    /// path as an ordinary upload (CLI 2.1.287+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_files: Option<bool>,
+    /// Present, and true, only when this worker uses the `file_names` member
+    /// of a `turn_handoff` request; a client sends that member to no other
+    /// worker (CLI 2.1.287+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_names: Option<bool>,
+    /// Present, and true, only on a worker that writes the files of the
+    /// Write calls a `turn_handoff` request brings already answered, where
+    /// their paths are under `/home/claude`. Before it appends a turn that
+    /// has calls to run, it writes each such call's content to its path,
+    /// replacing nothing. If it cannot write them all, it appends and runs
+    /// nothing: the request is refused with an error that starts
+    /// `invalid_handoff: carried_writes_`, or it is accepted and the turn
+    /// ends in a result with `num_turns` 0. Any other worker writes no file
+    /// for these calls (CLI 2.1.288+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_writes: Option<bool>,
+    /// Present, and true, only on a worker that rebuilt the conversation
+    /// from the session's stored transcript before it read any request, and
+    /// would not have started without it. A client may send such a worker
+    /// again a `turn_handoff` request an earlier worker accepted, if the
+    /// request names no calls (empty `tool_use_ids`), is not stopped, and its
+    /// messages hold no tool call: the worker appends only the turn's
+    /// messages its conversation lacks and, once the store confirms them,
+    /// echoes the turn's last message back as an assistant event. The
+    /// request can still be accepted or refused (`invalid_handoff:`) with no
+    /// echo, e.g. after a rewind, a compaction or a Stop; an echo proves
+    /// nothing if the same worker had the request before. The key promises
+    /// nothing for a turn that holds a tool call. A worker without it may
+    /// have started with none of the turn's messages (CLI 2.1.296+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hydrates_carried_lines: Option<bool>,
+    /// Present, and true, when this worker accepts a `turn_handoff` request
+    /// in which an assistant message repeats the message id of the assistant
+    /// message before it. A worker that omits it refuses such a request
+    /// (`invalid_handoff`), so a client gives each message an id of its own
+    /// there (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_message_id: Option<bool>,
+    /// Present, and true, only on a worker that reads the
+    /// `requires_rewind_request_id` member of a `turn_handoff` request; a
+    /// worker without this key ignores the member and appends the turn
+    /// whether or not the rewind was made (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_rewind_request_id: Option<bool>,
+    pub uuid: String,
+    pub session_id: String,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// `system/turn_preempted` — the CLI itself stopped the running turn so a
+/// user's rapid follow-up message is answered at once, exactly as a priority
+/// `now` message would have (running shell commands are backgrounded, not
+/// killed). Sent at the moment of the stop, so it precedes the stopped turn's
+/// `result` frame (`terminal_reason` `aborted_streaming` or `aborted_tools`)
+/// and its members' `cancelled` `command_lifecycle` frames: a host renders
+/// that turn as superseded by the follow-up rather than as interrupted, does
+/// not resend its messages, and treats only `preempted_by_uuid` as picked
+/// up. At most one per burst. Emitted in `-p`/SDK sessions only, and only to
+/// a consumer that declared `rapidFollowupPreempt` on its initialize request
+/// while the feature's rollout flag is on (CLI 2.1.273+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnPreemptedMessage {
+    /// Why the turn was stopped. `rapid_followup`: the user's next message
+    /// arrived before the running turn showed any output. More reasons may
+    /// be added; treat an unknown one the same way.
+    pub reason: String,
+    /// The client-supplied uuid of the queued user message the turn was
+    /// stopped for. It runs next, together with any messages queued behind
+    /// it.
+    pub preempted_by_uuid: String,
+    /// The client-supplied uuids of the user messages the stopped turn was
+    /// running (uuid-less members omitted; may be empty).
+    #[serde(default)]
+    pub preempted_message_uuids: Vec<String>,
+    pub uuid: String,
+    pub session_id: String,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// `system/peer_message_hold` — a cross-session (peer) message this
+/// session's receive-side policy held rather than queued, and how that hold
+/// resolved. Lets a host show the human that a message arrived but has not
+/// reached the model (and may never) instead of nothing at all; the sending
+/// session is told separately over its own transport where one exists.
+/// Informational only — there is no host-side approval through this frame.
+/// Emitted in `-p`/SDK sessions (CLI 2.1.273+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerMessageHoldMessage {
+    /// `held` once per message per hold cause (a re-announcement under a
+    /// different cause emits again); then at most one of `released` (it
+    /// enters the queue — its `command_lifecycle` `queued` and user replay
+    /// echo follow under `message_uuid`) or `dropped` (it will never reach
+    /// the model in this session; see `outcome`).
+    pub state: PeerMessageHoldState,
+    /// The parked command's uuid — the value its later `command_lifecycle`
+    /// frames and user replay echo carry. For lane `bridge`/`stdin` it is
+    /// the id the host supplied on the inbound message; for lane `socket` it
+    /// was chosen by the sending session, so correlate it only within
+    /// `peer_message_hold` / peer replay frames, never against the host's
+    /// own prompts' lifecycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_uuid: Option<String>,
+    /// Which ingress delivered it.
+    pub lane: PeerMessageLane,
+    /// The sender's address as the envelope will show it — an address-shaped
+    /// token with control and invisible code points scrubbed; empty when the
+    /// sender supplied none or an unshaped one. Sender-asserted on the
+    /// socket lane: a label, not an identity proof.
+    pub from: String,
+    /// The sender's display name when it supplied one, normalized and
+    /// scrubbed the same way. A claim, like `from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_name: Option<String>,
+    /// State `held` only: why the policy parked it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<PeerMessageHoldCause>,
+    /// State `dropped` only: how the hold ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<PeerMessageHoldOutcome>,
+    pub uuid: String,
+    pub session_id: String,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// Lifecycle state carried by a [`PeerMessageHoldMessage`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PeerMessageHoldState {
+    /// The receive-side policy parked the message instead of queueing it.
+    Held,
+    /// The policy now accepts it: it enters the queue.
+    Released,
+    /// It will never reach the model in this session.
+    Dropped,
+    /// A state not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PeerMessageHoldState {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Held => "held",
+            Self::Released => "released",
+            Self::Dropped => "dropped",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PeerMessageHoldState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PeerMessageHoldState {
+    fn from(s: &str) -> Self {
+        match s {
+            "held" => Self::Held,
+            "released" => Self::Released,
+            "dropped" => Self::Dropped,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PeerMessageHoldState {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PeerMessageHoldState {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Which ingress delivered the message a [`PeerMessageHoldMessage`] reports.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PeerMessageLane {
+    /// The Remote Control bridge.
+    Bridge,
+    /// The host's own stdin stream.
+    Stdin,
+    /// The local cross-session socket.
+    Socket,
+    /// A lane not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PeerMessageLane {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Bridge => "bridge",
+            Self::Stdin => "stdin",
+            Self::Socket => "socket",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PeerMessageLane {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PeerMessageLane {
+    fn from(s: &str) -> Self {
+        match s {
+            "bridge" => Self::Bridge,
+            "stdin" => Self::Stdin,
+            "socket" => Self::Socket,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PeerMessageLane {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PeerMessageLane {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Why the receive-side policy parked a peer message
+/// ([`PeerMessageHoldMessage::cause`], state `held` only). The `*Setting`
+/// causes are a standing `crossSessionInbound: "hold"`; `ModeMismatch` and
+/// `NoModeAsserted` are the permission-mode parity holds (the sender runs in
+/// a different permission class, or asserted none while this session
+/// bypasses permissions).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PeerMessageHoldCause {
+    ExplicitSetting,
+    ManagedSetting,
+    RepoSetting,
+    InvalidSetting,
+    BypassDefault,
+    ModeUnknown,
+    ModeMismatch,
+    NoModeAsserted,
+    /// A cause not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PeerMessageHoldCause {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ExplicitSetting => "explicit-setting",
+            Self::ManagedSetting => "managed-setting",
+            Self::RepoSetting => "repo-setting",
+            Self::InvalidSetting => "invalid-setting",
+            Self::BypassDefault => "bypass-default",
+            Self::ModeUnknown => "mode-unknown",
+            Self::ModeMismatch => "mode-mismatch",
+            Self::NoModeAsserted => "no-mode-asserted",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PeerMessageHoldCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PeerMessageHoldCause {
+    fn from(s: &str) -> Self {
+        match s {
+            "explicit-setting" => Self::ExplicitSetting,
+            "managed-setting" => Self::ManagedSetting,
+            "repo-setting" => Self::RepoSetting,
+            "invalid-setting" => Self::InvalidSetting,
+            "bypass-default" => Self::BypassDefault,
+            "mode-unknown" => Self::ModeUnknown,
+            "mode-mismatch" => Self::ModeMismatch,
+            "no-mode-asserted" => Self::NoModeAsserted,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PeerMessageHoldCause {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PeerMessageHoldCause {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// How a peer-message hold ended ([`PeerMessageHoldMessage::outcome`],
+/// state `dropped` only).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PeerMessageHoldOutcome {
+    /// No one approved it before the approval deadline (a headless host has
+    /// no approval surface, so every parity hold ends this way unless the
+    /// mode changes first).
+    Expired,
+    /// The policy turned to refuse while it waited.
+    Refused,
+    /// Released or approved, but the ingress guard (rate limit, duplicate,
+    /// queue cap) discarded it.
+    Dropped,
+    /// The session ended with it still parked.
+    Discarded,
+    /// An outcome not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PeerMessageHoldOutcome {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Expired => "expired",
+            Self::Refused => "refused",
+            Self::Dropped => "dropped",
+            Self::Discarded => "discarded",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PeerMessageHoldOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PeerMessageHoldOutcome {
+    fn from(s: &str) -> Self {
+        match s {
+            "expired" => Self::Expired,
+            "refused" => Self::Refused,
+            "dropped" => Self::Dropped,
+            "discarded" => Self::Discarded,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PeerMessageHoldOutcome {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PeerMessageHoldOutcome {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// `system/per_turn_effort_changed` — the conversation stopped sending effort
+/// per turn, because the server refused its per-turn effort message or a
+/// `role:"system"` message. From the retried request on, an effort change
+/// rewrites the cached prefix, for every model, until a later `system/init`
+/// says otherwise. Sent once, when the conversation first turns per-turn
+/// effort off, before the retried request's output; sent again only if the
+/// server refuses again after the conversation's refusals are cleared (for
+/// example by `/clear` or a compaction). It can repeat a `false` the host
+/// already holds. Pairs with [`InitMessage::per_turn_effort_active`]
+/// (CLI 2.1.281+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerTurnEffortChangedMessage {
+    /// Always `false`: a change to `true` is reported only by `system/init`.
+    pub per_turn_effort_active: bool,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/instruction_size_warning` — the session's instruction files
+/// (CLAUDE.md files, rules files and the files they import) add up to more
+/// than the recommended limit. Numbers only: the host words the warning in
+/// the person's language. Sent to Claude Desktop's Code tab alone, at most
+/// once per process, on a conversation's first turn after `system/init`;
+/// never stored in the transcript. Safe to ignore (CLI 2.1.288+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstructionSizeWarningMessage {
+    /// Combined length, in characters, of the instruction files in the
+    /// session prompt. Always over [`Self::total_limit_chars`].
+    pub total_chars: u64,
+    /// The recommended limit for `total_chars` on the turn's model, in
+    /// characters.
+    pub total_limit_chars: u64,
+    /// Number of files counted in `total_chars`. When it is 1, word the
+    /// warning for a single file rather than a total.
+    pub file_count: u64,
+    /// Length of the largest file, in characters. Present only when the
+    /// warning should mention it: there are several files and this one by
+    /// itself is over `total_limit_chars`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub largest_chars: Option<u64>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/file_attachments_missing` — some files a user message sent by
+/// reference (`file_attachments`) did not arrive where Claude can read them,
+/// and Claude was told so; the turn runs on without them. A host can use it
+/// to tell the person who sent them. Only sent by a worker connected to
+/// Claude Code Remote. Each event states the whole list for its message, so
+/// keep the last one per `message_uuid` (CLI 2.1.290+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileAttachmentsMissingMessage {
+    /// The uuid of the inbound user message whose `file_attachments` named
+    /// the files.
+    pub message_uuid: String,
+    /// How many well-formed `file_attachments` entries that message had.
+    pub sent_count: u64,
+    /// The files Claude was told did not arrive, each once. Never empty.
+    pub missing: Vec<MissingFileAttachment>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/permission_check_status` — a tool call has been waiting on its
+/// automatic permission check (the auto-mode classifier) for longer than
+/// usual, so a host can say the step is being checked instead of showing a
+/// silent pause. Every `checking` is followed by a `done` for the same
+/// `tool_use_id`; `done` does not say whether the call was allowed (the
+/// tool's result, `permission_denied` or a `can_use_tool` request does). One
+/// call can send more than one pair. Display-only and best-effort: also stop
+/// showing it at any other frame for this `tool_use_id` or at the end of the
+/// turn (CLI 2.1.292+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionCheckStatusMessage {
+    pub tool_use_id: String,
+    /// Subagent ID when the tool call originated inside a subagent, as on
+    /// `permission_denied`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    pub status: PermissionCheckStatus,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/inherited_asks_settled` — a cloud worker's report, before its
+/// first turn, of which asks it inherited from the earlier worker and keeps
+/// answerable. Any ask stored before this event that it does not name is
+/// over (CLI 2.1.311+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InheritedAsksSettledMessage {
+    /// The request ids of the earlier worker's asks that this worker keeps
+    /// answerable.
+    pub kept_request_ids: Vec<String>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// Phase of a [`PermissionCheckStatusMessage`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PermissionCheckStatus {
+    /// The call has waited about four seconds on its check and is still
+    /// waiting.
+    Checking,
+    /// That wait is over.
+    Done,
+    /// A status not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl PermissionCheckStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Checking => "checking",
+            Self::Done => "done",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for PermissionCheckStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PermissionCheckStatus {
+    fn from(s: &str) -> Self {
+        match s {
+            "checking" => Self::Checking,
+            "done" => Self::Done,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for PermissionCheckStatus {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PermissionCheckStatus {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// One entry of [`FileAttachmentsMissingMessage::missing`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MissingFileAttachment {
+    /// The `file_uuid` of the message's `file_attachments` entry.
+    pub file_uuid: String,
+    /// Why, as a short code: `download`, `too_large`, `not_found` (the
+    /// files route answered 404 or 410, so sending it again rarely helps;
+    /// CLI 2.1.293+), `write`, `no_token`, `not_finished` or `count_cap`.
+    /// More codes may be added; read an unknown one as "did not arrive".
+    pub reason: String,
+}
+
+/// `system/session_title_changed` — the session's name, for a host that
+/// shows it (an IDE editor tab, say). A headless session sends it at startup
+/// when the session already has a name, and again after each change to the
+/// name (not an AI-generated title), including a rename the host itself sent
+/// with `rename_session`. A cleared name is not sent. The same name can
+/// arrive more than once, so treat a repeated name as no change. The frame
+/// can arrive before the `system/init` that first names its `session_id`
+/// (at startup or after `/clear`); a host that learns the session id from
+/// init can hold the name until then (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTitleChangedMessage {
+    /// The session's current name: control, bidirectional and zero-width
+    /// characters replaced with single spaces, ends trimmed, at most 200
+    /// Unicode code points. A suffix can make it unique when another session
+    /// already has the name.
+    pub title: String,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/session_writes_lost` — the CLI could not save lines of a session
+/// transcript, changes to `~/.claude.json`, or both, because the disk was
+/// full or its quota was used up. Sent at most once, as the CLI exits with
+/// status 0, after the last result if there was one. A run that exits 1, as
+/// after an error result, gets only the line on stderr (CLI 2.1.317 and some
+/// later releases sent this message there too). The results already received stand,
+/// and this message does not change the exit status. Sent only with
+/// stream-json output on stdout, never under `--sdk-url` or a Claude Desktop
+/// entrypoint. Safe to ignore (CLI 2.1.317+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionWritesLostMessage {
+    /// Why the writes failed. When both kinds of write were lost for
+    /// different reasons, the transcript's.
+    pub error_code: SessionWriteErrorCode,
+    /// What was not saved. Never empty.
+    pub lost: Vec<LostSessionWrite>,
+    /// The sessions whose transcripts lost lines, in the order each first
+    /// lost one. Present only when [`LostSessionWrite::Transcript`] is
+    /// listed; never empty. Usually `session_id` alone; a CLI that started a
+    /// new session after the loss (as `/clear` does) lists the earlier
+    /// session, and lists `session_id` only if that session lost lines too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_session_ids: Option<Vec<String>>,
+    pub uuid: String,
+    /// The session the CLI is in, as on every message; see
+    /// [`transcript_session_ids`](Self::transcript_session_ids) for whose
+    /// transcript lost lines.
+    pub session_id: String,
+}
+
+/// [`SessionWritesLostMessage::error_code`]: why the writes failed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SessionWriteErrorCode {
+    /// `ENOSPC` — the disk was full.
+    Enospc,
+    /// `EDQUOT` — the disk quota was used up.
+    Edquot,
+    /// A code not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl SessionWriteErrorCode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Enospc => "ENOSPC",
+            Self::Edquot => "EDQUOT",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for SessionWriteErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for SessionWriteErrorCode {
+    fn from(s: &str) -> Self {
+        match s {
+            "ENOSPC" => Self::Enospc,
+            "EDQUOT" => Self::Edquot,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for SessionWriteErrorCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionWriteErrorCode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// One entry of [`SessionWritesLostMessage::lost`]: what was not saved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LostSessionWrite {
+    /// Lines of a session transcript, so resuming a session in
+    /// `transcript_session_ids` may miss part of its conversation.
+    Transcript,
+    /// Changes this run made to `~/.claude.json`.
+    GlobalConfig,
+    /// A value not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl LostSessionWrite {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Transcript => "transcript",
+            Self::GlobalConfig => "global_config",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for LostSessionWrite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for LostSessionWrite {
+    fn from(s: &str) -> Self {
+        match s {
+            "transcript" => Self::Transcript,
+            "global_config" => Self::GlobalConfig,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for LostSessionWrite {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LostSessionWrite {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// `system/ui_log` — one `$.ui.log(text)` line from a plugin in a headless
+/// session: what the REPL appends to its transcript as a dim notice under
+/// the plugin's name. Not sent to the model (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiLogMessage {
+    /// The calling plugin's registry name, as the hooks engine knows it.
+    pub plugin: String,
+    /// The line the plugin gave: be ready for up to 10000 characters of it
+    /// and then an ellipsis (4096 before CLI 2.1.289). Plain text: draw it
+    /// as a text node, never as markup.
+    pub text: String,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/ui_notify` — one `$.ui.notify(text)` from a plugin in a headless
+/// session: a notification for the client to raise under the plugin's name,
+/// now or later. Nothing limits how often a plugin sends one
+/// (CLI 2.1.321+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiNotifyMessage {
+    /// The calling plugin's registry name, as the hooks engine knows it
+    /// (never plugin-settable). Not cleaned as `title` is, so scrub it, and
+    /// show it after the host's own word that a mod sent it, so neither it
+    /// nor the title can pass for the app's own.
+    pub plugin: String,
+    /// The plugin's full id, `name@marketplace` (`name@inline` when
+    /// side-loaded), as the hooks engine loaded it (never plugin-settable).
+    /// Two plugins sharing a name differ here.
+    pub source: String,
+    /// The notification's heading: the plugin's words, cleaned of control
+    /// characters and cut to 120 characters, or the plugin's name. Plain
+    /// text, and never the only sign of who sent it.
+    pub title: String,
+    /// The body: the plugin's words, cleaned of control characters and cut
+    /// to 1000 characters. Plain text: draw it as a text node, never as
+    /// markup.
+    pub text: String,
+    /// The plugin's name for this notification: one with the same `source`
+    /// and key replaces the last. Scope it by `source`, so one mod cannot
+    /// touch another's. Absent: each frame is its own notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// How long after this frame arrives to raise it; the client holds it,
+    /// so it fires with the session out of reach. At most 7 days. Absent
+    /// (with no [`at`](Self::at)): raise it now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
+    /// The epoch-millisecond time to raise it, at most 7 days ahead. Never
+    /// sent beside [`delay_ms`](Self::delay_ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+    /// With `delay_ms` or `at`: throw it away if the person returns to the
+    /// session before it fires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_back: Option<bool>,
+    /// True when what this frame carries differs from what the sender sent
+    /// and another plugin's hook was in the chain: its words, timing or key
+    /// may not be the sender's, so say so beside the sender. Always sent;
+    /// missing (from an older engine) reads as false. Never plugin-settable.
+    #[serde(default)]
+    pub rewritten: bool,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/ui_notify_cancel` — one `$.ui.cancelNotify(key)` from a plugin in
+/// a headless session, or the engine removing a plugin: remove the
+/// notification with this `source` and `key`, shown or still waiting. None
+/// held under that key: do nothing (CLI 2.1.321+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiNotifyCancelMessage {
+    /// The plugin's registry name, as the hooks engine knows it (never
+    /// plugin-settable).
+    pub plugin: String,
+    /// The plugin's full id, as on [`UiNotifyMessage::source`] (never
+    /// plugin-settable). Only notifications of this source are touched.
+    pub source: String,
+    /// The [`UiNotifyMessage::key`] of the notification to take back.
+    /// Absent: the engine removed the plugin from this session, so drop
+    /// everything this source has waiting for this session. Only the engine
+    /// sends that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/ui_toast` — one `$.ui.toast(text)` from a plugin in a headless
+/// session: what the REPL shows on the notification bar under the prompt
+/// for a few seconds, under the plugin's name. Toasts arrive at no fixed
+/// rate: CLI 2.1.289 dropped the hooks host's 2 s spacing (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiToastMessage {
+    /// The calling plugin's registry name, as the hooks engine knows it.
+    pub plugin: String,
+    /// The line the plugin gave: be ready for up to 10000 characters of it
+    /// and then an ellipsis (4096 before CLI 2.1.289). Plain text: draw it
+    /// as a text node, never as markup.
+    pub text: String,
+    /// How long the REPL would keep it on the notification bar: the plugin's
+    /// `timeoutMs`, or the engine's default (4000).
+    pub timeout_ms: u64,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/ui_status` — one `$.ui.status(text)` from a plugin in a headless
+/// session: the line the REPL pins under the prompt until the plugin's next
+/// call replaces or clears it. One status line per plugin (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiStatusMessage {
+    /// The calling plugin's registry name, as the hooks engine knows it.
+    pub plugin: String,
+    /// The plugin's pinned line, replacing its previous one; `None` (wire
+    /// `null`) removes it. Be ready for up to 10000 characters of it and
+    /// then an ellipsis (4096 before CLI 2.1.289). Plain text: draw it as a
+    /// text node, never as markup.
+    pub text: Option<String>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/ui_invalidate` — a plugin called `$.ui.invalidate("ui.render")`,
+/// a plugin loaded or reloaded, or (CLI 2.1.318+) a mobile client already
+/// known to the session named a field in `draws` it had not named before:
+/// every tree a remote surface drew through `ui_render` may be stale, and the surface re-asks each mounted instance.
+/// Bumps from one plugin fold to at most one per 100 ms (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiInvalidateMessage {
+    /// The render event whose version moved — `"ui.render"`; the engine
+    /// versions it as one event, so no component or instance is named.
+    pub event: String,
+    /// Present when a plugin state write, or (CLI 2.1.289+) a `Client`
+    /// drawn in them that failed and whose plugin heard it (`ui.fault`),
+    /// made only these instances stale, so the surface may re-ask them
+    /// alone. The theme of the session being set or cleared
+    /// (`$.theme.set` / `$.theme.clear` on CLI 2.1.319+), or a client of a
+    /// surface that draws it joining where one ever stood, names the
+    /// `Backdrop` instance (`instance_id` `backdrop`) and, on CLI 2.1.321+,
+    /// the `Theme` instance (`instance_id` `theme`) on each such surface.
+    /// Absent, every mounted instance may be stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instances: Option<Vec<UiInvalidatedInstance>>,
+    /// Present, and true, while a mod may change what is recorded of a typed
+    /// line (a hook on `prompt.submit`, `command.run`, `session.append` or
+    /// `session.receive`, mods not yet known, or an organization policy that
+    /// lists a plugin or cannot be read): what the `prompts_screened_v1`
+    /// capability says on `system/init`, sent as soon as a plugin load or
+    /// reload makes it so. Absent says nothing; the next `system/init` does
+    /// (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts_screened: Option<bool>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// One stale instance named by [`UiInvalidateMessage::instances`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiInvalidatedInstance {
+    /// The surface that drew the instance.
+    pub surface: String,
+    /// The component of the instance.
+    pub component: String,
+    /// The engine's requestId of the instance, as the `ui_render` that drew
+    /// it named it.
+    pub instance_id: String,
+}
+
+/// `system/ui_panes` — the pane roster a remote surface draws changed: a
+/// plugin opened, retitled or closed a pane, the person showed, focused or
+/// closed one, or a placing client attached. Deduplicated: an unchanged
+/// roster is not pushed. A pane opened before the stream armed produces
+/// none, so read the roster with a `ui_panes` request on mount
+/// (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPanesMessage {
+    /// The placed open panes in open order (an open appends, a close
+    /// removes); a pane waiting unplaced is not listed.
+    pub panes: Vec<UiPane>,
+    /// The pane the surface shows: the last opened or focused, never
+    /// displacing one the person holds; `None` with none open.
+    pub shown_id: Option<String>,
+    /// The pane the person gave the keyboard; `None` while the composer has
+    /// it.
+    pub focused_id: Option<String>,
+    /// A standing `$.ui.open({ focus: true })` the surface has yet to judge:
+    /// honour it only while the composer is empty and idle and no dialog is
+    /// up, else refuse it.
+    pub focus_requested_id: Option<String>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// One placed pane in a [`UiPanesMessage`] roster.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiPane {
+    /// The pane's id as the plugin opened it: 1 to 64 of letters, digits,
+    /// `_`, `-`.
+    pub id: String,
+    /// The pane's tab label: the `title` its latest open gave, else its id.
+    /// Plugin-authored text: draw it as a text node, never as markup.
+    pub title: String,
+    /// The registry name of the plugin that opened it.
+    pub plugin: String,
+    /// `true`: Escape while the pane holds the keyboard, or at an idle empty
+    /// composer, closes it. Absent, Escape only returns the keyboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_on_escape: Option<bool>,
+    /// `true`: the surface holds its transient toasts while this pane is
+    /// the one shown, and shows them once it closes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_toasts: Option<bool>,
+    /// What the surface paints under this pane's body while it is the one
+    /// shown: a theme key, a raw color, or `transparent` for nothing.
+    /// Plugin-authored: parse it, never write it into a style. Absent, the
+    /// surface's own look stands (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    /// The body rows its content asked for while seated inline; a request
+    /// the person's own sizing overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u64>,
+    /// The body columns its content asked for while docked; a request the
+    /// person's own sizing overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<u64>,
+}
+
+/// `system/ui_placed` — a fire-and-forget push from a headless session when
+/// a plugin places a row with `$.ui.place`, and to a client as it joins
+/// (CLI 2.1.314+). A surface inserts each row after
+/// [`UiPlacedRow::after_uuid`] and asks `ui_render` for it. Display only:
+/// no message carries these rows. A surface drops the rows it holds with
+/// the conversation it resets, and a row whose `after_uuid` it no longer
+/// holds. A compaction ends the rows before it, and no push says so.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPlacedMessage {
+    /// The main conversation's placed rows, in order.
+    pub rows: Vec<UiPlacedRow>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// One row in a [`UiPlacedMessage`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPlacedRow {
+    /// The plugin that placed the row.
+    pub plugin: String,
+    /// The row's id among that plugin's rows.
+    pub id: String,
+    /// The `instance_id` of the `ui_render` ask, with `component: "Placed"`,
+    /// that draws it.
+    pub request_id: String,
+    /// The conversation message the row follows; absent at the
+    /// conversation's start. Rows sharing it stand in roster order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_uuid: Option<String>,
+}
+
+/// `system/ui_scroll` — a plugin's `$.ui.scroll` moved the window of a site
+/// a remote surface draws: the surface scrolls the site's body there. The
+/// person's own scrolls are never pushed back (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiScrollMessage {
+    /// The client drawing the site, as it attached.
+    pub client_id: String,
+    /// Which site: a pane's body or the band above the prompt.
+    pub component: UiSiteComponent,
+    /// The pane's id, or `above-prompt` for the band.
+    pub instance_id: String,
+    /// The first content row the window is to show, 0 at the top, clamped
+    /// to the tree as the surface last reported it.
+    pub offset: u64,
+    /// `true`: keep the window on the tree's last rows through the draws to
+    /// come, until the person or a plugin next moves it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_end: Option<bool>,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// `system/ui_focus` — a plugin's `$.ui.focus` moved the focus ring of a
+/// site a remote surface draws onto one of its Buttons, Inputs or Selects:
+/// the surface focuses that element if it still draws it. The person's own
+/// moves are never pushed back (CLI 2.1.285+).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiFocusMessage {
+    /// The client drawing the site, as it attached.
+    pub client_id: String,
+    /// Which site: a pane's body or the band above the prompt.
+    pub component: UiSiteComponent,
+    /// The pane's id, or `above-prompt` for the band.
+    pub instance_id: String,
+    /// Whose element takes the ring: its `press.plugin`.
+    pub plugin: String,
+    /// The element's `props.key`, as `ui.press` names it.
+    pub key: String,
+    pub uuid: String,
+    pub session_id: String,
+}
+
+/// The site a [`UiScrollMessage`] or [`UiFocusMessage`] addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum UiSiteComponent {
+    /// A pane's body.
+    Pane,
+    /// The band above the prompt.
+    AbovePrompt,
+    /// A site not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl UiSiteComponent {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Pane => "Pane",
+            Self::AbovePrompt => "AbovePrompt",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for UiSiteComponent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for UiSiteComponent {
+    fn from(s: &str) -> Self {
+        match s {
+            "Pane" => Self::Pane,
+            "AbovePrompt" => Self::AbovePrompt,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for UiSiteComponent {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for UiSiteComponent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The run that printed a local-command row, carried as
+/// [`AssistantMessage::local_command_run`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalCommandRun {
+    /// The command's name as `command.run` carried it (no slash).
+    pub command: String,
+    /// Its arguments as the echo shows them (`***` when the command marks
+    /// them sensitive).
+    pub args: String,
+    /// For a command a plugin registered, that plugin's name; for a row
+    /// whose text plugins' `command.run` hooks answered or retold, the names
+    /// the text is led by. Untrusted text; absent for the binary's own
+    /// command in its own words (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+}
+
+/// What a local-command row reports, carried as
+/// [`AssistantMessage::local_command_outcome`] so a host can offer a fix
+/// instead of relaying the text (CLI 2.1.281+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalCommandOutcome {
+    pub kind: LocalCommandOutcomeKind,
+    /// Kind `unknown` only: the registered command closest to the typed
+    /// name, no slash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+}
+
+/// The outcome a local-command row reports ([`LocalCommandOutcome::kind`]).
+/// New kinds are additive; the CLI itself drops the whole outcome when it
+/// meets a kind it does not know, so treat [`Unknown`](Self::Unknown) as
+/// absent.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LocalCommandOutcomeKind {
+    /// An interactive-panel command this (headless) session cannot open.
+    UnavailableHeadless,
+    /// No command has the typed name; see
+    /// [`LocalCommandOutcome::suggestion`].
+    Unknown,
+    /// The command ran and failed.
+    Failed,
+    /// The change applies after Claude Code restarts.
+    RestartRequired,
+    /// A kind not yet known to this version of the crate.
+    Other(String),
+}
+
+impl LocalCommandOutcomeKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::UnavailableHeadless => "unavailable_headless",
+            Self::Unknown => "unknown",
+            Self::Failed => "failed",
+            Self::RestartRequired => "restart_required",
+            Self::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for LocalCommandOutcomeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for LocalCommandOutcomeKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "unavailable_headless" => Self::UnavailableHeadless,
+            "unknown" => Self::Unknown,
+            "failed" => Self::Failed,
+            "restart_required" => Self::RestartRequired,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for LocalCommandOutcomeKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LocalCommandOutcomeKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Structured twin of a `/usage` result, carried as
+/// [`AssistantMessage::usage_report`]: the session's totals, the plan's
+/// usage rows as the server sent them and the extra-usage spend, and nothing
+/// else from the usage body (the `get_usage` control reply carries the
+/// rest). Experimental — the shape may change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageReport {
+    /// Cost and usage accumulated by the current session.
+    pub session: super::control::UsageSession,
+    /// The plan's usage rows and extra-usage spend from the claude.ai usage
+    /// endpoint; `None` when the CLI could not fetch them (no plan on this
+    /// lane, or a token without the profile scope).
+    pub rate_limits: Option<UsageReportRateLimits>,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// The plan's usage rows and extra-usage spend in a [`UsageReport`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageReportRateLimits {
+    /// The server's usage rows (the usage endpoint's `limits[]`), as sent:
+    /// which meters apply, their scope, labels, severity and order are the
+    /// server's, so a client renders them verbatim. Empty when the server
+    /// reported no meters; `None` when the body carried no rows at all (a
+    /// server that predates them). When the usage fetch failed and the CLI
+    /// fell back to rate-limit response headers, this holds at most the one
+    /// row it synthesizes from them.
+    pub limits: Option<Vec<UsageReportLimit>>,
+    /// Extra-usage (overage) spend for the billing period, when the plan
+    /// has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_usage: Option<UsageReportExtraUsage>,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// One server usage row in [`UsageReportRateLimits::limits`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageReportLimit {
+    /// The server's meter kind, e.g. `session`, `weekly_all` or
+    /// `weekly_scoped`. Classify a row on this, never on a label.
+    pub kind: String,
+    /// The server's row group, e.g. `session` or `weekly`; rows render
+    /// grouped under it, in the server's order.
+    pub group: String,
+    /// Share of the window used, 0–100.
+    pub percent: f64,
+    /// ISO 8601 timestamp when the window resets.
+    pub resets_at: Option<String>,
+    /// What a scoped row is for, a model or a surface, with the server's
+    /// display label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<UsageReportScope>,
+    /// The server's reading of the row for a meter's colour, e.g. `normal`,
+    /// `warning` or `critical`; a client falls back to its own thresholds
+    /// without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    /// The server's headline pick: the row a single-value indicator shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_active: Option<bool>,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// What a scoped [`UsageReportLimit`] row is for.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageReportScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<UsageReportScopeLabel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<UsageReportScopeLabel>,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// The server's display label for a [`UsageReportScope`] member.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UsageReportScopeLabel {
+    pub display_name: String,
+}
+
+/// Extra-usage (overage) spend for the billing period in a
+/// [`UsageReportRateLimits`]. Amounts are in minor units of `currency`
+/// (cents for USD).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageReportExtraUsage {
+    /// `false` while extra usage cannot cover sends.
+    pub is_enabled: bool,
+    pub monthly_limit: Option<f64>,
+    pub used_credits: Option<f64>,
+    pub utilization: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// `{id, name}` of an original `Batch*` tool_use block, carried in
+/// [`AssistantMessage::batch_tool_uses`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BatchToolUse {
+    pub id: String,
+    pub name: String,
+}
+
+/// Structured twin of the `/context` report, carried as
+/// [`AssistantMessage::context_usage`] — the data a client needs to render
+/// the context-usage card without parsing the markdown table. Evolves
+/// additively; a breaking reshape would ship as a sibling field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextUsage {
+    /// Main-loop model the usage was computed for.
+    pub model: String,
+    /// Estimated tokens in use, unclamped — may exceed `raw_max_tokens` when
+    /// over limit.
+    pub total_tokens: u64,
+    /// The window usage is measured against: the resolved autocompact window —
+    /// the model's believed limit, or a smaller compaction-policy window.
+    pub raw_max_tokens: u64,
+    /// Rounded `total_tokens / raw_max_tokens`, 0–100+.
+    pub percentage: u64,
+    /// Present when `total_tokens` exceeds `raw_max_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub over_limit: Option<ContextOverLimit>,
+    /// Usage-by-category rows (`Messages`, `System prompt`, …).
+    #[serde(default)]
+    pub categories: Vec<ContextCategory>,
+    /// Per-tool token contributions of MCP tools.
+    #[serde(default)]
+    pub mcp_tools: Vec<ContextMcpTool>,
+    /// Per-file token contributions of memory files.
+    #[serde(default)]
+    pub memory_files: Vec<ContextMemoryFile>,
+    /// Per-agent token contributions of agent definitions.
+    #[serde(default)]
+    pub agents: Vec<ContextAgent>,
+    /// Per-skill token contributions. Omitted when no skills contribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<ContextSkill>>,
+}
+
+/// Why and by how much a [`ContextUsage`] exceeds its window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextOverLimit {
+    pub tokens_over: u64,
+    /// How the window was resolved: `"hard_limit"` (the model's believed
+    /// limit) or `"compaction_window"` (a compaction-policy window).
+    pub kind: String,
+}
+
+/// One row of the `/context` usage-by-category breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextCategory {
+    /// Display name of the row as the CLI renders it, e.g. `"Messages"`.
+    /// Use `kind` (not this name) to classify the row.
+    pub name: String,
+    pub tokens: u64,
+    /// What the row is: `"used"` content occupies the window; `"free"` is the
+    /// remaining window; `"buffer"` is the compaction reserve; `"deferred"`
+    /// rows are out-of-window tool schemas, excluded from usage math.
+    pub kind: String,
+}
+
+/// An MCP tool's token contribution, in [`ContextUsage::mcp_tools`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextMcpTool {
+    /// Wire name, e.g. `"mcp__linear__create_issue"`.
+    pub name: String,
+    pub server_name: String,
+    pub tokens: u64,
+}
+
+/// A memory file's token contribution, in [`ContextUsage::memory_files`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextMemoryFile {
+    pub path: String,
+    /// Display label of the memory-file source, e.g. `"Project"` or `"User"`.
+    #[serde(rename = "type")]
+    pub file_type: String,
+    pub tokens: u64,
+}
+
+/// An agent definition's token contribution, in [`ContextUsage::agents`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextAgent {
+    pub agent_type: String,
+    /// Raw source identifier, e.g. `"projectSettings"`, `"plugin"`.
+    pub source: String,
+    pub tokens: u64,
+}
+
+/// A skill's token contribution, in [`ContextUsage::skills`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextSkill {
+    pub name: String,
+    /// Raw source identifier, e.g. `"userSettings"`, `"plugin"`.
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
+    pub tokens: u64,
+}
+
+/// Display metadata for a tool-use block carried on the assistant wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolUseMeta {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// The `mcpsrv_` connector id of a server provisioned by claude.ai, set
+    /// by the CLI from claude.ai's own connector listing, so a client may
+    /// show the call as that connector's. Not a permission grant (CLI
+    /// 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    /// The `X-MCP-Server-ID` header value, lower-cased, of an http entry in
+    /// the dynamic scope (passed at launch or by a later `mcp_set_servers`
+    /// push). The CLI checks only its shape, not whose it is: look it up in
+    /// your own server list, treat a miss as an unknown server (never an
+    /// error), and show a hit as the entry's claim, not proof. Separate from
+    /// [`server_id`](Self::server_id); both are absent for plugin, repo,
+    /// settings and agent entries (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id_stamp: Option<String>,
+    /// The tool's name as its server lists it, without the
+    /// `mcp__<server>__` prefix (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// `Some(true)` on a call to a publishing tool of an Artifacts MCP entry
+    /// that reaches only Anthropic's server, which the CLI tells from the
+    /// entry itself, never its name. The finished call's `tool_use_result`
+    /// usually carries the artifact's url at its top level (and its title
+    /// where the server's answer has one), but the mark promises neither,
+    /// and the url can come on an unmarked call; all are the worker's word,
+    /// not proof. Sent only on the main loop's own frames: never for a
+    /// subagent's call or over Remote Control (CLI 2.1.321+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_publish: Option<bool>,
+}
+
+/// Assistant message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantMessage {
+    pub message: AssistantMessageContent,
+    #[serde(alias = "sessionId")]
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_use_id: Option<String>,
+    /// Anthropic API request id that produced this message (e.g. `req_...`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// Only on the assistant message that reports a refusal: the API `msg_*`
+    /// id of the refused response (`message.id` on this message is a local
+    /// UUID). Absent when the CLI has no well-formed id for it, and on CLIs
+    /// before 2.1.301.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_message_id: Option<String>,
+    /// Client uuid of the user message that triggered this turn, stamped on
+    /// the turn's first top-level assistant message so a consumer can bind
+    /// the reply to the send it answers without waiting for the result. With
+    /// `--include-partial-messages` the first non-ping stream event is
+    /// stamped too, independently (CLI 2.1.269+), so the same uuid may
+    /// appear on both frames. Absent on every later assistant message of the
+    /// turn, on subagent frames, on synthetic/scheduled (meta) turns, and
+    /// from CLIs before 2.1.259.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_uuid: Option<String>,
+    /// Client uuids of every user message whose prompt this turn has consumed
+    /// so far, in consumption order — all members of a prompt batch the host
+    /// merged into this one turn. Always contains `user_message_uuid`; at
+    /// most 64 entries. Present exactly when `user_message_uuid` is; absent
+    /// from CLIs before 2.1.259 (fall back to `user_message_uuid`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_message_uuids: Vec<String>,
+    /// ID of the subagent that produced this message: the `task_id` of its
+    /// task events, unchanged when the subagent is resumed. Absent on
+    /// main-thread messages (CLI 2.1.292+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Subagent type, when this assistant message was produced inside a
+    /// `local_agent` subagent (e.g. `general-purpose`, `Explore`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    /// Short description of the subagent task, present alongside `subagent_type`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<AssistantErrorKind>,
+    /// True when this message was truncated by an interrupt/abort before the
+    /// stream completed — `stop_reason` was never received and the content
+    /// may end mid-word. Absent on normally completed messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aborted: Option<bool>,
+    /// True when this turn continued the preceding truncated assistant turn
+    /// inside its trailing signed thinking block (max-output-tokens
+    /// recovery). Histories replayed through the bridge must carry the flag
+    /// back so the normalizer keeps the run's prefix on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_from_incomplete_thinking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supersedes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_use_meta: Vec<ToolUseMeta>,
+    /// `{id, name}` of the original `Batch*` tool_use block(s) for a message
+    /// whose content was decomposed into synthetic v1 tool_use blocks.
+    /// Round-tripped so a replayed history reassembles the batch block on the
+    /// wire. Wrapper-level sibling — never inside `message.content`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub batch_tool_uses: Vec<BatchToolUse>,
+    /// `tool_use.input` exactly as the API produced it, keyed by `tool_use`
+    /// id, for a message whose `message.content` carries the
+    /// client-normalized input. Round-tripped so a replayed history echoes
+    /// each earlier tool call back to the API as the API emitted it.
+    /// Wrapper-level sibling — never inside `message.content` (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_tool_inputs: Option<serde_json::Map<String, Value>>,
+    /// What the client-side input normalization read from process state for
+    /// the inputs in [`wire_tool_inputs`](Self::wire_tool_inputs), keyed by
+    /// the same `tool_use` ids. Round-tripped so a replayed history can verify
+    /// each recorded input against the normalized one. Wrapper-level sibling —
+    /// never inside `message.content` (CLI 2.1.266+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_ingest_context: Option<serde_json::Map<String, Value>>,
+    /// Replayed history rather than a live message, stamped by the Remote
+    /// Control bridge when it flushes history to the session server, which
+    /// also stamps it on deliveries it replays (CLI 2.1.266+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub historical: Option<bool>,
+    /// Why this frame's turn is the automatic re-run of a turn a worker
+    /// restart interrupted: the host's `CLAUDE_CODE_RESUME_REASON` when it set
+    /// one (`host_draining`, `checkpoint_restore`, `container_recreated`,
+    /// ...), else `interrupted_turn`. Stamped on the same reply frames as
+    /// `user_message_uuid`, which on such a re-run names the interrupted
+    /// turn's own last user prompt. Absent on every other turn and from CLIs
+    /// before 2.1.268.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_reason: Option<String>,
+    /// The originating `system/local_command` row's wire-form content,
+    /// carried on the loop-synthesized local-command twin so a bridge/SDK
+    /// history replay rebuilds the internal system row instead of dropping
+    /// the output. Wrapper-level sibling — never inside `message.content`
+    /// (CLI 2.1.259+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_command_source: Option<String>,
+    /// Ascending zero-based indexes into `message.content` of the thinking
+    /// blocks whose signature the server tagged as narration (server
+    /// summaries of the prose between tool calls, not the model's own
+    /// reasoning), so a renderer can label them as summaries without decoding
+    /// the signature envelope. Fail-closed: an unparseable or legacy
+    /// signature is not listed. Omitted when the frame has no such block and
+    /// by CLIs before 2.1.260; treat unlisted thinking blocks as ordinary
+    /// thinking. Wrapper-level sibling — never inside `message.content`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub narration_block_indexes: Vec<usize>,
+    /// How a renderer should treat this frame's narration blocks:
+    /// `"hidden"` or `"faint"` on CLI 2.1.280+ (kept open for future
+    /// values). Omitted when the CLI expresses no preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narration_hint: Option<String>,
+    /// How long the thinking block in this frame took to stream, in whole
+    /// milliseconds (at least 1): from its `content_block_start` to its
+    /// `content_block_stop` (or, on CLI 2.1.321+, to the interrupt that cut
+    /// it), so the wait for the response's first token is not counted. For display only. Sent only on a frame whose one content
+    /// block is a thinking block that was streamed; absent from CLIs before
+    /// 2.1.287 and from a CLI replaying history it rebuilt from SDK frames,
+    /// so be ready to show the block without a duration. Wrapper-level
+    /// sibling — never inside `message.content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_duration_ms: Option<u64>,
+    /// The `thinking.display` value Claude Code put in the API request body
+    /// for the response that streamed this frame's thinking block; same
+    /// source and meaning as
+    /// [`StreamEventMessage::thinking_display`](crate::io::StreamEventMessage::thinking_display).
+    /// Sent only on a frame whose one content block is a thinking block that
+    /// was streamed, and only when the request body had a display. Absent
+    /// from CLIs before 2.1.296 and from a CLI replaying history it rebuilt
+    /// from SDK frames; an absent key states nothing. Marked `@internal`
+    /// upstream, so treat the value set as open. Wrapper-level sibling —
+    /// never inside `message.content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_display: Option<String>,
+    /// Structured twin of the `/context` report, carried on the synthetic
+    /// assistant message that delivers the markdown table. Present only on
+    /// `/context` results from CLIs new enough to attach it (2.1.239+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage: Option<ContextUsage>,
+    /// Structured twin of the `/usage` report, carried on the synthetic
+    /// assistant message that delivers its text: the session totals, the
+    /// plan's usage rows and extra-usage spend, for remote clients that
+    /// render a card from data. Present only on `/usage` results from CLIs
+    /// new enough to attach it (2.1.273+) and from claude.ai-subscriber
+    /// sessions; the text in `message.content` remains the canonical
+    /// fallback. Wrapper-level sibling — never inside `message.content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_report: Option<Box<UsageReport>>,
+    /// On the local-command twin, the run that printed the row: the
+    /// command's name (no slash) and its arguments as the echo shows them
+    /// (`***` when the command marks them sensitive). Present when a `local`
+    /// command's dispatch printed the row or a `command.run` hook answered
+    /// it, absent on a never-ran notice. Wrapper-level sibling — never inside
+    /// `message.content` (CLI 2.1.273+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_command_run: Option<LocalCommandRun>,
+    /// On the local-command twin, what the row reports (`unavailable_headless`,
+    /// `unknown`, `failed`, `restart_required`), so a host can offer a fix
+    /// instead of relaying the text. Absent when the row reports none of
+    /// these; new kinds are additive, so treat an unknown one as absent.
+    /// Wrapper-level sibling — never inside `message.content` (CLI 2.1.281+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_command_outcome: Option<LocalCommandOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_meta: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_virtual: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_api_error_message: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_error_status: Option<u16>,
+    /// Typed kind of the API error when `is_api_error_message` is true. An
+    /// open set the CLI grows release to release: 2.1.274 extends the
+    /// original `max_output_tokens` / `dlp_request_denied` /
+    /// `claude_code_version_too_old` with `effort_requires_thinking`,
+    /// `advisor_incompatible`, `tool_history_mismatch`,
+    /// `autocompact_thrashing`, `pdf_too_large`, `pdf_password_protected`,
+    /// `media_removed` (CLI 2.1.288+: the API refused an image or a
+    /// document, so Claude Code leaves it out of the requests that follow),
+    /// `no_response`, `tls_untrusted_ca`, `gateway_content_type`,
+    /// `provider_credentials`, `gateway_signin_required`,
+    /// `gateway_session_expired`, `api_key_auth_disabled`,
+    /// `org_disabled_credential`, `invalid_credential_header`,
+    /// `model_requires_usage_credits`, `long_context_credits_required`,
+    /// `consent_unanswered`, `no_allowed_fallback`,
+    /// `model_substitution_disabled`, `field_not_granted`, (CLI 2.1.292+)
+    /// `usage_limit_reached` — the request was refused by the account's own
+    /// usage limit, a plan limit or a spend cap on usage credits;
+    /// [`ApiErrorParams::rate_limit_info`] says which and when it resets —
+    /// and (CLI 2.1.307+) `empty_completion` — the model ended its turn with
+    /// no visible text and its one retry had no content block, so the turn
+    /// ends as an error instead of a blank reply — and (CLI 2.1.311+)
+    /// `unattended_start_limit` — a cloud session's restarted process hit
+    /// the configured limit of unattended carry-ons within 24 hours, so no
+    /// request was sent; terminal for the turn, so a consumer replaying
+    /// history must not re-send the prompt that led to it — and
+    /// `unattended_start_unconfirmed` — the process could not check whether
+    /// it was allowed to carry on, so no request was sent; not terminal —
+    /// and (CLI 2.1.314+) `stored_login_refused` — the stored claude.ai
+    /// login was about to go out while the API key helper set by the
+    /// machine's administrator (or, on 2.1.316+, the organization's
+    /// settings) isn't in effect or its settings couldn't be confirmed, so
+    /// no request was sent and the message text says who can clear it —
+    /// `connection_failed` — Claude Code could not reach the
+    /// API host or lost the connection (never set for a TLS error code) —
+    /// `stream_idle_timeout` — Claude Code's own idle timer gave up waiting
+    /// on an open stream, which does not by itself mean the server stalled —
+    /// and `computer_slept` — the machine slept through the wait for the
+    /// response (never sent by a claude-code-server session) — and
+    /// (CLI 2.1.317+) `malformed_tool_use_exhausted` — the model's reply
+    /// stopped for a tool call and held none, and the loop's retries ran
+    /// out; terminal for the turn, so a consumer replaying history must not
+    /// re-send the prompt by itself — and `network_edge_blocked` — the
+    /// firewall in front of Anthropic's API refused the request for its
+    /// network location (an unsupported region, or a VPN, proxy or network
+    /// routing through one) before it reached the API; no sign-in or
+    /// credential change fixes it — and (CLI 2.1.321+) `hook_denied` — a
+    /// mod's `http.fetch` hook stopped the request.
+    /// Kinds with parameters carry them in [`Self::api_error_params`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_error: Option<String>,
+    /// The server's `error.details.error_code` for this API error, copied
+    /// through when it is an identifier (`^[a-z][a-z0-9_]{0,63}$`) and
+    /// dropped otherwise. Carries server gate codes this CLI build has no
+    /// `api_error` value for, so a host can key on a new gate without a
+    /// Claude Code release. Absent when the response carried no code and
+    /// from CLIs before 2.1.274.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_code: Option<String>,
+    /// `first_party` when this API error was built from a response
+    /// Anthropic's own API sent: the first-party provider, the default
+    /// `https://api.anthropic.com` endpoint answering directly, over TLS
+    /// verified with no added CA, override or socket tunnel. Absent in every
+    /// other case (a base-URL override, a gateway, a third-party provider, a
+    /// connection error, an error Claude Code raised itself, any replayed
+    /// frame); treat absence as unknown origin. It says which endpoint
+    /// answered, not that the text is the server's verbatim, so render
+    /// stamped text as plain text. Open set — treat an unknown value as
+    /// absent (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_origin: Option<String>,
+    /// Parameters of [`Self::api_error`], present only for the kinds that
+    /// have any (CLI 2.1.274+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_params: Option<ApiErrorParams>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advisor_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution_skill: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution_plugin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution_mcp_server: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution_mcp_tool: Option<String>,
+}
+
+/// Parameters of an assistant frame's `api_error`, carried as
+/// [`AssistantMessage::api_error_params`] only for the error kinds that have
+/// any (CLI 2.1.274+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ApiErrorParams {
+    /// The effort level the API refused (`effort_requires_thinking`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// The API provider whose credentials failed (`provider_credentials`,
+    /// `gateway_session_expired`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ApiErrorProvider>,
+    /// How to repair the failed credentials (`provider_credentials`,
+    /// `gateway_session_expired`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<ApiErrorRemedy>,
+    /// The kind of block the API refused (`media_removed`); absent for
+    /// [`ApiErrorMediaReason::MediaBudget`] (CLI 2.1.288+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<ApiErrorMedia>,
+    /// Why the API refused the block (`media_removed`, CLI 2.1.288+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_reason: Option<ApiErrorMediaReason>,
+    /// What the refused request's own response said about the limit
+    /// (`usage_limit_reached`), in the shape `rate_limit_event` carries:
+    /// `status` is rejected and `isUsingOverage` false, `rateLimitType` names
+    /// the limit, `resetsAt` is when it resets, and the overage fields and
+    /// `limitScope` say whose spend cap it is. It is that refusal's record
+    /// and is never updated, so compare `resetsAt` with the clock before
+    /// calling the limit current (CLI 2.1.292+).
+    ///
+    /// On CLI 2.1.316+ also carried for `model_requires_usage_credits`:
+    /// `status` is rejected and `isUsingOverage` false; `rateLimitType` is
+    /// the response's claim (`seven_day_overage_included` when an included
+    /// allowance was used up) and absent when it named none; `resetsAt`,
+    /// `overageStatus`, `overageResetsAt` and `limitScope` come when the
+    /// response had them; `errorCode` is `credits_required` when the body
+    /// said so; `overageDisabledReason`, `canUserPurchaseCredits` and
+    /// `hasChargeableSavedPaymentMethod` as the response gave them; the
+    /// person's own cap arrives as `org_level_disabled_until`. No other
+    /// member is sent.
+    ///
+    /// On CLI 2.1.319+ the `usage_limit_reached` record also carries
+    /// `dailyCapPaused` when usage is paused for the organization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_info: Option<RateLimitInfo>,
+    /// Which API stop reason cut the reply short (`max_output_tokens`),
+    /// which the kind alone does not say. Absent on the one other error
+    /// that carries `max_output_tokens`, the API's `tool_use_block_cut_off`,
+    /// which [`AssistantMessage::api_error_code`] names (CLI 2.1.321+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut: Option<ApiErrorCut>,
+}
+
+/// Which API stop reason cut a reply short ([`ApiErrorParams::cut`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ApiErrorCut {
+    /// `max_tokens`: the request's output-token maximum.
+    OutputLimit,
+    /// `model_context_window_exceeded`: the model's context window.
+    ContextWindow,
+    /// A value not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ApiErrorCut {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::OutputLimit => "output_limit",
+            Self::ContextWindow => "context_window",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorCut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ApiErrorCut {
+    fn from(s: &str) -> Self {
+        match s {
+            "output_limit" => Self::OutputLimit,
+            "context_window" => Self::ContextWindow,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ApiErrorCut {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiErrorCut {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The kind of block the API refused ([`ApiErrorParams::media`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ApiErrorMedia {
+    Image,
+    Document,
+    /// A kind not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ApiErrorMedia {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Image => "image",
+            Self::Document => "document",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorMedia {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ApiErrorMedia {
+    fn from(s: &str) -> Self {
+        match s {
+            "image" => Self::Image,
+            "document" => Self::Document,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ApiErrorMedia {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiErrorMedia {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Why the API refused an image or document
+/// ([`ApiErrorParams::media_reason`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ApiErrorMediaReason {
+    /// Every other refusal, a gateway's report of a model's refusal among
+    /// them.
+    Unprocessable,
+    /// The API said that the model does not accept PDF documents.
+    UnsupportedByModel,
+    /// The request's images and documents together exceed the API's limit,
+    /// and the requests that follow may leave out blocks of either kind.
+    MediaBudget,
+    /// A reason not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ApiErrorMediaReason {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Unprocessable => "unprocessable",
+            Self::UnsupportedByModel => "unsupported_by_model",
+            Self::MediaBudget => "media_budget",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorMediaReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ApiErrorMediaReason {
+    fn from(s: &str) -> Self {
+        match s {
+            "unprocessable" => Self::Unprocessable,
+            "unsupported_by_model" => Self::UnsupportedByModel,
+            "media_budget" => Self::MediaBudget,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ApiErrorMediaReason {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiErrorMediaReason {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// The API provider whose credentials failed ([`ApiErrorParams::provider`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ApiErrorProvider {
+    Bedrock,
+    AnthropicAws,
+    Mantle,
+    AnthropicGoogleCloud,
+    Vertex,
+    Foundry,
+    Gateway,
+    /// A provider not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ApiErrorProvider {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Bedrock => "bedrock",
+            Self::AnthropicAws => "anthropicAws",
+            Self::Mantle => "mantle",
+            Self::AnthropicGoogleCloud => "anthropicGoogleCloud",
+            Self::Vertex => "vertex",
+            Self::Foundry => "foundry",
+            Self::Gateway => "gateway",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ApiErrorProvider {
+    fn from(s: &str) -> Self {
+        match s {
+            "bedrock" => Self::Bedrock,
+            "anthropicAws" => Self::AnthropicAws,
+            "mantle" => Self::Mantle,
+            "anthropicGoogleCloud" => Self::AnthropicGoogleCloud,
+            "vertex" => Self::Vertex,
+            "foundry" => Self::Foundry,
+            "gateway" => Self::Gateway,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ApiErrorProvider {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiErrorProvider {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// How to repair failed provider credentials ([`ApiErrorParams::remedy`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ApiErrorRemedy {
+    /// A configured refresh command (`awsAuthRefresh` / `gcpAuthRefresh`)
+    /// refreshes the credentials.
+    RefreshCommand,
+    /// Refresh the provider's credentials by hand; no command is configured.
+    RefreshCredentials,
+    /// Refresh the Google application default credentials or the
+    /// `GOOGLE_APPLICATION_CREDENTIALS` key file.
+    Adc,
+    /// Replace the gateway token supplied through `ANTHROPIC_AUTH_TOKEN` or
+    /// `ANTHROPIC_CUSTOM_HEADERS`.
+    GatewayToken,
+    /// The host application owns these credentials.
+    HostManaged,
+    /// The credentials work but the model is not enabled for this account
+    /// and region (Amazon Bedrock).
+    ModelAccess,
+    /// A remedy not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl ApiErrorRemedy {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::RefreshCommand => "refresh_command",
+            Self::RefreshCredentials => "refresh_credentials",
+            Self::Adc => "adc",
+            Self::GatewayToken => "gateway_token",
+            Self::HostManaged => "host_managed",
+            Self::ModelAccess => "model_access",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorRemedy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ApiErrorRemedy {
+    fn from(s: &str) -> Self {
+        match s {
+            "refresh_command" => Self::RefreshCommand,
+            "refresh_credentials" => Self::RefreshCredentials,
+            "adc" => Self::Adc,
+            "gateway_token" => Self::GatewayToken,
+            "host_managed" => Self::HostManaged,
+            "model_access" => Self::ModelAccess,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ApiErrorRemedy {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiErrorRemedy {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Nested message content for assistant messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantMessageContent {
+    pub id: String,
+    /// The Anthropic API message type — always `"message"`.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub message_type: Option<String>,
+    pub role: MessageRole,
+    pub model: String,
+    pub content: Vec<ContentBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StopReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_sequence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<AssistantUsage>,
+    /// Details about why generation stopped
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_details: Option<Value>,
+    /// Context management metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Value>,
+}
+
+/// Usage information for assistant messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantUsage {
+    /// Number of input tokens
+    #[serde(default)]
+    pub input_tokens: u32,
+
+    /// Number of output tokens
+    #[serde(default)]
+    pub output_tokens: u32,
+
+    /// Tokens used to create cache
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
+
+    /// Tokens read from cache
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
+
+    /// Service tier used (e.g., "standard")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+
+    /// Detailed cache creation breakdown
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation: Option<CacheCreationDetails>,
+
+    /// Inference geography (e.g., "not_available")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_geo: Option<String>,
+
+    /// Speed tier the request ran at (`"standard"` or `"fast"`). The API
+    /// began sending it on per-message usage around CLI 2.1.301.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
+
+    /// Outcome of a fallback-credit token the request presented; `null` on
+    /// the wire when it presented none (CLI 2.1.285+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_credit: Option<Value>,
+}
+
+/// Detailed cache creation information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheCreationDetails {
+    /// Ephemeral 1-hour input tokens
+    #[serde(default)]
+    pub ephemeral_1h_input_tokens: u32,
+
+    /// Ephemeral 5-minute input tokens
+    #[serde(default)]
+    pub ephemeral_5m_input_tokens: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::io::ClaudeOutput;
+
+    #[test]
+    fn test_subagent_usage_rollup_accumulates_task_results() {
+        use super::SubagentUsageRollup;
+
+        let mut rollup = SubagentUsageRollup::default();
+
+        let task_result = r#"{"type":"user","message":{"role":"user","content":[]},"session_id":"7fbc568e-2bd6-45aa-b217-a1cf80004ba1","tool_use_result":{"status":"completed","prompt":"Compute 6 times 7.","agentId":"ab52f22445470d454","agentType":"general-purpose","resolvedModel":"claude-sonnet-4-6","totalDurationMs":1853,"totalTokens":10201,"totalToolUseCount":3}}"#;
+        let output: ClaudeOutput = serde_json::from_str(task_result).unwrap();
+        assert!(rollup.observe(&output));
+        assert_eq!(rollup.subagent_tokens, 10201);
+        assert_eq!(rollup.agent_count, 1);
+        assert_eq!(rollup.tool_uses, 3);
+        assert_eq!(rollup.duration_ms, 1853);
+
+        // Replayed frame with the same agentId is counted once.
+        assert!(!rollup.observe(&output));
+        assert_eq!(rollup.agent_count, 1);
+        assert_eq!(rollup.subagent_tokens, 10201);
+
+        // A second agent accumulates.
+        let second = r#"{"type":"user","message":{"role":"user","content":[]},"session_id":"7fbc568e-2bd6-45aa-b217-a1cf80004ba1","tool_use_result":{"status":"completed","agentId":"ffff00001111","totalDurationMs":100,"totalTokens":500,"totalToolUseCount":1}}"#;
+        let output: ClaudeOutput = serde_json::from_str(second).unwrap();
+        assert!(rollup.observe(&output));
+        assert_eq!(rollup.agent_count, 2);
+        assert_eq!(rollup.subagent_tokens, 10701);
+    }
+
+    #[test]
+    fn test_subagent_usage_rollup_ignores_non_task_results() {
+        use super::SubagentUsageRollup;
+
+        let mut rollup = SubagentUsageRollup::default();
+
+        // A ToolSearch tool_use_result parses as an all-None SubagentResult;
+        // it must not count as a subagent.
+        let tool_search = r#"{"type":"user","message":{"role":"user","content":[]},"session_id":"7fbc568e-2bd6-45aa-b217-a1cf80004ba1","tool_use_result":{"matches":["TaskCreate"],"query":"select:TaskCreate","total_deferred_tools":27}}"#;
+        let output: ClaudeOutput = serde_json::from_str(tool_search).unwrap();
+        assert!(!rollup.observe(&output));
+
+        // Plain user message without tool_use_result.
+        let plain = r#"{"type":"user","message":{"role":"user","content":[]},"session_id":"7fbc568e-2bd6-45aa-b217-a1cf80004ba1"}"#;
+        let output: ClaudeOutput = serde_json::from_str(plain).unwrap();
+        assert!(!rollup.observe(&output));
+
+        // Non-user frames are ignored.
+        let system = r#"{"type":"system","subtype":"status","status":null,"session_id":"7fbc568e-2bd6-45aa-b217-a1cf80004ba1"}"#;
+        let output: ClaudeOutput = serde_json::from_str(system).unwrap();
+        assert!(!rollup.observe(&output));
+
+        assert_eq!(rollup, SubagentUsageRollup::default());
+    }
+
+    #[test]
+    fn test_subagent_usage_rollup_over_captured_session() {
+        use super::SubagentUsageRollup;
+
+        let mut rollup = SubagentUsageRollup::default();
+        let fixture =
+            include_str!("../../test_cases/subagent_sessions/general_purpose_compute.jsonl");
+        for line in fixture.lines().filter(|l| !l.trim().is_empty()) {
+            if let Ok(output) = serde_json::from_str::<ClaudeOutput>(line) {
+                rollup.observe(&output);
+            }
+        }
+        assert_eq!(rollup.agent_count, 1);
+        assert_eq!(rollup.subagent_tokens, 10201);
+    }
+
+    #[test]
+    fn test_system_message_init() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "init",
+            "session_id": "test-session-123",
+            "cwd": "/home/user/project",
+            "model": "claude-sonnet-4",
+            "tools": ["Bash", "Read", "Write"],
+            "mcp_servers": [],
+            "slash_commands": ["compact", "cost", "review"],
+            "agents": ["Bash", "Explore", "Plan"],
+            "plugins": [{"name": "rust-analyzer-lsp", "path": "/home/user/.claude/plugins/rust-analyzer-lsp/1.0.0"}],
+            "skills": [],
+            "claude_code_version": "2.1.15",
+            "apiKeySource": "none",
+            "output_style": "default",
+            "permissionMode": "default"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            assert!(sys.is_init());
+            assert!(!sys.is_status());
+            assert!(!sys.is_compact_boundary());
+
+            let init = sys.as_init().expect("Should parse as init");
+            assert_eq!(init.session_id, "test-session-123");
+            assert_eq!(init.cwd, Some("/home/user/project".to_string()));
+            assert_eq!(init.model, Some("claude-sonnet-4".to_string()));
+            assert_eq!(init.tools, vec!["Bash", "Read", "Write"]);
+            assert_eq!(init.slash_commands, vec!["compact", "cost", "review"]);
+            assert_eq!(init.agents, vec!["Bash", "Explore", "Plan"]);
+            assert_eq!(init.plugins.len(), 1);
+            assert_eq!(init.plugins[0].name, "rust-analyzer-lsp");
+            assert_eq!(init.claude_code_version, Some("2.1.15".to_string()));
+            assert_eq!(init.api_key_source, Some(super::ApiKeySource::None));
+            assert_eq!(init.output_style, Some(super::OutputStyle::Default));
+            assert_eq!(
+                init.permission_mode,
+                Some(super::InitPermissionMode::Default)
+            );
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_init_from_real_capture() {
+        let json = include_str!("../../test_cases/tool_use_captures/tool_msg_0.json");
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            let init = sys.as_init().expect("Should parse real init capture");
+            assert_eq!(init.slash_commands.len(), 8);
+            assert!(init.slash_commands.contains(&"compact".to_string()));
+            assert!(init.slash_commands.contains(&"review".to_string()));
+            assert_eq!(init.agents.len(), 5);
+            assert!(init.agents.contains(&"Bash".to_string()));
+            assert!(init.agents.contains(&"Explore".to_string()));
+            assert_eq!(init.plugins.len(), 1);
+            assert_eq!(init.plugins[0].name, "rust-analyzer-lsp");
+            assert_eq!(init.claude_code_version, Some("2.1.15".to_string()));
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_status() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "status",
+            "session_id": "879c1a88-3756-4092-aa95-0020c4ed9692",
+            "status": "compacting",
+            "uuid": "32eb9f9d-5ef7-47ff-8fce-bbe22fe7ed93"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            assert!(sys.is_status());
+            assert!(!sys.is_init());
+
+            let status = sys.as_status().expect("Should parse as status");
+            assert_eq!(status.session_id, "879c1a88-3756-4092-aa95-0020c4ed9692");
+            assert_eq!(status.status, Some(super::StatusMessageStatus::Compacting));
+            assert_eq!(
+                status.uuid,
+                Some("32eb9f9d-5ef7-47ff-8fce-bbe22fe7ed93".to_string())
+            );
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_status_null() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "status",
+            "session_id": "879c1a88-3756-4092-aa95-0020c4ed9692",
+            "status": null,
+            "uuid": "92d9637e-d00e-418e-acd2-a504e3861c6a"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            let status = sys.as_status().expect("Should parse as status");
+            assert_eq!(status.status, None);
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_task_started() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "task_started",
+            "session_id": "9abbc466-dad0-4b8e-b6b0-cad5eb7a16b9",
+            "task_id": "b6daf3f",
+            "task_type": "local_bash",
+            "tool_use_id": "toolu_011rfSTFumpJZdCCfzeD7jaS",
+            "description": "Wait for CI on PR #12",
+            "uuid": "c4243261-c128-4747-b8c3-5e1c7c10eeb8"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            assert!(sys.is_task_started());
+            assert!(!sys.is_task_progress());
+            assert!(!sys.is_task_notification());
+
+            let task = sys.as_task_started().expect("Should parse as task_started");
+            assert_eq!(task.session_id, "9abbc466-dad0-4b8e-b6b0-cad5eb7a16b9");
+            assert_eq!(task.task_id, "b6daf3f");
+            assert_eq!(task.task_type, Some(super::TaskType::LocalBash));
+            assert_eq!(
+                task.tool_use_id.as_deref(),
+                Some("toolu_011rfSTFumpJZdCCfzeD7jaS")
+            );
+            assert_eq!(task.description, "Wait for CI on PR #12");
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_task_started_agent() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "task_started",
+            "session_id": "bff4f716-17c1-4255-ab7b-eea9d33824e3",
+            "task_id": "a4a7e0906e5fc64cc",
+            "task_type": "local_agent",
+            "tool_use_id": "toolu_01SFz9FwZ1cYgCSy8vRM7wep",
+            "description": "Explore Scene/ArrayScene duplication",
+            "uuid": "85a39f5a-e4d4-47f7-9a6d-1125f1a8035f"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            let task = sys.as_task_started().expect("Should parse as task_started");
+            assert_eq!(task.task_type, Some(super::TaskType::LocalAgent));
+            assert_eq!(task.task_id, "a4a7e0906e5fc64cc");
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_task_progress() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "task_progress",
+            "session_id": "bff4f716-17c1-4255-ab7b-eea9d33824e3",
+            "task_id": "a4a7e0906e5fc64cc",
+            "tool_use_id": "toolu_01SFz9FwZ1cYgCSy8vRM7wep",
+            "description": "Reading src/jplephem/chebyshev.rs",
+            "last_tool_name": "Read",
+            "usage": {
+                "duration_ms": 13996,
+                "tool_uses": 9,
+                "total_tokens": 38779
+            },
+            "uuid": "85a39f5a-e4d4-47f7-9a6d-1125f1a8035f"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            assert!(sys.is_task_progress());
+            assert!(!sys.is_task_started());
+
+            let progress = sys
+                .as_task_progress()
+                .expect("Should parse as task_progress");
+            assert_eq!(progress.task_id, "a4a7e0906e5fc64cc");
+            assert_eq!(progress.description, "Reading src/jplephem/chebyshev.rs");
+            assert_eq!(progress.last_tool_name.as_deref(), Some("Read"));
+            assert_eq!(progress.usage.duration_ms, 13996);
+            assert_eq!(progress.usage.tool_uses, 9);
+            assert_eq!(progress.usage.total_tokens, 38779);
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_task_notification_completed() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "task_notification",
+            "session_id": "bff4f716-17c1-4255-ab7b-eea9d33824e3",
+            "task_id": "a0ba761e9dc9c316f",
+            "tool_use_id": "toolu_01Ho6XVXFLVNjTQ9YqowdBXW",
+            "status": "completed",
+            "summary": "Agent \"Write Hipparcos data source doc\" completed",
+            "output_file": "",
+            "usage": {
+                "duration_ms": 172300,
+                "tool_uses": 11,
+                "total_tokens": 42005
+            },
+            "uuid": "269f49b9-218d-4c8d-9f7e-3a5383a0c5b2"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            assert!(sys.is_task_notification());
+
+            let notif = sys
+                .as_task_notification()
+                .expect("Should parse as task_notification");
+            assert_eq!(notif.status, super::TaskStatus::Completed);
+            assert_eq!(
+                notif.summary,
+                "Agent \"Write Hipparcos data source doc\" completed"
+            );
+            assert_eq!(notif.output_file, Some("".to_string()));
+            assert_eq!(
+                notif.tool_use_id,
+                Some("toolu_01Ho6XVXFLVNjTQ9YqowdBXW".to_string())
+            );
+            let usage = notif.usage.expect("Should have usage");
+            assert_eq!(usage.duration_ms, 172300);
+            assert_eq!(usage.tool_uses, 11);
+            assert_eq!(usage.total_tokens, 42005);
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_system_message_task_notification_failed_no_usage() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "task_notification",
+            "session_id": "ea629737-3c36-48a8-a1c4-ad761ad35784",
+            "task_id": "b98f6a3",
+            "status": "failed",
+            "summary": "Background command \"Run FSM calibration\" failed with exit code 1",
+            "output_file": "/tmp/claude-1000/tasks/b98f6a3.output"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            let notif = sys
+                .as_task_notification()
+                .expect("Should parse as task_notification");
+            assert_eq!(notif.status, super::TaskStatus::Failed);
+            assert!(notif.tool_use_id.is_none());
+            assert!(notif.usage.is_none());
+            assert_eq!(
+                notif.output_file,
+                Some("/tmp/claude-1000/tasks/b98f6a3.output".to_string())
+            );
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    /// Task system messages survive a `to_value` → `from_value` round-trip
+    /// with their typed accessors still resolving. Mirrors the proxy/relay
+    /// path where output is reparsed from a `serde_json::Value` rather than
+    /// straight from the CLI's stdout, so a silently dropped or renamed field
+    /// surfaces here instead of as a `None` downstream.
+    #[test]
+    fn test_task_messages_roundtrip_through_value() {
+        let cases = [
+            r#"{"type":"system","subtype":"task_started","session_id":"s1",
+                "task_id":"t1","task_type":"local_bash","tool_use_id":"tu1",
+                "description":"Sleep 3s","uuid":"u1"}"#,
+            r#"{"type":"system","subtype":"task_progress","session_id":"s1",
+                "task_id":"t1","tool_use_id":"tu1","description":"Running ls",
+                "last_tool_name":"Bash",
+                "usage":{"duration_ms":100,"tool_uses":1,"total_tokens":500},
+                "uuid":"u2"}"#,
+            r#"{"type":"system","subtype":"task_notification","session_id":"s1",
+                "task_id":"t1","tool_use_id":"tu1","status":"completed",
+                "summary":"done","output_file":"",
+                "usage":{"duration_ms":100,"tool_uses":1,"total_tokens":500},
+                "uuid":"u3"}"#,
+        ];
+
+        for json in cases {
+            let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+            let value = serde_json::to_value(&output).unwrap();
+            let reparsed: ClaudeOutput = serde_json::from_value(value).unwrap();
+
+            let ClaudeOutput::System(sys) = reparsed else {
+                panic!("Expected System variant after round-trip");
+            };
+
+            match sys.subtype {
+                super::SystemSubtype::TaskStarted => {
+                    assert!(
+                        sys.as_task_started().is_some(),
+                        "as_task_started failed after round-trip"
+                    );
+                }
+                super::SystemSubtype::TaskProgress => {
+                    assert!(
+                        sys.as_task_progress().is_some(),
+                        "as_task_progress failed after round-trip"
+                    );
+                }
+                super::SystemSubtype::TaskNotification => {
+                    assert!(
+                        sys.as_task_notification().is_some(),
+                        "as_task_notification failed after round-trip"
+                    );
+                }
+                other => panic!("unexpected subtype after round-trip: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_system_message_compact_boundary() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "compact_boundary",
+            "session_id": "879c1a88-3756-4092-aa95-0020c4ed9692",
+            "compact_metadata": {
+                "pre_tokens": 155285,
+                "trigger": "auto"
+            },
+            "uuid": "a67780d5-74cb-48b1-9137-7a6e7cee45d7"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            assert!(sys.is_compact_boundary());
+            assert!(!sys.is_init());
+            assert!(!sys.is_status());
+
+            let compact = sys
+                .as_compact_boundary()
+                .expect("Should parse as compact_boundary");
+            assert_eq!(compact.session_id, "879c1a88-3756-4092-aa95-0020c4ed9692");
+            assert_eq!(compact.compact_metadata.pre_tokens, 155285);
+            assert_eq!(
+                compact.compact_metadata.trigger,
+                super::CompactionTrigger::Auto
+            );
+            // Per-compaction stats are optional and absent here.
+            assert!(compact.summary.is_none());
+            assert!(compact.leaf_message_count.is_none());
+            assert!(compact.duration_ms.is_none());
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_compact_boundary_with_summary_stats() {
+        // Canonical keys.
+        let json = r#"{
+            "type": "system",
+            "subtype": "compact_boundary",
+            "session_id": "s1",
+            "compact_metadata": { "pre_tokens": 1000, "trigger": "manual" },
+            "summary": "Summarized the earlier exploration.",
+            "leaf_message_count": 42,
+            "duration_ms": 1234,
+            "uuid": "u1"
+        }"#;
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("Expected System message");
+        };
+        let compact = sys.as_compact_boundary().expect("compact_boundary");
+        assert_eq!(
+            compact.summary.as_deref(),
+            Some("Summarized the earlier exploration.")
+        );
+        assert_eq!(compact.leaf_message_count, Some(42));
+        assert_eq!(compact.duration_ms, Some(1234));
+
+        // Alternate wire keys (`content` for summary, `message_count` for count)
+        // deserialize into the same fields.
+        let json_alt = r#"{
+            "type": "system",
+            "subtype": "compact_boundary",
+            "session_id": "s2",
+            "compact_metadata": { "pre_tokens": 2000, "trigger": "auto" },
+            "content": "alt-key summary",
+            "message_count": 7
+        }"#;
+        let output: ClaudeOutput = serde_json::from_str(json_alt).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("Expected System message");
+        };
+        let compact = sys.as_compact_boundary().expect("compact_boundary");
+        assert_eq!(compact.summary.as_deref(), Some("alt-key summary"));
+        assert_eq!(compact.leaf_message_count, Some(7));
+    }
+
+    #[test]
+    fn test_init_message_with_new_fields() {
+        let json = r#"{
+            "type": "system",
+            "subtype": "init",
+            "session_id": "test-session",
+            "cwd": "/home/user",
+            "model": "claude-opus-4-7",
+            "tools": ["Bash"],
+            "mcp_servers": [],
+            "permissionMode": "default",
+            "apiKeySource": "none",
+            "uuid": "44841a0d-182d-493a-86b5-79800d3d9665",
+            "memory_paths": {"auto": "/home/user/.claude/projects/memory/"},
+            "fast_mode_state": "off",
+            "plugins": [{"name": "lsp", "path": "/plugins/lsp", "source": "lsp@official"}],
+            "claude_code_version": "2.1.117"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::System(sys) = output {
+            let init = sys.as_init().expect("Should parse as init");
+            assert_eq!(
+                init.uuid.as_deref(),
+                Some("44841a0d-182d-493a-86b5-79800d3d9665")
+            );
+            assert!(init.memory_paths.is_some());
+            assert_eq!(init.fast_mode_state.as_deref(), Some("off"));
+            assert_eq!(init.plugins[0].source.as_deref(), Some("lsp@official"));
+            assert_eq!(init.claude_code_version.as_deref(), Some("2.1.117"));
+        } else {
+            panic!("Expected System message");
+        }
+    }
+
+    #[test]
+    fn test_assistant_message_with_new_fields() {
+        let json = r#"{
+            "type": "assistant",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-opus-4-7",
+                "content": [{"type": "text", "text": "Hello"}],
+                "stop_reason": "end_turn",
+                "stop_details": null,
+                "context_management": null,
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 10,
+                    "cache_creation_input_tokens": 50,
+                    "cache_read_input_tokens": 0,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                }
+            },
+            "session_id": "abc",
+            "uuid": "msg-uuid-123"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::Assistant(asst) = output {
+            assert_eq!(asst.message.stop_details, None);
+            assert_eq!(asst.message.context_management, None);
+            let usage = asst.message.usage.unwrap();
+            assert_eq!(usage.inference_geo.as_deref(), Some("not_available"));
+        } else {
+            panic!("Expected Assistant message");
+        }
+    }
+
+    #[test]
+    fn test_user_message_with_new_fields() {
+        let json = r#"{
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Hello"}]
+            },
+            "session_id": "9abbc466-dad0-4b8e-b6b0-cad5eb7a16b9",
+            "parent_tool_use_id": "toolu_123",
+            "uuid": "user-msg-456"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::User(user) = output {
+            assert_eq!(user.parent_tool_use_id.as_deref(), Some("toolu_123"));
+            assert_eq!(user.uuid.as_deref(), Some("user-msg-456"));
+        } else {
+            panic!("Expected User message");
+        }
+    }
+
+    /// Real wire payload captured from the CLI after answering an
+    /// AskUserQuestion via the permission control protocol. The top-level
+    /// `tool_use_result` and `timestamp` fields must round-trip without loss —
+    /// proxies using this crate to relay messages to a viewer rely on those
+    /// fields being preserved (the viewer reads `tool_use_result.answers`).
+    #[test]
+    fn test_user_message_preserves_tool_use_result_and_timestamp() {
+        let json = r#"{
+            "type":"user",
+            "message":{"role":"user","content":[{"type":"tool_result","content":"User has answered your questions: . You can now continue with the user's answers in mind.","tool_use_id":"toolu_01331duMqP2PrRaqR2yWa8e4"}]},
+            "parent_tool_use_id":null,
+            "session_id":"622ae0c3-3d50-4fa7-9ee0-69d691238c6d",
+            "uuid":"8ef6e997-a849-4d15-bed3-2837c3d3f4cd",
+            "timestamp":"2026-05-12T23:12:04.121Z",
+            "tool_use_result":{"questions":[{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"A warm color"},{"label":"Blue","description":"A cool color"}],"multiSelect":false}],"answers":{"Color":"Blue"}}
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let user = match output {
+            ClaudeOutput::User(u) => u,
+            other => panic!("Expected User message, got {:?}", other.message_type()),
+        };
+
+        assert_eq!(user.timestamp.as_deref(), Some("2026-05-12T23:12:04.121Z"));
+        let raw = user
+            .tool_use_result
+            .as_ref()
+            .expect("tool_use_result must be captured");
+        assert_eq!(raw["answers"]["Color"], "Blue");
+        assert_eq!(raw["questions"][0]["header"], "Color");
+
+        // Round-trip: re-serialize and confirm tool_use_result + timestamp
+        // survive — the bug we're guarding against is that the proxy silently
+        // drops these fields when relaying user messages.
+        let reser: serde_json::Value = serde_json::to_value(&user).unwrap();
+        assert_eq!(reser["timestamp"], "2026-05-12T23:12:04.121Z");
+        assert_eq!(reser["tool_use_result"]["answers"]["Color"], "Blue");
+        assert_eq!(
+            reser["tool_use_result"]["questions"][0]["question"],
+            "Which color do you prefer?"
+        );
+
+        // Typed accessor: AskUserQuestionInput has the same shape as the
+        // AskUserQuestion tool_use_result.
+        let typed: crate::AskUserQuestionInput = user
+            .tool_use_result_as::<crate::AskUserQuestionInput>()
+            .expect("tool_use_result present")
+            .expect("AskUserQuestionInput parses");
+        assert_eq!(typed.questions.len(), 1);
+        assert_eq!(typed.questions[0].header, "Color");
+        let answers = typed.answers.expect("answers populated");
+        assert_eq!(answers.get("Color").map(String::as_str), Some("Blue"));
+    }
+
+    /// User messages without `tool_use_result` / `timestamp` must still
+    /// deserialize fine and serialize back without spuriously emitting nulls.
+    #[test]
+    fn test_user_message_without_tool_use_result_omits_field() {
+        let json = r#"{
+            "type":"user",
+            "message":{"role":"user","content":[{"type":"text","text":"hello"}]},
+            "session_id":"622ae0c3-3d50-4fa7-9ee0-69d691238c6d"
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let user = match output {
+            ClaudeOutput::User(u) => u,
+            _ => panic!("Expected User message"),
+        };
+        assert!(user.tool_use_result.is_none());
+        assert!(user.timestamp.is_none());
+
+        let reser = serde_json::to_value(&user).unwrap();
+        assert!(reser.get("tool_use_result").is_none());
+        assert!(reser.get("timestamp").is_none());
+    }
+
+    /// A `Task` tool result must expose subagent token / timing / tool-use
+    /// accounting through the typed [`UserMessage::subagent_result`] accessor,
+    /// including the nested per-model `usage` breakdown and `toolStats`.
+    #[test]
+    fn test_subagent_result_exposes_token_accounting() {
+        let json = r#"{
+            "type":"user",
+            "message":{"role":"user","content":[{"tool_use_id":"toolu_01","type":"tool_result","content":[{"type":"text","text":"21"}]}]},
+            "session_id":"d3fc5942-75e5-4aa1-a87d-b9484a176541",
+            "tool_use_result":{
+                "status":"completed",
+                "prompt":"Count the .rs files.",
+                "agentId":"ac4f0276e9d4b6232",
+                "agentType":"Explore",
+                "content":[{"type":"text","text":"21"}],
+                "resolvedModel":"claude-haiku-4-5-20251001",
+                "totalDurationMs":6869,
+                "totalTokens":7834,
+                "totalToolUseCount":1,
+                "usage":{"input_tokens":6,"cache_creation_input_tokens":125,"cache_read_input_tokens":7699,"output_tokens":4,"service_tier":"standard"},
+                "toolStats":{"readCount":0,"searchCount":0,"bashCount":1,"editFileCount":0,"linesAdded":0,"linesRemoved":0,"otherToolCount":0}
+            }
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let user = match output {
+            ClaudeOutput::User(u) => u,
+            _ => panic!("Expected User message"),
+        };
+
+        let result = user.subagent_result().expect("subagent result parses");
+        assert_eq!(result.agent_type.as_deref(), Some("Explore"));
+        assert_eq!(
+            result.resolved_model.as_deref(),
+            Some("claude-haiku-4-5-20251001")
+        );
+        assert_eq!(result.total_tokens, Some(7834));
+        assert_eq!(result.total_duration_ms, Some(6869));
+        assert_eq!(result.total_tool_use_count, Some(1));
+
+        let usage = result.usage.expect("nested usage present");
+        assert_eq!(usage.input_tokens, 6);
+        assert_eq!(usage.cache_read_input_tokens, 7699);
+
+        let stats = result.tool_stats.expect("toolStats present");
+        assert_eq!(stats.bash_count, 1);
+    }
+
+    /// `tool_use_result` shapes that aren't subagent runs (e.g. AskUserQuestion)
+    /// parse leniently into the all-`Option` [`SubagentResult`] with empty
+    /// accounting rather than failing, so callers can probe without panicking.
+    #[test]
+    fn test_subagent_result_absent_for_non_task_result() {
+        let json = r#"{
+            "type":"user",
+            "message":{"role":"user","content":[{"type":"text","text":"hi"}]},
+            "session_id":"622ae0c3-3d50-4fa7-9ee0-69d691238c6d",
+            "tool_use_result":{"questions":[],"answers":{"Color":"Blue"}}
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let user = match output {
+            ClaudeOutput::User(u) => u,
+            _ => panic!("Expected User message"),
+        };
+
+        let result = user.subagent_result().expect("lenient parse");
+        assert_eq!(result.total_tokens, None);
+        assert_eq!(result.agent_type, None);
+    }
+
+    #[test]
+    fn test_init_fast_mode_reason_and_mcp_server_errors_fully_wrapped() {
+        use serde_json::Value;
+
+        let raw: Value = serde_json::from_str(
+            r#"{
+            "type":"system","subtype":"init","session_id":"s1","uuid":"u1",
+            "fast_mode_state":"off",
+            "fast_mode_disabled_reason":"not_first_party",
+            "mcp_server_errors":[{"name":"broken","type":"invalid_config","message":"url entry with no type"}]
+        }"#,
+        )
+        .unwrap();
+        crate::io::assert_fully_wrapped(&raw);
+
+        let output: ClaudeOutput = serde_json::from_value(raw).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("expected System");
+        };
+        let init = sys.as_init().expect("parses as init");
+        assert_eq!(
+            init.fast_mode_disabled_reason,
+            Some(crate::FastModeDisabledReason::NotFirstParty)
+        );
+        let errs = init.mcp_server_errors.unwrap();
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].name, "broken");
+        assert_eq!(errs[0].error_type, "invalid_config");
+    }
+
+    #[test]
+    fn test_code_change_published_fully_wrapped() {
+        use super::{KnownSystemEvent, SystemSubtype};
+        use serde_json::Value;
+
+        let raw: Value = serde_json::from_str(
+            r#"{
+            "type":"system","subtype":"code_change_published",
+            "provider":"github","url":"https://github.com/owner/repo/pull/42",
+            "repo":"owner/repo","identifier":"42",
+            "uuid":"u1","session_id":"s1"
+        }"#,
+        )
+        .unwrap();
+        crate::io::assert_fully_wrapped(&raw);
+
+        let output: ClaudeOutput = serde_json::from_value(raw).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("expected System");
+        };
+        assert_eq!(sys.subtype, SystemSubtype::CodeChangePublished);
+        let Some(KnownSystemEvent::CodeChangePublished(msg)) = sys.as_known_system_event() else {
+            panic!("expected CodeChangePublished event");
+        };
+        assert_eq!(msg.provider, "github");
+        assert_eq!(msg.repo, "owner/repo");
+        assert_eq!(msg.identifier, "42");
+
+        assert!(sys.is_code_change_published());
+        assert!(!sys.is_vcs_state_changed());
+        let direct = sys.as_code_change_published().expect("direct accessor");
+        assert_eq!(direct.url, "https://github.com/owner/repo/pull/42");
+        assert!(sys.as_vcs_state_changed().is_none());
+    }
+
+    #[test]
+    fn test_feedback_draft_queued_fully_wrapped() {
+        use super::{KnownSystemEvent, SystemSubtype};
+        use serde_json::Value;
+
+        let raw: Value = serde_json::from_str(
+            r#"{
+            "type":"system","subtype":"feedback_draft_queued",
+            "draft_id":"draft-1","draft_type":"bug_report",
+            "title":"Tool output was truncated",
+            "details_preview":"The last command omitted its final lines",
+            "uuid":"u1","session_id":"s1","future_field":"preserved"
+        }"#,
+        )
+        .unwrap();
+        crate::io::assert_fully_wrapped(&raw);
+
+        let output: ClaudeOutput = serde_json::from_value(raw).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("expected System");
+        };
+        assert_eq!(sys.subtype, SystemSubtype::FeedbackDraftQueued);
+        assert!(sys.is_feedback_draft_queued());
+        assert!(!sys.is_vcs_state_changed());
+
+        let direct = sys
+            .as_feedback_draft_queued()
+            .expect("direct typed accessor");
+        assert_eq!(direct.draft_id, "draft-1");
+        assert_eq!(direct.draft_type, "bug_report");
+        assert_eq!(direct.extra["future_field"], "preserved");
+
+        let Some(KnownSystemEvent::FeedbackDraftQueued(known)) = sys.as_known_system_event() else {
+            panic!("expected FeedbackDraftQueued event");
+        };
+        assert_eq!(known.title, "Tool output was truncated");
+        assert_eq!(
+            sys.typed_value().expect("typed value")["future_field"],
+            "preserved"
+        );
+    }
+
+    #[test]
+    fn test_cloud_session_delta_fully_wrapped() {
+        use super::{KnownSystemEvent, SystemSubtype};
+        use serde_json::Value;
+
+        let raw: Value = serde_json::from_str(
+            r#"{
+            "type":"system","subtype":"cloud_session_delta",
+            "seq":3,"changed":["serving","connection"],
+            "cloud_session":{"id":"session_abc","view_url":"https://example.invalid/s/abc",
+                "serving":{"state":"on"},"connection":{"state":"live"}},
+            "uuid":"u1","session_id":"s1","future_field":"preserved"
+        }"#,
+        )
+        .unwrap();
+        crate::io::assert_fully_wrapped(&raw);
+
+        let output: ClaudeOutput = serde_json::from_value(raw).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("expected System");
+        };
+        assert_eq!(sys.subtype, SystemSubtype::CloudSessionDelta);
+        assert!(sys.is_cloud_session_delta());
+        assert!(!sys.is_feedback_draft_queued());
+
+        let direct = sys.as_cloud_session_delta().expect("direct typed accessor");
+        assert_eq!(direct.seq, 3);
+        assert_eq!(direct.changed, vec!["serving", "connection"]);
+        assert_eq!(direct.cloud_session["id"], "session_abc");
+        assert_eq!(direct.extra["future_field"], "preserved");
+
+        let Some(KnownSystemEvent::CloudSessionDelta(known)) = sys.as_known_system_event() else {
+            panic!("expected CloudSessionDelta event");
+        };
+        assert_eq!(known.session_id, "s1");
+        assert_eq!(
+            sys.typed_value().expect("typed value")["future_field"],
+            "preserved"
+        );
+    }
+
+    #[test]
+    fn test_vcs_state_changed_fully_wrapped() {
+        use super::{KnownSystemEvent, VcsMutationKind};
+        use serde_json::Value;
+
+        for kind in ["commit", "push", "merge", "rebase"] {
+            let raw: Value = serde_json::from_str(&format!(
+                r#"{{"type":"system","subtype":"vcs_state_changed","kind":"{}","cwd":"/repo","uuid":"u1","session_id":"s1"}}"#,
+                kind
+            ))
+            .unwrap();
+            crate::io::assert_fully_wrapped(&raw);
+
+            let output: ClaudeOutput = serde_json::from_value(raw).unwrap();
+            let ClaudeOutput::System(sys) = output else {
+                panic!("expected System");
+            };
+            let Some(KnownSystemEvent::VcsStateChanged(msg)) = sys.as_known_system_event() else {
+                panic!("expected VcsStateChanged event");
+            };
+            assert_eq!(msg.kind.as_str(), kind);
+            assert!(!matches!(msg.kind, VcsMutationKind::Unknown(_)));
+        }
+
+        // Unknown kinds are valid per the wire contract.
+        let raw: Value = serde_json::from_str(
+            r#"{"type":"system","subtype":"vcs_state_changed","kind":"tag","cwd":"/repo","uuid":"u2","session_id":"s2"}"#,
+        )
+        .unwrap();
+        crate::io::assert_fully_wrapped(&raw);
+        let output: ClaudeOutput = serde_json::from_value(raw).unwrap();
+        let ClaudeOutput::System(sys) = output else {
+            panic!("expected System");
+        };
+        let Some(KnownSystemEvent::VcsStateChanged(msg)) = sys.as_known_system_event() else {
+            panic!("expected VcsStateChanged event");
+        };
+        assert_eq!(msg.kind, VcsMutationKind::Unknown("tag".to_string()));
+
+        assert!(sys.is_vcs_state_changed());
+        let direct = sys.as_vcs_state_changed().expect("direct accessor");
+        assert_eq!(direct.cwd, "/repo");
+        assert!(sys.as_code_change_published().is_none());
+    }
+
+    #[test]
+    fn test_assistant_aborted_and_resume_flags_roundtrip() {
+        let json = r#"{
+            "type":"assistant",
+            "message":{"id":"msg_1","role":"assistant","model":"claude-3","content":[{"type":"text","text":"partial"}]},
+            "session_id":"s1",
+            "aborted":true,
+            "resumed_from_incomplete_thinking":true
+        }"#;
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let ClaudeOutput::Assistant(msg) = &output else {
+            panic!("expected Assistant");
+        };
+        assert_eq!(msg.aborted, Some(true));
+        assert_eq!(msg.resumed_from_incomplete_thinking, Some(true));
+        let reserialized = serde_json::to_string(&output).unwrap();
+        assert!(reserialized.contains("\"aborted\":true"));
+        assert!(reserialized.contains("\"resumed_from_incomplete_thinking\":true"));
+
+        // Absent flags stay absent on the wire.
+        let json = r#"{
+            "type":"assistant",
+            "message":{"id":"msg_2","role":"assistant","model":"claude-3","content":[]},
+            "session_id":"s2"
+        }"#;
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let reserialized = serde_json::to_string(&output).unwrap();
+        assert!(!reserialized.contains("aborted"));
+        assert!(!reserialized.contains("resumed_from_incomplete_thinking"));
+    }
+
+    #[test]
+    fn test_user_tool_result_meta_roundtrip() {
+        let json = r#"{
+            "type":"user",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"denied"}]},
+            "session_id":"622ae0c3-3d50-4fa7-9ee0-69d691238c6d",
+            "tool_result_meta":[
+                {"id":"toolu_1","non_execution_kind":"user-rejected","user_feedback":"use the staging db"},
+                {"id":"toolu_2","non_execution_kind":"permission-rule"}
+            ]
+        }"#;
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let ClaudeOutput::User(user) = &output else {
+            panic!("expected User");
+        };
+        let meta = user.tool_result_meta.as_ref().unwrap();
+        assert_eq!(meta.len(), 2);
+        assert_eq!(meta[0].non_execution_kind.as_deref(), Some("user-rejected"));
+        assert_eq!(meta[0].user_feedback.as_deref(), Some("use the staging db"));
+        assert_eq!(meta[1].user_feedback, None);
+
+        let reserialized = serde_json::to_string(&output).unwrap();
+        assert!(reserialized.contains("\"non_execution_kind\":\"user-rejected\""));
+        assert!(!reserialized.contains("\"user_feedback\":null"));
+    }
+
+    /// CLI 2.1.222 added `scope` to `system/model_refusal_fallback`:
+    /// "session" (main-thread swap, also the meaning when absent on older
+    /// CLIs) vs "local" (subagent/side-question fallback only).
+    #[test]
+    fn model_refusal_fallback_scope_roundtrips_and_defaults() {
+        use super::{ModelRefusalFallbackMessage, RefusalFallbackScope};
+        let with_scope = serde_json::json!({
+            "trigger": "refusal",
+            "direction": "retry",
+            "scope": "local",
+            "original_model": "claude-fable-5",
+            "fallback_model": "claude-opus-5",
+            "request_id": null,
+            "content": "Refused; retried on fallback model.",
+            "uuid": "u1",
+            "session_id": "s1"
+        });
+        let msg: ModelRefusalFallbackMessage = serde_json::from_value(with_scope.clone()).unwrap();
+        assert_eq!(msg.scope, Some(RefusalFallbackScope::Local));
+        assert_eq!(serde_json::to_value(&msg).unwrap(), with_scope);
+
+        // Older CLIs omit scope — absent, not null, and treated as session
+        // by consumers per the wire docs.
+        let mut without = with_scope.clone();
+        without.as_object_mut().unwrap().remove("scope");
+        let msg: ModelRefusalFallbackMessage = serde_json::from_value(without.clone()).unwrap();
+        assert_eq!(msg.scope, None);
+        assert_eq!(serde_json::to_value(&msg).unwrap(), without);
+
+        // Open enum: unknown scopes pass through verbatim.
+        assert_eq!(
+            RefusalFallbackScope::from("workspace").as_str(),
+            "workspace"
+        );
+    }
+}

@@ -1,0 +1,2251 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
+use std::fmt;
+
+/// Result message for completed queries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultMessage {
+    pub subtype: ResultSubtype,
+    pub is_error: bool,
+    pub duration_ms: u64,
+    pub duration_api_ms: u64,
+
+    /// Time to first token, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+
+    /// Time to first streamed token, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_stream_ms: Option<u64>,
+
+    /// Time from session start until the first request was issued, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_to_request_ms: Option<u64>,
+
+    /// How [`time_to_request_ms`](Self::time_to_request_ms) was spent, in
+    /// integer milliseconds per phase, summing to it exactly (CLI 2.1.285+):
+    /// `system_prompt`, `system_prompt_rebuild` (a second assembly of the
+    /// system prompt, run when the tool pool re-read after the message was
+    /// handled differs from the turn-start pool; CLIs before 2.1.287 report
+    /// it inside `system_prompt`), `resume_other` (settling, before the
+    /// turn's own prompt, tool calls that an earlier run left open or the
+    /// session's client handed over — see
+    /// [`turn_start_resume_kind`](Self::turn_start_resume_kind) — excluding
+    /// four parts that have keys of their own: `resume_store_confirm`,
+    /// `resume_staged_files_wait`, `resume_connector_wait` and
+    /// `turn_start_tool_run`; CLIs before 2.1.287 report these five as one
+    /// `turn_start_resume` key), `process_user_input` (excluding
+    /// `input_images`, `input_attachments`, `input_command` and
+    /// `input_hooks`, which have keys of their own on 2.1.287+),
+    /// `transcript_persist`, `init_message`, `engine_pickup`,
+    /// `memory_recall_wait`, `memory_context_wait`, `autocompact`,
+    /// `query_setup`, `tool_schema_build`, `message_normalization`,
+    /// `client_creation`, (CLI 2.1.316+) `conversation_append` (from the end
+    /// of `process_user_input` to the start of `tool_pool_refresh`, less
+    /// `transcript_persist`), `init_frame_send` (from the end of
+    /// `init_message` to the start of `engine_pickup`), `loop_entry` (from the
+    /// end of `engine_pickup` to the start of `message_prep`, less the memory
+    /// waits), `request_announcements` (from the end of `autocompact` to the
+    /// start of `query_setup`, less the model choice) and `other` (the
+    /// remainder no phase covers; producers before 2.1.316 count those four
+    /// stretches here). A phase that did not run is absent; `other` is always
+    /// present. Open set —
+    /// keep unrecognized phase names. Present where `time_to_request_ms` is,
+    /// on `CLAUDE_CODE_REMOTE` sessions and hosts that set
+    /// `CLAUDE_CODE_EMIT_STARTUP_TIMING`; absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_to_request_phases_ms: Option<std::collections::BTreeMap<String, u64>>,
+
+    /// What the turn was given to settle before its own prompt; the
+    /// `resume_*` phases and `turn_start_tool_run` in
+    /// [`time_to_request_phases_ms`](Self::time_to_request_phases_ms) say how
+    /// long that took (CLI 2.1.287+). A turn given more than one kind reports
+    /// the first in [`TurnStartResumeKind`] order. Present where
+    /// `time_to_request_phases_ms` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_start_resume_kind: Option<TurnStartResumeKind>,
+
+    /// On a turn the session's client handed over (`turn_start_resume_kind`
+    /// is `turn_handoff`), how long its `turn_handoff` control request waited
+    /// from its arrival on the session server's SSE stream until the input
+    /// loop read it, in integer ms, split into `startup_wait`,
+    /// `control_requests_ahead` and `user_frames_ahead` (each absent when 0)
+    /// and `before_read` (the rest, always present). The values sum to the
+    /// wait. Open set — keep unrecognized part names. Present only on
+    /// results that carry `turn_start_resume_kind` (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_intake_phases_ms: Option<std::collections::BTreeMap<String, u64>>,
+
+    /// Number of earlier turns of this CLI process that sent a
+    /// main-conversation model request: 0 is the process's first turn to
+    /// reach the model, not the conversation's first. Turns stopped or
+    /// failed after sending count but carry no value, so values can skip.
+    /// Where one process hosts several sessions, each has its own count.
+    /// Present where
+    /// [`time_to_request_phases_ms`](Self::time_to_request_phases_ms) is
+    /// (CLI 2.1.285+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_turn_index: Option<u64>,
+
+    /// CPU time (user plus system) the CLI process used from turn start
+    /// until it sent the turn's first main-conversation model request, in
+    /// milliseconds (CLI 2.1.285+). Near `time_to_request_ms`, the window
+    /// was mostly computing; near 0, mostly waiting. It adds up all threads,
+    /// so it can exceed the window, and leaves out child processes. Present
+    /// where `time_to_request_phases_ms` is, unless the runtime reports no
+    /// resource usage or the process hosts other sessions too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_to_request_cpu_ms: Option<u64>,
+
+    /// The longest single stall of the session's thread between turn start
+    /// and the turn's first main-conversation model request, in
+    /// milliseconds, measured as how late a 50 ms timer fired (CLI
+    /// 2.1.285+): the real stall can be up to 50 ms longer, and a few ms is
+    /// timer noise. Only the first two minutes are measured. Present where
+    /// `time_to_request_phases_ms` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_to_request_loop_lag_ms: Option<u64>,
+
+    /// Major page faults (waits for memory to be read from disk) by the
+    /// process in the
+    /// [`time_to_request_cpu_ms`](Self::time_to_request_cpu_ms) window;
+    /// Windows also counts faults needing no disk read. Present where
+    /// `time_to_request_cpu_ms` is (CLI 2.1.285+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_to_request_major_faults: Option<u64>,
+
+    /// Resident memory of the CLI process at turn start, in whole MiB
+    /// (`VmRSS`), child processes left out. Sent only by a worker Anthropic
+    /// hosts, with telemetry on, on Linux (not WSL); there it is present,
+    /// always with [`process_rss_mib_result`](Self::process_rss_mib_result),
+    /// where `process_turn_index` is, unless the process hosts other
+    /// sessions too (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_rss_mib_turn_start: Option<u64>,
+
+    /// The anonymous part (`RssAnon`: heaps, stacks, JIT code) of
+    /// [`process_rss_mib_turn_start`](Self::process_rss_mib_turn_start), in
+    /// whole MiB (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_anon_mib_turn_start: Option<u64>,
+
+    /// As [`process_rss_mib_turn_start`](Self::process_rss_mib_turn_start),
+    /// read again just before this result is built: the level the turn
+    /// leaves behind (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_rss_mib_result: Option<u64>,
+
+    /// The anonymous part of
+    /// [`process_rss_mib_result`](Self::process_rss_mib_result), in whole
+    /// MiB (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_anon_mib_result: Option<u64>,
+
+    /// The most memory the process has had resident from its start until
+    /// this result (`VmHWM`), in whole MiB — not this turn's peak alone
+    /// (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_peak_rss_mib: Option<u64>,
+
+    /// CPU time (user plus system, all threads, no child processes) the CLI
+    /// process used from the end of its previous turn to this turn's start,
+    /// in ms. Divide sums of it by sums of
+    /// [`process_wall_ms_between_turns`](Self::process_wall_ms_between_turns),
+    /// which always comes with it, for CPU per second. Present where
+    /// [`process_cpu_ms_turn`](Self::process_cpu_ms_turn) is, from the
+    /// process's second turn on (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_cpu_ms_between_turns: Option<u64>,
+
+    /// Monotonic wall time of the
+    /// [`process_cpu_ms_between_turns`](Self::process_cpu_ms_between_turns)
+    /// stretch, in ms (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_wall_ms_between_turns: Option<u64>,
+
+    /// CPU time, counted as in
+    /// [`process_cpu_ms_between_turns`](Self::process_cpu_ms_between_turns),
+    /// from this turn's start until just before this result is built,
+    /// including the waits for the model and tools. Always comes with
+    /// [`process_wall_ms_turn`](Self::process_wall_ms_turn). Sent only by the
+    /// workers named under
+    /// [`process_rss_mib_turn_start`](Self::process_rss_mib_turn_start)
+    /// (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_cpu_ms_turn: Option<u64>,
+
+    /// How many times the session built its main tool list, first build
+    /// included, since the last result that carried this count (or since the
+    /// session started). A read that reused the stored list counts as none;
+    /// builds between turns and in turns whose result carried no count are
+    /// included, a subagent's list is not. Sent with
+    /// [`process_cpu_ms_turn`](Self::process_cpu_ms_turn) (CLI 2.1.321+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_pool_build_count: Option<u64>,
+
+    /// Monotonic wall time of the
+    /// [`process_cpu_ms_turn`](Self::process_cpu_ms_turn) stretch, in ms
+    /// (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_wall_ms_turn: Option<u64>,
+
+    /// CPU time (user plus system), in ms, of the programs in the CLI's shell
+    /// CPU accounting group over the
+    /// [`process_cpu_ms_turn`](Self::process_cpu_ms_turn) stretch: the Bash
+    /// and Monitor tool shells and everything they start. Not part of
+    /// [`process_cpu_ms_turn`](Self::process_cpu_ms_turn), which leaves out
+    /// child processes. Hooks, MCP/LSP servers and plugin monitors are not
+    /// counted, and a command whose shell could not join the group (e.g.
+    /// under the command sandbox) makes it read lower rather than absent.
+    /// Present where `process_cpu_ms_turn` is, only on Linux with a cgroup v1
+    /// `cpuacct` hierarchy; absent, never 0, otherwise (CLI 2.1.312+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_cpu_ms_turn: Option<u64>,
+
+    /// Shell CPU time, counted as in
+    /// [`shell_cpu_ms_turn`](Self::shell_cpu_ms_turn), from just before the
+    /// previous result that carried `shell_cpu_ms_turn` was built until this
+    /// turn's start, so summed over a process's results the two never count a
+    /// millisecond twice. Always comes with
+    /// [`shell_wall_ms_since_last_result`](Self::shell_wall_ms_since_last_result).
+    /// Absent on the process's first such result and after a gap in the
+    /// figures (CLI 2.1.312+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_cpu_ms_since_last_result: Option<u64>,
+
+    /// Monotonic wall time of the
+    /// [`shell_cpu_ms_since_last_result`](Self::shell_cpu_ms_since_last_result)
+    /// stretch, in ms, by the same clock as
+    /// [`process_wall_ms_turn`](Self::process_wall_ms_turn) (CLI 2.1.312+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_wall_ms_since_last_result: Option<u64>,
+
+    /// How long, within the
+    /// [`process_cpu_ms_turn`](Self::process_cpu_ms_turn) stretch and by its
+    /// clock, a response stream of a main-conversation model request was
+    /// open, in ms: from the stream's first event until the CLI stopped
+    /// reading it. Summed over the turn's requests; overlapping streams count
+    /// once. Subagent, side-request and compaction streams are not in it
+    /// (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_wall_ms_streaming: Option<u64>,
+
+    /// CPU time, counted as in
+    /// [`process_cpu_ms_between_turns`](Self::process_cpu_ms_between_turns),
+    /// used inside
+    /// [`process_wall_ms_streaming`](Self::process_wall_ms_streaming); part
+    /// of [`process_cpu_ms_turn`](Self::process_cpu_ms_turn). Always comes
+    /// with `process_wall_ms_streaming`, `main_stream_count` and
+    /// `main_stream_event_count` (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_cpu_ms_streaming: Option<u64>,
+
+    /// How many streams
+    /// [`process_wall_ms_streaming`](Self::process_wall_ms_streaming)
+    /// covers: one per attempt of a main-conversation model request that
+    /// brought a first event, so a retry counts again (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_stream_count: Option<u64>,
+
+    /// How many stream events the API sent on those streams, leaving out
+    /// keepalive pings the CLI makes up itself (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_stream_event_count: Option<u64>,
+
+    /// In how many chunks the runtime's fetch handed over the bodies of
+    /// those streams. Absent, never 0, when chunks were not counted (Bedrock,
+    /// Vertex, Foundry, Mantle, byte watchdog off, or a stream still open)
+    /// (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_stream_chunk_count: Option<u64>,
+
+    /// Bit set of the runtime tuning variables the CLI process was started
+    /// with (set and not empty): 1 `BUN_GC_TIMER_INTERVAL`, 2
+    /// `MIMALLOC_PURGE_HOLES_MIN_INTERVAL`, 4 `BUN_IDLE_GC_SECONDS`, 8
+    /// `MIMALLOC_PURGE_DELAY`, 16 `BUN_JSC_useFTLJIT`, 32
+    /// `BUN_JSC_percentCPUPerMBForEdenTimer`, 64
+    /// `BUN_JSC_percentCPUPerMBForFullTimer`. Names only, never values. Sent
+    /// only by the workers named under
+    /// [`process_rss_mib_turn_start`](Self::process_rss_mib_turn_start), on
+    /// results of any subtype (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_start_tuning: Option<u64>,
+
+    /// `MIMALLOC_PURGE_DELAY` in ms as the CLI process was started with it.
+    /// Sent only beside
+    /// [`process_start_tuning`](Self::process_start_tuning), and absent when
+    /// the variable was unset, empty or not one to seven digits
+    /// (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_start_purge_delay_ms: Option<u64>,
+
+    /// Garbage collections on the CLI process's main thread, counted from
+    /// early start-up. Only on the process's first numbered result within an
+    /// hour of its start, when started with
+    /// `CLAUDE_CODE_COUNT_GARBAGE_COLLECTIONS=1`, and only from
+    /// Anthropic-hosted cloud workers with telemetry on (CLI 2.1.311+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_garbage_collections: Option<ProcessGarbageCollections>,
+
+    /// What the `input_attachments` phase of `time_to_request_phases_ms` did
+    /// on the turn, to tell a wait inside one attachment producer from a
+    /// process that was busy. Present on turns where the phase started,
+    /// unless nothing of it is known (CLI 2.1.288+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_attachments_detail: Option<InputAttachmentsDetail>,
+
+    /// How the `resume_store_confirm` phase of `time_to_request_phases_ms`
+    /// was spent. Present where that phase is, in a session whose transcript
+    /// goes to a hosted store: on the result of a handed-off turn whose lines
+    /// were confirmed and that went on to a model request (CLI 2.1.290+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_store_confirm_detail: Option<ResumeStoreConfirmDetail>,
+
+    /// How the `tool_schema_build` phase of `time_to_request_phases_ms` was
+    /// spent, over the main-conversation requests built before the turn's
+    /// first dispatch (normally one). Present where that phase is
+    /// (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_schema_build_detail: Option<ToolSchemaBuildDetail>,
+
+    /// How the `message_normalization` phase of `time_to_request_phases_ms`
+    /// was spent: building, from the conversation, the messages the API
+    /// takes. Present where that phase is (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_normalization_detail: Option<MessageNormalizationDetail>,
+
+    /// How the `request_build` phase of `time_to_request_phases_ms` was
+    /// spent: assembling the request from the normalized messages up to its
+    /// dispatch. Present where that phase is (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_build_detail: Option<RequestBuildDetail>,
+
+    /// `process_cpu_ms_turn` and `process_wall_ms_turn` split among states
+    /// that exclude each other: the states' `cpu_ms` add up to the first
+    /// exactly and their `wall_ms` to the second, and the field is sent only
+    /// where they do (CLI 2.1.317+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_turn_states: Option<ProcessTurnStates>,
+
+    /// The turn's CPU time by thread group, in whole ms, keyed by a
+    /// `process_turn_states` state (or `between_turns` for the
+    /// `process_cpu_ms_between_turns` stretch). Each inner map holds
+    /// `one_in` (the N of the one-in-N sampling draw that picked this
+    /// process), `<group>_cpu_ms` and `<group>_system_ms` for the groups
+    /// `main`, `gc`, `jit`, `warm_up`, `allocator`, `http`, `pool` and
+    /// `other` (each left out where it rounds to 0), `process_cpu_ms`,
+    /// `process_system_ms`, `run_wait_ms` and `guest_steal_ms`. Sent by
+    /// about one worker process in 4,096 (`CLAUDE_CODE_THREAD_CPU_ONE_IN`
+    /// changes the rate), and left out where a reading failed or looked
+    /// unreliable. Marked `@internal` upstream (CLI 2.1.319+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_turn_threads:
+        Option<std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>>,
+
+    /// Time from spawning a worker/spare until the first request was issued, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_to_request_from_spawn_ms: Option<u64>,
+
+    /// Whether a warm spare process was claimed for this request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_spare_claimed: Option<bool>,
+
+    /// Whether this process started its start-up feature-flag fetch before
+    /// the wait for it, or why not: the same value as `system/init`'s
+    /// `startup_timing.flag_fetch_kick`. An open string set
+    /// (`started_in_init_*`, `started_after_init_*`, `not_asked_warm`,
+    /// `settings_pending_*`, `launch_excluded`, `not_eligible`; an `_empty`
+    /// or `_warm` ending is the flag cache at that moment). Present only
+    /// where `time_to_request_from_spawn_ms` is, and only when start-up
+    /// judged it (CLI 2.1.288+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag_fetch_kick: Option<String>,
+
+    /// Epoch-ish timestamp origin used by CLI timing instrumentation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_origin_ms: Option<u64>,
+
+    /// Wall-clock epoch milliseconds when the API request was sent
+    /// (fractional; from CLI timing instrumentation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_sent_wall_ms: Option<f64>,
+
+    /// Input tokens of the model call whose send time is
+    /// [`request_sent_wall_ms`](Self::request_sent_wall_ms): `input_tokens +
+    /// cache_read_input_tokens + cache_creation_input_tokens` from that call's
+    /// `message_start`, so a consumer can group turn latency by prompt size
+    /// (CLI 2.1.286+). Present only with `request_sent_wall_ms`, and only
+    /// when the sum is above zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_request_input_tokens: Option<u64>,
+
+    /// The `cache_read_input_tokens` part of
+    /// [`first_request_input_tokens`](Self::first_request_input_tokens),
+    /// `0` included, so a consumer can tell a cold prompt cache from a large
+    /// prompt. Present exactly when `first_request_input_tokens` is
+    /// (CLI 2.1.321+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_request_cache_read_input_tokens: Option<u64>,
+
+    /// Time until the first content frame of the stream arrived, in
+    /// milliseconds (CLI 2.1.260+ timing instrumentation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_content_frame_ms: Option<u64>,
+
+    /// Time until the first stream POST was issued, in milliseconds
+    /// (CLI 2.1.260+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_stream_post_ms: Option<u64>,
+
+    /// Time until the first stream POST was acknowledged, in milliseconds
+    /// (CLI 2.1.260+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_stream_post_ack_ms: Option<u64>,
+
+    /// Time the first stream POST spent waiting in the outbound queue, in
+    /// milliseconds (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_stream_post_queue_wait_ms: Option<u64>,
+
+    /// What the first stream POST was queued behind (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_stream_post_queued_behind: Option<StreamPostQueuedBehind>,
+
+    /// Wall-clock epoch milliseconds when the first stream POST was issued
+    /// (fractional; CLI 2.1.260+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_stream_post_wall_ms: Option<f64>,
+
+    /// Wall-clock epoch milliseconds when the triggering send's frame arrived
+    /// on a session reading its input from the session server's SSE stream
+    /// (`--sdk-url`), before the input loop read it (CLI 2.1.278+). With
+    /// [`frame_enqueued_wall_ms`](Self::frame_enqueued_wall_ms) and
+    /// [`turn_started_wall_ms`](Self::turn_started_wall_ms) it splits the
+    /// stretch between the server's persist and `request_sent_wall_ms` into
+    /// transit, the input loop's handling of the frame, its wait on the
+    /// command queue, and the turn's own work. Present only together with
+    /// `request_sent_wall_ms`, and only when the transport recorded the
+    /// receipt; absent on a local stdin host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_received_wall_ms: Option<f64>,
+
+    /// Wall-clock epoch milliseconds when the input loop put the triggering
+    /// send's frame on the command queue (CLI 2.1.278+). Present exactly
+    /// when [`frame_received_wall_ms`](Self::frame_received_wall_ms) is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_enqueued_wall_ms: Option<f64>,
+
+    /// How the triggering send's frame spent the time between
+    /// [`frame_received_wall_ms`](Self::frame_received_wall_ms) and
+    /// [`frame_enqueued_wall_ms`](Self::frame_enqueued_wall_ms), in integer
+    /// milliseconds per intake step (CLI 2.1.282+): `before_read` (until the
+    /// input loop read the frame, including any wait behind earlier frames
+    /// and a first message's wait for the worker to finish starting),
+    /// `dedup`, `flag_settle`, `receive_hook`, `attachments`,
+    /// `admission_wait` (held behind a pending model switch, a pending MCP
+    /// server-set change, start-up work the worker still owed its first
+    /// turn, or an earlier held frame), `admit_check` (the host's decision
+    /// whether to queue the frame, when it had to be awaited) and `other`.
+    /// Steps that did not run are absent; `before_read` and `other` are
+    /// always present. The values sum to the enqueued-minus-received gap
+    /// unless a step came out negative and was clamped to 0. Open set —
+    /// keep unrecognized step names. Present exactly when
+    /// `frame_received_wall_ms` is, except from older producers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_intake_phases_ms: Option<std::collections::BTreeMap<String, u64>>,
+
+    /// Wall-clock epoch milliseconds when the turn's clock started: the
+    /// anchor `duration_ms`, `ttft_ms`, `ttft_stream_ms`,
+    /// `time_to_request_ms`, `first_content_frame_ms`, `first_stream_post_ms`
+    /// and `first_stream_post_ack_ms` are measured from (CLI 2.1.278+).
+    /// Present exactly when
+    /// [`frame_received_wall_ms`](Self::frame_received_wall_ms) is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_started_wall_ms: Option<f64>,
+
+    /// How the time from
+    /// [`frame_enqueued_wall_ms`](Self::frame_enqueued_wall_ms) to
+    /// [`turn_started_wall_ms`](Self::turn_started_wall_ms) was spent, in
+    /// integer milliseconds per step of the host's work through its message
+    /// queue (CLI 2.1.285+): `idle`, `earlier_turn`, `after_turn`,
+    /// `background_wait`, `entry_joins`, `sdk_mcp_update`, `loop_top`,
+    /// `session_start_wait`, `first_command`, `mcp_prewait`, `repo_wait`,
+    /// `turn_joins`, `tool_pool`, `commit`, `after_arm`, `turn_gate`,
+    /// `turn_open`, `engine_setup`, `tool_reread`, `cwd` and `other`. Each
+    /// step is where the host was at the time, which for part of the stretch
+    /// may be an earlier message's turn. A step that rounds to 0 is absent;
+    /// `other` is always present. The values sum to the started-minus-enqueued
+    /// gap, except that they can exceed it (usually by 1 ms from rounding).
+    /// Open set — keep unrecognized step names. Present only when
+    /// `frame_received_wall_ms` is, and absent from older producers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_start_phases_ms: Option<std::collections::BTreeMap<String, u64>>,
+
+    /// Of the time from `frame_enqueued_wall_ms` to `turn_started_wall_ms`,
+    /// the integer milliseconds in which the `claude -p` host's message
+    /// reader was held by control requests (such as `mcp_set_servers` or
+    /// `set_permission_mode`) instead of reading the next message (CLI
+    /// 2.1.285+). It overlaps
+    /// [`turn_start_phases_ms`](Self::turn_start_phases_ms) and is not part
+    /// of its sum. Absent when 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_start_control_requests_ms: Option<u64>,
+
+    /// Time until the first text POST was issued, in milliseconds
+    /// (CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_text_post_ms: Option<u64>,
+
+    /// Time the first text POST spent waiting in the outbound queue, in
+    /// milliseconds (CLI 2.1.287+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_text_post_queue_wait_ms: Option<u64>,
+
+    /// What the first text POST was queued behind (CLI 2.1.287+); the same
+    /// value set as
+    /// [`first_stream_post_queued_behind`](Self::first_stream_post_queued_behind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_text_post_queued_behind: Option<StreamPostQueuedBehind>,
+
+    /// Wall-clock epoch milliseconds when the first text POST was issued
+    /// (fractional; CLI 2.1.278+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_text_post_wall_ms: Option<f64>,
+
+    /// How many uploads carrying new visible reply text (as
+    /// [`first_text_post_ms`](Self::first_text_post_ms) defines it) the
+    /// remote transport sent during the turn, from the upload
+    /// `first_text_post_ms` measures until this result was built. Uploads
+    /// still queued then are not counted, and a retry counts only if it
+    /// carries text no earlier upload did. Present only when
+    /// `first_text_post_ms` is, and never in a claude-code-server tenant
+    /// (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_post_count: Option<u64>,
+
+    /// Of the uploads in [`text_post_count`](Self::text_post_count), how
+    /// many were dispatched more than 500 ms after the one before. Tool
+    /// calls, thinking and model pauses make such gaps too, so compare
+    /// groups of turns with each other, not with 0. Present where
+    /// `text_post_count` is (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_post_gap_over_500ms_count: Option<u64>,
+
+    /// The largest delay, in whole ms, between the remote transport's
+    /// stream-event flush timer falling due and its buffer being emptied,
+    /// from the turn's first frame of visible reply text until this result
+    /// was built — a lower bound on how late that timer fired. Read on the
+    /// wall clock and capped at 60000. Absent when
+    /// [`text_post_count`](Self::text_post_count) is, or when the buffer was
+    /// never emptied at or after a due time (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_post_flush_timer_max_late_ms: Option<u64>,
+
+    /// Wire uuid of the user message this result answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_message_uuid: Option<String>,
+
+    /// The [`server_received_wall_ms`](crate::io::UserMessage::server_received_wall_ms)
+    /// of the user message [`user_message_uuid`](Self::user_message_uuid)
+    /// names, copied unchanged, so the session server can measure from its
+    /// own receipt to `request_sent_wall_ms` (CLI 2.1.286+). Present only with
+    /// `request_sent_wall_ms`, and only when that message carried a positive
+    /// finite number there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_server_received_wall_ms: Option<f64>,
+
+    /// Client uuids of every user message whose prompt this turn consumed, in
+    /// consumption order — all members of a prompt batch the host merged into
+    /// this one turn, plus any queued user message folded into the running
+    /// turn between tool rounds. Always contains `user_message_uuid`; at most
+    /// 64 entries. Absent on delivery-failure/zeroed results and from CLIs
+    /// before 2.1.259 (fall back to `user_message_uuid`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_message_uuids: Vec<String>,
+
+    /// Why this turn was the automatic re-run of a turn a worker restart
+    /// interrupted (`CLAUDE_CODE_RESUME_INTERRUPTED_TURN`): the host's
+    /// `CLAUDE_CODE_RESUME_REASON` when it set one (`host_draining`,
+    /// `checkpoint_restore`, `container_recreated`, ...), else
+    /// `interrupted_turn`. Present on a headless re-run's result, success or
+    /// error; absent on every other turn, on the Remote Control bridge's
+    /// per-turn synthetic results, and from CLIs before 2.1.268.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_reason: Option<String>,
+
+    /// The local slash command that produced this result when the query loop
+    /// was bypassed (success results only). Absent when the turn went to the
+    /// model and from CLIs before 2.1.268.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_command: Option<String>,
+
+    /// User-initiated sends still waiting in the command queue when this
+    /// result was produced. Greater than 0 means at least one more user turn
+    /// follows without further input, barring cancellation. Absent on fatal
+    /// startup results, on surfaces without a command queue, and from CLIs
+    /// before 2.1.259.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_turn_count: Option<u64>,
+
+    pub num_turns: i32,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+
+    #[serde(alias = "sessionId")]
+    pub session_id: String,
+    pub total_cost_usd: f64,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageInfo>,
+
+    /// Tools that were blocked due to permission denials during the session
+    #[serde(default)]
+    pub permission_denials: Vec<PermissionDenial>,
+
+    /// Error messages when `is_error` is true.
+    ///
+    /// Contains human-readable error strings (e.g., "No conversation found with session ID: ...").
+    /// This allows typed access to error conditions without needing to serialize to JSON and search.
+    #[serde(default)]
+    pub errors: Vec<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+
+    /// HTTP status code when the result is an API error (e.g., 429, 500, 529)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_error_status: Option<u16>,
+
+    /// The `api_error_code` of the API error that ended the turn (see
+    /// `AssistantMessage::api_error_code`): the server's
+    /// `error.details.error_code` when it is an identifier. Absent when the
+    /// turn did not end on an API error, when the response carried no code,
+    /// and from CLIs before 2.1.274.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_code: Option<String>,
+
+    /// The `api_error_origin` of the API error that ended the turn (see
+    /// `AssistantMessage::api_error_origin`): `first_party` when Anthropic's
+    /// own API sent the response. Absent when the turn did not end on an API
+    /// error or the origin is anything else; treat an unknown value as
+    /// absent (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_origin: Option<String>,
+
+    /// The typed kind of the API error that ended the turn (see
+    /// `AssistantMessage::api_error`). Absent when the turn did not end on
+    /// an API error, when the error has no typed kind, and from CLIs before
+    /// 2.1.285; treat an unknown value as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error: Option<String>,
+
+    /// Why generation stopped (e.g., end_turn, max_tokens)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+
+    /// Why the session ended (e.g., "completed")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+
+    /// Present, and true, when the host of a multi-tenant worker shut the
+    /// worker down while this turn ran, the shutdown was the first thing to
+    /// abort the turn, and the turn is left for the session's next worker.
+    /// The other frames of the ending, and `terminal_reason`, look the same
+    /// as a client's Stop; this tells the two apart. A success result can
+    /// carry it (a shutdown during a Stop hook), and a result without it can
+    /// still be a shutdown's (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupted_by_shutdown: Option<bool>,
+
+    /// Present, and true, when a permission check ended this turn by
+    /// itself and nobody asked for the stop. Today only auto mode does so,
+    /// after a run of responses with no usable safety verdict. The turn ends
+    /// by an abort, so `terminal_reason` usually matches a client's Stop;
+    /// this tells the two apart. A result reporting a budget or turn limit
+    /// can carry it too, and so can a success result. Marked `@internal`
+    /// upstream (CLI 2.1.319+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_by_permission_check: Option<bool>,
+
+    /// Delivery sequence of this result within the run: how many results the
+    /// run numbered before this one, starting at 0, in the order the process
+    /// writes them. A result whose write fails still consumes its number, so
+    /// a gap means a result was lost. Distinct from `num_turns`. Numbered by
+    /// the process hosting the run (`claude -p`); a local client relaying a
+    /// cloud session passes the cloud numbering through and its own locally
+    /// built error results carry none. Absent from CLIs before 2.1.268.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_index: Option<u64>,
+
+    /// When the claude.ai credential this process's requests send ends for
+    /// good, as an ISO 8601 instant, read when the result is written. For a
+    /// stored claude.ai login this is the end of the login's refresh chain
+    /// as stored at sign-in; renewing the access token does not move it. The
+    /// date is the server's when it sent one and otherwise a 30-day
+    /// estimate, and the real end can be up to 3 days earlier. The server is
+    /// not asked, so a login revoked early still shows its date, and a past
+    /// date means the login has probably ended, not that it certainly has.
+    /// Absent when no date is known, for every other credential (an API
+    /// key, a token from the environment, another provider), on results this
+    /// process did not number, and from CLIs before 2.1.318.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_expires_at: Option<String>,
+
+    /// Fast mode toggle state (e.g., "off")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_mode_state: Option<String>,
+
+    /// Why fast mode can't serve right now. Absent when nothing blocks it.
+    /// A paused-after-rate-limit run is not reported here; it rides
+    /// `fast_mode_state` as `"cooldown"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_mode_disabled_reason: Option<FastModeDisabledReason>,
+
+    /// Per-model cost breakdown, keyed by model name (e.g. `"claude-opus-4-8"`).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "modelUsage")]
+    pub model_usage: Option<std::collections::BTreeMap<String, ModelUsageEntry>>,
+
+    /// Per-model usage and cost of the calls this process counted since it
+    /// wrote its previous result (since it started, for its first), keyed and
+    /// shaped like `modelUsage` and covering the same calls. Sum it over a
+    /// conversation's results instead of subtracting `modelUsage` totals: each
+    /// call is stated on at most one result, whatever a resume or a kill does
+    /// to `modelUsage`. Calls that finish after a result (a background
+    /// subagent, a late title call) are stated on the next result. Nothing is
+    /// carried across processes, so calls counted after a process's last
+    /// result (including a turn in flight when it is killed) are stated
+    /// nowhere. A model with nothing counted is left out; `{}` means nothing
+    /// was counted, and absent is not `{}`. Set by stream-json and `--sdk-url`
+    /// runs only; not set on hand-numbered error results (start-up failures,
+    /// errors that escape the run). Absent from CLIs before 2.1.309. Marked
+    /// `@internal` upstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_usage_since_last_result: Option<std::collections::BTreeMap<String, ModelUsageEntry>>,
+
+    /// Subagents started through the Agent tool in this session, as running
+    /// totals. Cumulative like `modelUsage`: read the latest result rather
+    /// than summing across results. Absent from CLIs before 2.1.239.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_stats: Option<SubagentStats>,
+
+    /// How many times a safety system has stopped one of this session's
+    /// model calls (main loop, subagents, forked skills, compaction and other
+    /// internal calls), as a running total since the session started in this
+    /// process: a `refusal` stop reason, a refusal answered on a fallback
+    /// model, output the API's content filter stopped, and (where the build
+    /// can tell) a server-side safety monitor block. Never sum across
+    /// results. Not saved, so a resumed session or a mid-session `/clear`
+    /// starts again at 0: over a stored log any result above 0 means a stop
+    /// happened, and a later 0 does not cancel it. Absent from CLIs before
+    /// 2.1.292. Marked `@internal` upstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety_stops: Option<u64>,
+
+    /// Structured-output payload returned by the model, when enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<Value>,
+
+    /// Deferred tool-use termination payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deferred_tool_use: Option<DeferredToolUse>,
+
+    /// Provenance of the message/run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<super::message_types::MessageOrigin>,
+
+    /// Set by the self-hosted runner on the result it synthesizes when the
+    /// session process fails to start or exits abnormally. Absent on normal
+    /// results and on CLIs before 2.1.266.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_exit: Option<RunnerExit>,
+
+    /// Why Claude Code refused to start. Set on the zeroed
+    /// `error_during_execution` result a stream-json run writes before
+    /// exiting on a known startup failure; `errors` carries the same text as
+    /// stderr. Failures that used to end with stderr alone write that result
+    /// only when the host sets `CLAUDE_CODE_STARTUP_FAILURE_RESULTS`, except
+    /// `org_config_required_unavailable`, `org_config_refused` and
+    /// `config_file_invalid`, which every stream-json run writes. Absent on
+    /// every other result, on startup failures without a known cause, and
+    /// from CLIs before 2.1.274.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_failure_reason: Option<StartupFailureReason>,
+}
+
+/// [`ResultMessage::input_attachments_detail`] — what the
+/// `input_attachments` phase did on the turn (CLI 2.1.288+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct InputAttachmentsDetail {
+    /// Label of the attachment producer that took longest from its start to
+    /// its result, among those that began within the phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slowest_producer: Option<String>,
+    /// How long [`Self::slowest_producer`] took. Well above
+    /// [`Self::cpu_ms`], that producer most likely waited (on a file, the
+    /// network or a child process).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slowest_producer_ms: Option<u64>,
+    /// `time_to_request_cpu_ms`'s counter over this phase alone. Absent
+    /// wherever `time_to_request_cpu_ms` is absent, and when the turn's
+    /// first model request went out before the phase ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_ms: Option<u64>,
+    /// `time_to_request_major_faults`'s counter over this phase alone.
+    /// Absent where [`Self::cpu_ms`] is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub major_faults: Option<u64>,
+    /// How many files the `changed_files` producer set out to read again in
+    /// full because their modification time was later than the one recorded
+    /// when the conversation last wrote or edited them. Absent when the
+    /// conversation's record of files was empty or the producer did not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_files_reread: Option<u64>,
+    /// How the `changed_files` producer's compares ended in the main
+    /// thread's pass (a subagent's are not counted). Absent when nothing was
+    /// counted (CLI 2.1.300+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub touch_compare: Option<TouchCompareCounts>,
+
+    // The members below add up what the main thread's attachment passes
+    // measured of themselves (CLI 2.1.316+). Only a pass that began and
+    // ended within one run of the phase, before the turn's first model
+    // request, counts: not a subagent's or a background agent's, and not a
+    // pass with attachments switched off. The five `_ms` splits run in order,
+    // each rounded down, so their sum is at most the phase's time.
+    /// Work before any producer starts, such as working out which tools the
+    /// tool announcements list (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_ms: Option<u64>,
+    /// Starting the producers that read the prompt's own text (at-mentioned
+    /// files, MCP resources, mentions of agents, skills and peers) and
+    /// waiting for them (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_producers_ms: Option<u64>,
+    /// Starting every other producer, each one's work up to its first wait
+    /// included, so the thread ran code throughout (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient_start_ms: Option<u64>,
+    /// Waiting for the producers [`Self::ambient_start_ms`] started
+    /// (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient_wait_ms: Option<u64>,
+    /// The rest: merging the producers' results, logging the attachments
+    /// with their token estimates and making each into a message
+    /// (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_ms: Option<u64>,
+    /// How many producers the passes started. Present, 0 included, whenever
+    /// a pass was kept (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producers: Option<u64>,
+    /// How many times the passes asked the API to count a file's tokens
+    /// (only for text estimated above a quarter of the Read tool's token
+    /// limit). Present, 0 included, whenever a pass was kept
+    /// (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_counts: Option<u64>,
+    /// Time at least one token count was under way, overlaps counted once.
+    /// Absent when [`Self::token_counts`] is 0 (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_count_ms: Option<u64>,
+    /// Time at least one of the `changed_files` producer's Read calls was
+    /// under way, their token counts included. Absent when it made none
+    /// (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_files_read_ms: Option<u64>,
+    /// The files counted under [`TouchCompareCounts::differs`], sorted by
+    /// size on disk, counting only the passes kept here (so the bands can
+    /// add up to less than `differs`). Absent when no compare in a kept pass
+    /// ended in `differs` (CLI 2.1.316+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub differs_files: Option<DiffersFilesCounts>,
+}
+
+/// [`InputAttachmentsDetail::differs_files`] — the `changed_files`
+/// compares that ended in `differs`, banded by file size on disk (1 KB is
+/// 1,024 bytes; a size on a boundary is in the band above it, except exactly
+/// 256 KB). A zero count is left out (CLI 2.1.316+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DiffersFilesCounts {
+    /// Under 25 KB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_under_25_kb: Option<u64>,
+    /// 25 KB up to 50 KB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_25_to_50_kb: Option<u64>,
+    /// 50 KB up to and including 256 KB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_50_to_256_kb: Option<u64>,
+    /// Over 256 KB (only where the Read size limit has been raised).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_over_256_kb: Option<u64>,
+    /// Those files for which the conversation kept only a hash of the
+    /// earlier text, so the model, if told, gets the file's name without a
+    /// diff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_only: Option<u64>,
+}
+
+/// [`InputAttachmentsDetail::touch_compare`] — how the `changed_files`
+/// producer's compares of touched files (size, then bytes, against what the
+/// conversation last saw) ended. Whole numbers; a zero count is left out
+/// (CLI 2.1.300+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct TouchCompareCounts {
+    /// The text had not changed, so it was not read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same: Option<u64>,
+    /// The text had changed, so it was read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub differs: Option<u64>,
+    /// Those of `same` and `differs` reached through the hosted container's
+    /// outputs link (`/mnt/user-data/outputs` → `/mnt/attach/outputs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via_outputs_link: Option<u64>,
+    /// Not compared, because the conversation has seen only part of the
+    /// file; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_view: Option<u64>,
+    /// Not compared, because it was compared once already since the
+    /// conversation last read or wrote it; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub already_compared: Option<u64>,
+    /// The file could not be shown to be the one its path names (a symbolic
+    /// link on the way, an unjudged outputs-link landing, or the file swapped
+    /// or removed meanwhile); read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_on_path: Option<u64>,
+    /// The open met a symbolic link; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaf_link: Option<u64>,
+    /// The file has a second hard link; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nlink: Option<u64>,
+    /// Not a regular file; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_regular: Option<u64>,
+    /// Too large to compare; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oversize: Option<u64>,
+    /// The file was gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enoent: Option<u64>,
+    /// Anything else, errors included; read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<u64>,
+}
+
+/// [`ResultMessage::resume_store_confirm_detail`] — how the
+/// `resume_store_confirm` phase was spent (CLI 2.1.290+). The four `_ms`
+/// values sum to that phase exactly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ResumeStoreConfirmDetail {
+    /// The transcript write, until the carried lines are in the queue of the
+    /// lane that uploads transcript rows.
+    pub write_ms: u64,
+    /// A POST was out that held only rows queued before the hand-off's write
+    /// began.
+    pub ahead_ms: u64,
+    /// Any other POST was out, each retry included.
+    pub post_ms: u64,
+    /// No POST was out (backoff, batching, a busy event loop), plus rounding
+    /// and any POST still out when the wait was cut short.
+    pub other_ms: u64,
+    /// POST attempts that ended between the start of the write and the end
+    /// of the wait.
+    pub posts: u64,
+    /// Those of [`Self::posts`] that did not go through.
+    pub failed_posts: u64,
+    /// Rows the lane had accepted and the store had not yet confirmed when
+    /// the write began.
+    pub rows_ahead: u64,
+    /// Rows queued since then that a POST delivered, the carried lines among
+    /// them.
+    pub rows: u64,
+}
+
+/// [`ResultMessage::tool_schema_build_detail`] — how the `tool_schema_build`
+/// phase was spent, in whole ms, in the order the code runs (CLI 2.1.317+).
+/// The six `_ms` values add up to the phase exactly; each is rounded so a
+/// fraction of a ms carries into the next.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ToolSchemaBuildDetail {
+    /// Choosing the beta headers, reading what the model supports and the
+    /// thinking configuration.
+    pub betas_ms: u64,
+    /// Waiting for the account's Artifact capabilities, early schema builds
+    /// for plugin-movable tools, and deciding whether tool search is on.
+    pub waits_ms: u64,
+    /// Deciding which tools the request declares in full, deferred or by
+    /// reference, with the waits that takes.
+    pub placement_ms: u64,
+    /// Making the API schema of every declared tool.
+    pub render_ms: u64,
+    /// The rest of the phase, such as in-message tool schemas and applying
+    /// the plan for deferred tools.
+    pub after_ms: u64,
+    /// Time no part covers plus what rounding leaves: 0 or 1 unless some
+    /// stretch of the phase has no mark.
+    pub other_ms: u64,
+    /// How many tools the render made schemas for (the last build's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<u64>,
+    /// How much the process's tool-schema cache grew over the phase: about
+    /// how many schemas were built from scratch (the last build's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_schemas: Option<u64>,
+}
+
+/// [`ResultMessage::message_normalization_detail`] — how the
+/// `message_normalization` phase was spent (CLI 2.1.317+). Read it as
+/// [`ToolSchemaBuildDetail`]: six `_ms` values in the order the code runs,
+/// which add up to the phase exactly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct MessageNormalizationDetail {
+    /// The passes ahead of the main one and the main pass's options.
+    pub before_ms: u64,
+    /// The main pass alone (`normalizeMessagesForAPI`).
+    pub normalize_ms: u64,
+    /// Checking every image against the model's size limit.
+    pub images_ms: u64,
+    /// The passes over the normalized list.
+    pub post_process_ms: u64,
+    /// The rest: per-turn notes, retry message lists, account-memory notes.
+    pub after_ms: u64,
+    /// As in [`ToolSchemaBuildDetail::other_ms`].
+    pub other_ms: u64,
+    /// How many messages the request was built from (the conversation since
+    /// its last compaction, after any trimming); the last build's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<u64>,
+    /// How many API messages this build made of them; the last build's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_messages: Option<u64>,
+}
+
+/// [`ResultMessage::request_build_detail`] — how the `request_build` phase
+/// was spent (CLI 2.1.317+). The nine values from `records_ms` to
+/// `other_ms` add up to the phase exactly; the three `sent_build_*` members
+/// lie within [`sent_build_ms`](Self::sent_build_ms) and are not part of
+/// the sum.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RequestBuildDetail {
+    /// Recording what this request sends and setting up the shared retry
+    /// handlers.
+    pub records_ms: u64,
+    /// The fallback-block check, attribution header, cache lifetime and the
+    /// system prompt's blocks.
+    pub system_ms: u64,
+    /// Tool/system-prompt change detection, effort, fast mode, permission
+    /// context waits and beta headers.
+    pub headers_ms: u64,
+    /// Recording the prompt's state so a later prompt-cache break can be
+    /// explained. In a cloud runner's session the on-disk write is queued
+    /// after the response instead, outside this phase, unless the model is
+    /// one that cache-break detection skips (CLI 2.1.318+).
+    pub cache_break_record_ms: u64,
+    /// Defining the first retry handlers, planning tool-result clearing and
+    /// opening the request's tracing span.
+    pub plans_ms: u64,
+    /// Defining the rest of the retry and fallback handlers.
+    pub retry_setup_ms: u64,
+    /// Building the parameters that are sent, for every attempt before the
+    /// first dispatch.
+    pub sent_build_ms: u64,
+    /// From there to the moment the request is recorded as sent.
+    pub record_attempt_ms: u64,
+    /// As in [`ToolSchemaBuildDetail::other_ms`].
+    pub other_ms: u64,
+    /// Assembling the context for the server-side safety check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_build_safety_context_ms: Option<u64>,
+    /// The last clean-up of the messages before sending, placing the
+    /// prompt-cache breakpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_build_cache_breakpoints_ms: Option<u64>,
+    /// Scanning the body for lone UTF-16 surrogates, and the scrub where one
+    /// is found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_build_surrogate_scan_ms: Option<u64>,
+}
+
+/// [`ResultMessage::process_turn_states`] — the turn's process CPU and wall
+/// time split among mutually exclusive states (CLI 2.1.317+). A state says
+/// what was open, not what the time was spent on. Where several were open,
+/// the first of `main_stream`, `side_stream`, `tool`, `agent_tool`,
+/// `first_event_wait` names the state; with nothing open, the state is
+/// named after the turn's main-conversation model calls.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProcessTurnStates {
+    /// A response stream of a main-conversation request was open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_stream: Option<ProcessStateTime>,
+    /// Any other model request's stream was open (a subagent's, a
+    /// compaction's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_stream: Option<ProcessStateTime>,
+    /// A call of any tool but Agent was open, permission prompt included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ProcessStateTime>,
+    /// A call of the Agent tool was open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_tool: Option<ProcessStateTime>,
+    /// A main-conversation request was sent and no stream of it was open
+    /// yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_event_wait: Option<ProcessStateTime>,
+    /// Nothing open, and no main-conversation model call sent yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_first_request: Option<ProcessStateTime>,
+    /// Nothing open, between two main-conversation model calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub between_requests: Option<ProcessStateTime>,
+    /// Nothing open, after the last main-conversation model call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_last_request: Option<ProcessStateTime>,
+}
+
+/// Time in one [`ProcessTurnStates`] state (CLI 2.1.317+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProcessStateTime {
+    /// Process CPU time, counted as in `process_cpu_ms_between_turns`
+    /// (child processes left out).
+    pub cpu_ms: u64,
+    /// Wall-clock time.
+    pub wall_ms: u64,
+    /// How many times the state was entered.
+    pub entries: u64,
+}
+
+/// [`ResultMessage::process_garbage_collections`] — garbage collections on
+/// the CLI process's main thread (CLI 2.1.311+). A worker claimed from a
+/// warm spare counts from the spare's own start.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProcessGarbageCollections {
+    /// Up to the start of the process's first turn. Absent if no turn began
+    /// first or its count failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_first_message: Option<GarbageCollectionCounts>,
+    /// Up to this result, including
+    /// [`to_first_message`](Self::to_first_message)'s.
+    pub to_first_result: GarbageCollectionCounts,
+}
+
+/// One window of [`ProcessGarbageCollections`] (CLI 2.1.311+). A collection
+/// still running at the window's end is not counted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct GarbageCollectionCounts {
+    /// Collections of young objects only (under Bun the process's first also
+    /// marks the whole heap).
+    pub eden: u64,
+    /// Collections of the whole heap.
+    pub full: u64,
+    /// Their summed wall-clock time in ms, not CPU time.
+    pub wall_ms: u64,
+    /// Heap in use after the last one, in MiB. Absent if none ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heap_after_mib: Option<u64>,
+}
+
+/// Why Claude Code refused to start, carried as
+/// [`ResultMessage::startup_failure_reason`] so a host can offer the fix
+/// instead of a retry (CLI 2.1.274+).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StartupFailureReason {
+    /// Managed settings pin a first-party or Cloud gateway sign-in, and an
+    /// Anthropic API key or auth token is configured instead.
+    OrgPinApiKeyConflict,
+    /// Managed settings list the API providers this machine may use
+    /// (`allowedProviders`), and the session is set up for one that is not
+    /// listed (CLI 2.1.285+).
+    ProviderNotAllowed,
+    /// The sign-in's organization could not be verified against the pin
+    /// (network, or a revoked token).
+    OrgVerifyFailed,
+    /// The sign-in belongs to an organization the pin does not allow.
+    OrgPinMismatch,
+    /// Managed policy settings could not be read, the pin names no
+    /// organization, or managed model settings (`deniedModels`, or an
+    /// `availableModels` list matched exactly) block the default model and
+    /// leave no allowed model to use instead.
+    ManagedSettingsInvalid,
+    /// Managed settings the organization requires could not be loaded.
+    RemoteSettingsRequiredUnavailable,
+    /// The Cloud gateway ended this sign-in.
+    GatewaySigninRequired,
+    /// The Cloud gateway refused managed settings for this account.
+    GatewayAccessDenied,
+    /// A proxy setting is not a complete URL.
+    ProxyInvalid,
+    /// The per-user temp directory is unsafe or could not be created.
+    TempDirUnusable,
+    /// The working directory was deleted, moved or cannot be read.
+    CwdUnavailable,
+    /// Windows has no shell tool: Git Bash is missing, and PowerShell is
+    /// missing or turned off by `CLAUDE_CODE_USE_POWERSHELL_TOOL`.
+    ShellToolMissing,
+    /// The conversation to resume or continue is running as a background
+    /// session.
+    SessionHeldByBackground,
+    /// The resume was refused because the session's worktree failed its
+    /// safety checks or the resume was launched from inside it; `errors`
+    /// says whether a re-run continues without the worktree.
+    WorktreeResumeRefused,
+    /// The session's worktree could not be verified right now; retrying may
+    /// succeed.
+    WorktreeUnverified,
+    /// This Claude Code version is below the minimum Anthropic requires.
+    CliVersionTooOld,
+    /// Bypass permissions mode was requested while running as root.
+    BypassRoot,
+    /// The organization requires its policy limits and managed settings
+    /// before a session starts, and they could not be loaded (network,
+    /// proxy, or an Anthropic error); retrying may succeed (CLI 2.1.293+).
+    OrgConfigRequiredUnavailable,
+    /// The organization requires its policy limits and managed settings, and
+    /// Anthropic refused them for this sign-in (expired or revoked session,
+    /// or the organization does not allow Claude Code for this account);
+    /// signing in again or an admin's change is the fix, not a retry
+    /// (CLI 2.1.293+).
+    OrgConfigRefused,
+    /// A working sandbox is required and it cannot run in this session, for
+    /// example because bubblewrap is missing or the platform is not
+    /// supported; make the sandbox available or have the requirement
+    /// changed (CLI 2.1.314+).
+    SandboxRequiredUnavailable,
+    /// `initialize_not_first` — Claude Code was started with
+    /// `--await-initialize`, and its first stdin line was not the
+    /// `initialize` control request (another message, or not valid JSON).
+    /// The fix is in the host or a wrapper script between the host and
+    /// Claude Code, not a retry (CLI 2.1.317+).
+    InitializeNotFirst,
+    /// `config_file_invalid` — a configuration file read at start-up is not
+    /// valid JSON; `errors` names the file and, for the global configuration
+    /// file, how to restore or repair it. The file is left unchanged, and
+    /// every start without a terminal is refused until it is repaired, so a
+    /// retry alone does not help (CLI 2.1.318+).
+    ConfigFileInvalid,
+    /// A cause not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl StartupFailureReason {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::OrgPinApiKeyConflict => "org_pin_api_key_conflict",
+            Self::ProviderNotAllowed => "provider_not_allowed",
+            Self::OrgVerifyFailed => "org_verify_failed",
+            Self::OrgPinMismatch => "org_pin_mismatch",
+            Self::ManagedSettingsInvalid => "managed_settings_invalid",
+            Self::RemoteSettingsRequiredUnavailable => "remote_settings_required_unavailable",
+            Self::GatewaySigninRequired => "gateway_signin_required",
+            Self::GatewayAccessDenied => "gateway_access_denied",
+            Self::ProxyInvalid => "proxy_invalid",
+            Self::TempDirUnusable => "temp_dir_unusable",
+            Self::CwdUnavailable => "cwd_unavailable",
+            Self::ShellToolMissing => "shell_tool_missing",
+            Self::SessionHeldByBackground => "session_held_by_background",
+            Self::WorktreeResumeRefused => "worktree_resume_refused",
+            Self::WorktreeUnverified => "worktree_unverified",
+            Self::CliVersionTooOld => "cli_version_too_old",
+            Self::BypassRoot => "bypass_root",
+            Self::OrgConfigRequiredUnavailable => "org_config_required_unavailable",
+            Self::OrgConfigRefused => "org_config_refused",
+            Self::SandboxRequiredUnavailable => "sandbox_required_unavailable",
+            Self::InitializeNotFirst => "initialize_not_first",
+            Self::ConfigFileInvalid => "config_file_invalid",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for StartupFailureReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for StartupFailureReason {
+    fn from(s: &str) -> Self {
+        match s {
+            "org_pin_api_key_conflict" => Self::OrgPinApiKeyConflict,
+            "provider_not_allowed" => Self::ProviderNotAllowed,
+            "org_verify_failed" => Self::OrgVerifyFailed,
+            "org_pin_mismatch" => Self::OrgPinMismatch,
+            "managed_settings_invalid" => Self::ManagedSettingsInvalid,
+            "remote_settings_required_unavailable" => Self::RemoteSettingsRequiredUnavailable,
+            "gateway_signin_required" => Self::GatewaySigninRequired,
+            "gateway_access_denied" => Self::GatewayAccessDenied,
+            "proxy_invalid" => Self::ProxyInvalid,
+            "temp_dir_unusable" => Self::TempDirUnusable,
+            "cwd_unavailable" => Self::CwdUnavailable,
+            "shell_tool_missing" => Self::ShellToolMissing,
+            "session_held_by_background" => Self::SessionHeldByBackground,
+            "worktree_resume_refused" => Self::WorktreeResumeRefused,
+            "worktree_unverified" => Self::WorktreeUnverified,
+            "cli_version_too_old" => Self::CliVersionTooOld,
+            "bypass_root" => Self::BypassRoot,
+            "org_config_required_unavailable" => Self::OrgConfigRequiredUnavailable,
+            "org_config_refused" => Self::OrgConfigRefused,
+            "sandbox_required_unavailable" => Self::SandboxRequiredUnavailable,
+            "initialize_not_first" => Self::InitializeNotFirst,
+            "config_file_invalid" => Self::ConfigFileInvalid,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for StartupFailureReason {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for StartupFailureReason {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// How the self-hosted runner's session process terminated, carried on a
+/// synthesized failure [`ResultMessage`] as [`ResultMessage::runner_exit`]
+/// (CLI 2.1.266+).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunnerExit {
+    /// Which phase the process was in when it exited.
+    pub phase: RunnerExitPhase,
+    /// Process exit code. Absent (or wire `null`) when it exited on a signal
+    /// instead, or when the runner did not capture one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    /// Terminating signal name. Absent (or wire `null`) when it exited with a
+    /// code instead, or when the runner did not capture one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
+/// Which phase the runner's session process was in when it exited, in
+/// [`RunnerExit::phase`]. Open set — unrecognized values deserialize to
+/// [`RunnerExitPhase::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RunnerExitPhase {
+    /// Failed while starting up.
+    Setup,
+    /// Failed once running.
+    Run,
+    /// A phase not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl RunnerExitPhase {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Setup => "setup",
+            Self::Run => "run",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl std::fmt::Display for RunnerExitPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RunnerExitPhase {
+    fn from(s: &str) -> Self {
+        match s {
+            "setup" => Self::Setup,
+            "run" => Self::Run,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for RunnerExitPhase {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RunnerExitPhase {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Usage and cost for a single model within a session, as found in
+/// [`ResultMessage::model_usage`] and
+/// [`ResultMessage::model_usage_since_last_result`].
+///
+/// The `extra` field captures any keys the CLI adds that aren't modeled here,
+/// so new wire fields deserialize without error.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsageEntry {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    #[serde(default, rename = "costUSD")]
+    pub cost_usd: f64,
+    #[serde(default)]
+    pub web_search_requests: u32,
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default)]
+    pub max_output_tokens: u64,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Tool use deferred by a terminal result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeferredToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+}
+
+/// Running totals for subagents started through the Agent tool, carried on
+/// `result` frames (CLI 2.1.239+) as [`ResultMessage::subagent_stats`].
+///
+/// Cumulative for the session: a resumed session starts fresh, and a
+/// mid-session `/clear` zeroes it — though a background subagent that outlives
+/// the `/clear` still records its outcome, so `completed`, `failed`, and
+/// `killed` can then exceed `spawned`. Forked skills, workflows, teammates,
+/// and other internal agents are not counted.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SubagentStats {
+    /// Subagents actually started; a refused or failed launch is not counted.
+    pub spawned: u64,
+    /// Spawns by the `run_in_background` value the model passed; all count as
+    /// `unset` while the parameter is not offered (background tasks disabled,
+    /// or subagents forced into the background: in a terminal, the desktop
+    /// app or the VS Code extension, or with `CLAUDE_CODE_FORK_SUBAGENT=1`).
+    pub requested: SubagentSpawnRequests,
+    /// Spawns that started in the background after defaults and session
+    /// settings; the rest blocked the spawning tool call.
+    pub started_in_background: u64,
+    /// Spawns by agent type.
+    #[serde(default)]
+    pub by_type: std::collections::BTreeMap<String, u64>,
+    /// Deepest spawn: 1 = started by the main thread, 2 = by a depth-1
+    /// subagent.
+    pub max_depth: u64,
+    /// Spawns made from inside another subagent (depth > 1).
+    pub spawned_by_subagents: u64,
+    pub completed: u64,
+    pub failed: u64,
+    /// Subagents stopped before finishing, by who stopped them.
+    pub killed: SubagentKillCounts,
+    /// Agent tool calls turned down because a limit was reached (other
+    /// denials, such as an unknown agent type, are not counted).
+    pub refused: SubagentRefusalCounts,
+}
+
+/// Spawn counts by the `run_in_background` value the model passed, carried in
+/// [`SubagentStats::requested`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SubagentSpawnRequests {
+    pub background: u64,
+    pub foreground: u64,
+    pub unset: u64,
+}
+
+/// Subagents stopped before finishing, carried in [`SubagentStats::killed`].
+/// `parent` = by another agent through TaskStop; `system` = by Claude Code
+/// itself; `user` = any other stop.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SubagentKillCounts {
+    pub parent: u64,
+    pub user: u64,
+    pub system: u64,
+}
+
+/// Agent tool calls refused at a limit, carried in [`SubagentStats::refused`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SubagentRefusalCounts {
+    pub depth_limit: u64,
+    pub concurrency_limit: u64,
+    pub budget: u64,
+}
+
+/// A record of a tool permission that was denied during the session.
+///
+/// This is included in `ResultMessage.permission_denials` to provide a summary
+/// of all permission denials that occurred.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PermissionDenial {
+    /// The name of the tool that was blocked (e.g., "Bash", "Write")
+    pub tool_name: String,
+
+    /// The input that was passed to the tool
+    pub tool_input: Value,
+
+    /// The unique identifier for this tool use request
+    pub tool_use_id: String,
+}
+
+/// What the first stream POST of a turn was queued behind, carried as
+/// [`ResultMessage::first_stream_post_queued_behind`] (CLI 2.1.278+).
+/// Internal timing instrumentation; the CLI does not describe the values.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StreamPostQueuedBehind {
+    /// `durable_post`
+    DurablePost,
+    /// `ephemeral_post`
+    EphemeralPost,
+    /// `retry_backoff`
+    RetryBackoff,
+    /// `hold`
+    Hold,
+    /// `none`
+    None,
+    /// A value not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl StreamPostQueuedBehind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::DurablePost => "durable_post",
+            Self::EphemeralPost => "ephemeral_post",
+            Self::RetryBackoff => "retry_backoff",
+            Self::Hold => "hold",
+            Self::None => "none",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for StreamPostQueuedBehind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for StreamPostQueuedBehind {
+    fn from(s: &str) -> Self {
+        match s {
+            "durable_post" => Self::DurablePost,
+            "ephemeral_post" => Self::EphemeralPost,
+            "retry_backoff" => Self::RetryBackoff,
+            "hold" => Self::Hold,
+            "none" => Self::None,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for StreamPostQueuedBehind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for StreamPostQueuedBehind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// What a turn was given to settle before its own prompt, carried as
+/// [`ResultMessage::turn_start_resume_kind`] (CLI 2.1.287+). A turn given
+/// more than one reports the first in this order.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TurnStartResumeKind {
+    /// `orphaned_permission` — a permission answer whose pending request was
+    /// lost (as when a worker restarts), so the tool call is settled with
+    /// that answer.
+    OrphanedPermission,
+    /// `turn_handoff` — a turn in progress that the session's client handed
+    /// over.
+    TurnHandoff,
+    /// `deferred_tool_use` — a call a `PreToolUse` hook deferred.
+    DeferredToolUse,
+    /// `none` — nothing to settle (`resume_other` is still reported, at
+    /// about 0).
+    None,
+    /// A value not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl TurnStartResumeKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::OrphanedPermission => "orphaned_permission",
+            Self::TurnHandoff => "turn_handoff",
+            Self::DeferredToolUse => "deferred_tool_use",
+            Self::None => "none",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for TurnStartResumeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for TurnStartResumeKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "orphaned_permission" => Self::OrphanedPermission,
+            "turn_handoff" => Self::TurnHandoff,
+            "deferred_tool_use" => Self::DeferredToolUse,
+            "none" => Self::None,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for TurnStartResumeKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TurnStartResumeKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Why fast mode can't serve right now, carried on `result` frames and
+/// `system/init` (CLI 2.1.219+). Absent when nothing blocks fast mode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FastModeDisabledReason {
+    /// Free-tier account.
+    Free,
+    /// Disabled by user preference.
+    Preference,
+    /// Extra-usage purchases are disabled for the account.
+    ExtraUsageDisabled,
+    /// A network error prevented fast-mode eligibility from resolving.
+    NetworkError,
+    /// The CLI could not determine the reason.
+    UnknownReason,
+    /// Not a first-party API session (e.g. Bedrock/Vertex).
+    NotFirstParty,
+    /// Disabled via environment variable.
+    DisabledByEnv,
+    /// The active model does not support fast mode.
+    ModelNotAllowed,
+    /// SDK sessions must opt in to fast mode.
+    SdkOptInRequired,
+    /// Eligibility is still being determined.
+    Pending,
+    /// A reason not yet known to this version of the crate.
+    Unknown(String),
+}
+
+impl FastModeDisabledReason {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Free => "free",
+            Self::Preference => "preference",
+            Self::ExtraUsageDisabled => "extra_usage_disabled",
+            Self::NetworkError => "network_error",
+            Self::UnknownReason => "unknown",
+            Self::NotFirstParty => "not_first_party",
+            Self::DisabledByEnv => "disabled_by_env",
+            Self::ModelNotAllowed => "model_not_allowed",
+            Self::SdkOptInRequired => "sdk_opt_in_required",
+            Self::Pending => "pending",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for FastModeDisabledReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for FastModeDisabledReason {
+    fn from(s: &str) -> Self {
+        match s {
+            "free" => Self::Free,
+            "preference" => Self::Preference,
+            "extra_usage_disabled" => Self::ExtraUsageDisabled,
+            "network_error" => Self::NetworkError,
+            "unknown" => Self::UnknownReason,
+            "not_first_party" => Self::NotFirstParty,
+            "disabled_by_env" => Self::DisabledByEnv,
+            "model_not_allowed" => Self::ModelNotAllowed,
+            "sdk_opt_in_required" => Self::SdkOptInRequired,
+            "pending" => Self::Pending,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for FastModeDisabledReason {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for FastModeDisabledReason {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Result subtypes
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ResultSubtype {
+    Success,
+    ErrorMaxTurns,
+    ErrorDuringExecution,
+    ErrorMaxBudgetUsd,
+    ErrorMaxStructuredOutputRetries,
+    Unknown(String),
+}
+
+impl ResultSubtype {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Success => "success",
+            Self::ErrorMaxTurns => "error_max_turns",
+            Self::ErrorDuringExecution => "error_during_execution",
+            Self::ErrorMaxBudgetUsd => "error_max_budget_usd",
+            Self::ErrorMaxStructuredOutputRetries => "error_max_structured_output_retries",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ResultSubtype {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ResultSubtype {
+    fn from(s: &str) -> Self {
+        match s {
+            "success" => Self::Success,
+            "error_max_turns" => Self::ErrorMaxTurns,
+            "error_during_execution" => Self::ErrorDuringExecution,
+            "error_max_budget_usd" => Self::ErrorMaxBudgetUsd,
+            "error_max_structured_output_retries" => Self::ErrorMaxStructuredOutputRetries,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ResultSubtype {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ResultSubtype {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s.as_str()))
+    }
+}
+
+/// Usage information for the request.
+///
+/// **These counters are accumulated roll-ups, not snapshots.** The CLI sums
+/// usage field-by-field across every API call ("iteration") in the turn's
+/// tool-use loop, so on a turn with N iterations each counter is the sum of
+/// all N. This is the right number for **cost**, and the wrong number for
+/// **context occupancy**: `cache_read_input_tokens` in particular re-counts
+/// the cached context on every iteration and can exceed the model's context
+/// window several times over on tool-heavy turns. To estimate context
+/// occupancy, use the *last* entry of [`iterations`](Self::iterations)
+/// instead (the CLI itself does exactly this).
+///
+/// Note: the `result` frame's usage covers the **main agent only** — the
+/// subagent (`Task` / sidechain) token rollup the CLI renders as
+/// `<subagent_tokens>` / `<agent_count>` is not carried here or anywhere
+/// else on the wire. Accumulate it from `Task` tool results with
+/// [`SubagentUsageRollup`](crate::SubagentUsageRollup).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageInfo {
+    /// Sum of fresh (uncached) input tokens across all iterations of the turn.
+    #[serde(default)]
+    pub input_tokens: u32,
+    /// Sum of cache-write input tokens across all iterations of the turn.
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
+    /// Sum of cache-read input tokens across all iterations of the turn.
+    /// Re-counts the cached context every iteration — **not** a measure of
+    /// context occupancy; see the type-level docs.
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
+    /// Sum of output tokens across all iterations of the turn.
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub server_tool_use: ServerToolUse,
+    #[serde(default)]
+    pub service_tier: String,
+
+    /// Cache creation breakdown
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation: Option<super::message_types::CacheCreationDetails>,
+
+    /// Inference geography (e.g., "not_available")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_geo: Option<String>,
+
+    /// Per-iteration usage breakdown **within** this turn — one entry per
+    /// API call in the tool-use loop, in order. The last entry reflects the
+    /// final API call and is what the CLI reads for context-size estimates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub iterations: Vec<UsageIteration>,
+
+    /// Speed tier (e.g., "standard")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
+
+    /// Output-token breakdown (CLI 2.1.232+): currently the thinking-token
+    /// share of `output_tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens_details: Option<OutputTokensDetails>,
+
+    /// Outcome of a fallback-credit token the request presented; `null` on
+    /// the wire when it presented none (CLI 2.1.285+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_credit: Option<Value>,
+}
+
+/// Breakdown of a turn's output tokens, carried in
+/// [`UsageInfo::output_tokens_details`].
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OutputTokensDetails {
+    /// Output tokens spent on extended thinking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_tokens: Option<u64>,
+}
+
+/// Usage for a single API call ("iteration") within a turn's tool-use loop.
+///
+/// Carried in [`UsageInfo::iterations`]. The cache fields are optional on
+/// the wire: some frames carry only `input_tokens` + `output_tokens`
+/// (observed with `type: "turn"`), while others carry the full cache
+/// breakdown (observed with `type: "message"` in captured subagent
+/// sessions). The CLI computes its context estimate from
+/// `input_tokens + output_tokens` of the **last** iteration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageIteration {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    /// Cache-read input tokens for this iteration, when carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u32>,
+    /// Cache-write input tokens for this iteration, when carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u32>,
+    /// Cache-write breakdown by TTL, when carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation: Option<super::message_types::CacheCreationDetails>,
+    /// Iteration kind; `"turn"` and `"message"` observed on the wire.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// Server tool usage information
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServerToolUse {
+    #[serde(default)]
+    pub web_search_requests: u32,
+    /// Number of web fetch requests made
+    #[serde(default)]
+    pub web_fetch_requests: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::ClaudeOutput;
+
+    #[test]
+    fn test_deserialize_result_message() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "duration_ms": 100,
+            "duration_api_ms": 200,
+            "num_turns": 1,
+            "result": "Done",
+            "session_id": "123",
+            "total_cost_usd": 0.01,
+            "permission_denials": []
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        assert!(!output.is_error());
+    }
+
+    #[test]
+    fn test_result_subtype_new_and_unknown_values_do_not_fail() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "error_max_budget_usd",
+            "is_error": true,
+            "duration_ms": 100,
+            "duration_api_ms": 200,
+            "num_turns": 1,
+            "session_id": "123",
+            "total_cost_usd": 0.01
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let ClaudeOutput::Result(result) = output else {
+            panic!("Expected Result");
+        };
+        assert_eq!(result.subtype, ResultSubtype::ErrorMaxBudgetUsd);
+
+        let json = r#"{
+            "type": "result",
+            "subtype": "future_result_subtype",
+            "is_error": true,
+            "duration_ms": 100,
+            "duration_api_ms": 200,
+            "num_turns": 1,
+            "session_id": "123",
+            "total_cost_usd": 0.01
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let ClaudeOutput::Result(result) = output else {
+            panic!("Expected Result");
+        };
+        assert_eq!(
+            result.subtype,
+            ResultSubtype::Unknown("future_result_subtype".to_string())
+        );
+    }
+
+    #[test]
+    fn test_deserialize_result_with_permission_denials() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "duration_ms": 100,
+            "duration_api_ms": 200,
+            "num_turns": 2,
+            "result": "Done",
+            "session_id": "123",
+            "total_cost_usd": 0.01,
+            "permission_denials": [
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "rm -rf /", "description": "Delete everything"},
+                    "tool_use_id": "toolu_123"
+                }
+            ]
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::Result(result) = output {
+            assert_eq!(result.permission_denials.len(), 1);
+            assert_eq!(result.permission_denials[0].tool_name, "Bash");
+            assert_eq!(result.permission_denials[0].tool_use_id, "toolu_123");
+            assert_eq!(
+                result.permission_denials[0]
+                    .tool_input
+                    .get("command")
+                    .unwrap(),
+                "rm -rf /"
+            );
+        } else {
+            panic!("Expected Result");
+        }
+    }
+
+    #[test]
+    fn test_permission_denial_roundtrip() {
+        let denial = PermissionDenial {
+            tool_name: "Write".to_string(),
+            tool_input: serde_json::json!({"file_path": "/etc/passwd", "content": "bad"}),
+            tool_use_id: "toolu_456".to_string(),
+        };
+
+        let json = serde_json::to_string(&denial).unwrap();
+        assert!(json.contains("\"tool_name\":\"Write\""));
+        assert!(json.contains("\"tool_use_id\":\"toolu_456\""));
+        assert!(json.contains("/etc/passwd"));
+
+        let parsed: PermissionDenial = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, denial);
+    }
+
+    #[test]
+    fn test_deserialize_result_message_with_errors() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "error_during_execution",
+            "duration_ms": 0,
+            "duration_api_ms": 0,
+            "is_error": true,
+            "num_turns": 0,
+            "session_id": "27934753-425a-4182-892c-6b1c15050c3f",
+            "total_cost_usd": 0,
+            "errors": ["No conversation found with session ID: d56965c9-c855-4042-a8f5-f12bbb14d6f6"],
+            "permission_denials": []
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        assert!(output.is_error());
+
+        if let ClaudeOutput::Result(res) = output {
+            assert!(res.is_error);
+            assert_eq!(res.errors.len(), 1);
+            assert!(res.errors[0].contains("No conversation found"));
+        } else {
+            panic!("Expected Result message");
+        }
+    }
+
+    #[test]
+    fn test_deserialize_result_message_errors_defaults_empty() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "duration_ms": 100,
+            "duration_api_ms": 200,
+            "num_turns": 1,
+            "session_id": "123",
+            "total_cost_usd": 0.01
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::Result(res) = output {
+            assert!(res.errors.is_empty());
+        } else {
+            panic!("Expected Result message");
+        }
+    }
+
+    #[test]
+    fn test_result_message_errors_roundtrip() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": true,
+            "duration_ms": 0,
+            "duration_api_ms": 0,
+            "num_turns": 0,
+            "session_id": "test-session",
+            "total_cost_usd": 0.0,
+            "errors": ["Error 1", "Error 2"]
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        let reserialized = serde_json::to_string(&output).unwrap();
+
+        assert!(reserialized.contains("Error 1"));
+        assert!(reserialized.contains("Error 2"));
+    }
+
+    #[test]
+    fn test_result_with_new_fields() {
+        let json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "duration_ms": 5000,
+            "duration_api_ms": 4500,
+            "num_turns": 1,
+            "result": "Done",
+            "session_id": "abc",
+            "total_cost_usd": 0.06,
+            "api_error_status": null,
+            "stop_reason": "end_turn",
+            "terminal_reason": "completed",
+            "fast_mode_state": "off",
+            "modelUsage": {
+                "claude-opus-4-7[1m]": {
+                    "inputTokens": 3817,
+                    "outputTokens": 14,
+                    "costUSD": 0.06
+                }
+            },
+            "usage": {
+                "input_tokens": 3817,
+                "output_tokens": 14,
+                "cache_creation_input_tokens": 3540,
+                "cache_read_input_tokens": 0,
+                "server_tool_use": {
+                    "web_search_requests": 0,
+                    "web_fetch_requests": 2
+                },
+                "service_tier": "standard",
+                "inference_geo": "not_available",
+                "speed": "standard",
+                "iterations": [
+                    {"input_tokens": 3817, "output_tokens": 14, "type": "turn"}
+                ]
+            }
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::Result(res) = output {
+            assert_eq!(res.stop_reason.as_deref(), Some("end_turn"));
+            assert_eq!(res.terminal_reason.as_deref(), Some("completed"));
+            assert_eq!(res.fast_mode_state.as_deref(), Some("off"));
+            let model_usage = res.model_usage.as_ref().unwrap();
+            let entry = model_usage
+                .get("claude-opus-4-7[1m]")
+                .expect("per-model entry present");
+            assert_eq!(entry.input_tokens, 3817);
+            assert_eq!(entry.output_tokens, 14);
+            assert_eq!(entry.cost_usd, 0.06);
+            assert!(res.api_error_status.is_none());
+
+            let usage = res.usage.unwrap();
+            assert_eq!(usage.server_tool_use.web_fetch_requests, 2);
+            assert_eq!(usage.inference_geo.as_deref(), Some("not_available"));
+            assert_eq!(usage.speed.as_deref(), Some("standard"));
+            assert_eq!(usage.iterations.len(), 1);
+            assert_eq!(usage.iterations[0].input_tokens, 3817);
+            assert_eq!(usage.iterations[0].output_tokens, 14);
+            assert_eq!(usage.iterations[0].kind.as_deref(), Some("turn"));
+        } else {
+            panic!("Expected Result");
+        }
+    }
+
+    #[test]
+    fn test_result_backwards_compatible_without_new_fields() {
+        // Verify old-format messages still parse fine
+        let json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "duration_ms": 100,
+            "duration_api_ms": 200,
+            "num_turns": 1,
+            "session_id": "abc",
+            "total_cost_usd": 0.01
+        }"#;
+
+        let output: ClaudeOutput = serde_json::from_str(json).unwrap();
+        if let ClaudeOutput::Result(res) = output {
+            assert!(res.api_error_status.is_none());
+            assert!(res.stop_reason.is_none());
+            assert!(res.terminal_reason.is_none());
+            assert!(res.fast_mode_state.is_none());
+            assert!(res.model_usage.is_none());
+        } else {
+            panic!("Expected Result");
+        }
+    }
+
+    #[test]
+    fn test_result_fast_mode_disabled_reason() {
+        let json = r#"{
+            "type":"result","subtype":"success","is_error":false,
+            "duration_ms":100,"duration_api_ms":80,"num_turns":1,
+            "session_id":"s1","total_cost_usd":0.01,
+            "fast_mode_state":"off",
+            "fast_mode_disabled_reason":"sdk_opt_in_required"
+        }"#;
+        let output: crate::ClaudeOutput = serde_json::from_str(json).unwrap();
+        let crate::ClaudeOutput::Result(res) = &output else {
+            panic!("expected Result");
+        };
+        assert_eq!(
+            res.fast_mode_disabled_reason,
+            Some(FastModeDisabledReason::SdkOptInRequired)
+        );
+        assert!(serde_json::to_string(&output)
+            .unwrap()
+            .contains("\"fast_mode_disabled_reason\":\"sdk_opt_in_required\""));
+
+        // Unknown reasons survive decode and round-trip verbatim; the wire
+        // literal "unknown" maps to the typed UnknownReason, not the fallback.
+        assert_eq!(
+            FastModeDisabledReason::from("unknown"),
+            FastModeDisabledReason::UnknownReason
+        );
+        let novel = FastModeDisabledReason::from("solar_flare");
+        assert_eq!(novel, FastModeDisabledReason::Unknown("solar_flare".into()));
+        assert_eq!(novel.as_str(), "solar_flare");
+    }
+
+    #[test]
+    fn test_result_timing_and_user_message_uuid_fields() {
+        let json = r#"{
+            "type":"result","subtype":"success","is_error":false,
+            "duration_ms":100,"duration_api_ms":80,"num_turns":1,
+            "session_id":"s1","total_cost_usd":0.01,
+            "request_sent_wall_ms":1753212345678.25,
+            "user_message_uuid":"um-1"
+        }"#;
+        let output: crate::ClaudeOutput = serde_json::from_str(json).unwrap();
+        let crate::ClaudeOutput::Result(res) = &output else {
+            panic!("expected Result");
+        };
+        assert_eq!(res.request_sent_wall_ms, Some(1753212345678.25));
+        assert_eq!(res.user_message_uuid.as_deref(), Some("um-1"));
+
+        let reserialized = serde_json::to_string(&output).unwrap();
+        assert!(reserialized.contains("\"user_message_uuid\":\"um-1\""));
+    }
+
+    #[test]
+    fn test_result_queued_turn_count_and_user_message_uuids() {
+        // CLI 2.1.259 additive fields on the result frame.
+        let json = r#"{
+            "type":"result","subtype":"success","is_error":false,
+            "duration_ms":100,"duration_api_ms":80,"num_turns":1,
+            "session_id":"s1","total_cost_usd":0.01,
+            "user_message_uuid":"um-2",
+            "user_message_uuids":["um-1","um-2"],
+            "queued_turn_count":3
+        }"#;
+        let output: crate::ClaudeOutput = serde_json::from_str(json).unwrap();
+        let crate::ClaudeOutput::Result(res) = &output else {
+            panic!("expected Result");
+        };
+        assert_eq!(res.user_message_uuids, vec!["um-1", "um-2"]);
+        assert_eq!(res.queued_turn_count, Some(3));
+
+        let reserialized = serde_json::to_string(&output).unwrap();
+        assert!(reserialized.contains("\"user_message_uuids\":[\"um-1\",\"um-2\"]"));
+        assert!(reserialized.contains("\"queued_turn_count\":3"));
+
+        // Both fields are absent from older producers and must default cleanly.
+        let old = r#"{
+            "type":"result","subtype":"success","is_error":false,
+            "duration_ms":100,"duration_api_ms":80,"num_turns":1,
+            "session_id":"s1","total_cost_usd":0.01
+        }"#;
+        let output: crate::ClaudeOutput = serde_json::from_str(old).unwrap();
+        let crate::ClaudeOutput::Result(res) = &output else {
+            panic!("expected Result");
+        };
+        assert!(res.user_message_uuids.is_empty());
+        assert_eq!(res.queued_turn_count, None);
+        let reserialized = serde_json::to_string(&output).unwrap();
+        assert!(!reserialized.contains("user_message_uuids"));
+        assert!(!reserialized.contains("queued_turn_count"));
+    }
+}

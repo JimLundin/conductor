@@ -65,7 +65,7 @@ the closest code to borrow (§14).
 | D3c | The phone client is a **static web app** (installable to the Home Screen) on your domain | No Apple Developer account, so there is no native iPhone app. The domain only serves files. | A native iOS app (needs an account). |
 | D4 | **Each host is the only source of truth for its own sessions** | No replication between hosts. Clients connect to each host and merge the results. Catching up is "events after seq N". | Syncing session state between hosts or a central hub. |
 | D5 | Trust comes from a **fleet root key** that signs device certificates | Hosts store only the root public key, so pairing a phone once gives it access to every host. Hosts never sync allowlists with each other. | Allowlists replicated between daemons. A compromised host could enrol keys on every other host. |
-| D6 | Talk to each agent in its **native protocol**: Claude stream-json control protocol, Codex app-server JSON-RPC. **Use the existing `claude-codes` and `codex-codes` crates** (Apache-2.0, `meawoppl/rust-code-agent-sdks`) for both, and send fixes upstream rather than writing our own clients | These carry the full feature set: approvals, interrupts, resume, fork. T3 Code and Orchestrator.inc do the same for Codex. | ACP. It is the lowest common denominator, built for one client per agent, and Claude would still need a TypeScript adapter. |
+| D6 | Talk to each agent in its **native protocol**: Claude stream-json control protocol, Codex app-server JSON-RPC. **Vendor `claude-codes` and `codex-codes`** (Apache-2.0, from `meawoppl/rust-code-agent-sdks`) into `vendor/` and own them from here on; fixes go straight into our copies, with no upstream contributions | These carry the full feature set: approvals, interrupts, resume, fork. T3 Code and Orchestrator.inc do the same for Codex. | ACP. It is the lowest common denominator, built for one client per agent, and Claude would still need a TypeScript adapter. |
 | D7 | Shell out to the `git` CLI, not `gix`/`git2` | Worktrees, hooks and the user's git config all behave exactly as on the command line. T3 Code and Orchestrator.inc do the same. | gix has incomplete worktree support. git2 adds a C dependency. |
 | D8 | Wire format is length-prefixed JSON over **bidirectional streams**: QUIC streams on iroh, data channels on WebRTC | Easy to debug, tolerant of schema changes, and agent payloads are already JSON. Both transports implement one small `Transport` trait (§5.1), so the protocol doesn't care which carries it. | postcard or bincode. Possible later; the bandwidth isn't a problem. |
 | D9 | Hosts run natively on **Windows, WSL and macOS** | That is where your agents live. A Windows machine with both native and WSL agents runs two daemons and appears as two hosts. | — |
@@ -362,8 +362,9 @@ to the domain as static files.
 
 ## 7. Agent adapters (`agents`)
 
-**Base:** depend on `claude-codes` and `codex-codes` from crates.io (repository
-`meawoppl/rust-code-agent-sdks`, Apache-2.0).
+**Base:** `vendor/claude-codes` and `vendor/codex-codes`, copied from
+`meawoppl/rust-code-agent-sdks` (Apache-2.0) on 2026-11-10 and maintained here as our own
+code. See `vendor/README.md` and `NOTICE`.
 
 - They already provide the typed protocols, async clients, the initialize handshake,
   interrupts and tool-approval control messages.
@@ -373,8 +374,8 @@ to the domain as static files.
   message types.
 - Our `agents` crate is a thin layer on top: one session actor per session, a map that
   makes sure each approval is answered exactly once, and the mapping to our `EventKind`.
-- Gaps we find go to `docs/upstream-claude-codes.md` and become upstream pull requests.
-  Until a pull request lands, we use `[patch.crates-io]`.
+- Gaps found in S1 are listed in `docs/claude-codes-gaps.md` and fixed directly in the
+  vendored copy. Tracking new CLI versions (the "drift" work upstream did daily) is now ours.
 
 The protocol notes below describe what these crates speak. Use them to review the crates
 and to diagnose drift.
@@ -676,7 +677,7 @@ Still open: nothing blocking. The next step is S1–S3.
 | anthropics/claude-agent-sdk-python: `_internal/query.py`, `transport/subprocess_cli.py` | MIT | Claude control protocol to port |
 | openai/codex: `codex-rs/app-server/README.md`, `app-server-protocol/schema/json/` | Apache-2.0 | Codex protocol and schema |
 | OrchestratorInc/agent-orchestrator: `adapters/chatdriver/codexappserver`, `lifecycle/`, `observe/scm`, `adapters/workspace/gitworktree` | Apache-2.0 (keep NOTICE) | Codex driver cross-check; later CI/PR routing and worktree edge cases |
-| meawoppl/rust-code-agent-sdks: `claude-codes`, `codex-codes` | Apache-2.0 | **Dependencies.** Typed Rust clients for Claude Code and Codex |
+| meawoppl/rust-code-agent-sdks: `claude-codes`, `codex-codes` | Apache-2.0 | **Vendored** in `vendor/`. Typed Rust clients for Claude Code and Codex |
 | BloopAI/vibe-kanban: `crates/executors/src/executors/{claude,codex}/`, `crates/worktree-manager/` | Apache-2.0 | Second reference for the Claude and Codex clients; worktree manager |
 | hardbeat920/monocode: `crates/mobile-link/`, `monocode-core/src/{remote,mobile,provider}/` | MIT | **Rust** phone transport and FFI, SSH host bootstrap, provider lifecycle |
 | getpaseo/paseo: `packages/server/src/server/agent/providers/{claude,codex}/`, `protocol/src/{hosts,connection-offer}.ts`, `agent/agent-timeline-store.ts` | Apache-2.0 | Option sets, tool-call mappers, host list, pairing offer, epoch cursors |

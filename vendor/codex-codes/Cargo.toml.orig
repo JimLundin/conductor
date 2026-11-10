@@ -1,0 +1,59 @@
+[package]
+name = "codex-codes"
+version = "0.167.4"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Matthew Goodman <d3a6d0cec0c16f3e@inboxnegative.com>"]
+description = "Typed Rust SDK for the OpenAI Codex agent CLI: serde models of the codex app-server JSON-RPC protocol, plus sync and async (Tokio) clients for multi-turn Codex agent sessions, tool calls, and approvals."
+documentation = "https://docs.rs/codex-codes"
+homepage = "https://github.com/meawoppl/rust-code-agent-sdks"
+repository = "https://github.com/meawoppl/rust-code-agent-sdks"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["codex", "openai", "agent", "llm", "cli"]
+categories = ["api-bindings", "asynchronous", "encoding", "parsing"]
+exclude = [
+    "test_cases/",
+    ".claude/",
+    "*.sh",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, optional = true }
+which = { workspace = true, optional = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+jsonschema = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = ["types", "sync-client", "async-client"]
+types = []
+sync-client = ["types", "dep:log", "dep:which"]
+async-client = ["types", "dep:tokio", "dep:log", "dep:which"]
+integration-tests = ["async-client", "sync-client"]
+
+[[example]]
+name = "async_client"
+required-features = ["async-client"]
+
+[[example]]
+name = "basic_repl"
+required-features = ["async-client"]
+
+[[example]]
+name = "sync_client"
+required-features = ["sync-client"]
+
+[[example]]
+name = "schema_coverage"
+# Pure types-only; uses the same JSON Schema validator the test suite does.
