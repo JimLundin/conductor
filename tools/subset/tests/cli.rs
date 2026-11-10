@@ -423,3 +423,15 @@ fn measure_prints_one_line_per_file_and_a_total() {
         "two.rs: 4 tokens, 1 lines\ntotal: 4 tokens, 1 lines\n"
     );
 }
+
+#[test]
+fn the_readme_lists_every_id_the_tool_emits() {
+    let (code, table, _) = subset(&["ids"]);
+    assert_eq!(code, 0);
+    let readme = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+        .expect("README.md");
+    assert!(
+        readme.contains(&table),
+        "README.md is out of date; paste the output of `subset ids` into it"
+    );
+}
