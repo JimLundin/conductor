@@ -10,7 +10,7 @@ are assumptions that a spike must confirm before we depend on them.
 One app that runs and supervises **Claude Code** and **Codex** sessions on **several of
 your machines**. It has two clients:
 
-- **Desktop:** a native Dioxus app, Windows first and macOS later.
+- **Desktop:** a native Dioxus app. It is developed on Linux (WSL, shown through WSLg); CI builds Windows and macOS.
 - **iPhone:** the same Dioxus UI compiled to WebAssembly. It is served as a static web app
   from your domain and installed to the Home Screen.
 
@@ -68,7 +68,7 @@ the closest code to borrow (§14).
 | D6 | Talk to each agent in its **native protocol**: Claude stream-json control protocol, Codex app-server JSON-RPC. **Vendor `claude-codes` and `codex-codes`** (Apache-2.0, from `meawoppl/rust-code-agent-sdks`) into `vendor/` and own them from here on; fixes go straight into our copies, with no upstream contributions | These carry the full feature set: approvals, interrupts, resume, fork. T3 Code and Orchestrator.inc do the same for Codex. | ACP. It is the lowest common denominator, built for one client per agent, and Claude would still need a TypeScript adapter. |
 | D7 | Shell out to the `git` CLI, not `gix`/`git2` | Worktrees, hooks and the user's git config all behave exactly as on the command line. T3 Code and Orchestrator.inc do the same. | gix has incomplete worktree support. git2 adds a C dependency. |
 | D8 | Wire format is length-prefixed JSON over **bidirectional streams**: QUIC streams on iroh, data channels on WebRTC | Easy to debug, tolerant of schema changes, and agent payloads are already JSON. Both transports implement one small `Transport` trait (§5.1), so the protocol doesn't care which carries it. | postcard or bincode. Possible later; the bandwidth isn't a problem. |
-| D9 | Hosts run natively on **Windows, WSL and macOS** | That is where your agents live. A Windows machine with both native and WSL agents runs two daemons and appears as two hosts. | — |
+| D9 | Hosts run on **Linux/WSL, macOS and Windows**. Development and the local desktop app target **Linux (WSL, shown through WSLg)**; Windows and macOS builds come from CI | The developer works in WSL. Windows is a low-priority target with no Windows-specific code; CI builds it. | Native Windows development (no toolchain there, and it isn't worth one). |
 
 ## 3. Topology and process model
 
@@ -676,10 +676,10 @@ Resolved on 2026-11-10:
 - **Relay:** we won't run one. We use n0's public relays for setup and fall back to them
   only when a direct path fails.
 - **Web domain:** static files only. It serves the client and nothing else.
-- **Desktop:** Windows first, then macOS.
+- **Desktop:** Linux under WSLg for development. Windows and macOS are built in CI and are not a priority.
 - **UI:** Dioxus.
 
-- **Web hosting:** GitHub Pages, on a custom domain over HTTPS.
+- **Web hosting:** GitHub Pages at `https://jimlundin.github.io/conductor/`, the free address, with no custom domain. The `conductor` repository is public, since Pages on the free plan needs that.
 - **n0 relays:** acceptable for connection setup and occasional fallback, but **not for all
   of a phone's traffic**. That makes the WebRTC upgrade a requirement (§5.4).
 
