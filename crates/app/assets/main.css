@@ -137,10 +137,17 @@ button:disabled { opacity: 0.4; }
 button.deny { background: var(--line); color: var(--text); }
 
 .empty {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.75rem;
+  max-width: 32rem;
   min-height: 100dvh;
-  padding: 2rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
   color: var(--muted);
-  text-align: center;
 }
+.empty h1 { margin: 0; color: var(--text); font-size: 1.4rem; }
+.empty p { margin: 0; }
+.pair { display: flex; gap: 0.5rem; }
+.empty .error { color: var(--warn); }

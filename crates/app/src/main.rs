@@ -21,21 +21,60 @@ fn main() {
 
 #[component]
 fn App() -> Element {
-    let ticket = use_hook(ticket::initial);
+    let initial = use_hook(ticket::initial);
+    let mut paired = use_signal(|| initial.as_ref().ok().cloned().flatten());
+    let first_error = initial
+        .err()
+        .map(|error| format!("That join link is not valid: {error}"));
     rsx! {
         document::Stylesheet { href: CSS }
-        match ticket {
-            Ok(Some(ticket)) => rsx! { Host { ticket } },
-            Ok(None) => rsx! { Empty { message: "Open a join link from `conductord s3-host` to connect to a host." } },
-            Err(error) => rsx! { Empty { message: "That join link is not valid: {error}" } },
+        match paired() {
+            Some(ticket) => rsx! { Host { ticket } },
+            None => rsx! {
+                Pair {
+                    error: first_error,
+                    on_pair: move |ticket: Ticket| {
+                        ticket::save(&ticket);
+                        paired.set(Some(ticket));
+                    },
+                }
+            },
         }
     }
 }
 
+/// Shown until a host is known. The host prints its join link when it starts;
+/// opening that link pairs Safari, and pasting it here pairs a Home Screen app.
 #[component]
-fn Empty(message: String) -> Element {
+fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
+    let mut text = use_signal(String::new);
+    let mut error = use_signal(move || error);
     rsx! {
-        main { class: "empty", p { "{message}" } }
+        main { class: "empty",
+            h1 { "Connect to a host" }
+            p { "Paste the join link your host printed when it started." }
+            form {
+                class: "pair",
+                onsubmit: move |event: FormEvent| {
+                    event.prevent_default();
+                    match ticket::parse_join(&text()) {
+                        Ok(ticket) => on_pair.call(ticket),
+                        Err(err) => error.set(Some(format!("That join link is not valid: {err}"))),
+                    }
+                },
+                input {
+                    r#type: "url",
+                    placeholder: "https://…#join=…",
+                    autocomplete: "off",
+                    value: "{text}",
+                    oninput: move |event| text.set(event.value()),
+                }
+                button { r#type: "submit", disabled: text().trim().is_empty(), "Connect" }
+            }
+            if let Some(message) = error() {
+                p { class: "error", "{message}" }
+            }
+        }
     }
 }
 

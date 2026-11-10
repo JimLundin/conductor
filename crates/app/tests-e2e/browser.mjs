@@ -1,9 +1,11 @@
-// Drives the web build in headless Chromium at an iPhone viewport against a
-// live `conductord s3-host`, through n0's relays.
+// Drives the web build at an iPhone viewport against a live
+// `conductord s3-host`, through n0's relays. ENGINE picks chromium or webkit;
+// webkit stands in for iOS Safari, which Chromium does not catch (it accepted
+// the relay's root-dot hostname that Safari rejected).
 //
-// usage: node browser.mjs <join-url> <screenshot.png>
+// usage: ENGINE=webkit node browser.mjs <join-url> <screenshot.png>
 
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const [joinUrl, screenshot] = process.argv.slice(2);
 if (!joinUrl || !screenshot) {
@@ -18,7 +20,9 @@ const check = (ok, what) => {
   log(`ok: ${what}`);
 };
 
-const browser = await chromium.launch();
+const engine = process.env.ENGINE ?? 'chromium';
+const browser = await { chromium, webkit }[engine].launch();
+log(`engine: ${engine} ${browser.version()}`);
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 3,
@@ -91,6 +95,21 @@ await waitLive();
 log(`Live ${Date.now() - reloaded}ms after reload without the fragment (reconnect)`);
 await page.locator('.turn-end').last().waitFor({ timeout: 10_000 });
 check((await page.locator('.reply').count()) >= 1, 'the transcript replayed after reload');
+
+// A Home Screen web app on iOS starts with empty storage and no fragment, so it
+// must pair by pasting the join link.
+const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+const installed = await fresh.newPage();
+installed.on('console', (msg) => msg.type() === 'error' && consoleErrors.push(msg.text()));
+await installed.goto(joinUrl.replace(/#join=.*/, ''));
+await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 30_000 });
+check(true, 'a fresh install asks for a join link');
+await installed.locator('form.pair input').fill(joinUrl);
+const pasted = Date.now();
+await installed.locator('form.pair button').click();
+await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+log(`Live ${Date.now() - pasted}ms after pasting the join link`);
+await fresh.close();
 
 check(consoleErrors.length === 0, `no console errors${consoleErrors.length ? `: ${consoleErrors.join(' | ')}` : ''}`);
 await browser.close();
