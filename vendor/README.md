@@ -12,3 +12,9 @@ Both are licensed Apache-2.0 (`LICENSE-APACHE-rust-code-agent-sdks`). Files we c
 keep the license; the repository `NOTICE` records that they were modified.
 
 `docs/claude-codes-gaps.md` lists what we changed in `claude-codes` after taking it.
+
+## Later: into the subset
+
+These crates are outside the Conductor Rust subset (`docs/subset.md`) for
+now. When they are rewritten into it, each moves out of `vendor/` into its
+own crate under `crates/`, and this directory goes away.
