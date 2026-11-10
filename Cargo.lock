@@ -250,10 +250,8 @@ dependencies = [
 name = "claude-codes"
 version = "2.1.323"
 dependencies = [
- "anyhow",
  "base64 0.22.1",
  "chrono",
- "env_logger",
  "log",
  "portable-pty",
  "serde",
@@ -261,7 +259,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "uuid",
- "which",
 ]
 
 [[package]]

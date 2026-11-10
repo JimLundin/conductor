@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 anyhow = "1.0.104"
-claude-codes = { path = "vendor/claude-codes", default-features = false, features = ["async-client"] }
+claude-codes = { path = "vendor/claude-codes", default-features = false, features = ["cli"] }
 codex-codes = { path = "vendor/codex-codes", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

@@ -25,7 +25,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Typed Rust SDK for the Claude Code agent CLI: serde models of its JSON-Lines (stream-json) protocol with streaming parsing, plus sync and async (Tokio) clients for driving Claude Code sessions, tools, and subagents."
+description = "Typed Rust SDK for the Claude Code agent CLI: serde models of its JSON-Lines (stream-json) protocol with streaming parsing, plus a builder for the CLI command line."
 homepage = "https://github.com/meawoppl/rust-code-agent-sdks"
 documentation = "https://docs.rs/claude-codes"
 readme = "README.md"
@@ -46,34 +46,22 @@ license = "Apache-2.0"
 repository = "https://github.com/meawoppl/rust-code-agent-sdks"
 
 [features]
-async-client = [
-    "types",
-    "anyhow",
-    "tokio",
-    "log",
-    "uuid/v4",
-    "dep:which",
-]
 auth = [
     "types",
     "dep:portable-pty",
     "dep:base64",
 ]
+cli = [
+    "types",
+    "dep:tokio",
+    "uuid/v4",
+]
 corpus-test = []
 default = [
     "types",
-    "sync-client",
-    "async-client",
+    "cli",
 ]
-integration-tests = []
 log = ["dep:log"]
-sync-client = [
-    "types",
-    "anyhow",
-    "log",
-    "uuid/v4",
-    "dep:which",
-]
 types = []
 
 [lib]
@@ -81,24 +69,9 @@ name = "claude_codes"
 path = "src/lib.rs"
 
 [[example]]
-name = "async_client"
-path = "examples/async_client.rs"
-required-features = ["async-client"]
-
-[[example]]
-name = "basic_repl"
-path = "examples/basic_repl.rs"
-required-features = ["async-client"]
-
-[[example]]
 name = "login"
 path = "examples/login.rs"
 required-features = ["auth"]
-
-[[example]]
-name = "sync_client"
-path = "examples/sync_client.rs"
-required-features = ["sync-client"]
 
 [[test]]
 name = "corpus_tests"
@@ -107,10 +80,6 @@ path = "tests/corpus_tests.rs"
 [[test]]
 name = "deserialization_tests"
 path = "tests/deserialization_tests.rs"
-
-[[test]]
-name = "integration_tests"
-path = "tests/integration_tests.rs"
 
 [[test]]
 name = "schema_2_1_259_tests"
@@ -252,10 +221,6 @@ path = "tests/subagent_wrapping_tests.rs"
 name = "tool_input_tests"
 path = "tests/tool_input_tests.rs"
 
-[dependencies.anyhow]
-version = "1.0.99"
-optional = true
-
 [dependencies.base64]
 version = "0.22.1"
 optional = true
@@ -284,30 +249,13 @@ version = "2.0.16"
 
 [dependencies.tokio]
 version = "1.49.0"
-features = ["full"]
+features = ["process"]
 optional = true
 
 [dependencies.uuid]
 version = "1.18.0"
 features = ["serde"]
 default-features = false
-
-[dependencies.which]
-version = "8.0.2"
-optional = true
-
-[dev-dependencies.anyhow]
-version = "1.0.99"
-
-[dev-dependencies.base64]
-version = "0.22.1"
-
-[dev-dependencies.env_logger]
-version = "0.11.9"
-
-[dev-dependencies.tokio]
-version = "1.49.0"
-features = ["full"]
 
 [dev-dependencies.uuid]
 version = "1.18.0"

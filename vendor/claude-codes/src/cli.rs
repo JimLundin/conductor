@@ -9,9 +9,7 @@
 //! - OAuth token and API key environment variables for authentication
 //!
 
-use crate::error::{Error, Result};
 use crate::models::EffortLevel;
-use log::debug;
 use std::path::PathBuf;
 use std::process::Stdio;
 use uuid::Uuid;
@@ -41,359 +39,12 @@ impl PermissionMode {
     }
 }
 
-/// Input format for Claude CLI
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputFormat {
-    Text,
-    StreamJson,
-}
-
-impl InputFormat {
-    /// Get the CLI string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            InputFormat::Text => "text",
-            InputFormat::StreamJson => "stream-json",
-        }
-    }
-}
-
-/// Output format for Claude CLI
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFormat {
-    Text,
-    Json,
-    StreamJson,
-}
-
-impl OutputFormat {
-    /// Get the CLI string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            OutputFormat::Text => "text",
-            OutputFormat::Json => "json",
-            OutputFormat::StreamJson => "stream-json",
-        }
-    }
-}
-
-/// Comprehensive enum of all Claude CLI flags.
-///
-/// This enum represents every flag available in the Claude CLI (`claude --help`).
-/// Each variant carries the appropriate data type for its flag value.
-///
-/// Use `as_flag()` to get the CLI flag string (e.g., `"--model"`),
-/// or `to_args()` to get the complete flag + value as CLI arguments.
-///
-/// # Example
-/// ```
-/// use claude_codes::CliFlag;
-///
-/// let flag = CliFlag::Model("sonnet".to_string());
-/// assert_eq!(flag.as_flag(), "--model");
-/// assert_eq!(flag.to_args(), vec!["--model", "sonnet"]);
-/// ```
-#[derive(Debug, Clone)]
-pub enum CliFlag {
-    /// Additional directories to allow tool access to
-    AddDir(Vec<PathBuf>),
-    /// Agent for the current session
-    Agent(String),
-    /// JSON object defining custom agents, or with `--print` the path to a
-    /// file that holds one (CLI 2.1.281+)
-    Agents(String),
-    /// Enable bypassing all permission checks as an option
-    AllowDangerouslySkipPermissions,
-    /// Tool names to allow (e.g. "Bash(git:*) Edit")
-    AllowedTools(Vec<String>),
-    /// Append to the default system prompt
-    AppendSystemPrompt(String),
-    /// Beta headers for API requests (API key users only)
-    Betas(Vec<String>),
-    /// Enable Claude in Chrome integration
-    Chrome,
-    /// URL of a signed configuration document; the CLI exits if it cannot
-    /// load it or it does not cover the selected model. Setting
-    /// `CLAUDE_CODE_CLIENT_DATA_URL` instead keeps the URL out of the
-    /// process list (CLI 2.1.283+; hidden from `--help` since 2.1.287 but
-    /// still accepted)
-    ClientDataUrl(String),
-    /// Continue the most recent conversation
-    Continue,
-    /// Bypass all permission checks
-    DangerouslySkipPermissions,
-    /// Enable debug mode with optional category filter
-    Debug(Option<String>),
-    /// Write debug logs to a specific file path
-    DebugFile(PathBuf),
-    /// Disable all skills/slash commands
-    DisableSlashCommands,
-    /// Tool names to deny (e.g. "Bash(git:*) Edit")
-    DisallowedTools(Vec<String>),
-    /// Effort level for the current session
-    Effort(EffortLevel),
-    /// Automatic fallback model when default is overloaded
-    FallbackModel(String),
-    /// File resources to download at startup (format: file_id:relative_path)
-    File(Vec<String>),
-    /// Create a new session ID when resuming instead of reusing original
-    ForkSession,
-    /// Resume a session linked to a PR
-    FromPr(Option<String>),
-    /// Include partial message chunks as they arrive
-    IncludePartialMessages,
-    /// Input format (text or stream-json)
-    InputFormat(InputFormat),
-    /// JSON Schema for structured output validation
-    JsonSchema(String),
-    /// Maximum dollar amount for API calls
-    MaxBudgetUsd(f64),
-    /// Maximum number of tokens for extended thinking
-    MaxThinkingTokens(u32),
-    /// Load MCP servers from JSON files or strings
-    McpConfig(Vec<String>),
-    /// Enable MCP debug mode (deprecated, use Debug instead)
-    McpDebug,
-    /// Model for the current session
-    Model(String),
-    /// Disable Claude in Chrome integration
-    NoChrome,
-    /// Disable session persistence
-    NoSessionPersistence,
-    /// Output format (text, json, or stream-json)
-    OutputFormat(OutputFormat),
-    /// Permission mode for the session
-    PermissionMode(PermissionMode),
-    /// Tool for handling permission prompts (e.g., "stdio")
-    PermissionPromptTool(String),
-    /// Load plugins from directories
-    PluginDir(Vec<PathBuf>),
-    /// Print response and exit
-    Print,
-    /// Re-emit user messages from stdin back on stdout
-    ReplayUserMessages,
-    /// Resume a conversation by session ID
-    Resume(Option<String>),
-    /// Use a specific session ID (UUID or tagged ID)
-    SessionId(String),
-    /// Comma-separated list of setting sources (user, project, local)
-    SettingSources(String),
-    /// Path to settings JSON file or JSON string
-    Settings(String),
-    /// Only use MCP servers from --mcp-config
-    StrictMcpConfig,
-    /// System prompt for the session
-    SystemPrompt(String),
-    /// Specify available tools from the built-in set
-    Tools(Vec<String>),
-    /// Override verbose mode setting
-    Verbose,
-}
-
-impl CliFlag {
-    /// Get the CLI flag string (e.g., `"--model"`)
-    pub fn as_flag(&self) -> &'static str {
-        match self {
-            CliFlag::AddDir(_) => "--add-dir",
-            CliFlag::Agent(_) => "--agent",
-            CliFlag::Agents(_) => "--agents",
-            CliFlag::AllowDangerouslySkipPermissions => "--allow-dangerously-skip-permissions",
-            CliFlag::AllowedTools(_) => "--allowed-tools",
-            CliFlag::AppendSystemPrompt(_) => "--append-system-prompt",
-            CliFlag::Betas(_) => "--betas",
-            CliFlag::Chrome => "--chrome",
-            CliFlag::ClientDataUrl(_) => "--client-data-url",
-            CliFlag::Continue => "--continue",
-            CliFlag::DangerouslySkipPermissions => "--dangerously-skip-permissions",
-            CliFlag::Debug(_) => "--debug",
-            CliFlag::DebugFile(_) => "--debug-file",
-            CliFlag::DisableSlashCommands => "--disable-slash-commands",
-            CliFlag::DisallowedTools(_) => "--disallowed-tools",
-            CliFlag::Effort(_) => "--effort",
-            CliFlag::FallbackModel(_) => "--fallback-model",
-            CliFlag::File(_) => "--file",
-            CliFlag::ForkSession => "--fork-session",
-            CliFlag::FromPr(_) => "--from-pr",
-            CliFlag::IncludePartialMessages => "--include-partial-messages",
-            CliFlag::InputFormat(_) => "--input-format",
-            CliFlag::JsonSchema(_) => "--json-schema",
-            CliFlag::MaxBudgetUsd(_) => "--max-budget-usd",
-            CliFlag::MaxThinkingTokens(_) => "--max-thinking-tokens",
-            CliFlag::McpConfig(_) => "--mcp-config",
-            CliFlag::McpDebug => "--mcp-debug",
-            CliFlag::Model(_) => "--model",
-            CliFlag::NoChrome => "--no-chrome",
-            CliFlag::NoSessionPersistence => "--no-session-persistence",
-            CliFlag::OutputFormat(_) => "--output-format",
-            CliFlag::PermissionMode(_) => "--permission-mode",
-            CliFlag::PermissionPromptTool(_) => "--permission-prompt-tool",
-            CliFlag::PluginDir(_) => "--plugin-dir",
-            CliFlag::Print => "--print",
-            CliFlag::ReplayUserMessages => "--replay-user-messages",
-            CliFlag::Resume(_) => "--resume",
-            CliFlag::SessionId(_) => "--session-id",
-            CliFlag::SettingSources(_) => "--setting-sources",
-            CliFlag::Settings(_) => "--settings",
-            CliFlag::StrictMcpConfig => "--strict-mcp-config",
-            CliFlag::SystemPrompt(_) => "--system-prompt",
-            CliFlag::Tools(_) => "--tools",
-            CliFlag::Verbose => "--verbose",
-        }
-    }
-
-    /// Convert this flag into CLI arguments (flag + value)
-    pub fn to_args(&self) -> Vec<String> {
-        let flag = self.as_flag().to_string();
-        match self {
-            // Boolean flags (no value)
-            CliFlag::AllowDangerouslySkipPermissions
-            | CliFlag::Chrome
-            | CliFlag::Continue
-            | CliFlag::DangerouslySkipPermissions
-            | CliFlag::DisableSlashCommands
-            | CliFlag::ForkSession
-            | CliFlag::IncludePartialMessages
-            | CliFlag::McpDebug
-            | CliFlag::NoChrome
-            | CliFlag::NoSessionPersistence
-            | CliFlag::Print
-            | CliFlag::ReplayUserMessages
-            | CliFlag::StrictMcpConfig
-            | CliFlag::Verbose => vec![flag],
-
-            // Optional value flags
-            CliFlag::Debug(filter) => match filter {
-                Some(f) => vec![flag, f.clone()],
-                None => vec![flag],
-            },
-            CliFlag::FromPr(value) | CliFlag::Resume(value) => match value {
-                Some(v) => vec![flag, v.clone()],
-                None => vec![flag],
-            },
-
-            // Single string value flags
-            CliFlag::Agent(v)
-            | CliFlag::Agents(v)
-            | CliFlag::AppendSystemPrompt(v)
-            | CliFlag::ClientDataUrl(v)
-            | CliFlag::FallbackModel(v)
-            | CliFlag::JsonSchema(v)
-            | CliFlag::Model(v)
-            | CliFlag::PermissionPromptTool(v)
-            | CliFlag::SessionId(v)
-            | CliFlag::SettingSources(v)
-            | CliFlag::Settings(v)
-            | CliFlag::SystemPrompt(v) => vec![flag, v.clone()],
-
-            // Format flags
-            CliFlag::Effort(level) => vec![flag, level.as_str().to_string()],
-            CliFlag::InputFormat(f) => vec![flag, f.as_str().to_string()],
-            CliFlag::OutputFormat(f) => vec![flag, f.as_str().to_string()],
-            CliFlag::PermissionMode(m) => vec![flag, m.as_str().to_string()],
-
-            // Numeric flags
-            CliFlag::MaxBudgetUsd(amount) => vec![flag, amount.to_string()],
-            CliFlag::MaxThinkingTokens(tokens) => vec![flag, tokens.to_string()],
-
-            // Path flags
-            CliFlag::DebugFile(p) => vec![flag, p.to_string_lossy().to_string()],
-
-            // Multi-value string flags
-            CliFlag::AllowedTools(items)
-            | CliFlag::Betas(items)
-            | CliFlag::DisallowedTools(items)
-            | CliFlag::File(items)
-            | CliFlag::McpConfig(items)
-            | CliFlag::Tools(items) => {
-                let mut args = vec![flag];
-                args.extend(items.clone());
-                args
-            }
-
-            // Multi-value path flags
-            CliFlag::AddDir(paths) | CliFlag::PluginDir(paths) => {
-                let mut args = vec![flag];
-                args.extend(paths.iter().map(|p| p.to_string_lossy().to_string()));
-                args
-            }
-        }
-    }
-
-    /// Returns all CLI flag names with their flag strings.
-    ///
-    /// Useful for enumerating available options in a UI or for validation.
-    ///
-    /// # Example
-    /// ```
-    /// use claude_codes::CliFlag;
-    ///
-    /// for (name, flag) in CliFlag::all_flags() {
-    ///     println!("{}: {}", name, flag);
-    /// }
-    /// ```
-    pub fn all_flags() -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("AddDir", "--add-dir"),
-            ("Agent", "--agent"),
-            ("Agents", "--agents"),
-            (
-                "AllowDangerouslySkipPermissions",
-                "--allow-dangerously-skip-permissions",
-            ),
-            ("AllowedTools", "--allowed-tools"),
-            ("AppendSystemPrompt", "--append-system-prompt"),
-            ("Betas", "--betas"),
-            ("Chrome", "--chrome"),
-            ("ClientDataUrl", "--client-data-url"),
-            ("Continue", "--continue"),
-            (
-                "DangerouslySkipPermissions",
-                "--dangerously-skip-permissions",
-            ),
-            ("Debug", "--debug"),
-            ("DebugFile", "--debug-file"),
-            ("DisableSlashCommands", "--disable-slash-commands"),
-            ("DisallowedTools", "--disallowed-tools"),
-            ("Effort", "--effort"),
-            ("FallbackModel", "--fallback-model"),
-            ("File", "--file"),
-            ("ForkSession", "--fork-session"),
-            ("FromPr", "--from-pr"),
-            ("IncludePartialMessages", "--include-partial-messages"),
-            ("InputFormat", "--input-format"),
-            ("JsonSchema", "--json-schema"),
-            ("MaxBudgetUsd", "--max-budget-usd"),
-            ("MaxThinkingTokens", "--max-thinking-tokens"),
-            ("McpConfig", "--mcp-config"),
-            ("McpDebug", "--mcp-debug"),
-            ("Model", "--model"),
-            ("NoChrome", "--no-chrome"),
-            ("NoSessionPersistence", "--no-session-persistence"),
-            ("OutputFormat", "--output-format"),
-            ("PermissionMode", "--permission-mode"),
-            ("PermissionPromptTool", "--permission-prompt-tool"),
-            ("PluginDir", "--plugin-dir"),
-            ("Print", "--print"),
-            ("ReplayUserMessages", "--replay-user-messages"),
-            ("Resume", "--resume"),
-            ("SessionId", "--session-id"),
-            ("SettingSources", "--setting-sources"),
-            ("Settings", "--settings"),
-            ("StrictMcpConfig", "--strict-mcp-config"),
-            ("SystemPrompt", "--system-prompt"),
-            ("Tools", "--tools"),
-            ("Verbose", "--verbose"),
-        ]
-    }
-}
-
 /// Builder for creating Claude CLI commands in JSON streaming mode
 ///
 /// This builder automatically configures Claude to use:
 /// - `--print` mode for non-interactive operation
 /// - `--output-format stream-json` for streaming JSON responses
 /// - `--input-format stream-json` for JSON input
-/// - `--replay-user-messages` to echo back user messages
 #[derive(Debug, Clone)]
 pub struct ClaudeCliBuilder {
     command: PathBuf,
@@ -422,8 +73,6 @@ pub struct ClaudeCliBuilder {
     api_key: Option<String>,
     /// Tool for handling permission prompts (e.g., "stdio" for bidirectional control)
     permission_prompt_tool: Option<String>,
-    /// Allow spawning inside another Claude Code session by unsetting CLAUDECODE env var
-    allow_recursion: bool,
     /// Maximum number of tokens for extended thinking
     max_thinking_tokens: Option<u32>,
 }
@@ -463,7 +112,6 @@ impl ClaudeCliBuilder {
             oauth_token: None,
             api_key: None,
             permission_prompt_tool: None,
-            allow_recursion: false,
             max_thinking_tokens: None,
         }
     }
@@ -695,24 +343,6 @@ impl ClaudeCliBuilder {
         self
     }
 
-    /// Allow spawning inside another Claude Code session by unsetting the
-    /// `CLAUDECODE` environment variable in the child process.
-    #[cfg(feature = "integration-tests")]
-    pub fn allow_recursion(mut self) -> Self {
-        self.allow_recursion = true;
-        self
-    }
-
-    /// Resolve the command path, using `which` for non-absolute paths.
-    fn resolve_command(&self) -> Result<PathBuf> {
-        if self.command.is_absolute() {
-            return Ok(self.command.clone());
-        }
-        which::which(&self.command).map_err(|_| Error::BinaryNotFound {
-            name: self.command.display().to_string(),
-        })
-    }
-
     /// Build the command arguments (always includes JSON streaming flags)
     fn build_args(&self) -> Vec<String> {
         // Always add JSON streaming mode flags
@@ -826,11 +456,7 @@ impl ClaudeCliBuilder {
         // the session id is known before spawn.
         if (self.resume.is_none() && !self.continue_conversation) || self.fork_session {
             args.push("--session-id".to_string());
-            let session_uuid = self.session_id.unwrap_or_else(|| {
-                let uuid = Uuid::new_v4();
-                debug!("[CLI] Generated session UUID: {}", uuid);
-                uuid
-            });
+            let session_uuid = self.session_id.unwrap_or_else(Uuid::new_v4);
             args.push(session_uuid.to_string());
         }
 
@@ -842,30 +468,21 @@ impl ClaudeCliBuilder {
         args
     }
 
-    /// Spawn the Claude process
-    #[cfg(feature = "async-client")]
-    pub async fn spawn(self) -> Result<tokio::process::Child> {
-        let resolved = self.resolve_command()?;
+    /// The command with piped stdio, ready to spawn. `kill_on_drop` is set, and
+    /// `CLAUDECODE` is removed so the CLI starts even when this process runs
+    /// inside another Claude Code session.
+    pub fn build_command(self) -> tokio::process::Command {
         let args = self.build_args();
-
-        debug!(
-            "[CLI] Executing command: {} {}",
-            resolved.display(),
-            args.join(" ")
-        );
-
-        let mut cmd = tokio::process::Command::new(&resolved);
+        let mut cmd = tokio::process::Command::new(&self.command);
         cmd.args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .env_remove("CLAUDECODE")
+            .kill_on_drop(true);
 
         if let Some(ref dir) = self.working_directory {
             cmd.current_dir(dir);
-        }
-
-        if self.allow_recursion {
-            cmd.env_remove("CLAUDECODE");
         }
 
         if let Some(ref token) = self.oauth_token {
@@ -877,77 +494,7 @@ impl ClaudeCliBuilder {
         }
 
         crate::process::configure_no_window(cmd.as_std_mut());
-        let child = cmd.spawn().map_err(Error::Io)?;
-
-        Ok(child)
-    }
-
-    /// Build a Command without spawning (for testing or manual execution)
-    #[cfg(feature = "async-client")]
-    pub fn build_command(self) -> Result<tokio::process::Command> {
-        let resolved = self.resolve_command()?;
-        let args = self.build_args();
-        let mut cmd = tokio::process::Command::new(&resolved);
-        cmd.args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if let Some(ref dir) = self.working_directory {
-            cmd.current_dir(dir);
-        }
-
-        if self.allow_recursion {
-            cmd.env_remove("CLAUDECODE");
-        }
-
-        if let Some(ref token) = self.oauth_token {
-            cmd.env("CLAUDE_CODE_OAUTH_TOKEN", token);
-        }
-
-        if let Some(ref key) = self.api_key {
-            cmd.env("ANTHROPIC_API_KEY", key);
-        }
-
-        crate::process::configure_no_window(cmd.as_std_mut());
-        Ok(cmd)
-    }
-
-    /// Spawn the Claude process using synchronous std::process
-    pub fn spawn_sync(self) -> Result<std::process::Child> {
-        let resolved = self.resolve_command()?;
-        let args = self.build_args();
-
-        debug!(
-            "[CLI] Executing sync command: {} {}",
-            resolved.display(),
-            args.join(" ")
-        );
-
-        let mut cmd = std::process::Command::new(&resolved);
-        cmd.args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if let Some(ref dir) = self.working_directory {
-            cmd.current_dir(dir);
-        }
-
-        if self.allow_recursion {
-            cmd.env_remove("CLAUDECODE");
-        }
-
-        if let Some(ref token) = self.oauth_token {
-            cmd.env("CLAUDE_CODE_OAUTH_TOKEN", token);
-        }
-
-        if let Some(ref key) = self.api_key {
-            cmd.env("ANTHROPIC_API_KEY", key);
-        }
-
-        crate::process::configure_no_window(&mut cmd);
-        cmd.spawn().map_err(Error::Io)
+        cmd
     }
 }
 
@@ -1005,10 +552,6 @@ mod tests {
         assert!(!ClaudeCliBuilder::new()
             .build_args()
             .contains(&"--effort".to_string()));
-        assert_eq!(
-            CliFlag::Effort(EffortLevel::Max).to_args(),
-            vec!["--effort", "max"]
-        );
     }
 
     #[test]

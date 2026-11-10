@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::process::{ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::time::Duration;
 
 use claude_codes::ClaudeCliBuilder;
@@ -208,9 +208,7 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Result<Command> {
     if let Some(model) = &opts.model {
         builder = builder.model(model);
     }
-    let mut cmd = builder
-        .build_command()
-        .map_err(|e| Error::Command(e.to_string()))?;
+    let mut cmd = builder.build_command();
     // The claude-codes builder cannot express `auto` or setting sources, so these
     // two flags are appended here.
     cmd.arg(format!(
@@ -221,11 +219,6 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Result<Command> {
         let joined: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
         cmd.arg(format!("--setting-sources={}", joined.join(",")));
     }
-    cmd.env_remove("CLAUDECODE")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
     Ok(cmd)
 }
 

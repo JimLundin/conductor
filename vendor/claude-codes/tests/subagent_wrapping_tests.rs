@@ -4,10 +4,8 @@
 //! session emits is **fully wrapped** by the typed model — no field is silently
 //! dropped, and no `system` subtype falls back to an untyped `Value`.
 //!
-//! - The fixture test runs always (CI-safe): it replays real captured subagent
-//!   sessions from `test_cases/subagent_sessions/` through [`audit_frame`].
-//! - The live test (behind `integration-tests`) deploys a real subagent via the
-//!   Claude CLI and audits every frame it produces in real time.
+//! The fixture test replays real captured subagent sessions from
+//! `test_cases/subagent_sessions/` through [`audit_frame`].
 
 use std::fs;
 use std::path::PathBuf;
@@ -127,88 +125,4 @@ fn captured_sessions_contain_real_subagent_frames() {
         saw_task_updated,
         "no `task_updated` frame — fixtures don't cover subagent lifecycle updates"
     );
-}
-
-/// Live end-to-end: deploy a real subagent through the Claude CLI and audit
-/// every raw frame it produces. Gated behind `integration-tests` because it
-/// spawns the real CLI and runs a subagent.
-#[cfg(feature = "integration-tests")]
-mod live {
-    use claude_codes::{audit_frame, AsyncClient, ClaudeCliBuilder, ClaudeInput};
-    use uuid::Uuid;
-
-    /// Drive a subagent and assert no frame it emits is less than fully wrapped.
-    #[tokio::test]
-    async fn live_subagent_session_is_fully_wrapped() {
-        let child = ClaudeCliBuilder::new()
-            .model("sonnet")
-            .allow_recursion()
-            .dangerously_skip_permissions(true)
-            .spawn()
-            .await
-            .expect("Failed to spawn Claude");
-        let mut client = AsyncClient::new(child).expect("Failed to create client");
-
-        let prompt = "Use the Task tool to launch a single general-purpose subagent whose \
-            entire job is to compute 6 times 7 and report back just the number. After it \
-            returns, tell me the answer.";
-        client
-            .send(&ClaudeInput::user_message(prompt, Uuid::new_v4()))
-            .await
-            .expect("Failed to send subagent prompt");
-
-        let mut frames = 0usize;
-        let mut failures: Vec<String> = Vec::new();
-        let mut saw_task_started = false;
-        let mut saw_task_notification = false;
-
-        // Read raw frames until the turn's `result` arrives (or a safety cap).
-        loop {
-            let raw = match client.receive_raw().await {
-                Ok(v) => v,
-                Err(_) => break, // EOF / connection closed
-            };
-            frames += 1;
-
-            let ty = raw.get("type").and_then(|v| v.as_str());
-            if ty == Some("system") {
-                match raw.get("subtype").and_then(|v| v.as_str()) {
-                    Some("task_started") => saw_task_started = true,
-                    Some("task_notification") => saw_task_notification = true,
-                    _ => {}
-                }
-            }
-
-            let audit = audit_frame(&raw);
-            if !audit.fully_wrapped {
-                for issue in &audit.issues {
-                    failures.push(format!(
-                        "[{}] {issue}\n      frame: {raw}",
-                        audit.message_type
-                    ));
-                }
-            }
-
-            if ty == Some("result") || frames > 300 {
-                break;
-            }
-        }
-        client.shutdown().await.ok();
-
-        assert!(frames > 0, "received no frames from the CLI");
-        assert!(
-            saw_task_started,
-            "no `task_started` frame — the subagent never launched"
-        );
-        assert!(
-            saw_task_notification,
-            "no `task_notification` frame — the subagent never completed"
-        );
-        assert!(
-            failures.is_empty(),
-            "{} live subagent frame(s) are not fully wrapped:\n  - {}",
-            failures.len(),
-            failures.join("\n  - ")
-        );
-    }
 }
