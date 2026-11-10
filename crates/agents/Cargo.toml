@@ -1,0 +1,17 @@
+[package]
+name = "agents"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+claude-codes.workspace = true
+# Used only by the s1 spike binary.
+anyhow.workspace = true
+tracing-subscriber.workspace = true
