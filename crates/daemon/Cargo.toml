@@ -1,0 +1,28 @@
+[package]
+name = "daemon"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "conductord"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4.6.7", features = ["derive"] }
+data-encoding.workspace = true
+directories = "6.0.0"
+getrandom.workspace = true
+iroh = { workspace = true, features = ["tls-ring", "portmapper"] }
+iroh-mdns-address-lookup = "0.6.1"
+proto = { path = "../proto" }
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+client = { path = "../client" }
