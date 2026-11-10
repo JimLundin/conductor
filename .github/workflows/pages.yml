@@ -1,0 +1,55 @@
+name: Deploy the web app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins nightly; rustup installs it on first use.
+      - name: Install the toolchain and the wasm target
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install dx 0.7.10
+        run: cargo binstall dioxus-cli@0.7.10 --no-confirm
+
+      - uses: Swatinem/rust-cache@v2
+
+      # ring compiles C for wasm32 with clang, which the runner image ships.
+      - name: Build the web app with base path /conductor/
+        working-directory: crates/app
+        run: |
+          clang --version
+          dx build --platform web --release
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/dx/app/release/web/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
