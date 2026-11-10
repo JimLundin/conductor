@@ -15,6 +15,39 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use uuid::Uuid;
 
+/// Set by a running Claude Code session for its children. Left in place, the
+/// parent's session state leaks into the child CLI.
+pub const PARENT_SESSION_VARS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+];
+
+/// A settings file the CLI can load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingSource {
+    User,
+    Project,
+    Local,
+}
+
+impl SettingSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+            Self::Local => "local",
+        }
+    }
+}
+
 /// Builder for creating Claude CLI commands in JSON streaming mode
 ///
 /// This builder automatically configures Claude to use:
@@ -41,6 +74,7 @@ pub struct ClaudeCliBuilder {
     fallback_model: Option<String>,
     effort: Option<EffortLevel>,
     settings: Option<String>,
+    setting_sources: Option<Vec<SettingSource>>,
     add_dir: Vec<PathBuf>,
     ide: bool,
     strict_mcp_config: bool,
@@ -81,6 +115,7 @@ impl ClaudeCliBuilder {
             fallback_model: None,
             effort: None,
             settings: None,
+            setting_sources: None,
             add_dir: Vec::new(),
             ide: false,
             strict_mcp_config: false,
@@ -199,7 +234,7 @@ impl ClaudeCliBuilder {
     /// Fork an existing session: resume `source_session_id`'s full history
     /// into a **new** session, leaving the source untouched.
     ///
-    /// Assembles `--resume <source> --fork-session --session-id <new>`,
+    /// Assembles `--resume=<source> --fork-session --session-id <new>`,
     /// generating a fresh UUID for the fork (override it by chaining
     /// [`session_id`](Self::session_id)). The forked session starts with the
     /// source's entire history — the Claude CLI has no headless
@@ -243,6 +278,13 @@ impl ClaudeCliBuilder {
     /// Set maximum number of tokens for extended thinking
     pub fn max_thinking_tokens(mut self, tokens: u32) -> Self {
         self.max_thinking_tokens = Some(tokens);
+        self
+    }
+
+    /// Which settings files the CLI loads (`--setting-sources`). Unset, the
+    /// CLI loads user, project and local settings.
+    pub fn setting_sources(mut self, sources: impl IntoIterator<Item = SettingSource>) -> Self {
+        self.setting_sources = Some(sources.into_iter().collect());
         self
     }
 
@@ -372,9 +414,9 @@ impl ClaudeCliBuilder {
             args.push("--continue".to_string());
         }
 
+        // One argument, so an id that starts with `-` is not read as a flag.
         if let Some(ref session) = self.resume {
-            args.push("--resume".to_string());
-            args.push(session.clone());
+            args.push(format!("--resume={session}"));
         }
 
         if self.fork_session {
@@ -404,6 +446,12 @@ impl ClaudeCliBuilder {
         if let Some(ref settings) = self.settings {
             args.push("--settings".to_string());
             args.push(settings.clone());
+        }
+
+        if let Some(ref sources) = self.setting_sources {
+            let names: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
+            args.push("--setting-sources".to_string());
+            args.push(names.join(","));
         }
 
         if !self.add_dir.is_empty() {
@@ -445,8 +493,8 @@ impl ClaudeCliBuilder {
     }
 
     /// The command with piped stdio, ready to spawn. `kill_on_drop` is set, and
-    /// `CLAUDECODE` is removed so the CLI starts even when this process runs
-    /// inside another Claude Code session.
+    /// [`PARENT_SESSION_VARS`] are removed so the CLI starts as its own session
+    /// even when this process runs inside another Claude Code session.
     pub fn build_command(self) -> tokio::process::Command {
         let args = self.build_args();
         let mut cmd = tokio::process::Command::new(&self.command);
@@ -454,8 +502,10 @@ impl ClaudeCliBuilder {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env_remove("CLAUDECODE")
             .kill_on_drop(true);
+        for var in PARENT_SESSION_VARS {
+            cmd.env_remove(var);
+        }
 
         if let Some(ref dir) = self.working_directory {
             cmd.current_dir(dir);
@@ -626,14 +676,20 @@ mod tests {
         let builder = ClaudeCliBuilder::new().resume(Some("existing-uuid".to_string()));
         let args = builder.build_args();
 
-        assert!(
-            args.contains(&"--resume".to_string()),
-            "Should have --resume flag"
-        );
+        assert!(args.contains(&"--resume=existing-uuid".to_string()));
         assert!(
             !args.contains(&"--session-id".to_string()),
             "--session-id should NOT be present when resuming"
         );
+    }
+
+    #[test]
+    fn test_setting_sources() {
+        let args = ClaudeCliBuilder::new()
+            .setting_sources([SettingSource::Project, SettingSource::Local])
+            .build_args();
+        let i = args.iter().position(|a| a == "--setting-sources").unwrap();
+        assert_eq!(args[i + 1], "project,local");
     }
 
     #[test]
@@ -660,8 +716,7 @@ mod tests {
             .session_id(new_id)
             .build_args();
 
-        let resume_pos = args.iter().position(|a| a == "--resume").unwrap();
-        assert_eq!(args[resume_pos + 1], "source-uuid");
+        assert!(args.contains(&"--resume=source-uuid".to_string()));
         assert!(args.contains(&"--fork-session".to_string()));
         let sid_pos = args.iter().position(|a| a == "--session-id").unwrap();
         assert_eq!(args[sid_pos + 1], new_id.to_string());

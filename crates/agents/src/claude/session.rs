@@ -29,12 +29,12 @@ pub enum SettingSource {
     Local,
 }
 
-impl SettingSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Project => "project",
-            Self::Local => "local",
+impl From<SettingSource> for claude_codes::SettingSource {
+    fn from(source: SettingSource) -> Self {
+        match source {
+            SettingSource::User => Self::User,
+            SettingSource::Project => Self::Project,
+            SettingSource::Local => Self::Local,
         }
     }
 }
@@ -110,7 +110,7 @@ impl ClaudeSession {
             ),
             None => None,
         };
-        let mut child = command(&opts)?.spawn()?;
+        let mut child = command(&opts).spawn()?;
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
@@ -199,7 +199,7 @@ impl ClaudeSession {
     }
 }
 
-pub(crate) fn command(opts: &ClaudeOptions) -> Result<Command> {
+pub(crate) fn command(opts: &ClaudeOptions) -> Command {
     let mut builder = ClaudeCliBuilder::new()
         .command(&opts.claude_path)
         .working_directory(&opts.cwd)
@@ -209,13 +209,10 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Result<Command> {
     if let Some(model) = &opts.model {
         builder = builder.model(model);
     }
-    let mut cmd = builder.build_command();
-    // The claude-codes builder cannot express setting sources.
     if let Some(sources) = &opts.setting_sources {
-        let joined: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
-        cmd.arg(format!("--setting-sources={}", joined.join(",")));
+        builder = builder.setting_sources(sources.iter().map(|&s| s.into()));
     }
-    Ok(cmd)
+    builder.build_command()
 }
 
 struct Running {
@@ -449,8 +446,7 @@ mod tests {
             resume: Some(SessionId("0b1c".into())),
             setting_sources: Some(vec![SettingSource::Project, SettingSource::Local]),
             stdout_log: None,
-        })
-        .unwrap();
+        });
         let std = cmd.as_std();
         let args: Vec<_> = std.get_args().map(|a| a.to_str().unwrap()).collect();
         assert_eq!(std.get_program(), "/opt/claude");
@@ -466,18 +462,21 @@ mod tests {
                 "stream-json",
                 "--permission-mode",
                 "default",
-                "--resume",
-                "0b1c",
+                "--resume=0b1c",
                 "--model",
                 "haiku",
+                "--setting-sources",
+                "project,local",
                 "--permission-prompt-tool",
                 "stdio",
-                "--setting-sources=project,local",
             ]
         );
-        assert!(
-            std.get_envs()
-                .any(|(k, v)| k == "CLAUDECODE" && v.is_none())
-        );
+        let removed: Vec<_> = std
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_str().unwrap())
+            .collect();
+        assert!(removed.contains(&"CLAUDECODE"));
+        assert!(removed.contains(&"CLAUDE_CODE_SESSION_ID"));
     }
 }

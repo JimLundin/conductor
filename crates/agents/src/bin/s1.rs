@@ -18,26 +18,7 @@ const CLAUDE: &str = "/home/jim/.local/bin/claude";
 const SCRATCH: &str = "/tmp/s1-scratch";
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Set by a parent Claude Code session, as when s1 runs inside one. Cleared so
-/// the parent's session state does not leak into the child.
-const PARENT_SESSION_VARS: &[&str] = &[
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_PID",
-    "CLAUDE_EFFORT",
-];
-
 fn main() -> Result<()> {
-    for var in PARENT_SESSION_VARS {
-        // SAFETY: no other thread exists yet; the runtime starts below.
-        unsafe { std::env::remove_var(var) };
-    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),

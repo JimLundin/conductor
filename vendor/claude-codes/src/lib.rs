@@ -140,4 +140,4 @@ pub use tool_inputs::{
 };
 
 #[cfg(feature = "cli")]
-pub use cli::ClaudeCliBuilder;
+pub use cli::{ClaudeCliBuilder, SettingSource};
