@@ -9,7 +9,9 @@
 //!
 //! str0m is sans-IO and does no STUN of its own, so [`Stun`] asks public STUN
 //! servers for the sockets' public addresses and adds them as
-//! server-reflexive candidates. Nothing relays: there is no TURN.
+//! server-reflexive candidates. Nothing relays: there is no TURN. str0m's
+//! STUN parser only accepts ICE messages, which carry MESSAGE-INTEGRITY, so
+//! the plain RFC 8489 binding exchange is encoded here.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -22,18 +24,12 @@ use iroh::endpoint::{RecvStream, SendStream};
 use proto::{CandidateType, RtcOffer, Signal};
 use str0m::change::SdpOffer;
 use str0m::channel::ChannelId;
-use str0m::ice::{StunMessage, StunMessageBuilder, TransId};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
 
 use crate::wire::{RecvHalf, SendHalf};
-
-pub const DEFAULT_STUN_SERVERS: &[&str] = &[
-    "stun:stun.l.google.com:19302",
-    "stun:stun.cloudflare.com:3478",
-];
 
 /// ICE and DTLS must finish within this, or the host gives up on the offer.
 /// The browser gives up sooner and reports why.
@@ -543,10 +539,10 @@ impl Driver {
             return Ok(());
         }
         self.datagrams_in += 1;
-        if self.remote != Some(packet.source) {
+        if self.remote.is_none() {
             tracing::info!(client = self.client, from = %packet.source, "webrtc datagrams arriving");
-            self.remote = Some(packet.source);
         }
+        self.remote = Some(packet.source);
         self.rtc.handle_input(input)
     }
 
@@ -620,9 +616,9 @@ struct Probe {
     server: String,
     addr: SocketAddr,
     socket: usize,
-    trans: TransId,
+    trans: [u8; 12],
     sent: usize,
-    answered: bool,
+    done: bool,
 }
 
 impl Stun {
@@ -648,9 +644,9 @@ impl Stun {
                     server: server.clone(),
                     addr,
                     socket,
-                    trans: TransId::new(),
+                    trans: crate::random(),
                     sent: 0,
-                    answered: false,
+                    done: false,
                 });
             }
         }
@@ -667,64 +663,132 @@ impl Stun {
         names
     }
 
+    /// When the next request is due, or when to give up on a silent server.
     fn next_due(&self, started: Instant) -> Option<Instant> {
-        let waiting = self.probes.iter().filter(|p| !p.answered);
-        let next = waiting
-            .filter_map(|p| STUN_SCHEDULE.get(p.sent))
+        self.probes
+            .iter()
+            .filter(|p| !p.done)
+            .map(|p| started + p.due())
             .min()
-            .map(|offset| started + *offset);
-        if next.is_none() && started.elapsed() < STUN_GIVE_UP + Duration::from_millis(50) {
-            return Some(started + STUN_GIVE_UP);
-        }
-        next
     }
 
     async fn send_due(&mut self, started: Instant, sockets: &[Arc<UdpSocket>]) {
         let elapsed = started.elapsed();
-        for probe in &mut self.probes {
-            if probe.answered {
+        for probe in self.probes.iter_mut().filter(|p| !p.done) {
+            if probe.due() > elapsed {
                 continue;
             }
-            match STUN_SCHEDULE.get(probe.sent) {
-                Some(offset) if *offset <= elapsed => {
-                    probe.sent += 1;
-                    let mut buf = [0u8; 128];
-                    let message = StunMessageBuilder::new()
-                        .binding()
-                        .request()
-                        .build(probe.trans);
-                    let Ok(len) = message.to_bytes(None, &mut buf, |_, _| [0; 20]) else {
-                        continue;
-                    };
-                    if let Err(err) = sockets[probe.socket].send_to(&buf[..len], probe.addr).await {
-                        tracing::debug!(server = probe.server, %err, "webrtc STUN send failed");
-                    }
-                }
-                None if elapsed >= STUN_GIVE_UP => {
-                    probe.answered = true;
-                    tracing::warn!(
-                        server = probe.server,
-                        local = ?sockets[probe.socket].local_addr().ok(),
-                        "webrtc STUN server did not answer: no srflx candidate from it"
-                    );
-                }
-                _ => {}
+            if probe.sent == STUN_SCHEDULE.len() {
+                probe.done = true;
+                tracing::warn!(
+                    server = probe.server,
+                    local = ?sockets[probe.socket].local_addr().ok(),
+                    "webrtc STUN server did not answer: no srflx candidate from it"
+                );
+                continue;
+            }
+            probe.sent += 1;
+            let request = binding_request(probe.trans);
+            if let Err(err) = sockets[probe.socket].send_to(&request, probe.addr).await {
+                tracing::debug!(server = probe.server, %err, "webrtc STUN send failed");
             }
         }
     }
 
     /// The mapped address, if `packet` answers one of our requests.
     fn answer(&mut self, packet: &Packet) -> Option<SocketAddr> {
-        if !self.probes.iter().any(|p| p.addr == packet.source) {
-            return None;
+        let probe = self
+            .probes
+            .iter_mut()
+            .find(|p| p.addr == packet.source && packet.bytes.get(8..20) == Some(&p.trans))?;
+        let mapped = mapped_address(&packet.bytes)?;
+        probe.done = true;
+        Some(mapped)
+    }
+}
+
+impl Probe {
+    fn due(&self) -> Duration {
+        STUN_SCHEDULE
+            .get(self.sent)
+            .copied()
+            .unwrap_or(STUN_GIVE_UP)
+    }
+}
+
+const STUN_MAGIC: [u8; 4] = [0x21, 0x12, 0xa4, 0x42];
+
+/// An RFC 8489 Binding request with no attributes.
+fn binding_request(trans: [u8; 12]) -> [u8; 20] {
+    let mut request = [0u8; 20];
+    request[1] = 0x01;
+    request[4..8].copy_from_slice(&STUN_MAGIC);
+    request[8..20].copy_from_slice(&trans);
+    request
+}
+
+/// XOR-MAPPED-ADDRESS (or the legacy MAPPED-ADDRESS) of a Binding success
+/// response, IPv4 only.
+fn mapped_address(response: &[u8]) -> Option<SocketAddr> {
+    if response.get(0..2)? != [0x01, 0x01] || response.get(4..8)? != STUN_MAGIC {
+        return None;
+    }
+    let mut attrs = response.get(20..)?;
+    let mut plain = None;
+    while attrs.len() >= 4 {
+        let kind = u16::from_be_bytes([attrs[0], attrs[1]]);
+        let len = u16::from_be_bytes([attrs[2], attrs[3]]) as usize;
+        let value = attrs.get(4..4 + len)?;
+        if len == 8 && value[1] == 0x01 {
+            let port = u16::from_be_bytes([value[2], value[3]]);
+            let ip = [value[4], value[5], value[6], value[7]];
+            match kind {
+                0x0020 => {
+                    let port = port ^ 0x2112;
+                    let ip: [u8; 4] = std::array::from_fn(|i| ip[i] ^ STUN_MAGIC[i]);
+                    return Some(SocketAddr::from((ip, port)));
+                }
+                0x0001 => plain = Some(SocketAddr::from((ip, port))),
+                _ => {}
+            }
         }
-        let message = StunMessage::parse(&packet.bytes).ok()?;
-        if !message.is_successful_binding_response() {
-            return None;
-        }
-        let trans = message.trans_id();
-        let probe = self.probes.iter_mut().find(|p| p.trans == trans)?;
-        probe.answered = true;
-        message.mapped_address()
+        attrs = attrs.get(4 + len.next_multiple_of(4)..).unwrap_or_default();
+    }
+    plain
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_request_is_a_bare_rfc8489_header() {
+        let request = binding_request([7; 12]);
+        assert_eq!(
+            request,
+            [
+                0, 1, 0, 0, 0x21, 0x12, 0xa4, 0x42, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7
+            ]
+        );
+    }
+
+    #[test]
+    fn mapped_address_reads_xor_mapped_then_plain() {
+        let mut response = vec![1, 1, 0, 12, 0x21, 0x12, 0xa4, 0x42];
+        response.extend([9; 12]);
+        // XOR-MAPPED-ADDRESS for 203.0.113.9:51000.
+        response.extend([0, 0x20, 0, 8, 0, 1, 0xe6, 0x2a, 0xea, 0x12, 0xd5, 0x4b]);
+        assert_eq!(
+            mapped_address(&response),
+            Some("203.0.113.9:51000".parse().unwrap())
+        );
+        let mut legacy = response[..20].to_vec();
+        legacy.extend([0, 0x01, 0, 8, 0, 1, 0xc7, 0x38, 203, 0, 113, 10]);
+        assert_eq!(
+            mapped_address(&legacy),
+            Some("203.0.113.10:51000".parse().unwrap())
+        );
+        response[1] = 0x11;
+        assert_eq!(mapped_address(&response), None);
     }
 }

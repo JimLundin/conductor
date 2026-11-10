@@ -53,6 +53,13 @@ pub enum Open {
     Rtc(RtcOffer),
 }
 
+/// Public STUN servers both ends ask for their public address by default.
+/// They are stateless and see no traffic; nothing relays (§5.4).
+pub const DEFAULT_STUN_SERVERS: &[&str] = &[
+    "stun:stun.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478",
+];
+
 /// The browser's SDP offer. It carries the browser's DTLS fingerprint, and
 /// the answer carries the host's, so only the two ends of this authenticated
 /// iroh connection can complete the WebRTC handshake.

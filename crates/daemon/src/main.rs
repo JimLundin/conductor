@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use daemon::host::{Host, HostOptions};
-use daemon::rtc::{self, RtcOptions};
+use daemon::rtc::RtcOptions;
 use daemon::server::Conductor;
 use iroh::Endpoint;
 use iroh::endpoint::presets;
@@ -38,7 +38,7 @@ enum Cmd {
         delta_ms: u64,
         /// A STUN server for the WebRTC upgrade, as `stun:host:port`. Repeat
         /// for more. STUN only reports public addresses; nothing relays.
-        #[arg(long = "stun", default_values = rtc::DEFAULT_STUN_SERVERS)]
+        #[arg(long = "stun", default_values = proto::DEFAULT_STUN_SERVERS)]
         stun_servers: Vec<String>,
         /// Refuse browsers' WebRTC upgrades, so they stay on iroh's relay.
         #[arg(long)]
