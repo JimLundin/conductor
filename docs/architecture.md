@@ -192,6 +192,7 @@ so we use those instead of hand-rolled multiplexing:
 
 ```rust
 pub trait Transport {                         // impls: IrohConn (native + wasm), RtcConn (wasm ↔ str0m)
+                                              // [S3: an enum per crate, `wire::Transport`, `SendHalf`, `RecvHalf`]
     async fn open_bi(&self) -> Result<(SendHalf, RecvHalf)>;
     async fn accept_bi(&self) -> Result<(SendHalf, RecvHalf)>;
     fn peer(&self) -> PeerId;                 // authenticated iroh node id
@@ -207,6 +208,7 @@ streams used:
 | 1st bi-stream | client→host | `Hello { cert, client_version }` → `Welcome { host_info, roster_version, head_seq }` |
 | one bi-stream per RPC | client→host | `Command` → `CommandResult`. The stream then closes. |
 | one long-lived bi-stream | client→host | `Subscribe { epoch, after_seq }`. The host replays the log from SQLite, then streams live events, or replies `SnapshotRequired` (§8). |
+| one bi-stream per WebRTC upgrade | browser→host, iroh only | `Rtc { sdp }` → `Answer`, then trickled `Candidate`s both ways while the WebRTC connection lives (§5.4). |
 
 Each frame is a `u32` length followed by a JSON body.
 
@@ -293,25 +295,51 @@ so far. T3 Code does the same with `ProviderTextDeltaCoalescer.ts`.
   the same machine.
 - **[S3]** The spike speaks ALPN `conductor/0`. §5.1's `conductor/1` is for P1.
 
-### 5.4 Browser upgrade to WebRTC
+### 5.4 Browser upgrade to WebRTC [built in S3; details in `docs/s3/NOTES.md`]
 
-1. The browser connects to the host with iroh-wasm through the relay, then sends `Hello`
-   and gets `Welcome`. The browser is now authenticated and the channel is end-to-end
+1. The browser connects to the host with iroh-wasm through the relay, sends `Hello` and
+   gets `Welcome`. The browser is now authenticated and the channel is end-to-end
    encrypted.
-2. The browser creates an `RTCPeerConnection` (through `web-sys`) and sends an `RtcOffer`
-   (its description and connection candidates) over a stream. The host answers using
-   `str0m`, a pure-Rust WebRTC library, and the two exchange candidates the same way.
-3. **Binding the two channels:** WebRTC's encryption certificates are self-signed. Because
-   each side's certificate fingerprint arrived over the authenticated iroh channel, the
-   WebRTC connection is bound to the same identities. No extra trust step is needed.
-4. **Address-discovery servers:** to learn their public addresses, both sides query a
-   public STUN server. These are stateless, see no content, and their list is a setting.
-   Nothing relays.
-5. Once the data channel opens, new streams use WebRTC and the relayed iroh connection
-   idles as a fallback. If the WebRTC connection drops, the client retries the upgrade and
-   uses the relay meanwhile.
-6. **Reference:** Vibe Kanban `crates/relay-webrtc/` (Apache-2.0, built on `webrtc-rs`) for
-   signaling, chunking large messages and host/peer structure.
+2. Once the link is Live, the browser creates an `RTCPeerConnection` through `web-sys` with
+   one data channel, and opens a new iroh stream with `Open::Rtc { sdp }`. The host answers
+   with `Signal::Answer` from a `str0m` `Rtc`. Both sides then trickle
+   `Signal::Candidate`s on the same stream. The stream stays open for the life of the
+   WebRTC connection, and closing it ends that connection.
+3. **Binding the two channels:** WebRTC's encryption certificates are self-signed. Each
+   side's certificate fingerprint is in its SDP, and both SDPs travel only on the
+   authenticated iroh stream. The host checks the browser's fingerprint
+   (`set_fingerprint_verification(true)`). The host creates an `Rtc` only for an
+   `Open::Rtc` on an authenticated iroh connection, and refuses one on a data channel.
+4. **Address-discovery servers:** both sides ask public STUN servers for their public
+   addresses. The list is a setting: `--stun` on the host, `LinkOptions::stun_servers` on
+   the client, defaulting to `proto::DEFAULT_STUN_SERVERS` (Google's and Cloudflare's).
+   str0m does no STUN, so the host encodes the RFC 8489 Binding exchange itself and adds
+   the answer as a server-reflexive candidate. No TURN server is configured, so nothing
+   relays except n0's iroh relay.
+5. **Host sockets:** one UDP socket per up, non-loopback IPv4 interface, each on an
+   ephemeral port. They never collide with iroh's socket, or with another host on the same
+   machine.
+6. **Streams:** every stream of §5.1 except `Hello` becomes an ordered, reliable data
+   channel carrying the same length-prefixed frames. A frame is split into messages of
+   at most 16 KiB (`proto::CHUNK_LEN`) and reassembled with `proto::FrameBuffer`. A data
+   channel can't half-close, so the host closes a command's channel after the result.
+   `SendHalf`, `RecvHalf` and the client's `Transport` hide which transport carries a
+   stream, on both sides.
+7. **Switching:** when the data channel opens, the client subscribes on WebRTC with
+   `after_seq` set to its cursor, then drops the relayed subscription. The host's replay
+   covers the overlap, and the client skips seqs it already applied. Commands go over
+   WebRTC from then on. The iroh connection stays open and idle.
+8. **Fallback:** if ICE, DTLS or the data channel isn't up within 15 s, the client stays
+   on iroh, shows `Relayed`, reports the reason to the host (`Signal::Failed`), and
+   retries after a jittered backoff from 2 s to 2 min. If the WebRTC connection fails or
+   its subscription channel closes, the client subscribes on iroh from its cursor at
+   once, then retries.
+9. **Path:** `PathKind::WebRtc` carries the selected candidate pair (host, srflx, prflx)
+   from the browser's `getStats`. The status line shows it, and the browser sends it to
+   the host log (`Signal::Selected`). Native clients hole-punch with iroh and never
+   upgrade.
+10. **Reference:** Vibe Kanban `crates/relay-webrtc/` (Apache-2.0) for signaling and
+    chunking. It now uses str0m too.
 
 **This is required, not optional.** You accept n0 relays for setup and for occasional
 fallback, but not for all phone traffic, so the phone isn't done until WebRTC carries its
@@ -321,7 +349,7 @@ within the same phase (P3).
 **If WebRTC keeps failing for a host,** the phone would sit on the relay for that host:
 
 - The UI shows the path for each host, so this is visible rather than silent.
-- The host logs how often the upgrade fails, so we can tell whether it's persistent.
+- The host logs every failed attempt with the browser's reason (`webrtc client gave up`), so we can tell whether it's persistent.
 - Remedies, in order:
   1. WSL `networkingMode=mirrored`.
   2. The host asks the router to open a port with UPnP or NAT-PMP, as MonoCode does
