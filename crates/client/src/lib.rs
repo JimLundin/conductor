@@ -3,6 +3,7 @@
 
 mod link;
 pub mod platform;
+pub mod transcript;
 mod wire;
 
 pub use link::{Cursor, HostLink, LinkState, PathKind, SendError, Status, Target, Update};

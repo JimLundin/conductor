@@ -1,0 +1,39 @@
+# Web build in headless Chromium (390x844) against conductord s3-host, 2026-11-10T18:16:18Z
+
+wasm: 5630781 bytes raw, 1791610 bytes gzip -9
+
+## Playwright
+[  0.899s] open http://localhost:8080/conductor/#join=<ticket>
+[  2.115s] Live 1215ms after navigation (first connect)
+[  2.120s] status line: "s3-host Live Relayed"
+[  2.120s] ok: the join fragment was removed from the address bar
+[  2.126s] ok: the ticket is in local storage
+[  2.168s] submitted a prompt
+[  2.746s] ok: deltas rendered live (4 distinct partial texts seen)
+[  4.063s] approval card: "Bash wants to run echo "hello from the phone" Approve Deny"
+[  4.139s] ok: .approval button.approve is at least 44px (162x44)
+[  4.169s] ok: .approval button.deny is at least 44px (162x44)
+[  4.188s] ok: .composer input is at least 44px (273x44)
+[  4.203s] ok: .composer button is at least 44px (77x44)
+[  4.256s] tapped Approve
+[  4.345s] resolved: "Approved by browser"
+[  4.354s] message: "Ran it. The answer to "hello from the phone" is 42."
+[  4.354s] Turn finished rendered
+[  4.359s] path reported by the client: Relayed
+[  4.359s] ok: the browser client is relayed
+[  4.582s] screenshot docs/s3/iphone-390x844.png
+[  5.543s] Live 961ms after reload without the fragment (reconnect)
+[  5.549s] ok: the transcript replayed after reload
+[  5.549s] ok: no console errors
+[  5.608s] PASS
+
+## Host log
+data dir: /home/jim/.local/share/conductor
+host id:  eaf5db9d416f6a7469335f69c3a319603fca639b944a32a209eba83d5b5df03f
+relay:    https://euc1-1.relay.n0.iroh.link./
+INFO daemon::server: client connected peer=57afb6c6460c579217f37ff9a9ac8cb72b88897b10c40314f2cf3d0d26b81968 client="browser"
+INFO daemon::server: subscribed after_seq=0 replayed=0
+INFO daemon::server: command client="browser" command=Command { id: CommandId(15928453001170151665), body: Prompt { text: "hello from the phone" } }
+INFO daemon::server: command client="browser" command=Command { id: CommandId(15928453001170151666), body: Resolve { approval: RequestId(1), decision: Approve } }
+INFO daemon::server: client connected peer=6cfd4b4eb62ef78c7ba111a954831f30db0ef65847a050445590690bfa46ea65 client="browser"
+INFO daemon::server: subscribed after_seq=0 replayed=18

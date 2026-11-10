@@ -1,0 +1,146 @@
+:root {
+  --bg: #14161b;
+  --panel: #1d2027;
+  --line: #2c313a;
+  --text: #e6e8ec;
+  --muted: #9aa1ad;
+  --accent: #7cc4a8;
+  --warn: #e0b45c;
+  --bad: #e07a6c;
+  color-scheme: dark;
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body { margin: 0; }
+
+/* The shell tracks the visible viewport, so the composer stays above the
+   keyboard and the browser chrome. */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.6rem;
+  padding: calc(0.6rem + env(safe-area-inset-top, 0px)) 1rem 0.6rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+.status .dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--bad);
+}
+.status[data-state="Connecting"] .dot,
+.status[data-state="Authenticating"] .dot,
+.status[data-state="CatchingUp"] .dot { background: var(--warn); }
+.status[data-state="Live"] .dot { background: var(--accent); }
+.status .host { font-weight: 600; }
+.status .state, .status .path { color: var(--muted); }
+.status .error { flex-basis: 100%; color: var(--bad); font-size: 0.8rem; }
+
+/* column-reverse keeps the newest output in view without scripting. */
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column-reverse;
+  padding: 0 1rem;
+}
+.items { padding: 1rem 0; }
+
+.reply, .message { margin: 0 0 0.75rem; white-space: pre-wrap; }
+.reply.streaming::after { content: "▍"; color: var(--accent); }
+.message { padding-left: 0.75rem; border-left: 2px solid var(--accent); }
+.turn-end {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.approval {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--panel);
+}
+.approval[data-open="true"] { border-color: var(--warn); }
+.approval-title { margin: 0 0 0.4rem; font-weight: 600; }
+.approval pre {
+  margin: 0 0 0.6rem;
+  padding: 0.5rem;
+  overflow-x: auto;
+  border-radius: 0.4rem;
+  background: var(--bg);
+  font-size: 0.85rem;
+}
+.actions { display: flex; gap: 0.5rem; }
+.actions button { flex: 1; }
+.resolved { margin: 0; color: var(--muted); }
+
+.composer {
+  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.composer .row { display: flex; gap: 0.5rem; }
+.notice { margin: 0 0 0.5rem; color: var(--warn); font-size: 0.85rem; }
+
+input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+}
+
+button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: #0d1a14;
+  font: inherit;
+  font-weight: 600;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 100ms ease-out, opacity 100ms ease-out;
+}
+button:active { transform: scale(0.97); }
+button:disabled { opacity: 0.4; }
+button.deny { background: var(--line); color: var(--text); }
+
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 2rem;
+  color: var(--muted);
+  text-align: center;
+}

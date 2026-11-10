@@ -27,7 +27,7 @@ pub struct Ticket {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AuthToken([u8; TOKEN_LEN]);
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum TicketError {
     #[error("ticket is not base64url")]
     Encoding,

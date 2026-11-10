@@ -1,0 +1,7 @@
+[application]
+name = "conductor"
+
+[web.app]
+title = "Conductor"
+# Served from https://jimlundin.github.io/conductor/ by GitHub Pages.
+base_path = "conductor"

@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
-WASM_CRATES=(proto client app)
+WASM_CRATES=(proto client)
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 for crate in "${WASM_CRATES[@]}"; do
@@ -11,4 +11,7 @@ for crate in "${WASM_CRATES[@]}"; do
     cargo clippy -p "$crate" --target wasm32-unknown-unknown -- -D warnings
   fi
 done
+if [ -d crates/app ]; then
+  cargo clippy -p app --features web --target wasm32-unknown-unknown -- -D warnings
+fi
 cargo test --workspace

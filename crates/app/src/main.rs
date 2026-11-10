@@ -1,0 +1,208 @@
+//! The Conductor UI. One host for S3: status line, live transcript, approval
+//! cards and a prompt box. `dx serve --platform web` runs it in a browser.
+
+// rsx! expands each "{text}" node to format!, which clippy flags.
+#![allow(clippy::useless_format)]
+
+mod ticket;
+
+use std::rc::Rc;
+
+use client::transcript::{Item, Outcome, Transcript};
+use client::{HostLink, LinkState, PathKind, Status, Update};
+use dioxus::prelude::*;
+use proto::{CommandBody, CommandResult, Decision, RequestId, Ticket};
+
+const CSS: Asset = asset!("/assets/main.css");
+
+fn main() {
+    dioxus::launch(App);
+}
+
+#[component]
+fn App() -> Element {
+    let ticket = use_hook(ticket::initial);
+    rsx! {
+        document::Stylesheet { href: CSS }
+        match ticket {
+            Ok(Some(ticket)) => rsx! { Host { ticket } },
+            Ok(None) => rsx! { Empty { message: "Open a join link from `conductord s3-host` to connect to a host." } },
+            Err(error) => rsx! { Empty { message: "That join link is not valid: {error}" } },
+        }
+    }
+}
+
+#[component]
+fn Empty(message: String) -> Element {
+    rsx! {
+        main { class: "empty", p { "{message}" } }
+    }
+}
+
+#[component]
+fn Host(ticket: Ticket) -> Element {
+    let mut status = use_signal(|| None::<Status>);
+    let mut transcript = use_signal(Transcript::default);
+    let mut link = use_signal(|| None::<Rc<HostLink>>);
+    let notice = use_signal(|| None::<String>);
+
+    use_future(move || {
+        let ticket = ticket.clone();
+        async move {
+            let endpoint = match client::platform::bind_endpoint().await {
+                Ok(endpoint) => endpoint,
+                Err(err) => {
+                    tracing::error!(%err, "could not start iroh");
+                    return;
+                }
+            };
+            let (handle, mut updates) =
+                HostLink::spawn(endpoint, (&ticket).into(), ticket::CLIENT_NAME.into(), None);
+            link.set(Some(Rc::new(handle)));
+            while let Some(update) = updates.recv().await {
+                match update {
+                    Update::Status(next) => status.set(Some(next)),
+                    Update::Reset(_) => transcript.set(Transcript::default()),
+                    Update::Event(event) => transcript.write().apply(&event.kind),
+                }
+            }
+        }
+    });
+
+    let send = move |body: CommandBody| run_command(link, notice, body);
+
+    rsx! {
+        div { class: "app",
+            StatusLine { status: status() }
+            main { class: "transcript",
+                div { class: "items",
+                    for (i, item) in transcript.read().items.iter().enumerate() {
+                        TranscriptItem { key: "{i}", item: item.clone(), on_decide: move |(id, decision)| {
+                            send(CommandBody::Resolve { approval: id, decision })
+                        } }
+                    }
+                }
+            }
+            Composer { live: status().is_some_and(|s| s.state == LinkState::Live), notice: notice(),
+                on_send: move |text| send(CommandBody::Prompt { text }) }
+        }
+    }
+}
+
+fn run_command(
+    link: Signal<Option<Rc<HostLink>>>,
+    mut notice: Signal<Option<String>>,
+    body: CommandBody,
+) {
+    let Some(link) = link() else {
+        notice.set(Some("Not connected yet.".into()));
+        return;
+    };
+    spawn(async move {
+        let result = link.send(body).await;
+        notice.set(match result {
+            Ok(CommandResult::Accepted) => None,
+            Ok(CommandResult::Rejected(rejection)) => Some(rejection.to_string()),
+            Err(err) => Some(err.to_string()),
+        });
+    });
+}
+
+#[component]
+fn StatusLine(status: Option<Status>) -> Element {
+    let status = status.unwrap_or(Status {
+        state: LinkState::Disconnected,
+        path: PathKind::Unknown,
+        host: None,
+        error: None,
+    });
+    let state = format!("{:?}", status.state);
+    let path = match status.path {
+        PathKind::Direct => "Direct",
+        PathKind::Relayed => "Relayed",
+        PathKind::Unknown => "path unknown",
+    };
+    let host = status.host.unwrap_or_else(|| "host".into());
+    rsx! {
+        header { class: "status", "data-state": "{state}", "data-path": "{path}",
+            span { class: "dot" }
+            span { class: "host", "{host}" }
+            span { class: "state", "{state}" }
+            span { class: "path", "{path}" }
+            if let Some(error) = status.error {
+                span { class: "error", "{error}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) -> Element {
+    match item {
+        Item::Reply { text, done } => rsx! {
+            p { class: if done { "reply" } else { "reply streaming" }, "{text}" }
+        },
+        Item::Message(text) => rsx! { p { class: "message", "{text}" } },
+        Item::TurnFinished => rsx! { p { class: "turn-end", "Turn finished" } },
+        Item::Approval {
+            id,
+            tool,
+            detail,
+            outcome,
+        } => {
+            let open = outcome.is_none();
+            rsx! {
+            section { class: "approval", "data-open": open,
+                p { class: "approval-title", "{tool} wants to run" }
+                pre { "{detail}" }
+                match outcome {
+                    None => rsx! {
+                        div { class: "actions",
+                            button { class: "approve", onclick: move |_| on_decide((id, Decision::Approve)), "Approve" }
+                            button { class: "deny", onclick: move |_| on_decide((id, Decision::Deny)), "Deny" }
+                        }
+                    },
+                    Some(Outcome { decision, by }) => rsx! {
+                        p { class: "resolved",
+                            {match decision { Decision::Approve => "Approved", Decision::Deny => "Denied" }}
+                            " by {by}"
+                        }
+                    },
+                }
+            }
+            }
+        }
+    }
+}
+
+#[component]
+fn Composer(live: bool, notice: Option<String>, on_send: EventHandler<String>) -> Element {
+    let mut draft = use_signal(String::new);
+    rsx! {
+        form { class: "composer",
+            onsubmit: move |evt: FormEvent| {
+                evt.prevent_default();
+                let text = draft().trim().to_string();
+                if !text.is_empty() {
+                    on_send(text);
+                    draft.set(String::new());
+                }
+            },
+            if let Some(notice) = notice {
+                p { class: "notice", "{notice}" }
+            }
+            div { class: "row",
+                input {
+                    r#type: "text",
+                    name: "prompt",
+                    placeholder: "Ask the agent",
+                    autocomplete: "off",
+                    enterkeyhint: "send",
+                    value: "{draft}",
+                    oninput: move |evt| draft.set(evt.value()),
+                }
+                button { r#type: "submit", disabled: !live, "Send" }
+            }
+        }
+    }
+}

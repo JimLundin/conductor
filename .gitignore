@@ -1,2 +1,3 @@
 target/
 .audit/
+node_modules/
