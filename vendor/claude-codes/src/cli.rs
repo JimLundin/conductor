@@ -9,35 +9,11 @@
 //! - OAuth token and API key environment variables for authentication
 //!
 
+use crate::io::PermissionMode;
 use crate::models::EffortLevel;
 use std::path::PathBuf;
 use std::process::Stdio;
 use uuid::Uuid;
-
-/// Permission mode for Claude CLI
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PermissionMode {
-    AcceptEdits,
-    BypassPermissions,
-    Default,
-    Delegate,
-    DontAsk,
-    Plan,
-}
-
-impl PermissionMode {
-    /// Get the CLI string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PermissionMode::AcceptEdits => "acceptEdits",
-            PermissionMode::BypassPermissions => "bypassPermissions",
-            PermissionMode::Default => "default",
-            PermissionMode::Delegate => "delegate",
-            PermissionMode::DontAsk => "dontAsk",
-            PermissionMode::Plan => "plan",
-        }
-    }
-}
 
 /// Builder for creating Claude CLI commands in JSON streaming mode
 ///

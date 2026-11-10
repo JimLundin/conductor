@@ -204,17 +204,13 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Result<Command> {
         .command(&opts.claude_path)
         .working_directory(&opts.cwd)
         .permission_prompt_tool("stdio")
+        .permission_mode(opts.permission_mode.into())
         .resume(opts.resume.as_ref().map(|id| id.0.clone()));
     if let Some(model) = &opts.model {
         builder = builder.model(model);
     }
     let mut cmd = builder.build_command();
-    // The claude-codes builder cannot express `auto` or setting sources, so these
-    // two flags are appended here.
-    cmd.arg(format!(
-        "--permission-mode={}",
-        opts.permission_mode.as_str()
-    ));
+    // The claude-codes builder cannot express setting sources.
     if let Some(sources) = &opts.setting_sources {
         let joined: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
         cmd.arg(format!("--setting-sources={}", joined.join(",")));
@@ -468,13 +464,14 @@ mod tests {
                 "stream-json",
                 "--input-format",
                 "stream-json",
+                "--permission-mode",
+                "default",
                 "--resume",
                 "0b1c",
                 "--model",
                 "haiku",
                 "--permission-prompt-tool",
                 "stdio",
-                "--permission-mode=default",
                 "--setting-sources=project,local",
             ]
         );

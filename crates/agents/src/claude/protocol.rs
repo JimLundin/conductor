@@ -8,7 +8,7 @@ use claude_codes::io::{
     ControlResponseMessage, ControlResponsePayload, PermissionResult, SystemSubtype,
     ToolResultContent,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// A Claude session id, as printed in `system/init` and accepted by `--resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -34,15 +34,15 @@ pub enum PermissionMode {
     Auto,
 }
 
-impl PermissionMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::AcceptEdits => "acceptEdits",
-            Self::Plan => "plan",
-            Self::BypassPermissions => "bypassPermissions",
-            Self::DontAsk => "dontAsk",
-            Self::Auto => "auto",
+impl From<PermissionMode> for claude_codes::PermissionMode {
+    fn from(mode: PermissionMode) -> Self {
+        match mode {
+            PermissionMode::Default => Self::Default,
+            PermissionMode::AcceptEdits => Self::AcceptEdits,
+            PermissionMode::Plan => Self::Plan,
+            PermissionMode::BypassPermissions => Self::BypassPermissions,
+            PermissionMode::DontAsk => Self::DontAsk,
+            PermissionMode::Auto => Self::Auto,
         }
     }
 }
@@ -263,15 +263,13 @@ pub(crate) fn encode(msg: Outbound<'_>) -> serde_json::Result<String> {
             request_id,
             call: ControlCall::Interrupt,
         } => serde_json::to_string(&ControlRequestMessage::interrupt(request_id)),
-        // claude-codes has no `set_permission_mode` payload; see docs/upstream-claude-codes.md.
         Outbound::Control {
             request_id,
             call: ControlCall::SetPermissionMode(mode),
-        } => serde_json::to_string(&json!({
-            "type": "control_request",
-            "request_id": request_id,
-            "request": {"subtype": "set_permission_mode", "mode": mode.as_str()},
-        })),
+        } => serde_json::to_string(&ControlRequestMessage::set_permission_mode(
+            request_id,
+            mode.into(),
+        )),
         Outbound::Permission {
             id,
             decision,
@@ -301,6 +299,7 @@ pub(crate) fn encode(msg: Outbound<'_>) -> serde_json::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn sent(msg: Outbound<'_>) -> Value {
         serde_json::from_str(&encode(msg).unwrap()).unwrap()

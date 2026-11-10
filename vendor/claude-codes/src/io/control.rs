@@ -212,6 +212,32 @@ impl<'de> Deserialize<'de> for PermissionModeName {
     }
 }
 
+/// A session permission mode, as passed to `--permission-mode` and sent in
+/// `set_permission_mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionMode {
+    Default,
+    AcceptEdits,
+    Plan,
+    BypassPermissions,
+    DontAsk,
+    Auto,
+}
+
+impl PermissionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Plan => "plan",
+            Self::BypassPermissions => "bypassPermissions",
+            Self::DontAsk => "dontAsk",
+            Self::Auto => "auto",
+        }
+    }
+}
+
 // ============================================================================
 // Control Protocol Types (for bidirectional tool approval)
 // ============================================================================
@@ -271,6 +297,9 @@ pub enum ControlRequestPayload {
     /// Merge settings into the live session's flag-settings layer (sent by
     /// SDK to CLI), e.g. to change effort mid-session.
     ApplyFlagSettings(ApplyFlagSettingsRequest),
+    /// Change the session's permission mode (sent by SDK to CLI). The CLI
+    /// answers `{"mode": ...}` and prints a `system/status` frame.
+    SetPermissionMode { mode: PermissionMode },
     /// A subtype this crate does not model, or a known subtype whose body did
     /// not parse. Holds the raw `request` object.
     #[serde(untagged)]
@@ -287,6 +316,7 @@ impl ControlRequestPayload {
             Self::Initialize(_) => "initialize",
             Self::Interrupt => "interrupt",
             Self::ApplyFlagSettings(_) => "apply_flag_settings",
+            Self::SetPermissionMode { .. } => "set_permission_mode",
             Self::Unknown(raw) => raw
                 .get("subtype")
                 .and_then(Value::as_str)
@@ -1239,12 +1269,35 @@ impl ControlRequestMessage {
             request: ControlRequestPayload::Interrupt,
         }
     }
+
+    /// Create a `set_permission_mode` request.
+    pub fn set_permission_mode(request_id: impl Into<String>, mode: PermissionMode) -> Self {
+        ControlRequestMessage {
+            message_type: "control_request".to_string(),
+            request_id: request_id.into(),
+            request: ControlRequestPayload::SetPermissionMode { mode },
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::io::ClaudeOutput;
+
+    #[test]
+    fn set_permission_mode_matches_the_wire() {
+        let line = r#"{"type":"control_request","request_id":"req_2","request":{"subtype":"set_permission_mode","mode":"acceptEdits"}}"#;
+        let msg = ControlRequestMessage::set_permission_mode("req_2", PermissionMode::AcceptEdits);
+        assert_eq!(serde_json::to_string(&msg).unwrap(), line);
+        let parsed: ControlRequestMessage = serde_json::from_str(line).unwrap();
+        assert!(matches!(
+            parsed.request,
+            ControlRequestPayload::SetPermissionMode {
+                mode: PermissionMode::AcceptEdits
+            }
+        ));
+    }
 
     #[test]
     fn unknown_control_subtype_keeps_its_request_id() {

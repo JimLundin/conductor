@@ -56,7 +56,7 @@ pub use io::{
     ControlRequestMessage, ControlRequestPayload, ControlResponse, ControlResponseMessage,
     ControlResponsePayload, GetUsageResponse, HookCallbackRequest, InitializeRequest,
     McpMessageRequest, ModelScopedRateLimit, Permission, PermissionBehavior, PermissionDenial,
-    PermissionDestination, PermissionModeName, PermissionResult, PermissionRule,
+    PermissionDestination, PermissionMode, PermissionModeName, PermissionResult, PermissionRule,
     PermissionSuggestion, PermissionType, ToolCaller, ToolPermissionRequest, ToolUseBlock,
     UsageBehavior, UsageBehaviors, UsageModelUsage, UsageRateLimitWindow, UsageRateLimits,
     UsageSession,
@@ -140,4 +140,4 @@ pub use tool_inputs::{
 };
 
 #[cfg(feature = "cli")]
-pub use cli::{ClaudeCliBuilder, PermissionMode};
+pub use cli::ClaudeCliBuilder;
