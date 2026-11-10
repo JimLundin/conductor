@@ -1,9 +1,11 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use daemon::host::{Host, HostOptions};
+use daemon::rtc::{self, RtcOptions};
 use daemon::server::Conductor;
 use iroh::Endpoint;
 use iroh::endpoint::presets;
@@ -34,6 +36,20 @@ enum Cmd {
         /// Pause between the simulated agent's transcript chunks.
         #[arg(long, default_value_t = 100)]
         delta_ms: u64,
+        /// A STUN server for the WebRTC upgrade, as `stun:host:port`. Repeat
+        /// for more. STUN only reports public addresses; nothing relays.
+        #[arg(long = "stun", default_values = rtc::DEFAULT_STUN_SERVERS)]
+        stun_servers: Vec<String>,
+        /// Refuse browsers' WebRTC upgrades, so they stay on iroh's relay.
+        #[arg(long)]
+        no_webrtc: bool,
+        /// Test only: drop every WebRTC datagram, so upgrades fail.
+        #[arg(long, hide = true)]
+        test_rtc_blackhole: bool,
+        /// Test only: drop the first WebRTC connection after it sends this
+        /// many frames.
+        #[arg(long, hide = true)]
+        test_rtc_drop_after: Option<u64>,
     },
 }
 
@@ -52,6 +68,10 @@ async fn main() -> anyhow::Result<()> {
             name,
             web_url,
             delta_ms,
+            stun_servers,
+            no_webrtc,
+            test_rtc_blackhole,
+            test_rtc_drop_after,
         } => {
             let data_dir = match data_dir {
                 Some(dir) => dir,
@@ -60,7 +80,20 @@ async fn main() -> anyhow::Result<()> {
                     .data_dir()
                     .to_path_buf(),
             };
-            s3_host(data_dir, name, web_url, Duration::from_millis(delta_ms)).await
+            let rtc = (!no_webrtc).then(|| {
+                let mut options = RtcOptions::new(stun_servers);
+                options.test_blackhole = test_rtc_blackhole;
+                options.test_drop_after = test_rtc_drop_after;
+                Arc::new(options)
+            });
+            s3_host(
+                data_dir,
+                name,
+                web_url,
+                Duration::from_millis(delta_ms),
+                rtc,
+            )
+            .await
         }
     }
 }
@@ -70,6 +103,7 @@ async fn s3_host(
     name: String,
     web_url: String,
     delta_interval: Duration,
+    rtc: Option<Arc<RtcOptions>>,
 ) -> anyhow::Result<()> {
     let key = daemon::load_or_create_key(&data_dir)?;
     let endpoint = Endpoint::builder(presets::N0)
@@ -92,7 +126,7 @@ async fn s3_host(
         delta_interval,
     });
     let router = Router::builder(endpoint.clone())
-        .accept(proto::ALPN, Conductor { host, token })
+        .accept(proto::ALPN, Conductor { host, token, rtc })
         .spawn();
 
     let ticket = Ticket {

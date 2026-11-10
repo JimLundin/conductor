@@ -47,6 +47,7 @@ async fn host() -> Fixture {
             Conductor {
                 host,
                 token: AuthToken::from_bytes(TOKEN),
+                rtc: None,
             },
         )
         .spawn();

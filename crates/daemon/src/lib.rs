@@ -1,7 +1,8 @@
 //! `conductord`: the host daemon. For S3 it serves a simulated agent over
-//! iroh (`conductord s3-host`).
+//! iroh, and over WebRTC to browsers that upgrade (`conductord s3-host`).
 
 pub mod host;
+pub mod rtc;
 pub mod server;
 mod wire;
 

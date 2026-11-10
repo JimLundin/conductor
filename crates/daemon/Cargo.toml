@@ -17,11 +17,13 @@ directories = "6.0.0"
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring", "portmapper"] }
 iroh-mdns-address-lookup = "0.6.1"
+netdev = "0.46.3"
 proto = { path = "../proto" }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 serde.workspace = true
+str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["net", "signal"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
