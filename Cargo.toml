@@ -8,6 +8,11 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 anyhow = "1.0.104"
+data-encoding = "2.11"
+getrandom = "0.4"
+iroh = { version = "1.4.1", default-features = false }
+iroh-base = { version = "1.4.1", default-features = false, features = ["key"] }
+n0-future = "0.3.2"
 claude-codes = { path = "vendor/claude-codes", default-features = false, features = ["cli"] }
 codex-codes = { path = "vendor/codex-codes", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
