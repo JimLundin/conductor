@@ -1,8 +1,7 @@
 //! Best-effort local auth status read — **private-contract territory**.
 //!
 //! The sanctioned way to read account state is protocol-native
-//! ([`AsyncClient::account_read`](crate::client_async::AsyncClient::account_read)),
-//! which requires standing up an app-server connection. For cheap status
+//! (the `account/read` request), which requires standing up an app-server connection. For cheap status
 //! probes (dashboards, launcher matrices) this module reads what the codex
 //! CLI itself persists at `$CODEX_HOME/auth.json` (default
 //! `~/.codex/auth.json`) and decodes the display-only identity claims from

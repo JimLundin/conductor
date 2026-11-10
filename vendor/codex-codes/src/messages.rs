@@ -383,7 +383,7 @@ impl Notification {
     /// treats an empty id the server omitted as absent.
     ///
     /// The turn id from `turn/started` is what
-    /// [`turn/interrupt`](crate::AsyncClient::turn_interrupt) needs to cancel
+    /// `turn/interrupt` needs to cancel
     /// the active turn.
     pub fn turn_id(&self) -> Option<&str> {
         let id = match self {
@@ -957,8 +957,7 @@ impl ServerRequest {
 ///
 /// Replaces the previous loose `{ method, params }` shape with typed enums.
 /// Match on the outer variant first to distinguish notifications (no response)
-/// from requests (need [`crate::AsyncClient::respond`] /
-/// [`crate::SyncClient::respond`]).
+/// from requests (answer with a JSON-RPC response carrying the same id).
 /// Keep variants unboxed so pattern matches and constructors stay ergonomic;
 /// the size skew comes from the generated notification payloads.
 #[allow(clippy::large_enum_variant)]
@@ -966,7 +965,7 @@ impl ServerRequest {
 pub enum ServerMessage {
     /// A notification — no response required.
     Notification(Notification),
-    /// A request — call `respond(id, ...)` on the client with the matching id.
+    /// A request; the reply is a JSON-RPC response with the same `id`.
     Request {
         id: RequestId,
         request: ServerRequest,
@@ -983,11 +982,6 @@ impl ServerMessage {
     }
 
     /// Parse a raw app-server frame (one JSON-RPC line) into a [`ServerMessage`].
-    ///
-    /// This is the same parse path the [`AsyncClient`](crate::AsyncClient) and
-    /// [`SyncClient`](crate::SyncClient) run on incoming lines, exposed for
-    /// replay, recovery, and test fixtures that need to decode a captured frame
-    /// without a live client.
     ///
     /// A frame is a [`ServerMessage`] only if it is a server-initiated
     /// notification or request. A JSON-RPC *response* / *error* (a reply to a

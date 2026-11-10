@@ -183,25 +183,9 @@ impl AppServerBuilder {
         args
     }
 
-    /// Build a Tokio command without spawning it.
-    ///
-    /// This is the escape hatch for process configuration not modeled by the
-    /// builder. The command is fully configured for app-server stdio; callers
-    /// can make further adjustments before spawning it.
-    ///
-    /// Pair this with [`crate::AsyncClient::new`] to customize the command
-    /// while preserving the SDK's stdio setup.
-    #[cfg(feature = "async-client")]
-    pub fn build_command(self) -> crate::error::Result<tokio::process::Command> {
-        self.build_command_sync().map(tokio::process::Command::from)
-    }
-
-    /// Build a standard-library command without spawning it.
-    ///
-    /// This is the synchronous counterpart to [`build_command`](Self::build_command).
-    /// Pair it with [`crate::SyncClient::new`] to customize the command while
-    /// preserving the SDK's stdio setup.
-    pub fn build_command_sync(self) -> crate::error::Result<std::process::Command> {
+    /// Build the command without spawning it, with stdin, stdout and stderr
+    /// piped. Convert it with `tokio::process::Command::from` for async use.
+    pub fn build_command(self) -> crate::error::Result<std::process::Command> {
         let resolved = self.resolve_command()?;
         let args = self.build_args();
 
@@ -225,21 +209,6 @@ impl AppServerBuilder {
 
         crate::process::configure_no_window(&mut command);
         Ok(command)
-    }
-
-    /// Spawn the app-server process asynchronously.
-    #[cfg(feature = "async-client")]
-    pub async fn spawn(self) -> crate::error::Result<tokio::process::Child> {
-        self.build_command()?
-            .spawn()
-            .map_err(crate::error::Error::Io)
-    }
-
-    /// Spawn the app-server process synchronously.
-    pub fn spawn_sync(self) -> crate::error::Result<std::process::Child> {
-        self.build_command_sync()?
-            .spawn()
-            .map_err(crate::error::Error::Io)
     }
 }
 
@@ -268,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_command_sync_applies_process_configuration() {
+    fn test_build_command_applies_process_configuration() {
         let executable = std::env::current_exe().unwrap();
         let command = AppServerBuilder::new()
             .command(&executable)
@@ -277,7 +246,7 @@ mod tests {
             .envs([("RUST_LOG", "debug"), ("CODEX_HOME", "/tmp/codex-home")])
             .config_override("approval_policy", "never")
             .extra_args(["--strict-config"])
-            .build_command_sync()
+            .build_command()
             .unwrap();
 
         assert_eq!(command.get_program(), executable);
