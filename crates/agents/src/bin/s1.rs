@@ -189,6 +189,43 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     );
 
+    // 3b. Interrupt while a permission request is still unanswered.
+    live.session
+        .send_user("Use the Write tool to create the file d.txt in the current directory with the content `late`. Do nothing else.".into())
+        .await?;
+    let mut t = Turn::default();
+    let mut open = None;
+    let mut interrupted = None;
+    while t.finished.is_none() {
+        match next(&mut live).await? {
+            ClaudeEvent::PermissionRequested { id, tool_name, .. } if open.is_none() => {
+                t.permissions.push(tool_name);
+                open = Some(id);
+                interrupted = Some(live.session.interrupt().await);
+            }
+            event => observe(&mut live, &mut t, event, Policy::Deny("late request")).await?,
+        }
+    }
+    let late = match &open {
+        Some(id) => Some(
+            live.session
+                .respond(id.clone(), PermissionDecision::Allow)
+                .await,
+        ),
+        None => None,
+    };
+    report(
+        "3b interrupt pending permission",
+        matches!(interrupted, Some(Ok(())))
+            && t.cancelled_permissions == 1
+            && matches!(late, Some(Err(_)))
+            && !scratch.join("d.txt").exists(),
+        format!(
+            "permissions={:?} interrupt()={interrupted:?} cancelled={} finished={:?} terminal_reason={:?} respond-after={late:?}",
+            t.permissions, t.cancelled_permissions, t.finished, t.terminal_reason
+        ),
+    );
+
     // 4. Resume in a fresh process.
     let status = live.session.shutdown().await?;
     let (session, events) =
