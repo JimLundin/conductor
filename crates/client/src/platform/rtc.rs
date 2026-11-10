@@ -185,7 +185,7 @@ pub async fn negotiate(conn: Connection, stun_servers: Vec<String>) -> Result<Se
     let outcome = tokio::select! {
         opened = liveness.opened() => opened,
         _ = closed_rx.wait_for(|closed| *closed) => Err("the connection failed".to_string()),
-        () = sleep(UPGRADE_TIMEOUT) => Err(format!("timed out after {}s", UPGRADE_TIMEOUT.as_secs())),
+        () = sleep(UPGRADE_TIMEOUT) => Err("timed out".to_string()),
     };
     let elapsed_ms = (js_sys::Date::now() - started) as u64;
     if let Err(why) = outcome {

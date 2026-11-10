@@ -245,6 +245,7 @@ pub async fn accept(
         started,
         connected_at: None,
         remote: None,
+        mapped: HashMap::new(),
         datagrams_in: 0,
         datagrams_out: 0,
         _ended: ended_tx,
@@ -348,6 +349,8 @@ struct Driver {
     connected_at: Option<Instant>,
     /// Where the browser's datagrams last came from.
     remote: Option<SocketAddr>,
+    /// What STUN said each socket maps to.
+    mapped: HashMap<SocketAddr, SocketAddr>,
     datagrams_in: u64,
     datagrams_out: u64,
     /// Dropped when the driver ends, which resolves [`Session::closed`].
@@ -368,6 +371,8 @@ impl Driver {
             frames_out = self.counters.frames_out.load(Ordering::Relaxed),
             datagrams_in = self.datagrams_in,
             datagrams_out = self.datagrams_out,
+            connected = self.connected_at.is_some(),
+            last_remote = ?self.remote,
             "webrtc session ended"
         );
     }
@@ -408,7 +413,16 @@ impl Driver {
                         self.rtc.direct_api().close_data_channel(id);
                         Ok(())
                     }
-                    Some(Out::Kill) => return "test knob: dropped".into(),
+                    Some(Out::Kill) => {
+                        // Reset every channel so the browser sees the drop at
+                        // once rather than when ICE consent expires.
+                        let ids: Vec<ChannelId> = self.open.keys().copied().collect();
+                        for id in ids {
+                            self.rtc.direct_api().close_data_channel(id);
+                        }
+                        self.poll().await.ok();
+                        return "test knob: dropped".into();
+                    }
                     None => Ok(()),
                 },
                 signal = self.signals.recv() => match signal {
@@ -519,8 +533,8 @@ impl Driver {
         if self.counters.options.test_blackhole {
             return Ok(());
         }
-        if let Some(mapped) = self.stun.answer(&packet) {
-            self.add_srflx(mapped, packet.destination).await;
+        if let Some((server, mapped)) = self.stun.answer(&packet) {
+            self.add_srflx(server, mapped, packet.destination).await;
             return Ok(());
         }
         let Ok(contents) = packet.bytes.as_slice().try_into() else {
@@ -546,7 +560,20 @@ impl Driver {
         self.rtc.handle_input(input)
     }
 
-    async fn add_srflx(&mut self, mapped: SocketAddr, base: SocketAddr) {
+    async fn add_srflx(&mut self, server: String, mapped: SocketAddr, base: SocketAddr) {
+        tracing::info!(client = self.client, server, %mapped, %base, "webrtc STUN answer");
+        match self.mapped.insert(base, mapped) {
+            Some(earlier) if earlier != mapped => tracing::warn!(
+                client = self.client,
+                %base,
+                %earlier,
+                %mapped,
+                "webrtc STUN servers saw different public addresses for one socket: \
+                 the NAT maps per destination, so a peer on another network can't use \
+                 the srflx candidate"
+            ),
+            _ => {}
+        }
         let Ok(candidate) = Candidate::server_reflexive(mapped, base, "udp") else {
             return;
         };
@@ -696,14 +723,14 @@ impl Stun {
     }
 
     /// The mapped address, if `packet` answers one of our requests.
-    fn answer(&mut self, packet: &Packet) -> Option<SocketAddr> {
+    fn answer(&mut self, packet: &Packet) -> Option<(String, SocketAddr)> {
         let probe = self
             .probes
             .iter_mut()
             .find(|p| p.addr == packet.source && packet.bytes.get(8..20) == Some(&p.trans))?;
         let mapped = mapped_address(&packet.bytes)?;
         probe.done = true;
-        Some(mapped)
+        Some((probe.server.clone(), mapped))
     }
 }
 
