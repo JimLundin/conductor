@@ -15,3 +15,9 @@ if [ -d crates/app ]; then
   cargo clippy -p app --features web --target wasm32-unknown-unknown -- -D warnings
 fi
 cargo test --workspace
+# The existing code fails the subset until the bootstrap round rewrites it
+# (docs/subset.md), so this step runs only with SUBSET=1. Drop the flag and
+# run it unconditionally once `subset check` passes on all of crates/.
+if [ "${SUBSET:-0}" = 1 ]; then
+  cargo run -q -p subset -- check
+fi
