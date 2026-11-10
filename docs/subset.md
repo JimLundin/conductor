@@ -46,6 +46,7 @@ The ids are those used in `subset.toml`.
 | Errors | `expr.try`, plus `Result` / `Option` through the core | `?` is the only early exit. |
 | Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method. |
 | Bindings | `stmt.let` | Immutable, with a pattern. |
+| Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
 | Modules | `item.use`, `item.mod` | |
 | Attributes | `attr.doc`, `attr.derive` (the listed derives), `attr.cfg_test` | |
 | Macros | `macro.allowed` (the listed macros) | Tests may also use `assert_eq!` and `assert_ne!`. |
@@ -57,7 +58,7 @@ Don't work around it.
 
 ## Not in the core
 
-Everything else, for example `if`, `while`, `for`, `loop`, `return`,
+Everything else, for example `()`, `if`, `while`, `for`, `loop`, `return`,
 `break`, operators (`&&`, `==`, `+`, `as`, indexing, ranges), `let mut`,
 `let … else`, traits, generics, `async`, `dyn`, and unlisted macros. Some of
 these will join through proposals. Others, such as `unsafe` and

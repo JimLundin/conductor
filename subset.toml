@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 0
+version = 1
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -34,6 +34,7 @@ allowed = [
   "expr.reference",           # &x
   "expr.try",                 # ?
   "expr.closure.adapter",     # a closure passed straight to an iterator, Option or Result method
+  "expr.tuple",               # proposal 0001
 
   # Statements
   "stmt.let",                 # immutable, with a pattern; no `else`
@@ -46,10 +47,12 @@ allowed = [
   "pat.lit",                  # literals except `true` / `false`
   "pat.or",                   # A | B in one arm
   "pat.wild",                 # `_`, only in positions clippy's wildcard rules allow
+  "pat.tuple",                # proposal 0001
 
   # Types
   "type.path",                # except `bool`
   "type.reference",
+  "type.tuple",               # proposal 0001
 
   # Attributes
   "attr.doc",

@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the core constructs in `subset.toml` (version 0) look like in practice.
+What the constructs in `subset.toml` (version 1) look like in practice.
 Every example uses only allowed constructs. A **Note** marks where the core
 forces a longer form. Those are the likely early proposals.
 
@@ -99,31 +99,24 @@ pub enum LinkEvent {
 
 impl Link {
     pub fn on(self, event: LinkEvent) -> Link {
-        match self {
-            Link::Disconnected { attempts } => match event {
-                LinkEvent::Dialled => Link::Connecting { attempts },
-                LinkEvent::Opened(session) => Link::Live { session },
-                LinkEvent::Dropped => Link::Disconnected { attempts },
+        match (self, event) {
+            (_, LinkEvent::Opened(session)) => Link::Live { session },
+            (Link::Disconnected { attempts } | Link::Connecting { attempts }, LinkEvent::Dialled) => {
+                Link::Connecting { attempts }
+            }
+            (Link::Disconnected { attempts }, LinkEvent::Dropped) => Link::Disconnected { attempts },
+            (Link::Connecting { attempts }, LinkEvent::Dropped) => Link::Disconnected {
+                attempts: attempts.saturating_add(1),
             },
-            Link::Connecting { attempts } => match event {
-                LinkEvent::Dialled => Link::Connecting { attempts },
-                LinkEvent::Opened(session) => Link::Live { session },
-                LinkEvent::Dropped => Link::Disconnected {
-                    attempts: attempts.saturating_add(1),
-                },
-            },
-            Link::Live { session } => match event {
-                LinkEvent::Dialled => Link::Live { session },
-                LinkEvent::Opened(next) => Link::Live { session: next },
-                LinkEvent::Dropped => Link::Disconnected { attempts: 0 },
-            },
+            (Link::Live { session }, LinkEvent::Dialled) => Link::Live { session },
+            (Link::Live { .. }, LinkEvent::Dropped) => Link::Disconnected { attempts: 0 },
         }
     }
 }
 ```
 
-**Note:** matching on the pair `match (self, event)` needs tuples, which
-aren't in the core, so the matches nest.
+The `match` on `(state, event)` reads as a transition table. Tuples were
+added in version 1 (proposal 0001).
 
 ## 6. Missing values are `Option`, matched
 
@@ -254,6 +247,6 @@ The bootstrap round decides each of these with a proposal:
 - `async` / `.await`, and the actor `loop` around `select!`.
 - Trait impls: `Display`, `Error` (thiserror), `From`, `Default`, serde.
 - Generic definitions.
-- Tuples and slices.
+- Slices and the unit type `()`.
 - Derives beyond the six listed, such as `PartialOrd`, `Ord`, `Default`,
   `Serialize` and `Deserialize`.
