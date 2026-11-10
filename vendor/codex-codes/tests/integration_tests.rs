@@ -999,8 +999,7 @@ fn test_all_item_ids_are_sequential_within_capture() {
 //
 // When a wire frame's envelope parses but the typed-payload decode fails,
 // callers must still be able to recover the original `method` + `params` for
-// bug reports. These tests pin the exact code path used by
-// `AsyncClient::next_message` / `SyncClient::next_message`: deserialize the
+// bug reports. These tests pin the decode path a reader runs: deserialize the
 // line as a `JsonRpcMessage`, run `Notification::from_envelope` /
 // `ServerRequest::from_envelope`, wrap the resulting `serde_json::Error` in a
 // `ParseError`, and check that nothing was dropped on the floor.
@@ -1674,4 +1673,45 @@ fn thread_items_list_defer_output_round_trips() {
         .unwrap()
         .get("outputDeferred")
         .is_none());
+}
+
+/// With `experimentalApi`, codex 0.166.0 sends `availableDecisions` and the
+/// options must survive parsing in order (Conductor gap 3).
+#[test]
+fn command_approval_keeps_experimental_available_decisions() {
+    let params: codex_codes::CommandExecutionRequestApprovalParams =
+        serde_json::from_value(serde_json::json!({
+            "kind": "command", "threadId": "th", "turnId": "tu", "itemId": "exec-1",
+            "startedAtMs": 1, "command": "printf hi > a.txt",
+            "availableDecisions": ["accept",
+                {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["printf"]}},
+                "cancel"]
+        }))
+        .unwrap();
+    assert_eq!(
+        params.available_decisions,
+        Some(vec![
+            codex_codes::CommandExecutionApprovalDecision::Accept,
+            codex_codes::CommandExecutionApprovalDecision::AcceptWithExecpolicyAmendment {
+                execpolicy_amendment: vec!["printf".into()]
+            },
+            codex_codes::CommandExecutionApprovalDecision::Cancel,
+        ])
+    );
+}
+
+/// `serverRequest/resolved` names the request with the same id type the
+/// request envelope used, so the two compare equal (Conductor gap 4).
+#[test]
+fn server_request_resolved_id_matches_the_envelope_id() {
+    let request: JsonRpcMessage = serde_json::from_str(
+        r#"{"method":"item/commandExecution/requestApproval","id":0,"params":{}}"#,
+    )
+    .unwrap();
+    let JsonRpcMessage::Request(request) = request else {
+        panic!("not a request");
+    };
+    let resolved: codex_codes::ServerRequestResolvedNotification =
+        serde_json::from_str(r#"{"threadId":"th","requestId":0}"#).unwrap();
+    assert_eq!(resolved.request_id, request.id);
 }

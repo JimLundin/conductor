@@ -277,13 +277,11 @@ dependencies = [
 name = "codex-codes"
 version = "0.167.4"
 dependencies = [
- "env_logger",
  "jsonschema",
  "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokio",
  "which",
 ]
 

@@ -489,7 +489,6 @@ mod samples {
     }
 
     /// Method strings our client request surface (Params/Response pairs) covers.
-    /// Must stay in sync with `client_async.rs` / `client_sync.rs`.
     pub(super) fn modeled_client_request_methods() -> HashSet<&'static str> {
         [
             methods::INITIALIZE,
