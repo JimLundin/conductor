@@ -26,7 +26,6 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "Typed Rust SDK for the Claude Code agent CLI: serde models of its JSON-Lines (stream-json) protocol with streaming parsing, plus a builder for the CLI command line."
-homepage = "https://github.com/meawoppl/rust-code-agent-sdks"
 documentation = "https://docs.rs/claude-codes"
 readme = "README.md"
 keywords = [

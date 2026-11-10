@@ -104,7 +104,17 @@ async fn s3_host(
     println!("host id:  {}", endpoint.id());
     println!("relay:    {}", ticket.relay);
     println!("ticket:   {ticket}");
-    println!("join:     {web_url}#join={ticket}");
+    let join = format!("{web_url}#join={ticket}");
+    println!("join:     {join}");
+    match qrcode::QrCode::new(&join) {
+        Ok(code) => println!(
+            "{}",
+            code.render::<qrcode::render::unicode::Dense1x2>()
+                .quiet_zone(true)
+                .build()
+        ),
+        Err(err) => tracing::warn!("could not render the join link as a QR code: {err}"),
+    }
 
     tokio::signal::ctrl_c().await?;
     router.shutdown().await?;
