@@ -1,0 +1,71 @@
+# The Conductor Rust subset: the constructs code may use. `tools/subset check`
+# rejects anything not listed here in the files under `include`. The list
+# grows only through accepted proposals in docs/subset/proposals/. Each id is
+# documented in docs/subset.md.
+
+version = 0
+
+# Files written in the subset. Code outside these paths predates the subset
+# and moves in when a module is rewritten through the pair loop.
+include = []
+
+# Core: data as structs and enums, branching as `match`, iteration as adapters.
+allowed = [
+  # Items
+  "item.struct.named",        # struct with named fields
+  "item.struct.newtype",      # struct Id(Ulid); exactly one field
+  "item.enum",                # variants may carry data
+  "item.fn",
+  "item.impl.inherent",
+  "item.const",
+  "item.use",
+  "item.mod",
+
+  # Expressions
+  "expr.match",
+  "expr.call",
+  "expr.method_call",
+  "expr.field",
+  "expr.struct",              # struct and enum-variant construction
+  "expr.path",
+  "expr.lit",                 # literals except `true` / `false`
+  "expr.block",
+  "expr.paren",
+  "expr.reference",           # &x
+  "expr.try",                 # ?
+  "expr.closure.adapter",     # a closure passed straight to an iterator, Option or Result method
+
+  # Statements
+  "stmt.let",                 # immutable, with a pattern; no `else`
+
+  # Patterns
+  "pat.ident",
+  "pat.path",                 # unit variants and consts
+  "pat.struct",
+  "pat.tuple_struct",         # Some(x), Ok(x), Variant(x)
+  "pat.lit",                  # literals except `true` / `false`
+  "pat.or",                   # A | B in one arm
+  "pat.wild",                 # `_`, only in positions clippy's wildcard rules allow
+
+  # Types
+  "type.path",                # except `bool`
+  "type.reference",
+
+  # Attributes
+  "attr.doc",
+  "attr.derive",              # only the derives in `derives`
+  "attr.cfg_test",            # #[cfg(test)] and #[test]
+
+  # Macros
+  "macro.allowed",            # only the macros in `macros`
+]
+
+derives = ["Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash"]
+
+macros = [
+  "format", "write", "writeln",
+  "tracing::trace", "tracing::debug", "tracing::info", "tracing::warn", "tracing::error",
+]
+
+# Extra macros allowed only inside #[cfg(test)] code and tests/.
+test_macros = ["assert_eq", "assert_ne"]

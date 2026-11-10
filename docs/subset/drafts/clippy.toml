@@ -1,0 +1,12 @@
+# Thresholds and test carve-outs for the workspace lints in Cargo.toml.
+avoid-breaking-exported-api = false
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 5
+absolute-paths-max-segments = 2
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true

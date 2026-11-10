@@ -1,0 +1,14 @@
+# Nightly rustfmt. Renamed to rustfmt.toml in the enforcement pass.
+style_edition = "2024"
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_impl_items = true
+use_field_init_shorthand = true
+use_try_shorthand = true
+format_code_in_doc_comments = true
+format_macro_matchers = true
+normalize_doc_attributes = true
+wrap_comments = true
+comment_width = 100
+hex_literal_case = "Upper"
+condense_wildcard_suffixes = true
