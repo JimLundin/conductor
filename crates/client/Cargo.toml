@@ -1,0 +1,29 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+getrandom.workspace = true
+iroh = { workspace = true, features = ["tls-ring"] }
+n0-future.workspace = true
+proto = { path = "../proto" }
+serde.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.54.1", default-features = false, features = ["sync", "macros"] }
+tracing.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+iroh = { workspace = true, features = ["tls-ring", "portmapper"] }
+iroh-mdns-address-lookup = "0.6.1"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { workspace = true, features = ["wasm_js"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+clap = { version = "4.6.7", features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-subscriber.workspace = true
