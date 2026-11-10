@@ -18,8 +18,8 @@ const CLAUDE: &str = "/home/jim/.local/bin/claude";
 const SCRATCH: &str = "/tmp/s1-scratch";
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Variables a parent Claude Code session sets; a child that inherits them
-/// believes it is nested inside that session.
+/// Set by a parent Claude Code session, as when s1 runs inside one. Cleared so
+/// the parent's session state does not leak into the child.
 const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -114,7 +114,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let (session, events) = ClaudeSession::spawn(opts(None, log("session1"))).await?;
     let mut live = Live { session, events };
 
-    // 1. Approve a Write.
     let t = turn(
         &mut live,
         "Use the Write tool to create the file a.txt in the current directory with the content `hello from s1`. Do nothing else.",
@@ -135,7 +134,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     );
     let session_id = t.session_id.clone().context("no session id in turn 1")?;
 
-    // 2. Deny a Write.
     let t = turn(
         &mut live,
         "Use the Write tool to create the file b.txt in the current directory with the content `nope`. If it is denied, do not retry; just say so.",
@@ -157,7 +155,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     );
 
-    // 3. Interrupt mid-turn, then show the session still answers.
     let (t, interrupted) = interrupted_turn(
         &mut live,
         "Say the word `starting` first. Then use the Bash tool to run `sleep 30 && echo slept`. Then count from 1 to 200, one number per line.",
@@ -189,7 +186,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     );
 
-    // 3b. Interrupt while a permission request is still unanswered.
     live.session
         .send_user("Use the Write tool to create the file d.txt in the current directory with the content `late`. Do nothing else.".into())
         .await?;
@@ -226,7 +222,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     );
 
-    // 4. Resume in a fresh process.
     let status = live.session.shutdown().await?;
     let (session, events) =
         ClaudeSession::spawn(opts(Some(session_id.clone()), log("session2-resume"))).await?;
@@ -248,7 +243,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     );
 
-    // 5. acceptEdits skips the Write prompt.
     let mode = live
         .session
         .set_permission_mode(PermissionMode::AcceptEdits)
@@ -271,7 +265,6 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     );
 
-    // Answering an id twice, or one the CLI never sent, is an error.
     let bogus = live
         .session
         .respond(

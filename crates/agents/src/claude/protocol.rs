@@ -96,8 +96,8 @@ pub enum ClaudeEvent {
     PermissionCancelled {
         id: PermissionRequestId,
     },
-    /// `subtype` is the CLI's result subtype. An interrupted turn reports
-    /// `error_during_execution` with `terminal_reason` `aborted_streaming`.
+    /// An interrupted turn reports `error_during_execution`; only
+    /// `terminal_reason` (`aborted_streaming`, `aborted_tools`) says why.
     TurnFinished {
         subtype: String,
         is_error: bool,
