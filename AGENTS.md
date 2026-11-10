@@ -6,11 +6,10 @@ with a desktop app and an iPhone web app. The design is in
 
 ## Writing code
 
-- **Subset code.** Files under `include` in `subset.toml` are written in the
+- **All code is subset code.** Everything under `crates/` is written in the
   Conductor Rust subset (`docs/subset.md`), through the pair loop
-  (`.claude/skills/pair/SKILL.md`). New code goes there. Code outside
-  `include` predates the subset; when you rewrite a module, move it in
-  through the pair loop.
+  (`.claude/skills/pair/SKILL.md`). Code from before the subset is being
+  rewritten into it, starting with the bootstrap round in `docs/subset.md`.
 - **The subset grows only by accepted proposals.** When the subset makes
   code long, log the friction point and write it the long way. Only the
   owner adds constructs.

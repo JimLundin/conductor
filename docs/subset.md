@@ -9,7 +9,8 @@ costing any of the qualities below, and the owner accepts it.
 
 `subset.toml` is the source of truth. `tools/subset check` enforces it on
 the paths under `include`. `tools/subset measure` counts the code volume
-used in proposals.
+used in proposals. `tools/subset report` summarises violations by
+construct.
 
 ## Qualities
 
@@ -61,6 +62,22 @@ Everything else, for example `if`, `while`, `for`, `loop`, `return`,
 `let … else`, traits, generics, `async`, `dyn`, and unlisted macros. Some of
 these will join through proposals. Others, such as `unsafe` and
 interior mutability, conflict with the qualities and won't.
+
+## Bootstrap round
+
+The code from before the subset uses constructs the core lacks, and some
+of it (such as `async` and trait impls) has no long-hand form. The first
+pass of the pair loop therefore runs on the existing code:
+
+1. `tools/subset report` lists every construct outside the subset under
+   `include`, with counts and locations.
+2. The reviewer turns that report into proposals. Each proposal gives the
+   minimal construct and the narrowest rule that the existing code needs,
+   with before/after examples taken from that code. It also proposes
+   rewrites into the core for everything the core can already express.
+3. The owner decides. The implementer then rewrites module by module in
+   the agreed subset, until `tools/subset check` passes on all of
+   `crates/`.
 
 ## Growing the subset
 

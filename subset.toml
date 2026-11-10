@@ -5,9 +5,9 @@
 
 version = 0
 
-# Files written in the subset. Code outside these paths predates the subset
-# and moves in when a module is rewritten through the pair loop.
-include = []
+# All of our code is written in the subset. tools/ (the checker itself) and
+# vendor/ are outside it for now.
+include = ["crates/**/*.rs"]
 
 # Core: data as structs and enums, branching as `match`, iteration as adapters.
 allowed = [
