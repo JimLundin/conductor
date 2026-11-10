@@ -1,103 +1,104 @@
-expr.await 293 in 17 files: crates/agents/src/bin/s1.rs:96:79 crates/agents/src/bin/s1.rs:104:6 crates/agents/src/bin/s1.rs:124:6 crates/agents/src/bin/s1.rs:144:6 crates/agents/src/bin/s1.rs:150:6
-vis.pub 198 in 22 files: crates/agents/src/claude/mod.rs:9:1 crates/agents/src/claude/mod.rs:12:1 crates/agents/src/claude/protocol.rs:15:1 crates/agents/src/claude/protocol.rs:15:22 crates/agents/src/claude/protocol.rs:19:1
-item.fn.async 111 in 16 files: crates/agents/src/bin/s1.rs:54:1 crates/agents/src/bin/s1.rs:271:1 crates/agents/src/bin/s1.rs:281:1 crates/agents/src/bin/s1.rs:306:1 crates/agents/src/bin/s1.rs:313:1
-stmt.let.mut 102 in 19 files: crates/agents/src/bin/s1.rs:88:5 crates/agents/src/bin/s1.rs:89:5 crates/agents/src/bin/s1.rs:97:5 crates/agents/src/bin/s1.rs:174:5 crates/agents/src/bin/s1.rs:175:5
-pat.tuple 92 in 19 files: crates/agents/src/bin/s1.rs:96:9 crates/agents/src/bin/s1.rs:140:9 crates/agents/src/bin/s1.rs:154:49 crates/agents/src/bin/s1.rs:208:9 crates/agents/src/bin/s2.rs:93:9
-expr.reference.mut 66 in 11 files: crates/agents/src/bin/s1.rs:100:9 crates/agents/src/bin/s1.rs:120:9 crates/agents/src/bin/s1.rs:141:9 crates/agents/src/bin/s1.rs:146:9 crates/agents/src/bin/s1.rs:178:20
-attr.error 51 in 10 files: crates/agents/src/claude/session.rs:59:5 crates/agents/src/claude/session.rs:61:5 crates/agents/src/claude/session.rs:63:5 crates/agents/src/claude/session.rs:65:5 crates/agents/src/claude/session.rs:67:5
-expr.return 50 in 18 files: crates/agents/src/bin/s2.rs:315:72 crates/agents/src/claude/protocol.rs:134:9 crates/agents/src/claude/session.rs:124:13 crates/agents/src/claude/session.rs:157:17 crates/agents/src/claude/session.rs:245:13
-pat.type 46 in 18 files: crates/agents/src/bin/s1.rs:70:20 crates/agents/src/bin/s1.rs:77:23 crates/agents/src/bin/s1.rs:89:27 crates/agents/src/bin/s1.rs:89:37 crates/agents/src/bin/s1.rs:89:51
-expr.if 45 in 13 files: crates/agents/src/bin/s1.rs:56:5 crates/agents/src/bin/s1.rs:64:5 crates/agents/src/bin/s1.rs:91:9 crates/agents/src/bin/s1.rs:265:5 crates/agents/src/bin/s1.rs:298:9
-expr.assign 43 in 11 files: crates/agents/src/bin/s1.rs:181:22 crates/agents/src/bin/s1.rs:182:29 crates/agents/src/bin/s1.rs:299:25 crates/agents/src/bin/s1.rs:320:68 crates/agents/src/bin/s1.rs:352:24
-expr.binary.and 42 in 8 files: crates/agents/src/bin/s1.rs:108:36 crates/agents/src/bin/s1.rs:108:50 crates/agents/src/bin/s1.rs:129:13 crates/agents/src/bin/s1.rs:130:13 crates/agents/src/bin/s1.rs:154:13
-type.unit 40 in 13 files: crates/agents/src/bin/s1.rs:21:21 crates/agents/src/bin/s1.rs:54:51 crates/agents/src/bin/s1.rs:284:43 crates/agents/src/bin/s1.rs:318:13 crates/agents/src/bin/s2.rs:24:21
-expr.binary.eq 38 in 14 files: crates/agents/src/bin/s1.rs:108:23 crates/agents/src/bin/s1.rs:108:64 crates/agents/src/bin/s1.rs:128:51 crates/agents/src/bin/s1.rs:158:31 crates/agents/src/bin/s1.rs:198:40
-expr.tuple 37 in 10 files: crates/agents/src/bin/s1.rs:108:72 crates/agents/src/bin/s1.rs:158:39 crates/agents/src/bin/s1.rs:219:56 crates/agents/src/bin/s1.rs:303:8 crates/agents/src/bin/s1.rs:352:31
-type.lifetime 35 in 7 files: crates/agents/src/bin/s1.rs:41:11 crates/agents/src/bin/s1.rs:271:61 crates/agents/src/bin/s1.rs:317:20 crates/agents/src/claude/protocol.rs:22:47 crates/agents/src/claude/protocol.rs:245:37
-expr.lit.bool 32 in 11 files: crates/agents/src/bin/s1.rs:86:33 crates/agents/src/bin/s1.rs:108:91 crates/agents/src/bin/s1.rs:158:58 crates/agents/src/bin/s1.rs:219:75 crates/agents/src/bin/s1.rs:338:32
-type.reference.mut 31 in 10 files: crates/agents/src/bin/s1.rs:271:21 crates/agents/src/bin/s1.rs:282:11 crates/agents/src/bin/s1.rs:306:21 crates/agents/src/bin/s1.rs:314:11 crates/agents/src/bin/s1.rs:315:8
-expr.closure 28 in 10 files: crates/agents/src/bin/s1.rs:70:15 crates/agents/src/bin/s1.rs:77:16 crates/agents/src/bin/s1.rs:89:22 crates/agents/src/bin/s2.rs:73:15 crates/agents/src/bin/s2.rs:80:23
-expr.if_let 28 in 12 files: crates/agents/src/bin/s1.rs:67:5 crates/agents/src/bin/s1.rs:326:17 crates/agents/src/bin/s1.rs:341:13 crates/agents/src/bin/s2.rs:70:5 crates/agents/src/claude/session.rs:154:9
-item.fn.receiver.mut 28 in 6 files: crates/agents/src/claude/session.rs:271:18 crates/agents/src/claude/session.rs:302:23 crates/agents/src/claude/session.rs:365:26 crates/agents/src/claude/session.rs:412:21 crates/agents/src/claude/session.rs:424:20
-expr.unary.not 25 in 7 files: crates/agents/src/bin/s1.rs:64:8 crates/agents/src/bin/s1.rs:91:12 crates/agents/src/bin/s1.rs:129:16 crates/agents/src/bin/s1.rs:200:16 crates/agents/src/bin/s2.rs:67:8
-vis.restricted 23 in 5 files: crates/agents/src/claude/protocol.rs:115:1 crates/agents/src/claude/protocol.rs:131:1 crates/agents/src/claude/protocol.rs:218:1 crates/agents/src/claude/protocol.rs:224:1 crates/agents/src/claude/protocol.rs:238:1
-attr.from 20 in 7 files: crates/agents/src/claude/session.rs:62:8 crates/agents/src/claude/session.rs:64:12 crates/agents/src/codex/server.rs:42:8 crates/agents/src/codex/server.rs:44:10 crates/client/src/link.rs:96:10
-expr.unit 19 in 10 files: crates/agents/src/bin/s1.rs:268:8 crates/agents/src/bin/s1.rs:358:8 crates/agents/src/bin/s2.rs:250:8 crates/agents/src/bin/s2.rs:343:12 crates/agents/src/bin/s2.rs:405:8
-macro.assert 18 in 8 files: crates/agents/src/claude/session.rs:494:9 crates/agents/src/claude/session.rs:495:9 crates/agents/tests/codex_replay.rs:233:5 crates/agents/tests/codex_replay.rs:274:5 crates/agents/tests/codex_replay.rs:358:5
-expr.unary.deref 17 in 10 files: crates/agents/src/bin/s1.rs:154:64 crates/agents/src/claude/session.rs:433:23 crates/agents/src/codex/server.rs:471:23 crates/agents/tests/codex_replay.rs:103:9 crates/agents/tests/codex_replay.rs:127:18
-attr.derive.Deserialize 16 in 1 file: crates/proto/src/lib.rs:22:1 crates/proto/src/lib.rs:28:1 crates/proto/src/lib.rs:33:1 crates/proto/src/lib.rs:38:1 crates/proto/src/lib.rs:43:1
-attr.derive.Serialize 16 in 1 file: crates/proto/src/lib.rs:22:1 crates/proto/src/lib.rs:28:1 crates/proto/src/lib.rs:33:1 crates/proto/src/lib.rs:38:1 crates/proto/src/lib.rs:43:1
+expr.await 352 in 20 files: crates/agents/src/bin/s1.rs:96:79 crates/agents/src/bin/s1.rs:104:6 crates/agents/src/bin/s1.rs:124:6 crates/agents/src/bin/s1.rs:144:6 crates/agents/src/bin/s1.rs:150:6
+vis.pub 272 in 25 files: crates/agents/src/claude/mod.rs:9:1 crates/agents/src/claude/mod.rs:12:1 crates/agents/src/claude/protocol.rs:15:1 crates/agents/src/claude/protocol.rs:15:22 crates/agents/src/claude/protocol.rs:19:1
+item.fn.async 144 in 19 files: crates/agents/src/bin/s1.rs:54:1 crates/agents/src/bin/s1.rs:271:1 crates/agents/src/bin/s1.rs:281:1 crates/agents/src/bin/s1.rs:306:1 crates/agents/src/bin/s1.rs:313:1
+stmt.let.mut 132 in 23 files: crates/agents/src/bin/s1.rs:88:5 crates/agents/src/bin/s1.rs:89:5 crates/agents/src/bin/s1.rs:97:5 crates/agents/src/bin/s1.rs:174:5 crates/agents/src/bin/s1.rs:175:5
+expr.return 89 in 21 files: crates/agents/src/bin/s2.rs:315:72 crates/agents/src/claude/protocol.rs:134:9 crates/agents/src/claude/session.rs:124:13 crates/agents/src/claude/session.rs:157:17 crates/agents/src/claude/session.rs:245:13
+expr.assign 71 in 15 files: crates/agents/src/bin/s1.rs:181:22 crates/agents/src/bin/s1.rs:182:29 crates/agents/src/bin/s1.rs:299:25 crates/agents/src/bin/s1.rs:320:68 crates/agents/src/bin/s1.rs:352:24
+expr.if 71 in 16 files: crates/agents/src/bin/s1.rs:56:5 crates/agents/src/bin/s1.rs:64:5 crates/agents/src/bin/s1.rs:91:9 crates/agents/src/bin/s1.rs:265:5 crates/agents/src/bin/s1.rs:298:9
+item.fn.receiver.mut 63 in 12 files: crates/agents/src/claude/session.rs:271:18 crates/agents/src/claude/session.rs:302:23 crates/agents/src/claude/session.rs:365:26 crates/agents/src/claude/session.rs:412:21 crates/agents/src/claude/session.rs:424:20
+pat.type 59 in 20 files: crates/agents/src/bin/s1.rs:70:20 crates/agents/src/bin/s1.rs:77:23 crates/agents/src/bin/s1.rs:89:27 crates/agents/src/bin/s1.rs:89:37 crates/agents/src/bin/s1.rs:89:51
+type.unit 58 in 16 files: crates/agents/src/bin/s1.rs:21:21 crates/agents/src/bin/s1.rs:54:51 crates/agents/src/bin/s1.rs:284:43 crates/agents/src/bin/s1.rs:318:13 crates/agents/src/bin/s2.rs:24:21
+expr.reference.mut 57 in 13 files: crates/agents/src/bin/s1.rs:100:9 crates/agents/src/bin/s1.rs:120:9 crates/agents/src/bin/s1.rs:141:9 crates/agents/src/bin/s1.rs:146:9 crates/agents/src/bin/s1.rs:178:20
+attr.error 55 in 11 files: crates/agents/src/claude/session.rs:59:5 crates/agents/src/claude/session.rs:61:5 crates/agents/src/claude/session.rs:63:5 crates/agents/src/claude/session.rs:65:5 crates/agents/src/claude/session.rs:67:5
+expr.binary.eq 52 in 17 files: crates/agents/src/bin/s1.rs:108:23 crates/agents/src/bin/s1.rs:108:64 crates/agents/src/bin/s1.rs:128:51 crates/agents/src/bin/s1.rs:158:31 crates/agents/src/bin/s1.rs:198:40
+expr.binary.and 51 in 10 files: crates/agents/src/bin/s1.rs:108:36 crates/agents/src/bin/s1.rs:108:50 crates/agents/src/bin/s1.rs:129:13 crates/agents/src/bin/s1.rs:130:13 crates/agents/src/bin/s1.rs:154:13
+expr.lit.bool 48 in 13 files: crates/agents/src/bin/s1.rs:86:33 crates/agents/src/bin/s1.rs:108:91 crates/agents/src/bin/s1.rs:158:58 crates/agents/src/bin/s1.rs:219:75 crates/agents/src/bin/s1.rs:338:32
+expr.if_let 44 in 15 files: crates/agents/src/bin/s1.rs:67:5 crates/agents/src/bin/s1.rs:326:17 crates/agents/src/bin/s1.rs:341:13 crates/agents/src/bin/s2.rs:70:5 crates/agents/src/claude/session.rs:154:9
+expr.closure 39 in 12 files: crates/agents/src/bin/s1.rs:70:15 crates/agents/src/bin/s1.rs:77:16 crates/agents/src/bin/s1.rs:89:22 crates/agents/src/bin/s2.rs:73:15 crates/agents/src/bin/s2.rs:80:23
+type.lifetime 39 in 10 files: crates/agents/src/bin/s1.rs:41:11 crates/agents/src/bin/s1.rs:271:61 crates/agents/src/bin/s1.rs:317:20 crates/agents/src/claude/protocol.rs:22:47 crates/agents/src/claude/protocol.rs:245:37
+expr.unary.not 37 in 10 files: crates/agents/src/bin/s1.rs:64:8 crates/agents/src/bin/s1.rs:91:12 crates/agents/src/bin/s1.rs:129:16 crates/agents/src/bin/s1.rs:200:16 crates/agents/src/bin/s2.rs:67:8
+expr.unit 36 in 13 files: crates/agents/src/bin/s1.rs:268:8 crates/agents/src/bin/s1.rs:358:8 crates/agents/src/bin/s2.rs:250:8 crates/agents/src/bin/s2.rs:343:12 crates/agents/src/bin/s2.rs:405:8
+type.reference.mut 31 in 12 files: crates/agents/src/bin/s1.rs:271:21 crates/agents/src/bin/s1.rs:282:11 crates/agents/src/bin/s1.rs:306:21 crates/agents/src/bin/s1.rs:314:11 crates/agents/src/bin/s1.rs:315:8
+attr.cfg 30 in 7 files: crates/agents/tests/codex_replay.rs:7:1 crates/agents/tests/replay.rs:5:1 crates/app/src/ticket.rs:7:1 crates/app/src/ticket.rs:21:1 crates/app/src/ticket.rs:28:1
+expr.index 30 in 7 files: crates/agents/src/bin/s2.rs:193:26 crates/agents/src/bin/s2.rs:193:40 crates/agents/tests/codex_replay.rs:170:8 crates/agents/tests/codex_replay.rs:379:20 crates/agents/tests/replay.rs:111:62
+vis.restricted 26 in 6 files: crates/agents/src/claude/protocol.rs:115:1 crates/agents/src/claude/protocol.rs:131:1 crates/agents/src/claude/protocol.rs:218:1 crates/agents/src/claude/protocol.rs:224:1 crates/agents/src/claude/protocol.rs:238:1
+expr.for 25 in 13 files: crates/agents/src/bin/s1.rs:325:13 crates/agents/src/bin/s2.rs:236:5 crates/agents/src/claude/session.rs:435:9 crates/agents/src/codex/protocol.rs:806:9 crates/agents/src/codex/protocol.rs:807:13
+stmt.let.else 24 in 12 files: crates/agents/src/bin/s2.rs:302:9 crates/agents/src/claude/protocol.rs:133:5 crates/agents/src/claude/session.rs:121:9 crates/agents/src/claude/session.rs:273:13 crates/agents/src/claude/session.rs:274:17
+expr.array 23 in 8 files: crates/agents/src/bin/s1.rs:61:15 crates/agents/src/bin/s1.rs:108:26 crates/agents/src/bin/s2.rs:64:15 crates/agents/src/bin/s2.rs:192:38 crates/agents/src/codex/protocol.rs:263:9
+expr.loop 23 in 12 files: crates/agents/src/bin/s2.rs:313:5 crates/agents/src/claude/session.rs:272:9 crates/agents/src/codex/server.rs:295:9 crates/agents/tests/codex_replay.rs:146:9 crates/agents/tests/replay.rs:261:5
+expr.unary.deref 23 in 13 files: crates/agents/src/bin/s1.rs:154:64 crates/agents/src/claude/session.rs:433:23 crates/agents/src/codex/server.rs:471:23 crates/agents/tests/codex_replay.rs:103:9 crates/agents/tests/codex_replay.rs:127:18
+type.bool 22 in 15 files: crates/agents/src/bin/s1.rs:49:31 crates/agents/src/bin/s1.rs:89:39 crates/agents/src/bin/s2.rs:86:39 crates/agents/src/claude/protocol.rs:55:40 crates/agents/src/claude/protocol.rs:76:19
+attr.from 21 in 7 files: crates/agents/src/claude/session.rs:62:8 crates/agents/src/claude/session.rs:64:12 crates/agents/src/codex/server.rs:42:8 crates/agents/src/codex/server.rs:44:10 crates/client/src/link.rs:142:10
+macro.assert 20 in 8 files: crates/agents/src/claude/session.rs:494:9 crates/agents/src/claude/session.rs:495:9 crates/agents/tests/codex_replay.rs:233:5 crates/agents/tests/codex_replay.rs:274:5 crates/agents/tests/codex_replay.rs:358:5
+pat.ident.mut 20 in 10 files: crates/agents/src/claude/session.rs:271:28 crates/agents/src/codex/server.rs:294:28 crates/agents/tests/replay.rs:100:5 crates/app/src/main.rs:139:5 crates/client/src/link.rs:536:53
+attr.derive.Deserialize 19 in 1 file: crates/proto/src/lib.rs:26:1 crates/proto/src/lib.rs:32:1 crates/proto/src/lib.rs:37:1 crates/proto/src/lib.rs:42:1 crates/proto/src/lib.rs:47:1
+attr.derive.Serialize 19 in 1 file: crates/proto/src/lib.rs:26:1 crates/proto/src/lib.rs:32:1 crates/proto/src/lib.rs:37:1 crates/proto/src/lib.rs:42:1 crates/proto/src/lib.rs:47:1
+item.impl.trait 19 in 9 files: crates/agents/src/claude/protocol.rs:21:1 crates/agents/src/claude/protocol.rs:37:1 crates/agents/src/claude/session.rs:32:1 crates/agents/src/codex/protocol.rs:31:1 crates/agents/src/codex/protocol.rs:37:1
+expr.binary.add 17 in 7 files: crates/agents/tests/codex_replay.rs:102:26 crates/agents/tests/replay.rs:230:44 crates/client/src/link.rs:462:40 crates/client/src/link.rs:564:55 crates/client/src/link.rs:565:10
+expr.binary.add_assign 17 in 10 files: crates/agents/src/bin/s1.rs:92:22 crates/agents/src/bin/s1.rs:345:76 crates/agents/src/bin/s2.rs:89:22 crates/agents/src/bin/s2.rs:403:62 crates/agents/src/claude/session.rs:371:35
+expr.match.guard 17 in 10 files: crates/agents/src/bin/s1.rs:179:68 crates/agents/src/bin/s2.rs:315:53 crates/agents/src/claude/protocol.rs:137:35 crates/agents/tests/codex_replay.rs:156:77 crates/agents/tests/codex_replay.rs:160:63
 attr.tokio::test 16 in 4 files: crates/agents/tests/codex_replay.rs:228:1 crates/agents/tests/codex_replay.rs:344:1 crates/agents/tests/replay.rs:144:1 crates/agents/tests/replay.rs:203:1 crates/agents/tests/replay.rs:247:1
+expr.continue 16 in 8 files: crates/agents/src/bin/s2.rs:300:39 crates/agents/src/claude/session.rs:278:17 crates/agents/src/codex/server.rs:301:17 crates/agents/tests/codex_replay.rs:148:17 crates/client/examples/headless.rs:109:21
 generics.type_param 16 in 8 files: crates/agents/src/claude/session.rs:82:17 crates/agents/src/claude/session.rs:82:20 crates/agents/src/claude/session.rs:206:22 crates/agents/src/codex/protocol.rs:450:9 crates/agents/src/codex/server.rs:60:17
-stmt.let.else 16 in 9 files: crates/agents/src/bin/s2.rs:302:9 crates/agents/src/claude/protocol.rs:133:5 crates/agents/src/claude/session.rs:121:9 crates/agents/src/claude/session.rs:273:13 crates/agents/src/claude/session.rs:274:17
-attr.cfg 15 in 5 files: crates/agents/tests/codex_replay.rs:7:1 crates/agents/tests/replay.rs:5:1 crates/app/src/ticket.rs:7:1 crates/app/src/ticket.rs:21:1 crates/app/src/ticket.rs:28:1
-expr.loop 15 in 9 files: crates/agents/src/bin/s2.rs:313:5 crates/agents/src/claude/session.rs:272:9 crates/agents/src/codex/server.rs:295:9 crates/agents/tests/codex_replay.rs:146:9 crates/agents/tests/replay.rs:261:5
-type.tuple 15 in 10 files: crates/agents/src/bin/s1.rs:49:22 crates/agents/src/bin/s1.rs:284:13 crates/agents/src/bin/s2.rs:267:13 crates/agents/src/bin/s2.rs:290:13 crates/agents/src/claude/session.rs:110:55
-item.impl.trait 14 in 6 files: crates/agents/src/claude/protocol.rs:21:1 crates/agents/src/claude/protocol.rs:37:1 crates/agents/src/claude/session.rs:32:1 crates/agents/src/codex/protocol.rs:31:1 crates/agents/src/codex/protocol.rs:37:1
+expr.range 15 in 4 files: crates/daemon/src/host.rs:299:19 crates/daemon/src/rtc.rs:307:24 crates/daemon/src/rtc.rs:669:28 crates/daemon/src/rtc.rs:730:68 crates/daemon/src/rtc.rs:752:14
 macro.println 14 in 4 files: crates/agents/src/bin/s1.rs:90:9 crates/agents/src/bin/s1.rs:264:5 crates/agents/src/bin/s1.rs:342:17 crates/agents/src/bin/s2.rs:87:9 crates/agents/src/bin/s2.rs:102:5
-type.bool 14 in 10 files: crates/agents/src/bin/s1.rs:49:31 crates/agents/src/bin/s1.rs:89:39 crates/agents/src/bin/s2.rs:86:39 crates/agents/src/claude/protocol.rs:55:40 crates/agents/src/claude/protocol.rs:76:19
-expr.for 13 in 11 files: crates/agents/src/bin/s1.rs:325:13 crates/agents/src/bin/s2.rs:236:5 crates/agents/src/claude/session.rs:435:9 crates/agents/src/codex/protocol.rs:806:9 crates/agents/src/codex/protocol.rs:807:13
-expr.binary.add_assign 12 in 8 files: crates/agents/src/bin/s1.rs:92:22 crates/agents/src/bin/s1.rs:345:76 crates/agents/src/bin/s2.rs:89:22 crates/agents/src/bin/s2.rs:403:62 crates/agents/src/claude/session.rs:371:35
+type.slice 14 in 7 files: crates/agents/tests/replay.rs:226:34 crates/client/src/platform/rtc.rs:234:35 crates/client/src/platform/rtc.rs:458:37 crates/client/src/upgrade.rs:19:36 crates/client/src/upgrade.rs:68:35
+attr.serde 13 in 1 file: crates/proto/src/lib.rs:27:1 crates/proto/src/lib.rs:33:1 crates/proto/src/lib.rs:38:1 crates/proto/src/lib.rs:43:1 crates/proto/src/lib.rs:48:1
+type.array 13 in 6 files: crates/agents/src/bin/s2.rs:290:12 crates/daemon/src/lib.rs:20:24 crates/daemon/src/lib.rs:54:36 crates/daemon/src/rtc.rs:39:22 crates/daemon/src/rtc.rs:646:12
+attr.arg 12 in 2 files: crates/client/examples/headless.rs:16:5 crates/client/examples/headless.rs:18:5 crates/client/examples/headless.rs:22:5 crates/client/examples/headless.rs:24:5 crates/daemon/src/main.rs:28:9
+attr.derive.thiserror::Error 12 in 11 files: crates/agents/src/claude/session.rs:57:1 crates/agents/src/codex/server.rs:37:1 crates/client/src/link.rs:133:1 crates/client/src/link.rs:226:1 crates/client/src/wire.rs:15:1
+expr.repeat 12 in 8 files: crates/client/src/link.rs:569:21 crates/client/src/wire.rs:128:22 crates/daemon/src/lib.rs:55:21 crates/daemon/src/rtc.rs:750:23 crates/daemon/src/rtc.rs:793:39
+expr.while 12 in 5 files: crates/agents/src/bin/s1.rs:177:5 crates/agents/src/bin/s1.rs:274:5 crates/agents/src/bin/s1.rs:288:5 crates/agents/src/bin/s2.rs:256:5 crates/agents/src/bin/s2.rs:271:5
+item.use.glob 12 in 12 files: crates/agents/src/claude/protocol.rs:321:16 crates/agents/src/claude/session.rs:451:16 crates/agents/src/codex/protocol.rs:712:16 crates/agents/src/codex/server.rs:489:16 crates/app/src/main.rs:13:22
 macro.json 12 in 2 files: crates/agents/src/claude/protocol.rs:334:20 crates/agents/src/claude/protocol.rs:353:24 crates/agents/src/codex/protocol.rs:594:18 crates/agents/src/codex/protocol.rs:683:16 crates/agents/src/codex/protocol.rs:686:16
-attr.derive.thiserror::Error 11 in 10 files: crates/agents/src/claude/session.rs:57:1 crates/agents/src/codex/server.rs:37:1 crates/client/src/link.rs:87:1 crates/client/src/link.rs:185:1 crates/client/src/wire.rs:7:1
-attr.serde 11 in 1 file: crates/proto/src/lib.rs:23:1 crates/proto/src/lib.rs:29:1 crates/proto/src/lib.rs:34:1 crates/proto/src/lib.rs:39:1 crates/proto/src/lib.rs:44:1
-expr.array 11 in 5 files: crates/agents/src/bin/s1.rs:61:15 crates/agents/src/bin/s1.rs:108:26 crates/agents/src/bin/s2.rs:64:15 crates/agents/src/bin/s2.rs:192:38 crates/agents/src/codex/protocol.rs:263:9
-item.use.glob 11 in 11 files: crates/agents/src/claude/protocol.rs:321:16 crates/agents/src/claude/session.rs:451:16 crates/agents/src/codex/protocol.rs:712:16 crates/agents/src/codex/server.rs:489:16 crates/app/src/main.rs:13:22
+macro.matches 12 in 8 files: crates/agents/src/bin/s1.rs:197:9 crates/agents/src/bin/s1.rs:199:16 crates/agents/src/bin/s1.rs:290:28 crates/agents/src/bin/s2.rs:273:22 crates/agents/tests/codex_replay.rs:275:12
+type.dyn 12 in 2 files: crates/client/src/platform/rtc.rs:50:24 crates/client/src/platform/rtc.rs:51:28 crates/client/src/platform/rtc.rs:111:30 crates/client/src/platform/rtc.rs:131:34 crates/client/src/platform/rtc.rs:384:23
 macro.bail 11 in 3 files: crates/agents/src/bin/s1.rs:65:9 crates/agents/src/bin/s1.rs:266:9 crates/agents/src/bin/s1.rs:356:43 crates/agents/src/bin/s2.rs:68:9 crates/agents/src/bin/s2.rs:248:9
-expr.binary.add 10 in 6 files: crates/agents/tests/codex_replay.rs:102:26 crates/agents/tests/replay.rs:230:44 crates/client/src/link.rs:357:40 crates/client/src/link.rs:451:55 crates/client/src/link.rs:452:10
-expr.match.guard 10 in 8 files: crates/agents/src/bin/s1.rs:179:68 crates/agents/src/bin/s2.rs:315:53 crates/agents/src/claude/protocol.rs:137:35 crates/agents/tests/codex_replay.rs:156:77 crates/agents/tests/codex_replay.rs:160:63
-expr.while 10 in 4 files: crates/agents/src/bin/s1.rs:177:5 crates/agents/src/bin/s1.rs:274:5 crates/agents/src/bin/s1.rs:288:5 crates/agents/src/bin/s2.rs:256:5 crates/agents/src/bin/s2.rs:271:5
-pat.ident.mut 10 in 8 files: crates/agents/src/claude/session.rs:271:28 crates/agents/src/codex/server.rs:294:28 crates/agents/tests/replay.rs:100:5 crates/app/src/main.rs:136:5 crates/client/src/link.rs:423:38
-expr.index 9 in 5 files: crates/agents/src/bin/s2.rs:193:26 crates/agents/src/bin/s2.rs:193:40 crates/agents/tests/codex_replay.rs:170:8 crates/agents/tests/codex_replay.rs:379:20 crates/agents/tests/replay.rs:111:62
-expr.repeat 9 in 7 files: crates/client/src/link.rs:456:21 crates/client/src/wire.rs:19:22 crates/daemon/src/lib.rs:54:21 crates/daemon/src/wire.rs:19:22 crates/daemon/tests/e2e.rs:17:25
-macro.matches 9 in 5 files: crates/agents/src/bin/s1.rs:197:9 crates/agents/src/bin/s1.rs:199:16 crates/agents/src/bin/s1.rs:290:28 crates/agents/src/bin/s2.rs:273:22 crates/agents/tests/codex_replay.rs:275:12
-macro.rsx 9 in 1 file: crates/app/src/main.rs:29:5 crates/app/src/main.rs:52:5 crates/app/src/main.rs:116:5 crates/app/src/main.rs:168:5 crates/app/src/main.rs:184:39
-attr.arg 8 in 2 files: crates/client/examples/headless.rs:16:5 crates/client/examples/headless.rs:18:5 crates/client/examples/headless.rs:22:5 crates/client/examples/headless.rs:24:5 crates/daemon/src/main.rs:26:9
-macro.vec 8 in 8 files: crates/agents/src/bin/s1.rs:84:31 crates/agents/src/claude/session.rs:461:35 crates/agents/src/codex/protocol.rs:533:13 crates/agents/tests/codex_replay.rs:249:20 crates/agents/tests/replay.rs:49:31
-expr.async 7 in 6 files: crates/agents/src/claude/session.rs:126:22 crates/agents/src/codex/server.rs:110:22 crates/app/src/main.rs:90:9 crates/app/src/main.rs:143:11 crates/client/src/link.rs:423:48
-expr.continue 7 in 7 files: crates/agents/src/bin/s2.rs:300:39 crates/agents/src/claude/session.rs:278:17 crates/agents/src/codex/server.rs:301:17 crates/agents/tests/codex_replay.rs:148:17 crates/client/examples/headless.rs:110:21
-expr.let 7 in 4 files: crates/agents/src/claude/session.rs:303:12 crates/agents/src/claude/session.rs:304:16 crates/agents/src/codex/server.rs:326:12 crates/agents/src/codex/server.rs:327:16 crates/agents/src/codex/server.rs:349:32
-expr.struct.update 7 in 3 files: crates/agents/src/codex/protocol.rs:545:36 crates/agents/src/codex/protocol.rs:551:61 crates/agents/src/codex/protocol.rs:559:70 crates/agents/src/codex/protocol.rs:568:70 crates/agents/src/codex/protocol.rs:577:39
-item.use.rename 7 in 5 files: crates/agents/src/claude/session.rs:6:20 crates/agents/src/codex/server.rs:8:20 crates/client/examples/headless.rs:8:22 crates/daemon/src/lib.rs:10:21 crates/daemon/src/lib.rs:38:24
-type.array 7 in 5 files: crates/agents/src/bin/s2.rs:290:12 crates/daemon/src/lib.rs:19:24 crates/daemon/src/lib.rs:53:36 crates/daemon/tests/e2e.rs:17:14 crates/proto/src/frame.rs:33:25
+expr.binary.ne 10 in 6 files: crates/agents/src/bin/s2.rs:340:17 crates/client/src/link.rs:462:24 crates/client/src/platform/rtc.rs:434:30 crates/client/src/platform/rtc.rs:459:42 crates/daemon/src/rtc.rs:521:61
+macro.vec 10 in 9 files: crates/agents/src/bin/s1.rs:84:31 crates/agents/src/claude/session.rs:461:35 crates/agents/src/codex/protocol.rs:533:13 crates/agents/tests/codex_replay.rs:249:20 crates/agents/tests/replay.rs:49:31
+expr.async 9 in 7 files: crates/agents/src/claude/session.rs:126:22 crates/agents/src/codex/server.rs:110:22 crates/app/src/main.rs:90:9 crates/app/src/main.rs:146:11 crates/client/src/link.rs:536:64
+expr.let 9 in 6 files: crates/agents/src/claude/session.rs:303:12 crates/agents/src/claude/session.rs:304:16 crates/agents/src/codex/server.rs:326:12 crates/agents/src/codex/server.rs:327:16 crates/agents/src/codex/server.rs:349:32
+expr.struct.update 9 in 4 files: crates/agents/src/codex/protocol.rs:545:36 crates/agents/src/codex/protocol.rs:551:61 crates/agents/src/codex/protocol.rs:559:70 crates/agents/src/codex/protocol.rs:568:70 crates/agents/src/codex/protocol.rs:577:39
+macro.rsx 9 in 1 file: crates/app/src/main.rs:29:5 crates/app/src/main.rs:52:5 crates/app/src/main.rs:119:5 crates/app/src/main.rs:181:5 crates/app/src/main.rs:198:39
+macro.tokio::select 9 in 6 files: crates/agents/src/claude/session.rs:280:13 crates/agents/src/codex/server.rs:303:13 crates/client/src/link.rs:334:24 crates/client/src/link.rs:491:13 crates/client/src/platform/rtc.rs:79:9
+expr.cast 8 in 5 files: crates/agents/tests/codex_replay.rs:102:45 crates/agents/tests/codex_replay.rs:102:52 crates/client/src/link.rs:564:48 crates/client/src/platform/rtc.rs:190:54 crates/daemon/src/rtc.rs:767:60
+expr.while_let 8 in 8 files: crates/agents/src/claude/session.rs:128:13 crates/agents/src/codex/server.rs:112:13 crates/app/src/main.rs:104:13 crates/client/examples/headless.rs:67:5 crates/daemon/src/host.rs:128:9
+item.use.rename 8 in 6 files: crates/agents/src/claude/session.rs:6:20 crates/agents/src/codex/server.rs:8:20 crates/client/examples/headless.rs:8:22 crates/daemon/src/lib.rs:11:21 crates/daemon/src/lib.rs:39:24
+expr.binary.gt 7 in 6 files: crates/agents/src/bin/s1.rs:265:17 crates/agents/src/bin/s2.rs:247:17 crates/client/examples/headless.rs:101:73 crates/daemon/src/host.rs:138:43 crates/daemon/src/rtc.rs:389:70
+type.impl_trait.arg 7 in 6 files: crates/agents/src/claude/session.rs:206:39 crates/agents/src/codex/server.rs:197:39 crates/agents/tests/replay.rs:100:17 crates/client/src/link.rs:106:24 crates/client/src/link.rs:508:37
 type.infer 7 in 5 files: crates/agents/src/bin/s2.rs:390:73 crates/agents/src/claude/session.rs:466:23 crates/agents/src/claude/session.rs:489:26 crates/agents/src/codex/server.rs:500:23 crates/client/src/platform/web.rs:8:21
-attr.component 6 in 1 file: crates/app/src/main.rs:22:1 crates/app/src/main.rs:48:1 crates/app/src/main.rs:81:1 crates/app/src/main.rs:153:1 crates/app/src/main.rs:181:1
-expr.cast 6 in 3 files: crates/agents/tests/codex_replay.rs:102:45 crates/agents/tests/codex_replay.rs:102:52 crates/client/src/link.rs:451:48 crates/proto/src/frame.rs:26:48 crates/proto/src/frame.rs:38:12
-type.impl_trait.arg 6 in 6 files: crates/agents/src/claude/session.rs:206:39 crates/agents/src/codex/server.rs:197:39 crates/agents/tests/replay.rs:100:17 crates/client/src/link.rs:403:37 crates/daemon/src/host.rs:108:33
-expr.binary.gt 5 in 5 files: crates/agents/src/bin/s1.rs:265:17 crates/agents/src/bin/s2.rs:247:17 crates/client/examples/headless.rs:102:73 crates/daemon/src/host.rs:138:43 crates/proto/src/frame.rs:35:12
-expr.while_let 5 in 5 files: crates/agents/src/claude/session.rs:128:13 crates/agents/src/codex/server.rs:112:13 crates/app/src/main.rs:101:13 crates/client/examples/headless.rs:68:5 crates/daemon/src/host.rs:128:9
-macro.panic 5 in 2 files: crates/agents/tests/replay.rs:206:9 crates/agents/tests/replay.rs:305:19 crates/agents/tests/replay.rs:306:18 crates/daemon/tests/e2e.rs:153:33 crates/daemon/tests/e2e.rs:212:37
-macro.tokio::select 5 in 4 files: crates/agents/src/claude/session.rs:280:13 crates/agents/src/codex/server.rs:303:13 crates/client/src/link.rs:294:13 crates/client/src/link.rs:386:13 crates/daemon/src/server.rs:141:24
-type.slice 5 in 4 files: crates/agents/tests/replay.rs:226:34 crates/daemon/tests/e2e.rs:119:18 crates/daemon/tests/e2e.rs:123:24 crates/proto/src/frame.rs:41:43 crates/proto/src/lib.rs:19:18
-expr.binary.le 4 in 3 files: crates/client/src/link.rs:277:20 crates/client/src/link.rs:354:22 crates/daemon/src/server.rs:154:26 crates/proto/src/frame.rs:25:28
-expr.binary.ne 4 in 4 files: crates/agents/src/bin/s2.rs:340:17 crates/client/src/link.rs:357:24 crates/daemon/src/server.rs:124:28 crates/proto/src/ticket.rs:112:20
+attr.component 6 in 1 file: crates/app/src/main.rs:22:1 crates/app/src/main.rs:48:1 crates/app/src/main.rs:81:1 crates/app/src/main.rs:156:1 crates/app/src/main.rs:195:1
+attr.derive.Default 5 in 5 files: crates/agents/src/bin/s1.rs:44:1 crates/agents/src/bin/s2.rs:47:1 crates/client/src/transcript.rs:6:1 crates/daemon/src/rtc.rs:48:1 crates/proto/src/frame.rs:56:1
+macro.panic 5 in 2 files: crates/agents/tests/replay.rs:206:9 crates/agents/tests/replay.rs:305:19 crates/agents/tests/replay.rs:306:18 crates/daemon/tests/e2e.rs:158:33 crates/daemon/tests/e2e.rs:217:37
+expr.binary.le 4 in 3 files: crates/client/src/link.rs:319:20 crates/client/src/link.rs:459:22 crates/daemon/src/server.rs:225:30 crates/proto/src/frame.rs:34:28
 generics.lifetime 4 in 4 files: crates/agents/src/bin/s1.rs:39:13 crates/agents/src/claude/protocol.rs:254:26 crates/agents/src/codex/protocol.rs:642:26 crates/proto/src/ticket.rs:84:6
-attr.derive.Default 3 in 3 files: crates/agents/src/bin/s1.rs:44:1 crates/agents/src/bin/s2.rs:47:1 crates/client/src/transcript.rs:6:1
-expr.break 3 in 2 files: crates/agents/tests/replay.rs:266:13 crates/daemon/tests/e2e.rs:220:21 crates/daemon/tests/e2e.rs:299:17
+macro.std::pin::pin 4 in 2 files: crates/client/src/link.rs:325:24 crates/client/src/link.rs:326:25 crates/client/src/link.rs:489:25 crates/client/src/platform/rtc.rs:263:24
+expr.binary.ge 3 in 2 files: crates/client/src/link.rs:469:33 crates/daemon/src/rtc.rs:436:31 crates/daemon/src/rtc.rs:765:23
+expr.binary.mul 3 in 1 file: crates/proto/src/frame.rs:15:35 crates/proto/src/frame.rs:15:42 crates/proto/src/frame.rs:20:33
+expr.binary.sub 3 in 3 files: crates/client/src/platform/rtc.rs:190:43 crates/daemon/src/host.rs:393:50 crates/daemon/tests/e2e.rs:175:44
+expr.break 3 in 2 files: crates/agents/tests/replay.rs:266:13 crates/daemon/tests/e2e.rs:225:21 crates/daemon/tests/e2e.rs:304:17
+generics.assoc_binding 3 in 2 files: crates/client/src/link.rs:535:18 crates/client/src/upgrade.rs:48:39 crates/client/src/upgrade.rs:63:36
+item.struct.unit 3 in 3 files: crates/agents/src/codex/protocol.rs:661:5 crates/client/src/upgrade.rs:16:9 crates/daemon/src/host.rs:28:5
+item.type 3 in 3 files: crates/agents/src/claude/session.rs:82:5 crates/agents/src/codex/server.rs:60:5 crates/client/src/upgrade.rs:48:5
 macro.env 3 in 3 files: crates/agents/src/codex/protocol.rs:543:30 crates/agents/tests/codex_replay.rs:50:15 crates/agents/tests/replay.rs:17:15
-macro.std::pin::pin 3 in 1 file: crates/client/src/link.rs:290:24 crates/client/src/link.rs:291:25 crates/client/src/link.rs:384:25
-attr.command 2 in 1 file: crates/daemon/src/main.rs:15:1 crates/daemon/src/main.rs:17:5
-attr.derive.Parser 2 in 2 files: crates/client/examples/headless.rs:13:1 crates/daemon/src/main.rs:14:1
-attr.tokio::main 2 in 2 files: crates/client/examples/headless.rs:28:1 crates/daemon/src/main.rs:40:1
-expr.binary.mul 2 in 1 file: crates/proto/src/frame.rs:11:35 crates/proto/src/frame.rs:11:42
-expr.binary.sub 2 in 2 files: crates/daemon/src/host.rs:393:50 crates/daemon/tests/e2e.rs:170:44
-expr.range 2 in 2 files: crates/daemon/src/host.rs:299:19 crates/daemon/tests/e2e.rs:170:47
+attr.allow 2 in 2 files: crates/app/src/main.rs:5:1 crates/client/src/platform/rtc.rs:248:1
+attr.command 2 in 1 file: crates/daemon/src/main.rs:17:1 crates/daemon/src/main.rs:19:5
+attr.derive.Parser 2 in 2 files: crates/client/examples/headless.rs:13:1 crates/daemon/src/main.rs:16:1
+attr.tokio::main 2 in 2 files: crates/client/examples/headless.rs:28:1 crates/daemon/src/main.rs:56:1
+expr.binary.bit_xor 2 in 1 file: crates/daemon/src/rtc.rs:774:37 crates/daemon/src/rtc.rs:775:69
+expr.binary.lt 2 in 2 files: crates/agents/tests/replay.rs:117:20 crates/proto/src/frame.rs:72:29
+expr.binary.or 2 in 2 files: crates/client/src/platform/rtc.rs:345:17 crates/daemon/src/rtc.rs:760:44
 item.impl.type 2 in 1 file: crates/proto/src/ticket.rs:66:5 crates/proto/src/ticket.rs:105:5
-item.struct.unit 2 in 2 files: crates/agents/src/codex/protocol.rs:661:5 crates/daemon/src/host.rs:28:5
-item.type 2 in 2 files: crates/agents/src/claude/session.rs:82:5 crates/agents/src/codex/server.rs:60:5
 macro.tokio::try_join 2 in 2 files: crates/agents/src/bin/s2.rs:188:20 crates/agents/tests/codex_replay.rs:248:9
 macro.unreachable 2 in 2 files: crates/agents/tests/codex_replay.rs:128:26 crates/client/src/transcript.rs:53:50
 pat.reference 2 in 2 files: crates/agents/src/claude/session.rs:227:63 crates/proto/src/ticket.rs:111:14
-attr.allow 1 in 1 file: crates/app/src/main.rs:5:1
-attr.derive.Ord 1 in 1 file: crates/proto/src/lib.rs:22:1
-attr.derive.PartialOrd 1 in 1 file: crates/proto/src/lib.rs:22:1
-attr.derive.Subcommand 1 in 1 file: crates/daemon/src/main.rs:21:1
-expr.binary.div 1 in 1 file: crates/client/src/link.rs:450:24
-expr.binary.ge 1 in 1 file: crates/client/src/link.rs:364:33
-expr.binary.lt 1 in 1 file: crates/agents/tests/replay.rs:117:20
-expr.binary.rem 1 in 1 file: crates/client/src/link.rs:451:28
-generics.assoc_binding 1 in 1 file: crates/client/src/link.rs:422:18
-generics.const_param 1 in 1 file: crates/daemon/src/lib.rs:53:15
+attr.derive.Ord 1 in 1 file: crates/proto/src/lib.rs:26:1
+attr.derive.PartialOrd 1 in 1 file: crates/proto/src/lib.rs:26:1
+attr.derive.Subcommand 1 in 1 file: crates/daemon/src/main.rs:23:1
+expr.binary.div 1 in 1 file: crates/client/src/link.rs:563:24
+expr.binary.rem 1 in 1 file: crates/client/src/link.rs:564:28
+generics.const_param 1 in 1 file: crates/daemon/src/lib.rs:54:15
+macro.anyhow::ensure 1 in 1 file: crates/daemon/src/rtc.rs:271:5
 macro.asset 1 in 1 file: crates/app/src/main.rs:16:20
 pat.rest 1 in 1 file: crates/agents/src/codex/protocol.rs:524:32
-type.impl_trait.ret 1 in 1 file: crates/client/src/link.rs:422:6
+type.impl_trait.ret 1 in 1 file: crates/client/src/link.rs:535:6
