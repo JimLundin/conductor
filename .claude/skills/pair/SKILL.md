@@ -11,8 +11,9 @@ subset runs as a pair: one agent implements, a second reviews. The reviewer's
 second job is the **ratchet**: finding constructs that would make the code
 shorter without costing any of the subset's qualities, and proving it.
 
-Use two fresh subagents on different models, so the review isn't anchored on
-the implementer's choices. The coordinator (you) runs the steps, owns the
+Use two fresh subagents, both on Opus (the owner's choice for now). The
+reviewer gets the diff and the friction log, never the implementer's
+reasoning, so the review isn't anchored on the implementer's choices. The coordinator (you) runs the steps, owns the
 branch, and talks to the owner.
 
 ## 1. Implement
