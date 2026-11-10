@@ -1,6 +1,6 @@
 ---
 name: pair
-description: Implement Conductor code as a pair, with an implementer writing in the Rust subset and a reviewer who checks it and proposes new subset constructs backed by measurements. Use for any code written in, or moved into, the subset (paths under `include` in subset.toml).
+description: Implement Conductor code as a pair, with an implementer writing in the Rust subset and a reviewer who checks it and proposes new subset constructs backed by measurements. Use for any change to code under `crates/`, including rewriting existing code into the subset.
 ---
 
 # Pair loop

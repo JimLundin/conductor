@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "vendor/claude-codes", "vendor/codex-codes"]
+members = ["crates/*", "tools/subset", "vendor/claude-codes", "vendor/codex-codes"]
 
 [workspace.package]
 edition = "2024"
