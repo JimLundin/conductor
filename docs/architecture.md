@@ -366,10 +366,11 @@ to the domain as static files.
 `meawoppl/rust-code-agent-sdks` (Apache-2.0) on 2026-11-10 and maintained here as our own
 code. See `vendor/README.md` and `NOTICE`.
 
-- They already provide the typed protocols, async clients, the initialize handshake,
-  interrupts and tool-approval control messages.
-- They pin a tested CLI version: Claude 2.1.322 on 2026-11-10, with daily "drift"
-  releases.
+- They provide the typed protocols and control messages (initialize, interrupt,
+  permission mode, tool approval). `claude-codes` also builds the CLI command line; it
+  has no client, because our session actor owns the process.
+- `claude-codes` keeps the supported Claude CLI range in `version::SUPPORTED_CLI_VERSIONS`
+  (2.1.316 to 2.1.322 on 2026-11-10).
 - Their `types` feature compiles to WASM, so the browser client can share the same
   message types.
 - Our `agents` crate is a thin layer on top: one session actor per session, a map that
@@ -437,9 +438,10 @@ claude --input-format stream-json --output-format stream-json --verbose \
 - **Process lifetime:** one long-lived process per active session, with messages streamed
   over stdin. Idle sessions are killed after N minutes and resumed with `--resume` on
   the next message.
-- **Pin the CLI version:** the SDK pins one in `_cli_version.py`. Our adapter does the same
-  and refuses unknown versions with a clear error. That error tells us when to re-check
-  the protocol.
+- **Pin the CLI version:** the SDK pins one in `_cli_version.py`. Our adapter checks
+  `claude_code_version` from the `initialize` response against
+  `SUPPORTED_CLI_VERSIONS` and refuses others with `Error::UnsupportedVersion`, unless
+  `allow_untested_version` is set. That error tells us when to re-check the protocol.
 - **T3 Code reference:**
   - `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts` (12.5k lines; it uses
     the TS SDK's `query`, `canUseTool`, `interrupt`, `setPermissionMode`, `resume`).

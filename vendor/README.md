@@ -10,3 +10,5 @@ We do not track or contribute to upstream.
 
 Both are licensed Apache-2.0 (`LICENSE-APACHE-rust-code-agent-sdks`). Files we change
 keep the license; the repository `NOTICE` records that they were modified.
+
+`docs/claude-codes-gaps.md` lists what we changed in `claude-codes` after taking it.

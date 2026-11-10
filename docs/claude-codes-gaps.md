@@ -1,138 +1,72 @@
-# Upstream gaps in `claude-codes` 2.1.323
+# `claude-codes` gaps found in S1, and their fixes
 
-Conductor drives Claude Code through `claude-codes` (meawoppl/rust-code-agent-sdks).
-Spike S1 found the gaps below. Each entry gives what is missing, the evidence, our
-local workaround in `crates/agents/src/claude/`, and the fix we propose upstream.
-All live evidence is from CLI 2.1.316; the recordings are in `fixtures/claude/`.
-No entry needed a `[patch.crates-io]`. The workarounds use the crate's public
-types and `ClaudeCliBuilder::build_command()`.
+Spike S1 found seven gaps in `vendor/claude-codes` (taken at 2.1.323). Each one is now
+fixed in the vendored crate, and the matching workaround in `crates/agents/src/claude/`
+is gone. The live evidence is from CLI 2.1.316; the recordings are in `fixtures/claude/`.
 
-## 1. The clients cannot be driven from an actor
+## 1. The clients could not run inside an actor
 
-**Missing.** `AsyncClient::receive()` and `RawAsyncClient::next_line()` read with
-`read_line` into a buffer local to the future. Used in `tokio::select!` next to a
-command channel, a cancelled read drops the part of the line already consumed.
-Reads and writes also share `&mut self`, and neither client can split into a
-reader half and a writer half. A session that must answer a permission request
-while it waits for the next stdout line has no safe way to use either client.
+`AsyncClient` and `RawAsyncClient` read with `read_line`, which is not cancellation safe
+in `tokio::select!`, and none of the clients could split into reader and writer halves.
+Our session actor owns the process and its stdio instead, so nothing used the clients.
 
-**Evidence.** Source: `client_async.rs` `read_frame_line`,
-`client_raw_async.rs` `next_line`. Tokio documents `read_line` as not
-cancellation safe.
-
-**Workaround.** We spawn with `ClaudeCliBuilder::build_command()`, own the child's
-stdio, read stdout with `Lines::next_line` (cancellation safe), and use
-`ClaudeOutput` and `ClaudeInput` only as types.
-
-**Proposed fix.** Add `into_split()` that returns a writer and a line stream, or
-keep the partial line in the struct so `next_line` is cancellation safe. Document
-which methods are safe in `select!`.
+**Change.** Deleted `client_async.rs`, `client_raw_async.rs`, `client_sync.rs`, their
+examples, `tests/integration_tests.rs`, the live part of `subagent_wrapping_tests.rs`,
+`ClaudeCliBuilder::spawn`/`spawn_sync`, the `which` lookup and `CliFlag`. The crate's
+features are now `types`, `cli` and `auth`. `build_command()` sets `kill_on_drop(true)`.
 
 ## 2. No `set_permission_mode` control request
 
-**Missing.** `ControlRequestPayload` has `initialize`, `interrupt` and
-`apply_flag_settings`, but no `set_permission_mode`.
+**Change.** `ControlRequestPayload::SetPermissionMode { mode }` and
+`ControlRequestMessage::set_permission_mode` in `src/io/control.rs`. `PermissionMode`
+moved there from `cli.rs` so the payload can carry it. `protocol.rs` uses the
+constructor instead of `json!`.
 
-**Evidence.** Step 5 sent it as raw JSON:
-`{"type":"control_request","request_id":"req_2","request":{"subtype":"set_permission_mode","mode":"acceptEdits"}}`.
-The CLI answered `{"mode":"acceptEdits"}`, printed `system/status`, and the next
-Write ran without a permission request.
+## 3. Unknown frame types and control subtypes failed to parse
 
-**Workaround.** `protocol.rs` builds that line with `serde_json::json!`.
+**Change.** `ClaudeOutput::Unknown(Value)` and `ControlRequestPayload::Unknown(Value)`
+keep the raw JSON. A control request whose payload does not parse, unknown or
+malformed, keeps its `request_id`. `ControlRequestPayload::subtype()` names the wire
+subtype. `audit_frame` and the corpus test count both variants as not wrapped.
 
-**Proposed fix.** Add `ControlRequestPayload::SetPermissionMode { mode }` and a
-`ClaudeInput::set_permission_mode(request_id, mode)` constructor.
+`protocol::parse_line` lost its raw-JSON recovery path. The actor still answers every
+control request it does not serve with an error `control_response`. The replay test
+`unknown_control_request_gets_an_error_reply` checks the bytes it writes.
 
-## 3. Unknown frame types and control subtypes fail to parse
+## 4. `ClaudeCliBuilder` could not express the session's flags
 
-**Missing.** `ClaudeOutput` has no catch-all variant, and neither has
-`ControlRequestPayload`. An unknown `type` or `subtype` is a parse error. For a
-`control_request` this is serious: the CLI blocks until it gets a
-`control_response`, and the typed path no longer has the `request_id`.
+**Change.** In `src/cli.rs`:
 
-**Evidence.** Source: `claude_output.rs` `Deserialize for ClaudeOutput` ends in
-`unknown_variant`. Our tests `unknown_type_becomes_unknown_event_with_the_raw_json`
-and `unknown_control_subtype_still_yields_its_request_id` cover the workaround.
+- `setting_sources()` and a `SettingSource` enum.
+- `PermissionMode::Auto`. `Delegate` is gone; the CLI does not list it.
+- `--resume=<id>` as one argument, so an id that starts with `-` is not read as a flag.
+- `build_command()` removes `PARENT_SESSION_VARS` (`CLAUDECODE` and the other
+  variables a parent Claude Code session sets). `s1` no longer scrubs its own
+  environment.
 
-**Workaround.** `protocol::parse_line` parses to `serde_json::Value` first. On a
-typed parse failure it reads `request_id` from the raw value and replies with an
-error `control_response`, as the Python SDK does.
+`session::command` is one builder chain. `resumed_session_argv` pins the argv.
 
-**Proposed fix.** Add `ClaudeOutput::Unknown(Value)` and
-`ControlRequestPayload::Unknown(Value)`, keeping the raw JSON.
+## 5. `ToolPermissionRequest` dropped fields the CLI sends
 
-## 4. `ClaudeCliBuilder` cannot express the flags a session needs
+**Change.** `display_name`, `description`, `title` and `agent_id` are optional fields.
+`can_use_tool_keeps_every_field_the_cli_sends` round-trips a recorded line. Our
+`ClaudeEvent::PermissionRequested` does not carry them yet.
 
-**Missing.**
-- No `setting_sources()` method. `CliFlag::SettingSources` exists but the builder
-  never emits it.
-- `PermissionMode` has no `Auto`, which the SDK lists. It has a `Delegate`
-  variant that the SDK does not list.
-- `allow_recursion()` (removes `CLAUDECODE`) is only available with the
-  `integration-tests` feature.
-- `--resume` is emitted as two arguments. The SDK uses `--resume=<id>` so that a
-  value starting with `-` cannot be read as a flag.
-- `build_command()` does not set `kill_on_drop(true)`.
+## 6. `AsyncClient::session_uuid` read the wrong field
 
-**Evidence.** `s1` runs with `--setting-sources=project,local` so the user's own
-hooks and plugins stay out of the session. The user's settings define a
-`PermissionRequest` hook. We did not test what that hook does to a stdio session.
-The flag is a precaution, not a reproduced failure.
+**Change.** Deleted with `AsyncClient`. Our actor reads `session_id` from `system/init`.
 
-**Workaround.** `session::command` appends `--permission-mode=<mode>` and
-`--setting-sources=<list>` to the built command, removes `CLAUDECODE`, and sets
-`kill_on_drop(true)`. The `resumed_session_argv` test pins the resulting argv.
+## 7. CLI version drift was only a warning
 
-**Proposed fix.** Add `setting_sources()`, `PermissionMode::Auto`, an
-always-available way to remove `CLAUDECODE`, the `--resume=<id>` form, and
-`kill_on_drop(true)` in `build_command()`.
+The old check ran `claude --version` from `PATH`, not the configured binary, and only
+logged.
 
-## 5. `ToolPermissionRequest` drops fields the CLI sends
-
-**Missing.** CLI 2.1.316 sends `display_name` and `description` in every
-`can_use_tool`, and the SDK also types `title` and `agent_id`. The struct keeps
-none of them, so a UI cannot show the CLI's own description of the request.
-
-**Evidence.** Steps 1, 2 and 3b. For example:
-`"display_name":"Write","description":"a.txt"`.
-
-**Workaround.** None needed for S1. Conductor's `PermissionRequested` event will
-need these fields in P1.
-
-**Proposed fix.** Add `display_name`, `description`, `title` and `agent_id` as
-optional fields.
-
-## 6. `AsyncClient::session_uuid` reads the wrong field
-
-**Missing.** `receive()` stores the first assistant or result message's `uuid` as
-the session UUID. That field is the message id, not the session id.
-
-**Evidence.** In the fixtures, every assistant message has a `uuid` different
-from its `session_id`. Source: `client_async.rs` `receive`.
-
-**Workaround.** We do not use `AsyncClient`. Our actor reads `session_id` from
-`system/init`.
-
-**Proposed fix.** Take the id from `system/init` `session_id`, or from
-`session_id` on any message.
-
-## 7. CLI version drift is only a warning
-
-**Missing.** `check_claude_version` runs `claude` from `PATH` instead of the
-configured binary. It only logs a warning when the CLI is newer than
-`TESTED_VERSION` (2.1.322), and only `with_defaults` and `start_with` call it.
-`build_command()` and `AsyncClient::new()` skip it.
-
-**Evidence.** Source: `version.rs`. The `initialize` response already reports the
-version: `"claude_code_version":"2.1.316"` (first line of each fixture). That
-makes a second process unnecessary.
-
-**Workaround.** None in S1. Architecture §7.1 wants Conductor to refuse
-unsupported versions with a clear error. That check belongs in our session spawn,
-keyed on the `initialize` response.
-
-**Proposed fix.** Expose `claude_code_version` from a typed `initialize`
-response. Offer a check against a supported range that callers can make fatal.
+**Change.** `src/version.rs` holds `SUPPORTED_CLI_VERSIONS` (2.1.316 to 2.1.322) and
+`check_cli_version`. `InitializeResponse` types `claude_code_version`.
+`ClaudeSession::spawn` checks it after the handshake. Outside the range it shuts the
+CLI down and returns `Error::UnsupportedVersion { found, supported }`.
+`ClaudeOptions::allow_untested_version` runs it anyway with a warning. Widen the range
+only after `s1` passes against the new CLI.
 
 ## Differences that need no fix
 
