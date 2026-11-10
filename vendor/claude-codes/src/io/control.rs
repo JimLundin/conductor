@@ -629,6 +629,18 @@ pub struct ToolPermissionRequest {
     /// The tool use ID for this request
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_use_id: Option<String>,
+    /// The tool's name as the CLI shows it, e.g. `Write`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// The CLI's one-line summary of the request, e.g. the file name for Write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// A prompt title, when the CLI sends one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The subagent that asked, absent for the main agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 impl ToolPermissionRequest {
@@ -645,6 +657,10 @@ impl ToolPermissionRequest {
     ///     blocked_path: None,
     ///     decision_reason: None,
     ///     tool_use_id: None,
+    ///     display_name: None,
+    ///     description: None,
+    ///     title: None,
+    ///     agent_id: None,
     /// };
     /// let response = req.allow("req-123");
     /// ```
@@ -668,6 +684,10 @@ impl ToolPermissionRequest {
     ///     blocked_path: None,
     ///     decision_reason: None,
     ///     tool_use_id: None,
+    ///     display_name: None,
+    ///     description: None,
+    ///     title: None,
+    ///     agent_id: None,
     /// };
     /// // Redirect to safe location
     /// let safe_input = json!({"file_path": "/tmp/safe/passwd", "content": "test"});
@@ -709,6 +729,10 @@ impl ToolPermissionRequest {
     ///     blocked_path: None,
     ///     decision_reason: None,
     ///     tool_use_id: None,
+    ///     display_name: None,
+    ///     description: None,
+    ///     title: None,
+    ///     agent_id: None,
     /// };
     ///
     /// // Allow and remember this decision for the session
@@ -762,6 +786,10 @@ impl ToolPermissionRequest {
     ///     blocked_path: None,
     ///     decision_reason: None,
     ///     tool_use_id: None,
+    ///     display_name: None,
+    ///     description: None,
+    ///     title: None,
+    ///     agent_id: None,
     /// };
     ///
     /// // Try to allow with first suggestion, or just allow without remembering
@@ -790,6 +818,10 @@ impl ToolPermissionRequest {
     ///     blocked_path: None,
     ///     decision_reason: None,
     ///     tool_use_id: None,
+    ///     display_name: None,
+    ///     description: None,
+    ///     title: None,
+    ///     agent_id: None,
     /// };
     /// let response = req.deny("Dangerous command blocked by policy", "req-123");
     /// ```
@@ -1299,6 +1331,26 @@ mod tests {
         ));
     }
 
+    /// Recorded from CLI 2.1.316 (`fixtures/claude/session1-approve-deny-interrupt.jsonl`).
+    #[test]
+    fn can_use_tool_keeps_every_field_the_cli_sends() {
+        let line = r#"{"type":"control_request","request_id":"aa325d90-e32d-4081-a2c3-2da64e7eda39","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/s1-scratch/a.txt","content":"hello from s1"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_bdrk_01QDvXeMcSrP8nF3Wa3aHoBt"}}"#;
+        let output: ClaudeOutput = serde_json::from_str(line).unwrap();
+        let ClaudeOutput::ControlRequest(ControlRequest {
+            request: ControlRequestPayload::CanUseTool(req),
+            ..
+        }) = &output
+        else {
+            panic!("not can_use_tool: {output:?}");
+        };
+        assert_eq!(req.display_name.as_deref(), Some("Write"));
+        assert_eq!(req.description.as_deref(), Some("a.txt"));
+        assert_eq!(
+            serde_json::to_value(&output).unwrap(),
+            serde_json::from_str::<Value>(line).unwrap()
+        );
+    }
+
     #[test]
     fn unknown_control_subtype_keeps_its_request_id() {
         let line = r#"{"type":"control_request","request_id":"cli_3","request":{"subtype":"elicit_frobnicate","q":1}}"#;
@@ -1402,6 +1454,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let response = req.allow("req-123");
@@ -1424,6 +1480,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let modified_input = serde_json::json!({
@@ -1447,6 +1507,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let response = req.deny("Dangerous command blocked", "req-789");
@@ -1467,6 +1531,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let response = req.deny_and_stop("Security violation", "req-000");
@@ -1899,6 +1967,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let response =
@@ -1927,6 +1999,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let response = req.allow_and_remember_suggestion("req-123");
@@ -1948,6 +2024,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let response = req.allow_and_remember_suggestion("req-123");
@@ -1983,6 +2063,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         }
     }
 
@@ -2066,6 +2150,10 @@ mod tests {
             blocked_path: None,
             decision_reason: None,
             tool_use_id: None,
+            display_name: None,
+            description: None,
+            title: None,
+            agent_id: None,
         };
 
         let answers = HashMap::new();
