@@ -18,3 +18,4 @@ web-sys = { version = "0.3.107", features = ["Window", "Location", "Storage", "H
 [features]
 default = []
 web = ["dioxus/web"]
+desktop = ["dioxus/desktop"]

@@ -61,7 +61,10 @@ fn Host(ticket: Ticket) -> Element {
             link.set(Some(Rc::new(handle)));
             while let Some(update) = updates.recv().await {
                 match update {
-                    Update::Status(next) => status.set(Some(next)),
+                    Update::Status(next) => {
+                        tracing::info!(state = ?next.state, path = ?next.path, error = ?next.error, "link status");
+                        status.set(Some(next));
+                    }
                     Update::Reset(_) => transcript.set(Transcript::default()),
                     Update::Event(event) => transcript.write().apply(&event.kind),
                 }
