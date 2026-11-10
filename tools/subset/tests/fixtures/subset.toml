@@ -1,0 +1,55 @@
+# Fixture config: the real core, with short derive and macro lists.
+version = 0
+include = ["*.rs", "tests/*.rs"]
+allowed = [
+  # Items
+  "item.struct.named",        # struct with named fields
+  "item.struct.newtype",      # struct Id(Ulid); exactly one field
+  "item.enum",                # variants may carry data
+  "item.fn",
+  "item.impl.inherent",
+  "item.const",
+  "item.use",
+  "item.mod",
+
+  # Expressions
+  "expr.match",
+  "expr.call",
+  "expr.method_call",
+  "expr.field",
+  "expr.struct",              # struct and enum-variant construction
+  "expr.path",
+  "expr.lit",                 # literals except `true` / `false`
+  "expr.block",
+  "expr.paren",
+  "expr.reference",           # &x
+  "expr.try",                 # ?
+  "expr.closure.adapter",     # a closure passed straight to an iterator, Option or Result method
+
+  # Statements
+  "stmt.let",                 # immutable, with a pattern; no `else`
+
+  # Patterns
+  "pat.ident",
+  "pat.path",                 # unit variants and consts
+  "pat.struct",
+  "pat.tuple_struct",         # Some(x), Ok(x), Variant(x)
+  "pat.lit",                  # literals except `true` / `false`
+  "pat.or",                   # A | B in one arm
+  "pat.wild",                 # `_`, only in positions clippy's wildcard rules allow
+
+  # Types
+  "type.path",                # except `bool`
+  "type.reference",
+
+  # Attributes
+  "attr.doc",
+  "attr.derive",              # only the derives in `derives`
+  "attr.cfg_test",            # #[cfg(test)] and #[test]
+
+  # Macros
+  "macro.allowed",            # only the macros in `macros`
+]
+derives = ["Debug", "Clone"]
+macros = ["format", "tracing::info"]
+test_macros = ["assert_eq"]

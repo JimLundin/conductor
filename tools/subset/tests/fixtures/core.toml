@@ -1,0 +1,7 @@
+# Allows nothing, so `report` lists every construct allowed.rs uses.
+version = 0
+include = ["allowed.rs"]
+allowed = []
+derives = ["Debug", "Clone"]
+macros = ["format"]
+test_macros = ["assert_eq"]
