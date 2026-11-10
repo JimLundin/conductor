@@ -45,8 +45,9 @@ impl ProtocolHandler for Conductor {
             };
             let this = self.clone();
             let client = client.clone();
+            let conn = conn.clone();
             tokio::spawn(async move {
-                if let Err(err) = this.stream(send, recv, client).await {
+                if let Err(err) = this.stream(&conn, send, recv, client).await {
                     tracing::debug!(%err, "stream ended with an error");
                 }
             });
@@ -92,6 +93,7 @@ impl Conductor {
 
     async fn stream(
         self,
+        conn: &Connection,
         mut send: SendStream,
         mut recv: RecvStream,
         client: String,
@@ -103,7 +105,7 @@ impl Conductor {
                 wire::write(&mut send, &result).await?;
                 send.finish()?;
             }
-            Some(Open::Subscribe(subscribe)) => self.feed(send, subscribe).await?,
+            Some(Open::Subscribe(subscribe)) => self.feed(conn, send, subscribe).await?,
             Some(Open::Hello(_)) | None => send.finish()?,
         }
         Ok(())
@@ -112,7 +114,12 @@ impl Conductor {
     /// Gap-free subscribe (§8): the host attached to the live feed before it
     /// took the replay, so drain the replay, then the live feed minus what
     /// the replay already covered.
-    async fn feed(&self, mut send: SendStream, subscribe: Subscribe) -> Result<(), StreamError> {
+    async fn feed(
+        &self,
+        conn: &Connection,
+        mut send: SendStream,
+        subscribe: Subscribe,
+    ) -> Result<(), StreamError> {
         let welcome = self.host.welcome().await?;
         if subscribe.epoch != welcome.epoch {
             send.finish()?;
@@ -131,7 +138,12 @@ impl Conductor {
         }
         let mut live = sub.live;
         loop {
-            let event: Event = match live.recv().await {
+            let next = tokio::select! {
+                next = live.recv() => next,
+                // Without this, an idle feed would outlive its connection.
+                _ = conn.closed() => return Ok(()),
+            };
+            let event: Event = match next {
                 Ok(event) => event,
                 Err(RecvError::Lagged(_)) | Err(RecvError::Closed) => {
                     // The client resubscribes from its cursor.
