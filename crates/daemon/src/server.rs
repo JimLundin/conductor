@@ -106,7 +106,7 @@ impl Conductor {
                 send.finish()?;
             }
             Some(Open::Subscribe(subscribe)) => self.feed(conn, send, subscribe).await?,
-            Some(Open::Hello(_)) | None => send.finish()?,
+            Some(Open::Hello(_) | Open::Rtc(_)) | None => send.finish()?,
         }
         Ok(())
     }

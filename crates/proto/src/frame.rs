@@ -1,6 +1,10 @@
 //! A frame is a `u32` big-endian body length followed by a JSON body (D8).
 //! Callers own the I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`],
 //! read that many bytes, pass them to [`decode`].
+//!
+//! A WebRTC data channel delivers messages, not a byte stream, so a sender
+//! splits each encoded frame into messages of at most [`CHUNK_LEN`] bytes and
+//! the receiver feeds them to a [`FrameBuffer`].
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -9,6 +13,11 @@ pub const HEADER_LEN: usize = 4;
 
 /// Larger frames are refused before their body is read.
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+
+/// The largest data channel message we send. Every browser accepts 16 KiB
+/// messages (RFC 8831 §6.6), and the length prefix makes boundaries
+/// irrelevant to the receiver.
+pub const CHUNK_LEN: usize = 16 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
@@ -42,12 +51,45 @@ pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
     Ok(serde_json::from_slice(body)?)
 }
 
+/// Reassembles frames from data channel messages, which split and join
+/// frames arbitrarily.
+#[derive(Debug, Default)]
+pub struct FrameBuffer {
+    bytes: Vec<u8>,
+}
+
+impl FrameBuffer {
+    pub fn push(&mut self, message: &[u8]) {
+        self.bytes.extend_from_slice(message);
+    }
+
+    /// The next complete frame's body, if all of it has arrived.
+    pub fn next_body(&mut self) -> Result<Option<Vec<u8>>, FrameError> {
+        let Some(header) = self.bytes.first_chunk::<HEADER_LEN>() else {
+            return Ok(None);
+        };
+        let len = body_len(*header)?;
+        if self.bytes.len() < HEADER_LEN + len {
+            return Ok(None);
+        }
+        let body = self.bytes[HEADER_LEN..HEADER_LEN + len].to_vec();
+        self.bytes.drain(..HEADER_LEN + len);
+        Ok(Some(body))
+    }
+
+    /// True between frames: the channel can end here without losing data.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        AuthToken, Command, CommandBody, CommandId, CommandResult, Decision, Epoch, Event,
-        EventKind, Hello, HelloReply, HostSeq, Open, Rejection, RequestId, Subscribe, Welcome,
+        AuthToken, CandidateType, Command, CommandBody, CommandId, CommandResult, Decision, Epoch,
+        Event, EventKind, Hello, HelloReply, HostSeq, Open, Rejection, RequestId, RtcOffer, Signal,
+        Subscribe, Welcome,
     };
 
     fn frame(body: &str) -> Vec<u8> {
@@ -150,6 +192,59 @@ mod tests {
             Err(FrameError::TooLarge(16_777_217))
         ));
         assert_eq!(body_len([0x01, 0x00, 0x00, 0x00]).unwrap(), 16_777_216);
+    }
+
+    #[test]
+    fn frame_buffer_reassembles_frames_split_and_joined_across_messages() {
+        let first = encode(&Event {
+            seq: HostSeq(1),
+            kind: EventKind::TurnFinished,
+        })
+        .unwrap();
+        let second = encode(&CommandResult::Accepted).unwrap();
+        let stream = [first, second].concat();
+        let mut buffer = FrameBuffer::default();
+        let mut bodies = Vec::new();
+        for message in stream.chunks(5) {
+            buffer.push(message);
+            while let Some(body) = buffer.next_body().unwrap() {
+                bodies.push(String::from_utf8(body).unwrap());
+            }
+        }
+        assert_eq!(
+            bodies,
+            [
+                r#"{"seq":1,"kind":{"type":"turn_finished"}}"#,
+                r#"{"result":"accepted"}"#
+            ]
+        );
+        assert!(buffer.is_empty());
+        buffer.push(&[0, 0]);
+        assert_eq!(buffer.next_body().unwrap(), None);
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn rtc_signal_wire_shapes() {
+        assert_eq!(
+            encode(&Open::Rtc(RtcOffer { sdp: "v=0".into() })).unwrap(),
+            frame(r#"{"open":"rtc","sdp":"v=0"}"#)
+        );
+        assert_eq!(
+            encode(&Signal::Selected {
+                local: CandidateType::Srflx,
+                remote: CandidateType::Prflx,
+            })
+            .unwrap(),
+            frame(r#"{"signal":"selected","local":"srflx","remote":"prflx"}"#)
+        );
+        assert_eq!(
+            CandidateType::of_candidate(
+                "candidate:1 1 udp 1686052607 203.0.113.9 51000 typ srflx raddr 0.0.0.0 rport 0"
+            ),
+            Some(CandidateType::Srflx)
+        );
+        assert_eq!(CandidateType::of_candidate("candidate:1 1 udp 1"), None);
     }
 
     #[test]
