@@ -965,6 +965,7 @@ dependencies = [
  "getrandom 0.4.3",
  "iroh",
  "iroh-mdns-address-lookup",
+ "js-sys",
  "n0-future",
  "proto",
  "serde",
@@ -972,6 +973,9 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

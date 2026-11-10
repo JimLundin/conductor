@@ -6,6 +6,12 @@
 //! connection drops. It keeps the cursor (epoch and last applied seq), so
 //! every reconnect resubscribes with `after_seq` and the event stream it hands
 //! out has no duplicates and no gaps.
+//!
+//! In the browser, once the relayed link is live, [`Upgrade`] negotiates a
+//! WebRTC connection over it. The link then subscribes again on WebRTC from
+//! its cursor and drops the relayed subscription, so the host's replay covers
+//! any overlap and [`Link::apply`] skips what it already has. If WebRTC
+//! drops, the link subscribes on iroh again the same way and retries later.
 
 use std::time::Duration;
 
@@ -14,12 +20,13 @@ use iroh::{Endpoint, EndpointAddr};
 use n0_future::time::sleep;
 use n0_future::{Stream, StreamExt, task};
 use proto::{
-    AuthToken, Command, CommandBody, CommandId, CommandResult, Epoch, Event, Hello, HelloReply,
-    HostSeq, Open, Subscribe, Ticket, Welcome,
+    AuthToken, CandidateType, Command, CommandBody, CommandId, CommandResult, Epoch, Event, Hello,
+    HelloReply, HostSeq, Open, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::wire::{self, WireError};
+use crate::upgrade::Upgrade;
+use crate::wire::{RecvHalf, SendHalf, Transport, WireError};
 
 const UPDATE_BUFFER: usize = 1024;
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
@@ -51,12 +58,25 @@ pub enum LinkState {
     Live,
 }
 
-/// How the connection's selected path reaches the host.
+/// How the protocol's traffic reaches the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathKind {
     Unknown,
+    /// iroh, hole-punched.
     Direct,
+    /// iroh, through a relay.
     Relayed,
+    /// A WebRTC data channel, with the selected candidate pair if the
+    /// browser reported it.
+    WebRtc(Option<CandidatePair>),
+}
+
+/// Host/host is the same LAN; srflx or prflx on either end means the path
+/// crosses a NAT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandidatePair {
+    pub local: CandidateType,
+    pub remote: CandidateType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +87,32 @@ pub struct Status {
     pub host: Option<String>,
     /// Why the last connection ended, until the next one is live.
     pub error: Option<String>,
+    /// Why the last WebRTC upgrade failed or dropped, until one succeeds.
+    pub upgrade_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LinkOptions {
+    /// Shown as `by` when this client resolves an approval.
+    pub client: String,
+    /// Continues an earlier link's cursor, so the first subscription replays
+    /// only what that link had not seen.
+    pub resume: Option<Cursor>,
+    /// `stun:` URLs for the browser's WebRTC upgrade.
+    pub stun_servers: Vec<String>,
+}
+
+impl LinkOptions {
+    pub fn new(client: impl Into<String>) -> Self {
+        Self {
+            client: client.into(),
+            resume: None,
+            stun_servers: proto::DEFAULT_STUN_SERVERS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,10 +140,6 @@ pub enum SendError {
     NoResult,
     #[error(transparent)]
     Wire(#[from] WireError),
-    #[error("could not open a stream: {0}")]
-    Connection(#[from] iroh::endpoint::ConnectionError),
-    #[error("could not finish the stream: {0}")]
-    Closed(#[from] iroh::endpoint::ClosedStream),
 }
 
 /// A handle to the link's task. Dropping every handle stops the task and
@@ -119,13 +161,10 @@ enum Request {
 }
 
 impl HostLink {
-    /// Starts connecting. `resume` continues an earlier link's cursor, so the
-    /// first subscription replays only what that link had not seen.
     pub fn spawn(
         endpoint: Endpoint,
         target: Target,
-        client: String,
-        resume: Option<Cursor>,
+        options: LinkOptions,
     ) -> (Self, mpsc::Receiver<Update>) {
         let (requests_tx, requests_rx) = mpsc::channel(16);
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
@@ -134,13 +173,15 @@ impl HostLink {
             path: PathKind::Unknown,
             host: None,
             error: None,
+            upgrade_error: None,
         };
         let (status_tx, status_rx) = watch::channel(initial);
         let link = Link {
             endpoint,
             target,
-            client,
-            cursor: resume,
+            client: options.client,
+            stun_servers: options.stun_servers,
+            cursor: options.resume,
             requests: requests_rx,
             updates: updates_tx,
             status: status_tx,
@@ -206,6 +247,7 @@ struct Link {
     endpoint: Endpoint,
     target: Target,
     client: String,
+    stun_servers: Vec<String>,
     cursor: Option<Cursor>,
     requests: mpsc::Receiver<Request>,
     updates: mpsc::Sender<Update>,
@@ -238,7 +280,7 @@ impl Link {
             if retry_now {
                 continue;
             }
-            let delay = backoff(failures, random_u64());
+            let delay = backoff(failures, random_u64(), BACKOFF_FLOOR, BACKOFF_CEILING);
             failures = failures.saturating_add(1);
             if !self.wait(delay).await {
                 return;
@@ -267,61 +309,125 @@ impl Link {
     ) -> Result<std::convert::Infallible, Lost> {
         self.set_state(LinkState::Authenticating).await?;
         let welcome = self.hello(conn).await?;
-        let after_seq = self.adopt(&welcome).await?;
+        self.adopt(&welcome).await?;
         let live_at = welcome.head_seq;
         self.set(|s| {
             s.host = Some(welcome.host.clone());
             s.state = LinkState::CatchingUp;
         })
         .await?;
-        if live_at <= after_seq {
+        if live_at <= self.cursor_seq() {
             self.go_live(failures).await?;
         }
 
-        let (mut send, recv) = conn.open_bi().await?;
-        wire::write(
-            &mut send,
-            &Open::Subscribe(Subscribe {
-                epoch: welcome.epoch,
-                after_seq,
-            }),
-        )
-        .await?;
-        let mut feed = std::pin::pin!(frames(recv));
+        let iroh = Transport::Iroh(conn.clone());
+        let mut carrier = iroh.clone();
+        let mut feed = std::pin::pin!(frames(self.subscribe(&carrier, welcome.epoch).await?));
         let mut paths = std::pin::pin!(conn.paths_stream());
+        let mut iroh_path = PathKind::Unknown;
+        let mut upgrade = Upgrade::new(&self.stun_servers);
 
         loop {
-            tokio::select! {
-                frame = feed.next() => {
-                    let event = frame.expect("frames() never ends")?.ok_or(Lost::HostClosed("subscription"))?;
-                    self.apply(event, live_at, failures).await?;
-                }
-                Some(list) = paths.next() => {
-                    let path = path_kind(&list);
-                    self.set(|s| s.path = path).await?;
-                }
+            if self.status.borrow().state == LinkState::Live {
+                upgrade.arm();
+            }
+            let step = tokio::select! {
+                frame = feed.next() => Step::Frame(frame.expect("frames() never ends")),
+                Some(list) = paths.next() => Step::Path(path_kind(&list)),
+                () = carrier.dropped() => Step::Dropped("the WebRTC connection closed".into()),
+                upgraded = upgrade.next(conn) => Step::Upgraded(upgraded),
                 request = self.requests.recv() => match request {
                     None => return Err(Lost::Stopped),
                     Some(Request::Reconnect) => return Err(Lost::Reconnect),
                     Some(Request::Send { command, reply }) => {
-                        let conn = conn.clone();
+                        let carrier = carrier.clone();
                         task::spawn(async move {
-                            reply.send(rpc(conn, command).await).ok();
+                            reply.send(rpc(carrier, command).await).ok();
                         });
+                        continue;
                     }
                 },
-            }
+            };
+            let dropped = match step {
+                Step::Frame(Ok(Some(event))) => {
+                    self.apply(event, live_at, failures).await?;
+                    continue;
+                }
+                Step::Frame(Ok(None)) if carrier.is_webrtc() => {
+                    "the host closed the WebRTC subscription".to_string()
+                }
+                Step::Frame(Err(err)) if carrier.is_webrtc() => err.to_string(),
+                Step::Frame(Ok(None)) => return Err(Lost::HostClosed("subscription")),
+                Step::Frame(Err(err)) => return Err(err.into()),
+                Step::Path(path) => {
+                    iroh_path = path;
+                    self.set(|s| s.path = carrier.path(iroh_path)).await?;
+                    continue;
+                }
+                Step::Dropped(reason) => reason,
+                Step::Upgraded(Ok(rtc)) => {
+                    match self.subscribe(&rtc, welcome.epoch).await {
+                        Ok(halves) => {
+                            // Replaces, and so retires, the relayed subscription.
+                            feed.set(frames(halves));
+                            carrier = rtc;
+                            tracing::info!(path = ?carrier.path(iroh_path), "now on WebRTC");
+                            self.set(|s| {
+                                s.path = carrier.path(iroh_path);
+                                s.upgrade_error = None;
+                            })
+                            .await?;
+                        }
+                        Err(err) => {
+                            upgrade.retry_later();
+                            let reason = format!("could not subscribe over WebRTC: {err}");
+                            self.set(|s| s.upgrade_error = Some(reason)).await?;
+                        }
+                    }
+                    continue;
+                }
+                Step::Upgraded(Err(reason)) => {
+                    self.set(|s| s.upgrade_error = Some(reason)).await?;
+                    continue;
+                }
+            };
+            tracing::warn!(reason = dropped, "WebRTC dropped; back on iroh");
+            carrier = iroh.clone();
+            feed.set(frames(self.subscribe(&carrier, welcome.epoch).await?));
+            upgrade.retry_later();
+            self.set(|s| {
+                s.path = carrier.path(iroh_path);
+                s.upgrade_error = Some(dropped);
+            })
+            .await?;
         }
     }
 
+    /// Opens a subscription on `carrier` from the cursor.
+    async fn subscribe(
+        &self,
+        carrier: &Transport,
+        epoch: Epoch,
+    ) -> Result<(SendHalf, RecvHalf), Lost> {
+        let (mut send, recv) = carrier.open_bi().await?;
+        let after_seq = self.cursor_seq();
+        send.write(&Open::Subscribe(Subscribe { epoch, after_seq }))
+            .await?;
+        Ok((send, recv))
+    }
+
+    fn cursor_seq(&self) -> HostSeq {
+        self.cursor.map_or(HostSeq(0), |c| c.seq)
+    }
+
     async fn hello(&mut self, conn: &Connection) -> Result<Welcome, Lost> {
-        let (mut send, mut recv) = conn.open_bi().await?;
+        let (mut send, mut recv) = Transport::Iroh(conn.clone()).open_bi().await?;
         let hello = Hello {
             client: self.client.clone(),
             token: self.target.token,
         };
-        wire::write(&mut send, &Open::Hello(hello)).await?;
-        match wire::read::<HelloReply>(&mut recv).await? {
+        send.write(&Open::Hello(hello)).await?;
+        match recv.read::<HelloReply>().await? {
             Some(HelloReply::Welcome(welcome)) => Ok(welcome),
             Some(HelloReply::Refused { reason }) => Err(Lost::Refused(reason)),
             None => Err(Lost::HostClosed("hello")),
@@ -330,18 +436,17 @@ impl Link {
 
     /// Keeps the cursor if the host's log is the one it points into;
     /// otherwise starts over from the beginning of the new epoch.
-    async fn adopt(&mut self, welcome: &Welcome) -> Result<HostSeq, Lost> {
+    async fn adopt(&mut self, welcome: &Welcome) -> Result<(), Lost> {
         if let Some(cursor) = self.cursor
             && cursor.epoch == welcome.epoch
         {
-            return Ok(cursor.seq);
+            return Ok(());
         }
         self.cursor = Some(Cursor {
             epoch: welcome.epoch,
             seq: HostSeq(0),
         });
-        self.emit(Update::Reset(welcome.epoch)).await?;
-        Ok(HostSeq(0))
+        self.emit(Update::Reset(welcome.epoch)).await
     }
 
     async fn apply(
@@ -415,22 +520,30 @@ impl Link {
     }
 }
 
-/// A cancel-safe stream of frames: the read in progress lives inside the
-/// stream, so a `select!` that picks another branch doesn't lose bytes.
+enum Step {
+    Frame(Result<Option<Event>, WireError>),
+    Path(PathKind),
+    Dropped(String),
+    Upgraded(Result<Transport, String>),
+}
+
+/// A cancel-safe stream of a subscription's events: the read in progress
+/// lives inside the stream, so a `select!` that picks another branch doesn't
+/// lose bytes. It owns both halves, so dropping it ends the subscription.
 fn frames(
-    recv: iroh::endpoint::RecvStream,
+    (send, recv): (SendHalf, RecvHalf),
 ) -> impl Stream<Item = Result<Option<Event>, WireError>> {
-    n0_future::stream::unfold(recv, |mut recv| async move {
-        let frame = wire::read::<Event>(&mut recv).await;
-        Some((frame, recv))
+    n0_future::stream::unfold((send, recv), |(send, mut recv)| async move {
+        let frame = recv.read::<Event>().await;
+        Some((frame, (send, recv)))
     })
 }
 
-async fn rpc(conn: Connection, command: Command) -> Result<CommandResult, SendError> {
-    let (mut send, mut recv) = conn.open_bi().await?;
-    wire::write(&mut send, &Open::Command(command)).await?;
+async fn rpc(carrier: Transport, command: Command) -> Result<CommandResult, SendError> {
+    let (mut send, mut recv) = carrier.open_bi().await?;
+    send.write(&Open::Command(command)).await?;
     send.finish()?;
-    wire::read(&mut recv).await?.ok_or(SendError::NoResult)
+    recv.read().await?.ok_or(SendError::NoResult)
 }
 
 fn path_kind(paths: &PathList<'_>) -> PathKind {
@@ -441,18 +554,18 @@ fn path_kind(paths: &PathList<'_>) -> PathKind {
     }
 }
 
-/// Exponential from 250ms to 10s, with the upper half jittered so many
-/// clients don't retry in step.
-fn backoff(failures: u32, random: u64) -> Duration {
-    let ceiling = BACKOFF_FLOOR
+/// Exponential from `floor` to `ceiling`, with the upper half jittered so
+/// many clients don't retry in step.
+pub(crate) fn backoff(failures: u32, random: u64, floor: Duration, ceiling: Duration) -> Duration {
+    let ceiling = floor
         .saturating_mul(1u32.checked_shl(failures).unwrap_or(u32::MAX))
-        .min(BACKOFF_CEILING);
+        .min(ceiling);
     let half = ceiling / 2;
     let jitter_ms = random % (half.as_millis() as u64 + 1);
     half + Duration::from_millis(jitter_ms)
 }
 
-fn random_u64() -> u64 {
+pub(crate) fn random_u64() -> u64 {
     let mut bytes = [0u8; 8];
     getrandom::fill(&mut bytes).expect("the platform has a random source");
     u64::from_le_bytes(bytes)
@@ -464,7 +577,9 @@ mod tests {
 
     #[test]
     fn backoff_doubles_to_ten_seconds_with_jitter_in_the_upper_half() {
-        let ms = |failures, random| backoff(failures, random).as_millis();
+        let ms = |failures, random| {
+            backoff(failures, random, BACKOFF_FLOOR, BACKOFF_CEILING).as_millis()
+        };
         assert_eq!(ms(0, 0), 125);
         assert_eq!(ms(0, 125), 250);
         assert_eq!(ms(1, 0), 250);

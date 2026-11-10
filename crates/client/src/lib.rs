@@ -4,6 +4,10 @@
 mod link;
 pub mod platform;
 pub mod transcript;
+mod upgrade;
 mod wire;
 
-pub use link::{Cursor, HostLink, LinkState, PathKind, SendError, Status, Target, Update};
+pub use link::{
+    CandidatePair, Cursor, HostLink, LinkOptions, LinkState, PathKind, SendError, Status, Target,
+    Update,
+};

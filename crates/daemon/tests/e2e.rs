@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use client::{Cursor, HostLink, LinkState, PathKind, Target, Update};
+use client::{Cursor, HostLink, LinkOptions, LinkState, PathKind, Target, Update};
 use daemon::host::{Host, HostOptions};
 use daemon::server::Conductor;
 use iroh::endpoint::presets;
@@ -55,7 +55,11 @@ async fn host() -> Fixture {
 }
 
 async fn link(target: Target, resume: Option<Cursor>) -> (HostLink, mpsc::Receiver<Update>) {
-    HostLink::spawn(endpoint().await, target, "test-client".into(), resume)
+    let options = LinkOptions {
+        resume,
+        ..LinkOptions::new("test-client")
+    };
+    HostLink::spawn(endpoint().await, target, options)
 }
 
 async fn next(updates: &mut mpsc::Receiver<Update>) -> Update {
