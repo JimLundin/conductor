@@ -2,12 +2,12 @@
 //! into our own types here, and every line we write is built here. Nothing from
 //! `claude-codes` leaves this module.
 
-use claude_codes::ClaudeInput;
 use claude_codes::io::{
     ClaudeOutput, ContentBlock, ControlRequestMessage, ControlRequestPayload, ControlResponse,
     ControlResponseMessage, ControlResponsePayload, PermissionResult, SystemSubtype,
     ToolResultContent,
 };
+use claude_codes::{ClaudeInput, InitializeResponse};
 use serde_json::Value;
 
 /// A Claude session id, as printed in `system/init` and accepted by `--resume`.
@@ -210,6 +210,27 @@ fn block(b: ContentBlock) -> Block {
             is_error: t.is_error.unwrap_or(false),
         },
         other => Block::Other(serde_json::to_value(other).unwrap_or(Value::Null)),
+    }
+}
+
+/// A CLI version outside the range `claude-codes` supports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnsupportedVersion {
+    pub found: String,
+    pub supported: String,
+}
+
+/// Checks the `claude_code_version` an `initialize` response reports.
+pub(crate) fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
+    let found = serde_json::from_value::<InitializeResponse>(initialize)
+        .map(|r| r.claude_code_version)
+        .unwrap_or_else(|_| "<missing>".into());
+    match claude_codes::check_cli_version(&found) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(UnsupportedVersion {
+            found,
+            supported: claude_codes::version::supported_cli_versions(),
+        }),
     }
 }
 

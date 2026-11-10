@@ -18,6 +18,7 @@ pub mod models;
 pub mod protocol;
 pub mod tool_inputs;
 pub mod types;
+pub mod version;
 
 // On-disk transcript locations (the CLI's unpublished path-encoding rule)
 pub mod transcript;
@@ -41,6 +42,7 @@ pub use messages::*;
 pub use models::{ClaudeModel, EffortLevel};
 pub use protocol::{MessageEnvelope, Protocol};
 pub use types::*;
+pub use version::{check_cli_version, CliVersion, UnsupportedCliVersion, SUPPORTED_CLI_VERSIONS};
 
 // Content block types for message parsing
 pub use io::{
@@ -55,11 +57,11 @@ pub use io::{
     ApplyFlagSettingsRequest, AskUserQuestionResponseError, ControlCancelRequest, ControlRequest,
     ControlRequestMessage, ControlRequestPayload, ControlResponse, ControlResponseMessage,
     ControlResponsePayload, GetUsageResponse, HookCallbackRequest, InitializeRequest,
-    McpMessageRequest, ModelScopedRateLimit, Permission, PermissionBehavior, PermissionDenial,
-    PermissionDestination, PermissionMode, PermissionModeName, PermissionResult, PermissionRule,
-    PermissionSuggestion, PermissionType, ToolCaller, ToolPermissionRequest, ToolUseBlock,
-    UsageBehavior, UsageBehaviors, UsageModelUsage, UsageRateLimitWindow, UsageRateLimits,
-    UsageSession,
+    InitializeResponse, McpMessageRequest, ModelScopedRateLimit, Permission, PermissionBehavior,
+    PermissionDenial, PermissionDestination, PermissionMode, PermissionModeName, PermissionResult,
+    PermissionRule, PermissionSuggestion, PermissionType, ToolCaller, ToolPermissionRequest,
+    ToolUseBlock, UsageBehavior, UsageBehaviors, UsageModelUsage, UsageRateLimitWindow,
+    UsageRateLimits, UsageSession,
 };
 
 // System message and assistant message types

@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::protocol::{
     ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
-    PermissionRequestId, SessionId, encode, parse_line,
+    PermissionRequestId, SessionId, UnsupportedVersion, check_version, encode, parse_line,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -50,6 +50,8 @@ pub struct ClaudeOptions {
     pub setting_sources: Option<Vec<SettingSource>>,
     /// Append every raw stdout line to this file.
     pub stdout_log: Option<PathBuf>,
+    /// Run a CLI version outside the supported range instead of refusing it.
+    pub allow_untested_version: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -69,6 +71,10 @@ pub enum Error {
     },
     #[error("claude did not answer {0} within {CONTROL_TIMEOUT:?}")]
     Timeout(&'static str),
+    #[error(
+        "claude {found} is not supported (supported: {supported}); set allow_untested_version to run it anyway"
+    )]
+    UnsupportedVersion { found: String, supported: String },
     #[error("no open permission request with id {0}")]
     UnknownPermissionRequest(PermissionRequestId),
 }
@@ -99,7 +105,8 @@ pub struct ClaudeSession {
 }
 
 impl ClaudeSession {
-    /// Starts `claude` and completes the `initialize` handshake.
+    /// Starts `claude` and completes the `initialize` handshake. Refuses a CLI
+    /// version outside the supported range unless `allow_untested_version`.
     pub async fn spawn(opts: ClaudeOptions) -> Result<(Self, mpsc::Receiver<ClaudeEvent>)> {
         let stdout_log = match &opts.stdout_log {
             Some(path) => Some(
@@ -143,7 +150,14 @@ impl ClaudeSession {
         let session = Self {
             commands: commands_tx,
         };
-        session.control(ControlCall::Initialize).await?;
+        let initialize = session.control(ControlCall::Initialize).await?;
+        if let Err(UnsupportedVersion { found, supported }) = check_version(initialize) {
+            if !opts.allow_untested_version {
+                session.shutdown().await?;
+                return Err(Error::UnsupportedVersion { found, supported });
+            }
+            tracing::warn!("running untested claude {found} (supported: {supported})");
+        }
         Ok((session, events_rx))
     }
 
@@ -446,6 +460,7 @@ mod tests {
             resume: Some(SessionId("0b1c".into())),
             setting_sources: Some(vec![SettingSource::Project, SettingSource::Local]),
             stdout_log: None,
+            allow_untested_version: false,
         });
         let std = cmd.as_std();
         let args: Vec<_> = std.get_args().map(|a| a.to_str().unwrap()).collect();

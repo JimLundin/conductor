@@ -83,6 +83,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         // Keep the user's own hooks and plugins out of the spike.
         setting_sources: Some(vec![SettingSource::Project, SettingSource::Local]),
         stdout_log,
+        allow_untested_version: false,
     };
     let mut failures = 0;
     let mut report = |step: &str, ok: bool, detail: String| {

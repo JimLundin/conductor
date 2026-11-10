@@ -1056,6 +1056,13 @@ pub struct InitializeRequest {
     pub hooks: Option<Value>,
 }
 
+/// The CLI's answer to `initialize`. It carries more (commands, models,
+/// account); only the version is typed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitializeResponse {
+    pub claude_code_version: String,
+}
+
 /// Control response to CLI
 ///
 /// Built using the ergonomic methods on [`ToolPermissionRequest`] or

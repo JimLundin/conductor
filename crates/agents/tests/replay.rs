@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use agents::claude::{
-    Block, ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionDecision, PermissionMode,
+    Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, PermissionDecision, PermissionMode,
     PermissionRequestId, Role, SettingSource,
 };
 use serde_json::Value;
@@ -48,6 +48,7 @@ fn options(claude_path: PathBuf) -> ClaudeOptions {
         resume: None,
         setting_sources: Some(vec![SettingSource::Project]),
         stdout_log: None,
+        allow_untested_version: false,
     }
 }
 
@@ -286,4 +287,34 @@ async fn unknown_control_request_gets_an_error_reply() {
                 "error": "unsupported control request subtype: elicit_frobnicate"}}),
         ]
     );
+}
+
+const FUTURE_CLI: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.2.0"}}}"#;
+
+#[tokio::test]
+async fn unsupported_cli_version_is_refused() {
+    let stdout = recording("future-cli", &[FUTURE_CLI]);
+    let (claude, _) = fake_claude("future-cli", &stdout);
+    match ClaudeSession::spawn(options(claude)).await {
+        Err(Error::UnsupportedVersion { found, supported }) => {
+            assert_eq!(
+                (found.as_str(), supported.as_str()),
+                ("2.2.0", "2.1.316 to 2.1.322")
+            );
+        }
+        Err(e) => panic!("wrong error: {e}"),
+        Ok(_) => panic!("2.2.0 was accepted"),
+    }
+}
+
+#[tokio::test]
+async fn allow_untested_version_runs_it_anyway() {
+    let stdout = recording("future-cli-allowed", &[FUTURE_CLI]);
+    let (claude, _) = fake_claude("future-cli-allowed", &stdout);
+    let opts = ClaudeOptions {
+        allow_untested_version: true,
+        ..options(claude)
+    };
+    let (session, _events) = ClaudeSession::spawn(opts).await.unwrap();
+    assert!(session.shutdown().await.unwrap().success());
 }
