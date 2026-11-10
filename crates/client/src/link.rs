@@ -215,14 +215,14 @@ impl Link {
     async fn run(mut self) {
         let mut failures = 0u32;
         loop {
-            let lost = self.connection(&mut failures).await;
+            let Err(lost) = self.connect_and_pump(&mut failures).await;
             tracing::debug!(%lost, "host link down");
-            match lost {
+            let error = match lost {
                 Lost::Stopped => return,
-                Lost::Reconnect => failures = 0,
-                _ => {}
-            }
-            let error = (!matches!(lost, Lost::Reconnect)).then(|| lost.to_string());
+                Lost::Reconnect => None,
+                lost => Some(lost.to_string()),
+            };
+            let retry_now = error.is_none();
             if self
                 .set(|s| {
                     s.state = LinkState::Disconnected;
@@ -234,19 +234,14 @@ impl Link {
             {
                 return;
             }
+            if retry_now {
+                continue;
+            }
             let delay = backoff(failures, random_u64());
             failures = failures.saturating_add(1);
             if !self.wait(delay).await {
                 return;
             }
-        }
-    }
-
-    /// One connection, from dial to drop.
-    async fn connection(&mut self, failures: &mut u32) -> Lost {
-        match self.connect_and_pump(failures).await {
-            Ok(never) => match never {},
-            Err(lost) => lost,
         }
     }
 

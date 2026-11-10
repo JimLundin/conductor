@@ -50,8 +50,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let endpoint = client::platform::bind_endpoint().await?;
     log(format!("client endpoint {}", endpoint.id().fmt_short()));
-    let (link, mut updates) =
-        HostLink::spawn(endpoint, (&args.ticket).into(), "headless".into(), None);
+    let (link, mut updates) = HostLink::spawn(
+        endpoint.clone(),
+        (&args.ticket).into(),
+        "headless".into(),
+        None,
+    );
 
     // Events up to this seq predate our prompt.
     let mut prompted_after: Option<HostSeq> = None;
@@ -59,6 +63,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let mut deltas = 0usize;
     let mut reconnected = false;
     let mut times_live = 0;
+    let mut was_live = false;
 
     while let Some(update) = updates.recv().await {
         match update {
@@ -69,7 +74,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     "status {state:?} path={path:?}{}",
                     error.map(|e| format!(" error={e}")).unwrap_or_default()
                 ));
-                if state == LinkState::Live {
+                let live = state == LinkState::Live;
+                if live && !was_live {
                     times_live += 1;
                     log(format!(
                         "live #{times_live} after {:.3}s",
@@ -85,6 +91,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                         log(format!("prompt {:?} -> {result:?}", args.prompt));
                     }
                 }
+                was_live = live;
             }
             Update::Reset(epoch) => {
                 log(format!("reset to epoch {}", epoch.0));
@@ -125,6 +132,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     }
                     EventKind::TurnFinished => {
                         log(format!("turn finished; path={:?}", link.status().path));
+                        drop(link);
+                        endpoint.close().await;
                         return Ok(());
                     }
                     _ => {}
