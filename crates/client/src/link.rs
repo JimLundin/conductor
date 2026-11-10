@@ -35,7 +35,8 @@ pub struct Target {
 impl From<&Ticket> for Target {
     fn from(ticket: &Ticket) -> Self {
         Self {
-            addr: EndpointAddr::new(ticket.host).with_relay_url(ticket.relay.clone()),
+            addr: EndpointAddr::new(ticket.host)
+                .with_relay_url(crate::platform::without_root_dot(&ticket.relay)),
             token: ticket.token,
         }
     }
