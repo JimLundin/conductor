@@ -13,8 +13,9 @@ with a desktop app and an iPhone web app. The design is in
 - **The subset grows only by accepted proposals.** When the subset makes
   code long, log the friction point and write it the long way. Only the
   owner adds constructs.
-- **Gate.** `tools/check.sh` (fmt, clippy for native and wasm, tests) and
-  `tools/subset check` pass on every commit.
+- **Gate.** `tools/check.sh` (fmt, clippy for native and wasm, tests) passes
+  on every commit. `SUBSET=1 tools/check.sh` also runs `tools/subset check`,
+  which becomes mandatory once the rewrite makes `crates/` clean.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **Vendored crates.** `vendor/claude-codes` and `vendor/codex-codes` are
   our own code now. Fix bugs in place and never contribute upstream

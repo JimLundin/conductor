@@ -238,7 +238,7 @@ tracing::info!(seq = seen.0, host = %name, "caught up");
 ```rust
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{toggle, Visibility};
 
     #[test]
     fn toggling_twice_returns_to_the_start() {
