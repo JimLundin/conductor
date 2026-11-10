@@ -107,12 +107,25 @@ async fn s3_host(
     let join = format!("{web_url}#join={ticket}");
     println!("join:     {join}");
     match qrcode::QrCode::new(&join) {
-        Ok(code) => println!(
-            "{}",
-            code.render::<qrcode::render::unicode::Dense1x2>()
-                .quiet_zone(true)
-                .build()
-        ),
+        Ok(code) => {
+            use qrcode::render::{svg, unicode::Dense1x2};
+            // Terminals usually draw light glyphs on a dark background, so swap the
+            // module colours; phone cameras often refuse inverted codes.
+            println!(
+                "{}",
+                code.render::<Dense1x2>()
+                    .dark_color(Dense1x2::Light)
+                    .light_color(Dense1x2::Dark)
+                    .quiet_zone(true)
+                    .build()
+            );
+            let svg_path = data_dir.join("join-qr.svg");
+            let image = code.render::<svg::Color>().min_dimensions(512, 512).build();
+            match std::fs::write(&svg_path, image) {
+                Ok(()) => println!("qr image: {}", svg_path.display()),
+                Err(err) => tracing::warn!("could not write {}: {err}", svg_path.display()),
+            }
+        }
         Err(err) => tracing::warn!("could not render the join link as a QR code: {err}"),
     }
 
