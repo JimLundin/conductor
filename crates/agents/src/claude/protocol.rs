@@ -120,7 +120,7 @@ pub(crate) enum Inbound {
         outcome: Result<Value, String>,
     },
     /// A control request we do not serve (hooks, SDK MCP servers, or a subtype
-    /// `claude-codes` cannot parse). It must still get an error reply or the
+    /// `claude-codes` does not model). It must still get an error reply or the
     /// CLI waits forever.
     UnsupportedControlRequest {
         request_id: String,
@@ -131,7 +131,7 @@ pub(crate) enum Inbound {
 pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw: Value = serde_json::from_str(line)?;
     let Ok(output) = serde_json::from_value::<ClaudeOutput>(raw.clone()) else {
-        return Ok(unparsed(raw));
+        return Ok(Inbound::Event(ClaudeEvent::Unknown(raw)));
     };
     Ok(match output {
         ClaudeOutput::System(msg) if msg.subtype == SystemSubtype::Init => {
@@ -164,9 +164,9 @@ pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
                     input: perm.input,
                 })
             }
-            _ => Inbound::UnsupportedControlRequest {
+            other => Inbound::UnsupportedControlRequest {
                 request_id: req.request_id,
-                subtype: subtype_of(&raw),
+                subtype: other.subtype().to_owned(),
             },
         },
         ClaudeOutput::ControlResponse(resp) => match resp.response {
@@ -189,26 +189,6 @@ pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
         }
         _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
     })
-}
-
-/// `claude-codes` rejects unknown `type`s and unknown control subtypes outright.
-/// A control request still needs a reply, so recover its id from the raw JSON.
-fn unparsed(raw: Value) -> Inbound {
-    let request_id = raw.get("request_id").and_then(Value::as_str);
-    match (raw.get("type").and_then(Value::as_str), request_id) {
-        (Some("control_request"), Some(id)) => Inbound::UnsupportedControlRequest {
-            request_id: id.to_owned(),
-            subtype: subtype_of(&raw),
-        },
-        _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
-    }
-}
-
-fn subtype_of(raw: &Value) -> String {
-    raw.pointer("/request/subtype")
-        .and_then(Value::as_str)
-        .unwrap_or("<missing>")
-        .to_owned()
 }
 
 fn block(b: ContentBlock) -> Block {
@@ -430,6 +410,18 @@ mod tests {
             Inbound::UnsupportedControlRequest {
                 request_id: "cli_3".into(),
                 subtype: "elicit_frobnicate".into()
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_can_use_tool_is_still_answered() {
+        let line = r#"{"type":"control_request","request_id":"cli_5","request":{"subtype":"can_use_tool"}}"#;
+        assert_eq!(
+            parse_line(line).unwrap(),
+            Inbound::UnsupportedControlRequest {
+                request_id: "cli_5".into(),
+                subtype: "can_use_tool".into()
             }
         );
     }

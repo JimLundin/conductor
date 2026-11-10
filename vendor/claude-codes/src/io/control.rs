@@ -226,7 +226,15 @@ pub struct ControlRequest {
     /// Unique identifier for this request (used to correlate responses)
     pub request_id: String,
     /// The request payload
+    #[serde(deserialize_with = "payload_or_unknown")]
     pub request: ControlRequestPayload,
+}
+
+/// A request the CLI sends always needs a reply, so a payload this crate cannot
+/// parse still yields a [`ControlRequest`] with its `request_id`.
+fn payload_or_unknown<'de, D: Deserializer<'de>>(d: D) -> Result<ControlRequestPayload, D::Error> {
+    let value = Value::deserialize(d)?;
+    Ok(ControlRequestPayload::deserialize(&value).unwrap_or(ControlRequestPayload::Unknown(value)))
 }
 
 /// Withdrawal of an in-flight [`ControlRequest`] (`control_cancel_request`).
@@ -263,6 +271,28 @@ pub enum ControlRequestPayload {
     /// Merge settings into the live session's flag-settings layer (sent by
     /// SDK to CLI), e.g. to change effort mid-session.
     ApplyFlagSettings(ApplyFlagSettingsRequest),
+    /// A subtype this crate does not model, or a known subtype whose body did
+    /// not parse. Holds the raw `request` object.
+    #[serde(untagged)]
+    Unknown(Value),
+}
+
+impl ControlRequestPayload {
+    /// The wire `subtype`.
+    pub fn subtype(&self) -> &str {
+        match self {
+            Self::CanUseTool(_) => "can_use_tool",
+            Self::HookCallback(_) => "hook_callback",
+            Self::McpMessage(_) => "mcp_message",
+            Self::Initialize(_) => "initialize",
+            Self::Interrupt => "interrupt",
+            Self::ApplyFlagSettings(_) => "apply_flag_settings",
+            Self::Unknown(raw) => raw
+                .get("subtype")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 /// Body of an `apply_flag_settings` control request.
@@ -1215,6 +1245,31 @@ impl ControlRequestMessage {
 mod tests {
     use super::*;
     use crate::io::ClaudeOutput;
+
+    #[test]
+    fn unknown_control_subtype_keeps_its_request_id() {
+        let line = r#"{"type":"control_request","request_id":"cli_3","request":{"subtype":"elicit_frobnicate","q":1}}"#;
+        let ClaudeOutput::ControlRequest(req) = serde_json::from_str(line).unwrap() else {
+            panic!("not a control request");
+        };
+        assert_eq!(req.request_id, "cli_3");
+        assert_eq!(req.request.subtype(), "elicit_frobnicate");
+        assert_eq!(
+            serde_json::to_value(&req.request).unwrap(),
+            serde_json::json!({"subtype": "elicit_frobnicate", "q": 1})
+        );
+    }
+
+    #[test]
+    fn malformed_known_control_subtype_keeps_its_request_id() {
+        let line = r#"{"type":"control_request","request_id":"cli_5","request":{"subtype":"can_use_tool"}}"#;
+        let ClaudeOutput::ControlRequest(req) = serde_json::from_str(line).unwrap() else {
+            panic!("not a control request");
+        };
+        assert_eq!(req.request_id, "cli_5");
+        assert_eq!(req.request.subtype(), "can_use_tool");
+        assert!(matches!(req.request, ControlRequestPayload::Unknown(_)));
+    }
 
     #[test]
     fn test_deserialize_control_request_can_use_tool() {

@@ -124,6 +124,13 @@ fn scan_file(
             .map(ToOwned::to_owned);
 
         match ClaudeOutput::parse_json_tolerant(&line) {
+            Ok(ClaudeOutput::Unknown(_)) => failures.push(ParseFailure {
+                path: path.to_path_buf(),
+                line_number,
+                message_type,
+                error: "frame type is not modeled".into(),
+                raw: line,
+            }),
             Ok(output) => {
                 *parsed_by_type.entry(output.message_type()).or_default() += 1;
             }

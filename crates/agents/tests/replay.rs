@@ -19,21 +19,36 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn fake_claude(fixture: &Path) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "agents-replay-{}-{}",
-        std::process::id(),
-        fixture.file_stem().unwrap().to_str().unwrap()
-    ));
+/// A stand-in `claude` that prints `stdout` and records what it reads from
+/// stdin in `<dir>/stdin.jsonl`. Returns the script and that log.
+fn fake_claude(name: &str, stdout: &Path) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("agents-replay-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let script = dir.join("claude");
+    let stdin_log = dir.join("stdin.jsonl");
     std::fs::write(
         &script,
-        format!("#!/bin/sh\ncat '{}'\ncat >/dev/null\n", fixture.display()),
+        format!(
+            "#!/bin/sh\ncat '{}'\ncat >'{}'\n",
+            stdout.display(),
+            stdin_log.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    script
+    (script, stdin_log)
+}
+
+fn options(claude_path: PathBuf) -> ClaudeOptions {
+    ClaudeOptions {
+        claude_path,
+        cwd: std::env::temp_dir(),
+        model: None,
+        permission_mode: PermissionMode::Default,
+        resume: None,
+        setting_sources: Some(vec![SettingSource::Project]),
+        stdout_log: None,
+    }
 }
 
 fn summary(event: &ClaudeEvent) -> String {
@@ -84,17 +99,9 @@ async fn replay(
     mut decide: impl FnMut(&str) -> Option<PermissionDecision>,
 ) -> (Vec<String>, Vec<String>) {
     let path = fixture(name);
-    let (session, mut events) = ClaudeSession::spawn(ClaudeOptions {
-        claude_path: fake_claude(&path),
-        cwd: std::env::temp_dir(),
-        model: None,
-        permission_mode: PermissionMode::Default,
-        resume: None,
-        setting_sources: Some(vec![SettingSource::Project]),
-        stdout_log: None,
-    })
-    .await
-    .expect("initialize is answered by the recording's first line");
+    let (session, mut events) = ClaudeSession::spawn(options(fake_claude(name, &path).0))
+        .await
+        .expect("initialize is answered by the recording's first line");
 
     let lines = std::fs::read_to_string(&path).unwrap().lines().count();
     let results = std::fs::read_to_string(&path)
@@ -212,4 +219,71 @@ async fn resume_and_accept_edits_recording() {
         ]
     );
     assert!(second.is_empty());
+}
+
+/// Writes `lines` to a fresh stdout recording and returns its path.
+fn recording(name: &str, lines: &[&str]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("agents-replay-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("stdout.jsonl");
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    path
+}
+
+/// A real `result` line, so the test knows when the actor has handled every
+/// line before it.
+fn recorded_result() -> String {
+    std::fs::read_to_string(fixture("session2-resume-accept-edits.jsonl"))
+        .unwrap()
+        .lines()
+        .find(|l| serde_json::from_str::<Value>(l).unwrap()["type"] == "result")
+        .unwrap()
+        .to_owned()
+}
+
+const INITIALIZED: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.1.316"}}}"#;
+
+#[tokio::test]
+async fn unknown_control_request_gets_an_error_reply() {
+    let stdout = recording(
+        "unknown-control",
+        &[
+            INITIALIZED,
+            r#"{"type":"control_request","request_id":"cli_3","request":{"subtype":"elicit_frobnicate","q":1}}"#,
+            r#"{"type":"brand_new_frame","x":1}"#,
+            &recorded_result(),
+        ],
+    );
+    let (claude, stdin_log) = fake_claude("unknown-control", &stdout);
+    let (session, mut events) = ClaudeSession::spawn(options(claude)).await.unwrap();
+    let mut seen = Vec::new();
+    loop {
+        let event = events.recv().await.expect("event stream ended early");
+        let done = matches!(event, ClaudeEvent::TurnFinished { .. });
+        seen.push(summary(&event));
+        if done {
+            break;
+        }
+    }
+    session.shutdown().await.unwrap();
+    assert_eq!(
+        seen,
+        [
+            "unknown brand_new_frame/-",
+            "finished success is_error=false Some(\"completed\")"
+        ]
+    );
+    let written: Vec<Value> = std::fs::read_to_string(stdin_log)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        written,
+        [
+            serde_json::json!({"type": "control_request", "request_id": "req_1", "request": {"subtype": "initialize"}}),
+            serde_json::json!({"type": "control_response", "response": {"subtype": "error", "request_id": "cli_3",
+                "error": "unsupported control request subtype: elicit_frobnicate"}}),
+        ]
+    );
 }

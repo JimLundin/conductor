@@ -22,7 +22,7 @@
 use serde_json::Value;
 
 use super::message_types::SystemSubtype;
-use super::ClaudeOutput;
+use super::{ClaudeOutput, ControlRequestPayload};
 
 /// The result of auditing a single raw frame for full typed coverage.
 #[derive(Debug, Clone)]
@@ -68,6 +68,21 @@ pub fn audit_frame(raw: &Value) -> FrameAudit {
     match serde_json::to_value(&parsed) {
         Ok(reserialized) => diff_lost(raw, &reserialized, "", &mut issues),
         Err(e) => issues.push(format!("typed value failed to re-serialize: {e}")),
+    }
+
+    match &parsed {
+        ClaudeOutput::Unknown(_) => {
+            issues.push(format!("frame type '{message_type}' is not modeled"))
+        }
+        ClaudeOutput::ControlRequest(req)
+            if matches!(req.request, ControlRequestPayload::Unknown(_)) =>
+        {
+            issues.push(format!(
+                "control request subtype '{}' is not modeled",
+                req.request.subtype()
+            ))
+        }
+        _ => {}
     }
 
     // 3. System frames hide their payload behind the `data` catch-all, so a

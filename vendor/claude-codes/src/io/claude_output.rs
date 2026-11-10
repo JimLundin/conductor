@@ -104,6 +104,10 @@ pub enum ClaudeOutput {
 
     /// Claude Code internal session started event.
     Started(TranscriptMessage),
+
+    /// A frame whose `type` this crate does not model, kept as raw JSON.
+    #[serde(untagged)]
+    Unknown(Value),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -562,6 +566,11 @@ impl ClaudeOutput {
             ClaudeOutput::AiTitle(_) => "ai-title".to_string(),
             ClaudeOutput::LastPrompt(_) => "last-prompt".to_string(),
             ClaudeOutput::Started(_) => "started".to_string(),
+            ClaudeOutput::Unknown(raw) => raw
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
         }
     }
 
@@ -722,6 +731,7 @@ impl ClaudeOutput {
                 .get("session_id")
                 .or_else(|| msg.data.get("sessionId"))
                 .and_then(|v| v.as_str()),
+            ClaudeOutput::Unknown(raw) => raw.get("session_id").and_then(Value::as_str),
         }
     }
 
@@ -971,38 +981,7 @@ impl<'de> Deserialize<'de> for ClaudeOutput {
             "ai-title" => parse(payload).map(Self::AiTitle),
             "last-prompt" => parse(payload).map(Self::LastPrompt),
             "started" => parse(payload).map(Self::Started),
-            other => Err(serde::de::Error::unknown_variant(
-                other,
-                &[
-                    "system",
-                    "user",
-                    "assistant",
-                    "result",
-                    "control_request",
-                    "control_response",
-                    "control_cancel_request",
-                    "error",
-                    "rate_limit_event",
-                    "stream_event",
-                    "tool_progress",
-                    "command_lifecycle",
-                    "auth_status",
-                    "tool_use_summary",
-                    "prompt_suggestion",
-                    "conversation_reset",
-                    "progress",
-                    "queue-operation",
-                    "pr-link",
-                    "file-history-snapshot",
-                    "summary",
-                    "mode",
-                    "permission-mode",
-                    "attachment",
-                    "ai-title",
-                    "last-prompt",
-                    "started",
-                ],
-            )),
+            _ => Ok(Self::Unknown(value)),
         }
     }
 }
@@ -1027,6 +1006,18 @@ mod tests {
         let bridged = r#"{"type":"control_cancel_request","request_id":"r1","session_id":"s1"}"#;
         let output: ClaudeOutput = serde_json::from_str(bridged).unwrap();
         assert_eq!(output.session_id(), Some("s1"));
+    }
+
+    #[test]
+    fn unknown_type_keeps_the_raw_frame() {
+        let line = r#"{"type":"brand_new_frame","session_id":"s1","x":1}"#;
+        let output: ClaudeOutput = serde_json::from_str(line).unwrap();
+        assert_eq!(output.message_type(), "brand_new_frame");
+        assert_eq!(output.session_id(), Some("s1"));
+        assert_eq!(
+            serde_json::to_value(&output).unwrap(),
+            serde_json::json!({"type": "brand_new_frame", "session_id": "s1", "x": 1})
+        );
     }
 
     #[test]
