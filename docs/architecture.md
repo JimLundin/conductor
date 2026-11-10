@@ -261,18 +261,37 @@ The rule: **durable events are the state, deltas are cosmetic.** A client that r
 mid-turn misses some deltas, so the host also sends a `TurnSnapshot` with the partial text
 so far. T3 Code does the same with `ProviderTextDeltaCoalescer.ts`.
 
-### 5.3 iroh endpoint configuration [verify exact 1.x API names in S3]
+### 5.3 iroh endpoint configuration [verified in S3 against iroh 1.4.1; details in `docs/s3/NOTES.md`]
 
 - **Relays:** n0's default public relays, with the relay map read from `config.toml` on
   hosts and from settings in clients. Swapping relays is a config change.
+  **[verified in S3]** `Endpoint::builder(presets::N0)` selects n0's relays;
+  a custom map goes through `Builder::relay_mode(RelayMode::custom([...]))`.
+  `Endpoint::online()` waits for the home relay, and `endpoint.addr().relay_urls()`
+  gives the URL for tickets.
 - **Discovery:** dial with the address from the roster (`node_id + relay_url + last known
   direct addrs`). Turn on **local-network (mDNS) discovery** on native targets so devices
   on the same LAN connect with no relay. n0's DNS discovery can stay off, because the
   roster already holds every address we need.
+  **[verified in S3]** iroh 1.x calls discovery "address lookup", and node ids are
+  `EndpointId` with `EndpointAddr`. mDNS is a separate crate,
+  `iroh-mdns-address-lookup` 0.6, added with
+  `Builder::address_lookup(MdnsAddressLookup::builder())`. S3 keeps the `N0` preset, so
+  pkarr/DNS lookup is still on. Turning it off means building from `presets::Minimal`
+  plus the relay mode, which is P2 work.
 - **Browser build:** `iroh` with `default-features = false` for `wasm32-unknown-unknown`.
   In the browser it only ever connects through the relay.
+  **[verified in S3]** The browser also needs the `tls-ring` feature. ring's build script
+  then needs **clang** for wasm32 on every machine that builds the web app.
+  `getrandom 0.4` with `wasm_js` needs no RUSTFLAGS. The release bundle is 5.6 MB raw and
+  1.8 MB gzipped (4.0 MB and 1.5 MB with `opt-level = "z"` and LTO).
 - **Path reporting:** record whether each connection is direct, relayed or WebRTC. The UI
   shows it and S3 measures it.
+  **[verified in S3]** `Connection::paths_stream()` yields a `PathList` on every change.
+  The selected `Path`'s `is_ip()` or `is_relay()` gives `Direct` or `Relayed`. Observed:
+  Chromium relayed; the native client and the Linux desktop app were direct to a host on
+  the same machine.
+- **[S3]** The spike speaks ALPN `conductor/0`. §5.1's `conductor/1` is for P1.
 
 ### 5.4 Browser upgrade to WebRTC
 
@@ -316,8 +335,9 @@ within the same phase (P3).
 ```
 conductor/
 ├── Cargo.toml                    # [workspace], shared deps, lints, edition 2024
+├── .github/workflows/pages.yml   # [S3] dx build --platform web --release → GitHub Pages
 ├── crates/
-│   ├── proto/                    # wire + event types, framing codec. No I/O.
+│   ├── proto/                    # wire + event types, framing codec, Ticket. No I/O.
 │   ├── trust/                    # fleet keys, DeviceCert, Roster, sign/verify. No I/O.
 │   ├── store/                    # SQLite event log, receipts, pending requests, migrations
 │   ├── agents/                   # Agent trait + claude/ + codex/ adapters, fixture tests
@@ -326,13 +346,22 @@ conductor/
 │   ├── client/                   # client core: host links, cursors, merged fleet view
 │   │                             #   compiles to native AND wasm32; platform/ = storage, keys, transport
 │   ├── app/                      # Dioxus UI: `dx build --platform desktop` and `--platform web`
+│   │   ├── Dioxus.toml           # [S3] base_path = "conductor" for GitHub Pages
+│   │   ├── index.html            # [S3] page template: viewport, manifest, Home Screen tags
+│   │   ├── public/               # [S3] manifest.json + icons, copied to the site root
+│   │   └── tests-e2e/            # [S3] Playwright script, the one handwritten JS for tests
 │   └── fake-agent/               # test bin that speaks Claude stream-json & Codex JSON-RPC
 ├── vendor/codex-schema/          # pinned subset of codex app-server JSON Schema (see §7.2)
 ├── fixtures/                     # recorded real claude/codex stdio sessions for replay tests
-├── web/                          # static extras for the domain: manifest.json, icons, sw.js
+├── web/                          # static extras for the domain: sw.js (P3)
 ├── deploy/                       # systemd unit, launchd plist, Task Scheduler XML, WSL notes
+├── tools/                        # [S3] check.sh (the commit gate), s3-native.sh, s3-browser.sh
 └── docs/
 ```
+
+**[verified in S3]** dx copies `crates/app/public/` to the site root and uses
+`crates/app/index.html` as the template, so the manifest and icons live in the `app`
+crate rather than `web/`. `web/` keeps only `sw.js` when Web Push arrives.
 
 Dependency direction. Arrows point to dependencies; there are no cycles, and `proto`
 and `trust` stay pure:
@@ -347,14 +376,14 @@ agents ──► proto            fake-agent ──► (nothing internal)
 
 | Crate | Owns | Key deps (latest on crates.io as of 2026-11-10) |
 |---|---|---|
-| `proto` | `Command`, `EventKind`, IDs, frame codec | `serde 1.0.229`, `serde_json`, `ulid 3.0`, `jiff 0.2` |
+| `proto` | `Command`, `EventKind`, IDs, frame codec, `Ticket` | `serde 1.0.229`, `serde_json`, `ulid 3.0`, `jiff 0.2`. **[S3 uses]** `iroh-base 1.4` (feature `key`) for `EndpointId` and `RelayUrl`, and `data-encoding 2.11` for the base64url ticket; IDs are `u64` newtypes until P1 needs ULIDs |
 | `trust` | Root/device keys, certs, roster, verification | `ed25519-dalek 3.0`, `iroh` (key types only) |
 | `store` | Single-writer append, replay `after_seq`, command receipts, pending requests | `rusqlite 0.41` (feature `bundled`); migrations via `PRAGMA user_version` |
 | `agents` | Spawning providers, protocol I/O, mapping to `EventKind` | `tokio 1.54` (process, io-util), `serde_json`; `jsonschema` in tests [verify version] |
 | `git` | Create/remove worktrees, per-turn checkpoints, diffs between checkpoints | `tokio::process` calling `git`; a unified-diff parser (`diffy` or our own) [decide] |
-| `daemon` | Session actors, iroh router, auth, service install, `pair` QR code, WebRTC answerer, Web Push | `iroh 1.4`, `str0m 0.25` (P3), `web-push 0.11` (P3), `clap 4.6`, `qrcode 0.14`, `tracing 0.1`, `directories 6`, `service-manager 0.11` (launchd, systemd; check its Task Scheduler support), `sd-notify 0.5` |
-| `client` | One `HostLink` state machine per host, reconnect with backoff, cursor persistence, merged view | `iroh 1.4` (wasm: no default features), `n0-future` or `futures` for a runtime-agnostic core **[verify]**. Native: `tokio`, `rusqlite`, `keyring 4`. Wasm: `web-sys` (RTCPeerConnection), an IndexedDB wrapper **[pick in S3]** |
-| `app` | Screens, components, Markdown rendering, syntax highlighting | `dioxus 0.7.10` (features `desktop`, `web`), `pulldown-cmark 0.13`, `syntect 5.3` (check its wasm build size; switch to a lighter highlighter for web if it is too large) |
+| `daemon` | Session actors, iroh router, auth, service install, `pair` QR code, WebRTC answerer, Web Push | `iroh 1.4` (feature `tls-ring`), `iroh-mdns-address-lookup 0.6` **[S3]**, `str0m 0.25` (P3), `web-push 0.11` (P3), `clap 4.6`, `qrcode 0.14`, `tracing 0.1`, `directories 6` (**[S3]** `ProjectDirs::from("", "", "conductor")` gives `~/.local/share/conductor` on Linux), `service-manager 0.11` (launchd, systemd; check its Task Scheduler support), `sd-notify 0.5` |
+| `client` | One `HostLink` state machine per host, reconnect with backoff, cursor persistence, merged view | `iroh 1.4` (wasm: no default features plus `tls-ring`). **[verified in S3]** `n0-future 0.3` for spawn and timers plus `tokio` with only `sync` and `macros`; this compiles for wasm32 and runs under Dioxus web, Dioxus desktop and plain tokio. `getrandom 0.4` (`wasm_js` on wasm). Native adds `iroh-mdns-address-lookup 0.6`. In S3, `platform/` holds only the endpoint binding; `Storage` and `KeyStore` arrive with P1 and P2. Native later: `rusqlite`, `keyring 4`. Wasm later: `web-sys` (RTCPeerConnection), an IndexedDB wrapper **[pick in P3]** |
+| `app` | Screens, components, Markdown rendering, syntax highlighting | `dioxus 0.7.10` (features `desktop`, `web`; **[verified in S3]** both build on Linux, desktop with webkit2gtk-4.1), `web-sys` on wasm for local storage and the URL fragment, `pulldown-cmark 0.13`, `syntect 5.3` (check its wasm build size; switch to a lighter highlighter for web if it is too large) |
 | `fake-agent` | Scripted agent for daemon and approval tests at no API cost | `serde_json` |
 
 No relay of our own. The web client is the `app` crate's web build plus `web/`, uploaded

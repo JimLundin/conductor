@@ -27,7 +27,7 @@ out=docs/s3/browser-run.txt
 {
   echo "# Web build in headless Chromium (390x844) against conductord s3-host, $(date -u +%FT%TZ)"
   echo
-  wasm=$(ls target/dx/app/release/web/public/assets/*.wasm)
+  wasm=$(ls -t target/dx/app/release/web/public/assets/*.wasm | head -1)
   echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
   echo
   echo "## Playwright"
