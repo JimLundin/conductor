@@ -5,14 +5,18 @@
 //! stream of a connection must be [`Open::Hello`], answered by one
 //! [`HelloReply`]. A [`Open::Command`] stream gets one [`CommandResult`] and
 //! closes. A [`Open::Subscribe`] stream then carries [`Event`]s until either
-//! side closes it.
+//! side closes it. A [`Open::Rtc`] stream negotiates a WebRTC connection that
+//! carries the same streams as data channels (§5.4); it then carries
+//! [`Signal`]s both ways for as long as that connection lives.
 
 mod frame;
 mod ticket;
 
 use serde::{Deserialize, Serialize};
 
-pub use frame::{FrameError, HEADER_LEN, MAX_FRAME_LEN, body_len, decode, encode};
+pub use frame::{
+    CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, MAX_FRAME_LEN, body_len, decode, encode,
+};
 pub use ticket::{AuthToken, Ticket, TicketError};
 
 /// The ALPN for the S3 protocol. P1 moves to `conductor/1` (§5.1).
@@ -46,6 +50,90 @@ pub enum Open {
     Hello(Hello),
     Subscribe(Subscribe),
     Command(Command),
+    Rtc(RtcOffer),
+}
+
+/// Public STUN servers both ends ask for their public address by default.
+/// They are stateless and see no traffic; nothing relays (§5.4).
+pub const DEFAULT_STUN_SERVERS: &[&str] = &[
+    "stun:stun.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478",
+];
+
+/// The browser's SDP offer. It carries the browser's DTLS fingerprint, and
+/// the answer carries the host's, so only the two ends of this authenticated
+/// iroh connection can complete the WebRTC handshake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RtcOffer {
+    pub sdp: String,
+}
+
+/// Everything after the offer on an [`Open::Rtc`] stream. Closing the stream
+/// ends the WebRTC connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "signal", rename_all = "snake_case")]
+pub enum Signal {
+    /// Host to client, once, first.
+    Answer { sdp: String },
+    /// Both ways, trickled as each side learns its addresses. The text is an
+    /// SDP `candidate:` attribute value.
+    Candidate { candidate: String },
+    /// Client to host, so the host log records what the browser chose.
+    Selected {
+        local: CandidateType,
+        remote: CandidateType,
+    },
+    /// Client to host, so the host log records why an upgrade failed.
+    Failed { reason: String },
+}
+
+/// How an ICE candidate's address was found (RFC 8445 §5.1.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateType {
+    /// An interface address.
+    Host,
+    /// The public address a STUN server saw.
+    Srflx,
+    /// An address the peer saw our checks come from.
+    Prflx,
+    /// A TURN allocation. Conductor configures no TURN servers.
+    Relay,
+}
+
+impl CandidateType {
+    /// Reads the `typ` field of an SDP `candidate:` attribute value.
+    pub fn of_candidate(candidate: &str) -> Option<Self> {
+        let mut words = candidate.split_ascii_whitespace();
+        words.find(|w| *w == "typ")?;
+        Self::parse(words.next()?)
+    }
+
+    /// Parses the names browsers use in `RTCIceCandidateStats.candidateType`.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "host" => Some(Self::Host),
+            "srflx" => Some(Self::Srflx),
+            "prflx" => Some(Self::Prflx),
+            "relay" => Some(Self::Relay),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::Srflx => "srflx",
+            Self::Prflx => "prflx",
+            Self::Relay => "relay",
+        }
+    }
+}
+
+impl std::fmt::Display for CandidateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`

@@ -9,7 +9,7 @@ mod ticket;
 use std::rc::Rc;
 
 use client::transcript::{Item, Outcome, Transcript};
-use client::{HostLink, LinkState, PathKind, Status, Update};
+use client::{HostLink, LinkOptions, LinkState, PathKind, Status, Update};
 use dioxus::prelude::*;
 use proto::{CommandBody, CommandResult, Decision, RequestId, Ticket};
 
@@ -95,8 +95,11 @@ fn Host(ticket: Ticket) -> Element {
                     return;
                 }
             };
-            let (handle, mut updates) =
-                HostLink::spawn(endpoint, (&ticket).into(), ticket::CLIENT_NAME.into(), None);
+            let (handle, mut updates) = HostLink::spawn(
+                endpoint,
+                (&ticket).into(),
+                LinkOptions::new(ticket::CLIENT_NAME),
+            );
             link.set(Some(Rc::new(handle)));
             while let Some(update) = updates.recv().await {
                 match update {
@@ -157,16 +160,27 @@ fn StatusLine(status: Option<Status>) -> Element {
         path: PathKind::Unknown,
         host: None,
         error: None,
+        upgrade_error: None,
     });
     let state = format!("{:?}", status.state);
-    let path = match status.path {
-        PathKind::Direct => "Direct",
-        PathKind::Relayed => "Relayed",
-        PathKind::Unknown => "path unknown",
+    let (path_attr, path) = match status.path {
+        PathKind::Direct => ("Direct", "Direct".to_string()),
+        PathKind::Relayed => ("Relayed", "Relayed".to_string()),
+        PathKind::WebRtc(Some(pair)) => {
+            ("WebRtc", format!("WebRTC {}/{}", pair.local, pair.remote))
+        }
+        PathKind::WebRtc(None) => ("WebRtc", "WebRTC".to_string()),
+        PathKind::Unknown => ("Unknown", "path unknown".to_string()),
     };
+    let candidates = match status.path {
+        PathKind::WebRtc(Some(pair)) => format!("{}/{}", pair.local, pair.remote),
+        _ => String::new(),
+    };
+    let upgrade_error = status.upgrade_error.unwrap_or_default();
     let host = status.host.unwrap_or_else(|| "host".into());
     rsx! {
-        header { class: "status", "data-state": "{state}", "data-path": "{path}",
+        header { class: "status", "data-state": "{state}", "data-path": "{path_attr}",
+            "data-candidates": "{candidates}", "data-upgrade-error": "{upgrade_error}",
             span { class: "dot" }
             span { class: "host", "{host}" }
             span { class: "state", "{state}" }

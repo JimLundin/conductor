@@ -1,7 +1,10 @@
-//! The one thing that differs per target: how the iroh endpoint is built.
+//! What differs per target: how the iroh endpoint is built, and in the
+//! browser, the WebRTC upgrade.
 
 #[cfg(not(target_family = "wasm"))]
 mod native;
+#[cfg(target_family = "wasm")]
+pub(crate) mod rtc;
 #[cfg(target_family = "wasm")]
 mod web;
 

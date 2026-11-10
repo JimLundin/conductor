@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::Parser;
-use client::{HostLink, LinkState, Status, Update};
+use client::{HostLink, LinkOptions, LinkState, Status, Update};
 use proto::{CommandBody, Decision, EventKind, HostSeq, Ticket};
 
 #[derive(Parser)]
@@ -53,8 +53,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let (link, mut updates) = HostLink::spawn(
         endpoint.clone(),
         (&args.ticket).into(),
-        "headless".into(),
-        None,
+        LinkOptions::new("headless"),
     );
 
     // Events up to this seq predate our prompt.
