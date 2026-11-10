@@ -96,9 +96,12 @@ pub enum ClaudeEvent {
     PermissionCancelled {
         id: PermissionRequestId,
     },
+    /// `subtype` is the CLI's result subtype. An interrupted turn reports
+    /// `error_during_execution` with `terminal_reason` `aborted_streaming`.
     TurnFinished {
         subtype: String,
         is_error: bool,
+        terminal_reason: Option<String>,
         session_id: SessionId,
     },
     Exited {
@@ -150,6 +153,7 @@ pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
         ClaudeOutput::Result(msg) => Inbound::Event(ClaudeEvent::TurnFinished {
             subtype: msg.subtype.as_str().to_owned(),
             is_error: msg.is_error,
+            terminal_reason: msg.terminal_reason,
             session_id: SessionId(msg.session_id),
         }),
         ClaudeOutput::ControlRequest(req) => match req.request {

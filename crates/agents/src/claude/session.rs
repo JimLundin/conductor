@@ -135,6 +135,7 @@ impl ClaudeSession {
             stdout_log,
             pending: HashMap::new(),
             open_permissions: HashMap::new(),
+            session_id: None,
             next_request: 0,
         };
         tokio::spawn(actor.run(commands_rx));
@@ -261,6 +262,8 @@ struct Actor {
     pending: HashMap<String, (ControlCall, oneshot::Sender<Result<Value>>)>,
     /// `can_use_tool` requests not yet answered, with the input `allow` echoes.
     open_permissions: HashMap<PermissionRequestId, Value>,
+    /// The CLI repeats `system/init` every turn; only a new id is news.
+    session_id: Option<SessionId>,
     next_request: u64,
 }
 
@@ -317,6 +320,12 @@ impl Actor {
                     }
                     ClaudeEvent::PermissionCancelled { id } => {
                         self.open_permissions.remove(id);
+                    }
+                    ClaudeEvent::SessionStarted { session_id } => {
+                        if self.session_id.as_ref() == Some(session_id) {
+                            return;
+                        }
+                        self.session_id = Some(session_id.clone());
                     }
                     _ => {}
                 }
