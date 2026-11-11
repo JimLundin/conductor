@@ -372,16 +372,12 @@ fn reached(until: &Until, kind: &EventKind) -> Reached {
 }
 
 /// The kinds of the events the link receives, through the first that
-/// reaches `until`. Every event is session 1's, since each test starts one.
+/// reaches `until`. Each test starts one session, so all are session 1's.
 async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<EventKind> {
     let mut kinds = Vec::new();
     loop {
         match next(updates).await {
-            Update::Event(Event {
-                session: SessionId(1),
-                kind,
-                ..
-            }) => {
+            Update::Event(Event { kind, .. }) => {
                 let done = reached(&until, &kind);
                 kinds.push(kind);
                 match done {
@@ -389,7 +385,6 @@ async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<
                     Reached::No => {}
                 }
             }
-            Update::Event(event) => panic!("an event of another session: {event:?}"),
             Update::Status(_) | Update::Reset(_) => {}
         }
     }

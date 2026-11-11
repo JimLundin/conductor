@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use agents::claude::{
     ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode, SettingSource, VersionPolicy,
 };
+use n0_future::StreamExt;
 use proto::{
     ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath, Rejection, RequestId,
     Resolution, SessionId,
@@ -99,6 +100,14 @@ struct SessionActor {
     turn: Turn,
     requests: HashMap<RequestId, Pending>,
     last_request: RequestId,
+}
+
+/// What a settled step leaves the actor to do, outside its own state.
+enum Effect {
+    Emit(EventKind),
+    Interrupt,
+    /// The session is over.
+    End,
 }
 
 enum Input {
@@ -201,11 +210,15 @@ impl Feed {
 impl SessionActor {
     async fn run(mut self, mut inbox: mpsc::Receiver<SessionMsg>) -> Result<Infallible, Stopped> {
         loop {
-            let input = tokio::select! {
-                msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
-                input = self.feed.next() => input,
-            };
+            let input = self.next_input(&mut inbox).await;
             self.on(input).await?;
+        }
+    }
+
+    async fn next_input(&mut self, inbox: &mut mpsc::Receiver<SessionMsg>) -> Input {
+        tokio::select! {
+            msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
+            input = self.feed.next() => input,
         }
     }
 
@@ -221,7 +234,7 @@ impl SessionActor {
                 let reason = CloseReason::Exited {
                     status: String::from("the agent's events ended"),
                 };
-                self.step(Step::Closed(reason)).await
+                self.apply(Vec::from([Step::Closed(reason)])).await
             }
             Input::Closed => Err(Stopped {}),
         }
@@ -330,21 +343,26 @@ impl SessionActor {
         }
     }
 
-    /// Applies the steps in order, stopping at the first that ends the
-    /// session.
+    /// Settles every step into the actor's state first, then performs what
+    /// they leave to do, in order, until one ends the session.
     async fn apply(&mut self, steps: Vec<Step>) -> Result<(), Stopped> {
-        let mut steps = steps.into_iter();
-        loop {
-            match steps.next() {
-                Some(step) => self.step(step).await?,
-                None => break Ok(()),
-            }
-        }
+        let effects = steps
+            .into_iter()
+            .flat_map(|step| self.settle(step))
+            .collect::<Vec<Effect>>();
+        self.perform(effects).await
     }
 
-    async fn step(&mut self, step: Step) -> Result<(), Stopped> {
+    async fn perform(&self, effects: Vec<Effect>) -> Result<(), Stopped> {
+        n0_future::stream::iter(effects)
+            .then(|effect| self.effect(effect))
+            .try_collect()
+            .await
+    }
+
+    fn settle(&mut self, step: Step) -> Vec<Effect> {
         match step {
-            Step::Emit(kind) => self.emit(kind).await,
+            Step::Emit(kind) => Vec::from([Effect::Emit(kind)]),
             Step::Open {
                 native,
                 tool,
@@ -353,17 +371,16 @@ impl SessionActor {
                 let request = self.last_request.next();
                 self.last_request = request;
                 self.requests.insert(request, Pending::Open(native));
-                self.emit(EventKind::RequestOpened {
+                Vec::from([Effect::Emit(EventKind::RequestOpened {
                     request,
                     tool,
                     detail,
-                })
-                .await
+                })])
             }
-            Step::Withdraw(native) => self.withdraw(native).await,
+            Step::Withdraw(native) => self.withdraw(native),
             Step::TurnEnded(outcome) => {
                 self.turn = Turn::Idle;
-                self.emit(EventKind::TurnCompleted { outcome }).await
+                Vec::from([Effect::Emit(EventKind::TurnCompleted { outcome })])
             }
             Step::TurnStarted(native) => {
                 let before = std::mem::replace(&mut self.turn, Turn::Running(native));
@@ -373,20 +390,19 @@ impl SessionActor {
                             session = self.id.0,
                             "the turn started: sending the held interrupt"
                         );
-                        let sent = self.interrupt().await;
-                        self.note(sent).await
+                        Vec::from([Effect::Interrupt])
                     }
-                    Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => Ok(()),
+                    Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => Vec::new(),
                 }
             }
-            Step::Closed(reason) => {
-                self.emit(EventKind::SessionClosed { reason }).await?;
-                Err(Stopped {})
-            }
+            Step::Closed(reason) => Vec::from([
+                Effect::Emit(EventKind::SessionClosed { reason }),
+                Effect::End,
+            ]),
         }
     }
 
-    async fn withdraw(&mut self, native: NativeRequest) -> Result<(), Stopped> {
+    fn withdraw(&mut self, native: NativeRequest) -> Vec<Effect> {
         let open = Pending::Open(native);
         let found = self
             .requests
@@ -398,13 +414,23 @@ impl SessionActor {
             Some(request) => {
                 self.requests
                     .insert(request, Pending::Resolved(Resolution::Withdrawn));
-                self.emit(EventKind::RequestResolved {
+                Vec::from([Effect::Emit(EventKind::RequestResolved {
                     request,
                     resolution: Resolution::Withdrawn,
-                })
-                .await
+                })])
             }
-            None => Ok(()),
+            None => Vec::new(),
+        }
+    }
+
+    async fn effect(&self, effect: Effect) -> Result<(), Stopped> {
+        match effect {
+            Effect::Emit(kind) => self.emit(kind).await,
+            Effect::Interrupt => {
+                let sent = self.interrupt().await;
+                self.note(sent).await
+            }
+            Effect::End => Err(Stopped {}),
         }
     }
 

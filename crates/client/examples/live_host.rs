@@ -65,6 +65,13 @@ enum Verdict {
     Fail,
 }
 
+const PLANS: &[Plan] = &[
+    Plan::Approve,
+    Plan::InterruptOnFirstDelta,
+    Plan::InterruptAtSend,
+];
+
+/// The driver's loop state: the turn in progress and the finished ones.
 struct Live {
     start: Instant,
     link: HostLink,
@@ -72,6 +79,12 @@ struct Live {
     session: SessionId,
     plan: Plan,
     tally: Tally,
+    done: Vec<Tally>,
+}
+
+struct Ended {
+    link: HostLink,
+    result: anyhow::Result<Vec<Tally>>,
 }
 
 #[tokio::main]
@@ -111,51 +124,92 @@ async fn run(args: Args) -> anyhow::Result<()> {
             Err(anyhow::Error::msg("the host did not start a session"))
         }
     }?;
+    let interrupt = send_turn(&link, start, session, Plan::Approve).await?;
     let live = Live {
         start,
         link,
         updates,
         session,
         plan: Plan::Approve,
-        tally: FRESH,
+        tally: Tally { interrupt, ..FRESH },
+        done: Vec::new(),
     };
-    let (write, streamed, held) = live.turns().await?;
-    let checks = [
-        (
-            "turn 1 streamed, was approved and completed",
-            Some(&write).filter(|tally| {
-                tally.deltas > 0
-                    && tally.approved > 0
-                    && tally.outcome == Some(TurnOutcome::Completed)
-            }),
-        ),
-        (
-            "turn 2 was interrupted after its first delta",
-            Some(&streamed).filter(|tally| {
-                tally.deltas > 0
-                    && tally.interrupt == Some(CommandResult::Accepted)
-                    && tally.outcome == Some(TurnOutcome::Interrupted)
-            }),
-        ),
-        (
-            "turn 3 was interrupted at send",
-            Some(&held).filter(|tally| {
-                tally.interrupt == Some(CommandResult::Accepted)
-                    && tally.outcome == Some(TurnOutcome::Interrupted)
-            }),
-        ),
-    ]
-    .map(|(name, passed)| (name, passed.map_or(Verdict::Fail, |_| Verdict::Pass)));
+    let ended = live.run().await;
+    ended.link.stop().await?;
+    let done = ended.result?;
+    let checks = PLANS
+        .iter()
+        .copied()
+        .zip(done.iter())
+        .map(|(plan, tally)| (plan, verdict(plan, tally)))
+        .collect::<Vec<(Plan, Verdict)>>();
     checks
         .iter()
-        .try_for_each(|(name, verdict)| log(start, format!("check {verdict:?}: {name}")))?;
+        .try_for_each(|(plan, verdict)| log(start, format!("check {verdict:?}: {plan:?}")))?;
     match checks
         .iter()
         .find(|(_, verdict)| matches!(verdict, Verdict::Fail))
+        .map(|(plan, _)| plan)
+        .copied()
+        .or(PLANS.get(done.len()).copied())
     {
-        Some((name, _)) => Err(anyhow::Error::msg(format!("failed: {name}"))),
+        Some(plan) => Err(anyhow::Error::msg(format!("failed: {plan:?}"))),
         None => Ok(()),
     }
+}
+
+/// Turn 1 streams, is approved and completes. Turn 2 is interrupted after
+/// its first delta. Turn 3 is interrupted at send.
+fn verdict(plan: Plan, tally: &Tally) -> Verdict {
+    let passed = match plan {
+        Plan::Approve => Some(tally).filter(|tally| {
+            tally.deltas > 0 && tally.approved > 0 && tally.outcome == Some(TurnOutcome::Completed)
+        }),
+        Plan::InterruptOnFirstDelta => Some(tally).filter(|tally| {
+            tally.deltas > 0
+                && tally.interrupt == Some(CommandResult::Accepted)
+                && tally.outcome == Some(TurnOutcome::Interrupted)
+        }),
+        Plan::InterruptAtSend => Some(tally).filter(|tally| {
+            tally.interrupt == Some(CommandResult::Accepted)
+                && tally.outcome == Some(TurnOutcome::Interrupted)
+        }),
+    };
+    passed.map_or(Verdict::Fail, |_| Verdict::Pass)
+}
+
+/// Sends the plan's message, and the interrupt that goes with it at once.
+async fn send_turn(
+    link: &HostLink,
+    start: Instant,
+    session: SessionId,
+    plan: Plan,
+) -> anyhow::Result<Option<CommandResult>> {
+    let text = match plan {
+        Plan::Approve => WRITE,
+        Plan::InterruptOnFirstDelta | Plan::InterruptAtSend => COUNT,
+    };
+    let sent = link
+        .send(CommandBody::SendMessage {
+            session,
+            text: String::from(text),
+        })
+        .await?;
+    log(start, format!("message {text:?} -> {sent:?}"))?;
+    match plan {
+        Plan::InterruptAtSend => Ok(Some(interrupt(link, start, session).await?)),
+        Plan::Approve | Plan::InterruptOnFirstDelta => Ok(None),
+    }
+}
+
+async fn interrupt(
+    link: &HostLink,
+    start: Instant,
+    session: SessionId,
+) -> anyhow::Result<CommandResult> {
+    let result = link.send(CommandBody::Interrupt { session }).await?;
+    log(start, format!("interrupt -> {result:?}"))?;
+    Ok(result)
 }
 
 async fn until_live(start: Instant, updates: &mut mpsc::Receiver<Update>) -> anyhow::Result<()> {
@@ -181,39 +235,24 @@ fn log(start: Instant, line: String) -> std::io::Result<()> {
 }
 
 impl Live {
-    async fn turns(mut self) -> anyhow::Result<(Tally, Tally, Tally)> {
-        let write = self.turn(Plan::Approve, WRITE).await?;
-        let streamed = self.turn(Plan::InterruptOnFirstDelta, COUNT).await?;
-        let held = self.turn(Plan::InterruptAtSend, COUNT).await?;
-        self.link.stop().await?;
-        Ok((write, streamed, held))
-    }
-
-    async fn turn(&mut self, plan: Plan, text: &str) -> anyhow::Result<Tally> {
-        self.plan = plan;
-        self.tally = FRESH;
-        let session = self.session;
-        let sent = self
-            .link
-            .send(CommandBody::SendMessage {
-                session,
-                text: String::from(text),
-            })
-            .await?;
-        self.log(format!("message {text:?} -> {sent:?}"))?;
-        if let Plan::InterruptAtSend = plan {
-            self.interrupt().await?;
-        }
-        self.until_turn_ends().await?;
-        Ok(self.tally.clone())
-    }
-
-    async fn until_turn_ends(&mut self) -> anyhow::Result<()> {
+    /// Hands the link back however the turns ended, so it can be stopped.
+    async fn run(mut self) -> Ended {
         loop {
             let update = self.updates.recv().await;
-            match self.on(update).await? {
-                Flow::Next => {}
-                Flow::Ended => break Ok(()),
+            match self.on(update).await {
+                Ok(Flow::Next) => {}
+                Ok(Flow::Ended) => {
+                    break Ended {
+                        link: self.link,
+                        result: Ok(self.done),
+                    };
+                }
+                Err(err) => {
+                    break Ended {
+                        link: self.link,
+                        result: Err(err),
+                    };
+                }
             }
         }
     }
@@ -235,7 +274,10 @@ impl Live {
             (EventKind::AssistantDelta { .. }, plan) => {
                 self.tally.deltas = self.tally.deltas.saturating_add(1);
                 match (plan, self.tally.deltas) {
-                    (Plan::InterruptOnFirstDelta, 1) => self.interrupt().await?,
+                    (Plan::InterruptOnFirstDelta, 1) => {
+                        let result = interrupt(&self.link, self.start, self.session).await?;
+                        self.tally.interrupt = Some(result);
+                    }
                     (Plan::InterruptOnFirstDelta | Plan::Approve | Plan::InterruptAtSend, _) => {}
                 }
                 Ok(Flow::Next)
@@ -264,8 +306,11 @@ impl Live {
                 Ok(Flow::Next)
             }
             (EventKind::TurnCompleted { outcome }, _) => {
-                self.tally.outcome = Some(outcome);
-                Ok(Flow::Ended)
+                self.done.push(Tally {
+                    outcome: Some(outcome),
+                    ..self.tally.clone()
+                });
+                self.next_turn().await
             }
             (EventKind::SessionClosed { reason }, _) => Err(anyhow::Error::msg(format!(
                 "the session closed: {reason:?}"
@@ -283,12 +328,16 @@ impl Live {
         }
     }
 
-    async fn interrupt(&mut self) -> anyhow::Result<()> {
-        let session = self.session;
-        let result = self.link.send(CommandBody::Interrupt { session }).await?;
-        self.log(format!("interrupt -> {result:?}"))?;
-        self.tally.interrupt = Some(result);
-        Ok(())
+    async fn next_turn(&mut self) -> anyhow::Result<Flow> {
+        match PLANS.get(self.done.len()).copied() {
+            Some(plan) => {
+                let interrupt = send_turn(&self.link, self.start, self.session, plan).await?;
+                self.plan = plan;
+                self.tally = Tally { interrupt, ..FRESH };
+                Ok(Flow::Next)
+            }
+            None => Ok(Flow::Ended),
+        }
     }
 
     fn log(&self, line: String) -> std::io::Result<()> {
