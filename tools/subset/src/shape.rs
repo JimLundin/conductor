@@ -566,7 +566,10 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_path_segment(&mut self, segment: &'ast syn::PathSegment) {
         if let PathArguments::AngleBracketed(args) = &segment.arguments {
             let name = segment.ident.to_string();
-            let ours = self.facts.types.contains(&name) || self.facts.fns.contains(&name);
+            // Our `Result` aliases only fill in std's error type, so their
+            // `Result<(), E>` is still 0005's.
+            let ours = name != "Result"
+                && (self.facts.types.contains(&name) || self.facts.fns.contains(&name));
             for arg in &args.args {
                 let ty = match arg {
                     GenericArgument::Type(ty) => ty,

@@ -612,6 +612,22 @@ fn unit_type_only_in_library_type_arguments_and_main() {
 }
 
 #[test]
+fn unit_in_our_result_alias_is_still_a_result() {
+    assert_eq!(
+        check_repo_config(
+            "unit-result-alias",
+            &[(
+                "crates/agents/src/claude/session.rs",
+                "pub type Result<T, E = Error> = std::result::Result<T, E>;\n\nfn stop() -> Result<()> {\n    Ok(())\n}\n"
+            )]
+        ),
+        "crates/agents/src/claude/session.rs:1:5: item.type: type alias\n\
+         crates/agents/src/claude/session.rs:1:17: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n\
+         crates/agents/src/claude/session.rs:1:20: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n"
+    );
+}
+
+#[test]
 fn a_future_output_of_unit_breaks_no_unit_rule() {
     assert_eq!(
         check_repo_config(
