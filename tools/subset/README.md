@@ -12,7 +12,9 @@ Run it from the repository root with `cargo run -q -p subset -- <command>`.
 subset check [--config subset.toml]
 subset report [--config subset.toml] [--json]
 subset measure <paths...> [--json]
+subset score [paths...] [--config subset.toml] [--json] [--by crate|file|fn|construct]
 subset ids
+subset score-ids
 subset rules
 ```
 
@@ -30,6 +32,16 @@ subset rules
 - `measure` counts the code volume of files, or of every `*.rs` file under a
   directory, per file and in total. Proposals use it to compare the before
   and after versions of the same code.
+- `score` prints the weighted score of `paths`, or of the files under
+  `include` when none are given, at one level: per crate (the default), per
+  file, per fn or per construct. Each row gives the score, the tokens, the
+  score per token, the boundary score and the boundary's share of the
+  score. Fns and constructs are sorted by score, highest first. `--json`
+  prints `{"by", "rows": [{"name", "score", "tokens", "per_token",
+  "boundary", "boundary_share"}], "total"}`, with `count` and `tier` on
+  construct rows. See "The weighted score" below.
+- `score-ids` prints the table of score-only ids under "The weighted
+  score", kept equal to this file the same way as `ids`.
 - `ids` prints the id table below. A test keeps the table in this file equal
   to that output, so add an id to `src/ids.rs` and then paste the new table
   here.
@@ -190,6 +202,172 @@ Some rules need context.
 - **Lines** are the lines that hold at least one counted token. Blank lines,
   comment lines and doc-comment lines don't count. A string literal that
   spans several lines counts every line it covers.
+
+## The weighted score
+
+A line count treats every line alike. The weighted score charges each token
+by what kind of code it is part of, so a codebase that leans on the
+constructs it wants to encourage scores lower than one of the same size
+that leans on compromises. It is a better measure of code volume for
+comparing two versions of the same code.
+
+### The model
+
+- **Tokens** are the ones `measure` counts. Comments and doc comments cost
+  nothing.
+- **Every token belongs to the innermost construct that contains it**: the
+  smallest syntax node with an id whose span covers the token. In
+  `match x { A => f(y), }`, the `match`, its braces, the `=>` and the `,`
+  belong to the `match`, `A` to its pattern, and `f`, `(..)` and `y` to the
+  call and its paths. A token outside every construct is `(no construct)`
+  and costs the neutral weight.
+- **Some nodes fold their insides into themselves.** The whole head of an
+  `if let` with no `else` (`if let Pat = expr`) costs the `if let`'s
+  weight, and the body's tokens belong to whatever is inside it. A type
+  that is primitive or untyped (see Typing) costs its own weight for all of
+  its tokens, so `Vec<u8>` is one primitive, not a `Vec` and a `u8`. A
+  violation inside a folded node still costs its own weight.
+- **A token costs the weight of its construct's tier.** A construct that
+  breaks the subset costs `outside`, whatever its id. A construct whose
+  shape an item we don't define fixes costs `boundary` (below). Any other
+  construct costs the tier `[weights.ids]` gives its id.
+- **The score of a fn, file or crate** is the sum over its tokens. Its
+  score per token is the score divided by its tokens.
+
+### Configuration
+
+`score` reads the `[weights]` table of the config:
+
+```toml
+[weights]
+external_protocols = ["src/vendor_api/**"]   # optional, default none
+untyped = ["serde_json::Value", "dyn Any"]  # optional, default below
+# adapters = [...], primitives = [...]      # optional, default below
+
+[weights.tiers]
+encouraged = 0.5
+neutral = 1.0
+tolerated = 2.0
+costly = 3.0
+outside = 5.0
+boundary = 1.0
+
+[weights.ids]
+"item.enum" = "encouraged"
+"expr.loop" = "costly"
+```
+
+- `tiers` gives each tier its weight. All six are required.
+- `ids` maps an id to `encouraged`, `neutral`, `tolerated`, `costly`,
+  `outside` or `boundary`. An allowed id missing from `ids` is neutral. A
+  violation is always `outside`. List every allowed id explicitly: a
+  project can keep a test that fails when a newly allowed id has no tier.
+- `adapters` lists method names whose calls are
+  `expr.method_call.adapter`, so that iterator adapters can take their own
+  tier. The default is the std `Iterator` methods: `all`, `any`, `chain`,
+  `cloned`, `collect`, `copied`, `count`, `cycle`, `enumerate`, `filter`,
+  `filter_map`, `find`, `find_map`, `flat_map`, `flatten`, `fold`, `fuse`,
+  `inspect`, `last`, `map`, `map_while`, `max`, `max_by`, `max_by_key`,
+  `min`, `min_by`, `min_by_key`, `nth`, `partition`, `peekable`,
+  `position`, `product`, `reduce`, `rev`, `rposition`, `scan`, `skip`,
+  `skip_while`, `step_by`, `sum`, `take`, `take_while`, `try_fold`, `unzip`
+  and `zip`. The name is all the tool sees, so `Option::map` counts too.
+- `primitives`, `untyped` and `external_protocols` are described under
+  Typing.
+
+A list that is given replaces its default. To extend a default, copy it.
+
+### Score-only ids
+
+The score refines a few allowed ids by where they stand, so they can have
+their own tier. Give these tiers in `ids` like any other id.
+
+| Id | Meaning |
+|---|---|
+| `expr.method_call.adapter` | method call whose name is in `adapters` |
+| `stmt.let.discard` | `let _ = value;` |
+| `type.field` | type in a field of our own struct or enum variant |
+| `type.primitive` | type in `primitives`, as a field type or in a signature of our own |
+| `type.untyped` | type in `untyped`, anywhere |
+| `field.wire` | field of a wire type in an external protocol module |
+
+`field.wire` always costs the boundary weight.
+
+### The boundary context
+
+Some shapes exist only because a library demands them: a trait impl the
+library calls, a `bool` its function takes, a `let mut` for a value its
+method borrows as `&mut`. Charging those as style debt would punish code
+for the libraries it uses. So **a construct whose shape an item we don't
+define fixes costs the `boundary` weight instead of its tier**, wherever it
+is allowed. "We don't define" uses the same facts as the shape rules: a
+path is ours when it starts from `crate`, `self`, `super`, one of our
+crates or modules, or names a type or fn we define, and a method call is
+ours only when its receiver is `self`.
+
+The tool applies that one standard in four positions:
+
+1. **An argument, field value or type argument of an item we don't
+   define.** Such as `channel(false)`, `Some(())`, `Closure<dyn FnMut()>`
+   or `spawn(async move { .. })`. Here the boundary relieves only a
+   construct whose tier is above neutral (tolerated or costly), since any
+   construct can stand in an argument and a plain path or call there is not
+   library glue.
+2. **An impl of a trait we don't define**, with the generics, lifetimes and
+   `&mut self` receivers its signatures fix, and a generic parameter whose
+   bounds are all traits we don't define.
+3. **A `mut` binding that exists to be lent as `&mut`**: a `let mut` or
+   `mut` parameter other than an actor loop's state, and a `&mut T` type of
+   a `T` we don't define. An actor loop's own `let mut` state, our own
+   `&mut self` methods and assignments keep their tier.
+4. **Library syntax**: an attribute other than the language's own (`cfg`,
+   `derive`, `doc`, `test`, the lint attributes and so on), a derive of
+   anything outside the std derives (`Debug`, `Clone`, `Copy`, `PartialEq`,
+   `Eq`, `Hash`, `PartialOrd`, `Ord`, `Default`), and a macro outside std
+   (`format!`, `vec!`, `matches!`, `assert_eq!` and the rest), with
+   everything inside its delimiters.
+
+A violation is never boundary. `score` reports the boundary score and its
+share at every level, so library glue is visible and isn't read as style
+debt.
+
+### Typing
+
+The score also rewards defining types for data.
+
+- **Type definitions are cheap.** Give `item.struct.named`,
+  `item.struct.newtype`, `item.enum` and `type.field` a low tier. Every
+  type in a field of our own struct or enum variant is `type.field`, except
+  primitive and untyped ones. A newtype's one field is always `type.field`,
+  since wrapping a primitive is what a newtype is for.
+- **Primitives in our own signatures and fields cost more.** A type that
+  matches a `primitives` pattern is `type.primitive` when it is a field
+  type of our own struct or variant, or a parameter or return type of our
+  own fn (not of an impl of a trait we don't define). In fn bodies a
+  primitive is an ordinary `type.path`. A reference to a primitive, such as
+  `&str`, is primitive. The default `primitives` are `String`, `str`,
+  `char`, the integer and float types, and `Vec<u8>`.
+- **Untyped data costs more everywhere.** A type that matches an `untyped`
+  pattern is `type.untyped`, in a signature, a field or a body. The
+  default `untyped` are `HashMap<String, _>`, `BTreeMap<String, _>` and
+  `dyn Any`. A project adds its JSON value type, such as
+  `serde_json::Value`.
+- **Wire types of an external protocol are boundary.** In a file matched by
+  an `external_protocols` glob, each field of a struct or enum with a
+  non-std derive (a serialization derive, say) is `field.wire`, and every
+  construct inside it costs the boundary weight. Use it for modules that
+  mirror a protocol someone else defines. A protocol of your own keeps the
+  normal rules.
+
+A type pattern is Rust type syntax. `_` matches any type, a path matches on
+its last segment and on the generic arguments the pattern gives, and a
+pattern's leading segments must agree where the code spells them too. A
+bare name in the code, such as `Value`, matches `serde_json::Value` unless
+it is a name we define.
+
+Positions 1 to 3 of the boundary context apply to these ids too: a
+primitive passed as a type argument of a library type, as in
+`Result<String, E>` or `Option<String>`, costs the boundary weight.
 
 ## Known limits
 

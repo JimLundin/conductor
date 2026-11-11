@@ -1401,3 +1401,222 @@ fn every_example_passes_the_subset() {
         .collect();
     assert_eq!(check_repo_config("examples", &files), "");
 }
+
+/// A config for the score tests: the given allowed ids, the owner's starting
+/// tier weights, and `ids` as the `[weights.ids]` table.
+fn score_config(allowed: &[&str], ids: &[(&str, &str)], extra: &str) -> String {
+    let allowed: Vec<String> = allowed.iter().map(|id| format!("\"{id}\"")).collect();
+    let ids: String = ids
+        .iter()
+        .map(|(id, tier)| format!("\"{id}\" = \"{tier}\"\n"))
+        .collect();
+    format!(
+        "version = 0\ninclude = [\"**/*.rs\"]\nallowed = [{}]\n\n[weights]\n{extra}\n\
+         [weights.tiers]\nencouraged = 0.5\nneutral = 1.0\ntolerated = 2.0\ncostly = 3.0\n\
+         outside = 5.0\nboundary = 1.0\n\n[weights.ids]\n{ids}",
+        allowed.join(", ")
+    )
+}
+
+fn score_output(config: &Path, by: &str) -> String {
+    let (code, stdout, stderr) =
+        subset(&["score", "--config", config.to_str().unwrap(), "--by", by]);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    stdout
+}
+
+#[test]
+fn score_charges_each_token_the_weight_of_its_innermost_construct() {
+    // `flip`: 40 tokens. The enum's 6 cost 0.5 each (3.0). The fn's own 7
+    // (`fn flip ( : - > {`) cost 1.0, `l` 0.5 and the two `Light` types 1.0
+    // each (9.5). The match's own 7 (`match {` and each arm's `=>` and the
+    // `,`) cost 0.5 (3.5), the scrutinee `l` 1.0, the two arm patterns' 8
+    // tokens 0.5 (4.0) and the two arm values' 8 tokens 1.0 (8.0): 29.0.
+    // `first`: 22 tokens. The fn's own 5 cost 5.0, `v` 0.5 and
+    // `Option<Light>` 4.0. The `if let` takes its whole head `if let Some(x)
+    // = v` (7 tokens), its block's braces and the `;` inside: 9 tokens at
+    // 2.0 (18.0). The call `flip(x)` is 3 neutral tokens (3.0): 30.5.
+    let src = "// Comments cost nothing.\n\
+               enum Light { On, Off }\n\
+               fn flip(l: Light) -> Light {\n    match l { Light::On => Light::Off, Light::Off => Light::On }\n}\n\
+               fn first(v: Option<Light>) {\n    if let Some(x) = v { flip(x); }\n}\n";
+    let config = score_config(
+        &[
+            "item.fn",
+            "item.enum",
+            "expr.match",
+            "expr.path",
+            "expr.call",
+            "pat.path",
+            "pat.ident",
+            "pat.tuple_struct",
+            "expr.if_let.single",
+            "type.path",
+        ],
+        &[
+            ("item.enum", "encouraged"),
+            ("expr.match", "encouraged"),
+            ("pat.path", "encouraged"),
+            ("pat.ident", "encouraged"),
+            ("pat.tuple_struct", "encouraged"),
+            ("expr.if_let.single", "tolerated"),
+        ],
+        "",
+    );
+    let config = scratch(
+        "score-attribution",
+        &config,
+        &[("lights/Cargo.toml", ""), ("lights/src/lib.rs", src)],
+    );
+    assert_eq!(
+        score_output(&config, "fn"),
+        "     score   tokens per token  boundary  share fn\n\
+         \x20     30.5       22     1.386       0.0   0.0% lights/src/lib.rs:6 first\n\
+         \x20     26.0       34     0.765       0.0   0.0% lights/src/lib.rs:3 flip\n\
+         \x20     59.5       62     0.960       0.0   0.0% total\n"
+    );
+    assert_eq!(
+        score_output(&config, "crate"),
+        "     score   tokens per token  boundary  share crate\n\
+         \x20     59.5       62     0.960       0.0   0.0% lights\n\
+         \x20     59.5       62     0.960       0.0   0.0% total\n"
+    );
+}
+
+#[test]
+fn the_same_construct_costs_the_boundary_weight_where_a_library_fixes_its_shape() {
+    let src = "#[derive(Serialize)]\nstruct Total {\n    n: u8,\n}\n\n\
+               impl Drop for Total {\n    fn drop(&mut self) {}\n}\n\n\
+               fn list() -> Output {\n    let mut cmd = Command::new(\"ls\");\n    cmd.output()\n}\n\n\
+               fn watch() -> Pair {\n    watch::channel(false)\n}\n\n\
+               fn drive(rx: Receiver) -> Total {\n    let mut state = Total { n: 0 };\n    loop {\n        state = rx.recv();\n    }\n}\n";
+    let config = score_config(
+        &[
+            "item.fn",
+            "item.struct.named",
+            "item.impl.trait",
+            "item.fn.receiver.mut",
+            "attr.derive.Serialize",
+            "stmt.let.mut",
+            "pat.ident",
+            "expr.call",
+            "expr.path",
+            "expr.lit",
+            "expr.lit.bool",
+            "expr.method_call",
+            "expr.struct",
+            "expr.loop",
+            "expr.assign",
+            "type.path",
+        ],
+        &[
+            ("item.struct.named", "encouraged"),
+            ("type.field", "encouraged"),
+            ("pat.ident", "encouraged"),
+            ("item.impl.trait", "tolerated"),
+            ("expr.lit.bool", "tolerated"),
+            ("type.primitive", "tolerated"),
+            ("item.fn.receiver.mut", "costly"),
+            ("stmt.let.mut", "costly"),
+            ("expr.assign", "costly"),
+            ("expr.loop", "costly"),
+        ],
+        "",
+    );
+    let config = scratch("score-boundary", &config, &[("lib.rs", src)]);
+    // `let mut cmd` exists to lend `cmd` to a library method, so its `let =
+    // ;` cost the boundary weight (3.0). The actor's `let mut state` keeps
+    // the costly tier (9.0). So do `impl Drop` (4 tokens), its `&mut self`
+    // (3), the serde derive (5) and the `false` passed to `watch::channel`.
+    assert_eq!(
+        score_output(&config, "construct"),
+        "     score   tokens per token  boundary  share  count tier       construct\n\
+         \x20     23.0       23     1.000       0.0   0.0%      4 neutral    item.fn\n\
+         \x20     15.0        3     5.000       0.0   0.0%      1 outside    expr.loop\n\
+         \x20     11.0       11     1.000       0.0   0.0%      5 neutral    expr.path\n\
+         \x20      9.0        3     3.000       0.0   0.0%      1 costly     stmt.let.mut\n\
+         \x20      6.0        6     1.000       0.0   0.0%      2 neutral    expr.method_call\n\
+         \x20      5.0        5     1.000       5.0 100.0%      1 boundary   attr.derive.Serialize\n\
+         \x20      5.0        5     1.000       0.0   0.0%      5 neutral    type.path\n\
+         \x20      4.0        4     1.000       0.0   0.0%      1 neutral    expr.struct\n\
+         \x20      4.0        4     1.000       4.0 100.0%      1 boundary   item.impl.trait\n\
+         \x20      3.0        1     3.000       0.0   0.0%      1 costly     expr.assign\n\
+         \x20      3.0        3     1.000       3.0 100.0%      1 boundary   item.fn.receiver.mut\n\
+         \x20      3.0        6     0.500       0.0   0.0%      1 encouraged item.struct.named\n\
+         \x20      3.0        3     1.000       3.0 100.0%      1 boundary   stmt.let.mut\n\
+         \x20      2.5        5     0.500       0.0   0.0%      3 encouraged pat.ident\n\
+         \x20      2.0        2     1.000       0.0   0.0%      2 neutral    expr.call\n\
+         \x20      2.0        2     1.000       0.0   0.0%      2 neutral    expr.lit\n\
+         \x20      2.0        1     2.000       0.0   0.0%      1 tolerated  type.primitive\n\
+         \x20      1.0        1     1.000       1.0 100.0%      1 boundary   expr.lit.bool\n\
+         \x20    103.5       88     1.176      16.0  15.5%                   total\n"
+    );
+}
+
+#[test]
+fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
+    let derive = "#[derive(Serialize)]\nstruct Msg {\n    body: Vec<u8>,\n}\n";
+    let config = score_config(
+        &[
+            "item.fn",
+            "item.struct.named",
+            "item.struct.newtype",
+            "pat.ident",
+            "type.path",
+            "attr.derive.Serialize",
+        ],
+        &[
+            ("item.struct.named", "encouraged"),
+            ("item.struct.newtype", "encouraged"),
+            ("pat.ident", "encouraged"),
+            ("type.field", "encouraged"),
+            ("type.primitive", "tolerated"),
+            ("type.untyped", "costly"),
+        ],
+        "external_protocols = [\"wire/**\"]\nuntyped = [\"serde_json::Value\"]\n",
+    );
+    let config = scratch(
+        "score-typing",
+        &config,
+        &[
+            ("primitive.rs", "fn resume(session: String) {}\n"),
+            (
+                "typed.rs",
+                "struct SessionId(String);\n\nfn resume(session: SessionId) {}\n",
+            ),
+            ("untyped.rs", "struct Event {\n    body: Value,\n}\n"),
+            ("wire/lib.rs", derive),
+            ("proto/lib.rs", derive),
+        ],
+    );
+    // primitive.rs: `fn resume ( : {` 5.0, `session` 0.5, `String` 2.0.
+    // typed.rs: the newtype's `struct SessionId ( ;` and its `String` cost
+    // 0.5 each (2.5), and the fn 6.5 with `SessionId` at 1.0.
+    // untyped.rs: `struct Event { body : ,` 3.0 and `Value` 3.0.
+    // wire/lib.rs mirrors an external protocol: the derive (5 tokens), the
+    // field's `body :` and its `Vec<u8>` all cost the boundary weight, and
+    // `struct Msg { ,` 0.5 each. proto/lib.rs is our own format: the same
+    // field costs `body :` 0.5 each and `Vec<u8>` 2.0 a token.
+    assert_eq!(
+        score_output(&config, "file"),
+        "     score   tokens per token  boundary  share file\n\
+         \x20      7.5        7     1.071       0.0   0.0% primitive.rs\n\
+         \x20     16.0       15     1.067       5.0  31.2% proto/lib.rs\n\
+         \x20      9.0       12     0.750       0.0   0.0% typed.rs\n\
+         \x20      6.0        7     0.857       0.0   0.0% untyped.rs\n\
+         \x20     13.0       15     0.867      11.0  84.6% wire/lib.rs\n\
+         \x20     51.5       56     0.920      16.0  31.1% total\n"
+    );
+}
+
+#[test]
+fn the_readme_lists_every_score_only_id() {
+    let (code, table, _) = subset(&["score-ids"]);
+    assert_eq!(code, 0);
+    let readme = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+        .expect("README.md");
+    assert!(
+        readme.contains(&table),
+        "README.md is out of date; paste the output of `subset score-ids` into it"
+    );
+}

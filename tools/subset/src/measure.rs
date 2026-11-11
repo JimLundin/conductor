@@ -14,26 +14,37 @@ pub struct Volume {
 /// Idents, puncts and literals count one each, and so does each delimited
 /// group. A line counts when a counted token starts, ends or spans it.
 pub fn measure(src: &str) -> Result<Volume, proc_macro2::LexError> {
-    let stream: TokenStream = src.parse()?;
-    let mut tally = Tally {
-        src,
-        tokens: 0,
-        lines: BTreeSet::new(),
-    };
-    tally.walk(stream);
+    let tally = Tally::of(src)?;
     Ok(Volume {
-        tokens: tally.tokens,
+        tokens: tally.starts.len(),
         lines: tally.lines.len(),
     })
 }
 
+/// The byte offset of each token `measure` counts, in source order. A
+/// delimited group's offset is that of its opening delimiter.
+pub fn token_starts(src: &str) -> Result<Vec<usize>, proc_macro2::LexError> {
+    Ok(Tally::of(src)?.starts)
+}
+
 struct Tally<'a> {
     src: &'a str,
-    tokens: usize,
+    starts: Vec<usize>,
     lines: BTreeSet<usize>,
 }
 
-impl Tally<'_> {
+impl<'a> Tally<'a> {
+    fn of(src: &'a str) -> Result<Tally<'a>, proc_macro2::LexError> {
+        let stream: TokenStream = src.parse()?;
+        let mut tally = Tally {
+            src,
+            starts: Vec::new(),
+            lines: BTreeSet::new(),
+        };
+        tally.walk(stream);
+        Ok(tally)
+    }
+
     fn walk(&mut self, stream: TokenStream) {
         let mut trees = stream.into_iter().peekable();
         while let Some(tree) = trees.next() {
@@ -48,15 +59,15 @@ impl Tally<'_> {
             match tree {
                 TokenTree::Group(group) => {
                     if group.delimiter() != Delimiter::None {
-                        self.tokens += 1;
+                        self.starts.push(group.span_open().byte_range().start);
                         self.lines.insert(group.span_open().start().line);
                         self.lines.insert(group.span_close().end().line);
                     }
                     self.walk(group.stream());
                 }
                 leaf => {
-                    self.tokens += 1;
                     let span = leaf.span();
+                    self.starts.push(span.byte_range().start);
                     self.lines.extend(span.start().line..=span.end().line);
                 }
             }

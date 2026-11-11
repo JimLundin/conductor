@@ -3,6 +3,8 @@
 //! signatures) carry no id of their own; their modifiers (`async`, `mut`, ...)
 //! are reported as ids at the modifier's token.
 
+use std::ops::Range;
+
 use proc_macro2::Span;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -26,6 +28,9 @@ pub struct Occurrence {
     pub reason: &'static str,
     pub line: usize,
     pub col: usize,
+    /// The bytes of the whole construct, from its first token to its last. A
+    /// modifier such as `async` covers only its own token.
+    pub extent: Range<usize>,
 }
 
 pub fn classify(file: &syn::File, rules: &Rules, test_file: bool) -> Vec<Occurrence> {
@@ -34,6 +39,7 @@ pub fn classify(file: &syn::File, rules: &Rules, test_file: bool) -> Vec<Occurre
         test_depth: usize::from(test_file),
         in_return_type: false,
         in_let_mut: false,
+        node: None,
         out: Vec::new(),
     };
     classifier.visit_file(file);
@@ -47,6 +53,9 @@ struct Classifier<'r, 'a> {
     /// Inside the pattern of a `let` already reported as `stmt.let.mut`, so its
     /// `mut` bindings are not reported a second time.
     in_let_mut: bool,
+    /// The span of the node being classified. The next id emitted is that
+    /// node's own, so it takes the node's whole span as its extent.
+    node: Option<Span>,
     out: Vec<Occurrence>,
 }
 
@@ -57,12 +66,20 @@ impl Classifier<'_, '_> {
 
     fn emit_with(&mut self, span: Span, id: String, reason: &'static str) {
         let start = span.start();
+        let extent = self.node.take().unwrap_or(span).byte_range();
         self.out.push(Occurrence {
             id,
             reason,
             line: start.line,
             col: start.column + 1,
+            extent,
         });
+    }
+
+    /// Emits `id` at `span` with the whole of `node` as its extent.
+    fn emit_node(&mut self, span: Span, node: Span, id: &'static str) {
+        self.node = Some(node);
+        self.emit(span, id);
     }
 
     fn with_test_scope(&mut self, attrs: &[Attribute], walk: impl FnOnce(&mut Self)) {
@@ -100,6 +117,7 @@ impl Classifier<'_, '_> {
 
 impl<'ast> Visit<'ast> for Classifier<'_, '_> {
     fn visit_item(&mut self, item: &'ast Item) {
+        self.node = Some(item.span());
         match item {
             Item::Const(i) => self.emit(i.const_token.span, "item.const"),
             Item::Enum(i) => self.emit(i.enum_token.span, "item.enum"),
@@ -157,10 +175,12 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             Item::Use(i) => self.emit(i.use_token.span, "item.use"),
             _ => self.emit(item.span(), "unknown.item"),
         }
+        self.node = None;
         self.with_test_scope(item_attrs(item), |this| visit::visit_item(this, item));
     }
 
     fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        self.node = Some(item.span());
         match item {
             ImplItem::Const(i) => self.emit(i.const_token.span, "item.const"),
             ImplItem::Fn(i) => self.emit(i.sig.fn_token.span, "item.fn"),
@@ -168,6 +188,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             ImplItem::Macro(_) => {}
             _ => self.emit(item.span(), "unknown.impl_item"),
         }
+        self.node = None;
         let attrs: &[Attribute] = match item {
             ImplItem::Fn(i) => &i.attrs,
             _ => &[],
@@ -176,6 +197,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
     }
 
     fn visit_trait_item(&mut self, item: &'ast TraitItem) {
+        self.node = Some(item.span());
         match item {
             TraitItem::Const(i) => self.emit(i.const_token.span, "item.trait.const"),
             TraitItem::Fn(i) => self.emit(i.sig.fn_token.span, "item.trait.fn"),
@@ -183,10 +205,12 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             TraitItem::Macro(_) => {}
             _ => self.emit(item.span(), "unknown.trait_item"),
         }
+        self.node = None;
         visit::visit_trait_item(self, item);
     }
 
     fn visit_foreign_item(&mut self, item: &'ast ForeignItem) {
+        self.node = Some(item.span());
         match item {
             ForeignItem::Fn(i) => self.emit(i.sig.fn_token.span, "item.foreign.fn"),
             ForeignItem::Static(i) => self.emit(i.static_token.span, "item.foreign.static"),
@@ -194,12 +218,14 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             ForeignItem::Macro(_) => {}
             _ => self.emit(item.span(), "unknown.foreign_item"),
         }
+        self.node = None;
         visit::visit_foreign_item(self, item);
     }
 
     fn visit_variant(&mut self, v: &'ast syn::Variant) {
-        if let Some((eq, _)) = &v.discriminant {
-            self.emit(eq.span, "item.enum.discriminant");
+        if let Some((eq, value)) = &v.discriminant {
+            let node = eq.span.join(value.span()).unwrap_or(eq.span);
+            self.emit_node(eq.span, node, "item.enum.discriminant");
         }
         visit::visit_variant(self, v);
     }
@@ -236,7 +262,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                     self.visit_attribute(attr);
                 }
                 if let Some(token) = r.mutability {
-                    self.emit(token.span, "item.fn.receiver.mut");
+                    self.emit_node(token.span, r.span(), "item.fn.receiver.mut");
                 }
                 if let Some((_, Some(lifetime))) = &r.reference {
                     self.emit(lifetime.span(), "type.lifetime");
@@ -253,7 +279,9 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
     fn visit_visibility(&mut self, vis: &'ast Visibility) {
         match vis {
             Visibility::Public(token) => self.emit(token.span, "vis.pub"),
-            Visibility::Restricted(r) => self.emit(r.pub_token.span, "vis.restricted"),
+            Visibility::Restricted(r) => {
+                self.emit_node(r.pub_token.span, r.span(), "vis.restricted")
+            }
             Visibility::Inherited => {}
         }
     }
@@ -263,10 +291,11 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
     }
 
     fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
-        self.emit(rename.as_token.span, "item.use.rename");
+        self.emit_node(rename.as_token.span, rename.span(), "item.use.rename");
     }
 
     fn visit_expr(&mut self, expr: &'ast Expr) {
+        self.node = Some(expr.span());
         match expr {
             Expr::Array(e) => self.emit(e.span(), "expr.array"),
             Expr::Assign(e) => self.emit(e.eq_token.span, "expr.assign"),
@@ -324,7 +353,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                 self.emit(e.span(), id);
             }
             Expr::Loop(e) => self.emit(e.loop_token.span, "expr.loop"),
-            Expr::Macro(_) => {}
+            Expr::Macro(_) => self.node = None,
             Expr::Match(e) => self.emit(e.match_token.span, "expr.match"),
             Expr::MethodCall(e) => {
                 self.emit(e.method.span(), "expr.method_call");
@@ -406,12 +435,14 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             Expr::Yield(e) => self.emit(e.yield_token.span, "expr.yield"),
             _ => return self.emit(expr.span(), "unknown.expr"),
         }
+        self.node = None;
         visit::visit_expr(self, expr);
     }
 
     fn visit_arm(&mut self, arm: &'ast syn::Arm) {
-        if let Some((token, _)) = &arm.guard {
-            self.emit(token.span, "expr.match.guard");
+        if let Some((token, guard)) = &arm.guard {
+            let node = token.span.join(guard.span()).unwrap_or(token.span);
+            self.emit_node(token.span, node, "expr.match.guard");
         }
         visit::visit_arm(self, arm);
     }
@@ -426,6 +457,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                     (None, false) => "stmt.let.uninit",
                     (Some(_), false) => "stmt.let",
                 };
+                self.node = Some(local.span());
                 self.emit(local.let_token.span, id);
                 for attr in &local.attrs {
                     self.visit_attribute(attr);
@@ -442,6 +474,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
     }
 
     fn visit_pat(&mut self, pat: &'ast Pat) {
+        self.node = Some(pat.span());
         match pat {
             Pat::Const(p) => self.emit(p.const_token.span, "pat.const"),
             Pat::Ident(p) => {
@@ -464,7 +497,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                 };
                 return self.emit(p.span(), id);
             }
-            Pat::Macro(_) => {}
+            Pat::Macro(_) => self.node = None,
             Pat::Or(p) => self.emit(p.span(), "pat.or"),
             Pat::Paren(p) => self.emit(p.span(), "pat.paren"),
             Pat::Path(p) => return self.emit(p.span(), "pat.path"),
@@ -479,10 +512,12 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             Pat::Wild(p) => self.emit(p.span(), "pat.wild"),
             _ => return self.emit(pat.span(), "unknown.pat"),
         }
+        self.node = None;
         visit::visit_pat(self, pat);
     }
 
     fn visit_type(&mut self, ty: &'ast Type) {
+        self.node = Some(ty.span());
         match ty {
             Type::Array(t) => self.emit(t.span(), "type.array"),
             Type::BareFn(t) => self.emit(t.fn_token.span, "type.fn_ptr"),
@@ -496,7 +531,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                 self.emit(t.impl_token.span, id);
             }
             Type::Infer(t) => self.emit(t.span(), "type.infer"),
-            Type::Macro(_) => {}
+            Type::Macro(_) => self.node = None,
             Type::Never(t) => self.emit(t.span(), "type.never"),
             Type::Paren(t) => self.emit(t.span(), "type.paren"),
             Type::Path(t) => match (&t.qself, interior_mut(&t.path)) {
@@ -536,6 +571,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             }
             _ => return self.emit(ty.span(), "unknown.type"),
         }
+        self.node = None;
         visit::visit_type(self, ty);
     }
 
@@ -550,12 +586,12 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
     }
 
     fn visit_where_clause(&mut self, clause: &'ast syn::WhereClause) {
-        self.emit(clause.where_token.span, "generics.where");
+        self.emit_node(clause.where_token.span, clause.span(), "generics.where");
         visit::visit_where_clause(self, clause);
     }
 
     fn visit_bound_lifetimes(&mut self, bound: &'ast syn::BoundLifetimes) {
-        self.emit(bound.for_token.span, "generics.hrtb");
+        self.emit_node(bound.for_token.span, bound.span(), "generics.hrtb");
     }
 
     fn visit_generic_argument(&mut self, arg: &'ast GenericArgument) {
@@ -582,17 +618,18 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
 
     fn visit_attribute(&mut self, attr: &'ast Attribute) {
         let span = attr.pound_token.span;
+        let whole = attr.span();
         let path = attr.path();
         if path.is_ident("doc") {
-            return self.emit(span, "attr.doc");
+            return self.emit_node(span, whole, "attr.doc");
         }
         if path.is_ident("test") || is_cfg_test(attr) {
-            return self.emit(span, "attr.cfg_test");
+            return self.emit_node(span, whole, "attr.cfg_test");
         }
         if path.is_ident("derive") {
             let names = attr.parse_args_with(Punctuated::<Path, syn::Token![,]>::parse_terminated);
             let Ok(names) = names else {
-                return self.emit(span, "unknown.attr");
+                return self.emit_node(span, whole, "unknown.attr");
             };
             let unlisted: Vec<String> = names
                 .iter()
@@ -600,19 +637,22 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                 .filter(|name| !self.rules.derives.iter().any(|d| d == name))
                 .collect();
             if unlisted.is_empty() {
-                return self.emit(span, "attr.derive");
+                return self.emit_node(span, whole, "attr.derive");
             }
             for name in unlisted {
+                self.node = Some(whole);
                 self.emit_with(span, format!("attr.derive.{name}"), ids::UNLISTED_DERIVE);
             }
             return;
         }
         let id = format!("attr.{}", path_string(path));
+        self.node = Some(whole);
         self.emit_with(span, id, ids::UNLISTED_ATTR);
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let span = mac.path.span();
+        self.node = Some(mac.span());
         if mac.path.is_ident("env") && !build_constant(mac) {
             self.emit_with(span, "macro.env".to_string(), rules::ENV.message);
         } else if self.macro_allowed(&mac.path) {
