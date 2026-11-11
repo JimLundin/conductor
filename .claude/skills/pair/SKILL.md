@@ -92,9 +92,9 @@ The coordinator never accepts a proposal itself.
 When the implementer's branch and the review branch are merged (or
 abandoned), the coordinator removes both worktrees and their branches
 (`git worktree remove ../conductor-<task>`, `git branch -d <branch>`), and
-any scratch worktree or `/tmp` run logs the round created. Builds go to the
-shared `../conductor-target` (`AGENTS.md`), so a removed worktree leaves no
-build output behind.
+any scratch worktree or `/tmp` run logs the round created. Each worktree
+builds in its own `./target` (`AGENTS.md`), and removing the worktree removes
+that build output, which is most of the disk a round uses.
 
 **Done when** `git worktree list` shows only the main checkout and the
 worktrees of rounds still in progress.

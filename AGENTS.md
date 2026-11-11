@@ -17,12 +17,12 @@ with a desktop app and an iPhone web app. The design is in
   on every commit. `SUBSET=1 tools/check.sh` also runs `tools/subset check`,
   which becomes mandatory once the rewrite makes `crates/` clean.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
-- **One build directory.** `.cargo/config.toml` points every checkout at
-  `../conductor-target`, shared by the main checkout and every worktree
-  beside it. Find it with `tools/target-dir` (for example
-  `"$(tools/target-dir)"/debug/subset`), never by assuming `./target`.
-  Parallel builds take turns on cargo's lock; that is the price of one copy
-  of the dependencies instead of one per worktree.
+- **One build directory per checkout.** Each worktree builds in its own
+  `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo
+  can then silently build one worktree against another branch's sources.
+  Find the directory with `tools/target-dir` (for example
+  `"$(tools/target-dir)"/debug/subset`). Dev builds carry line tables only
+  (`Cargo.toml` `[profile.dev]`) to keep each `target/` small.
 - **Worktrees are temporary.** Create one per task beside the main
   checkout (`git worktree add ../conductor-<task> -b <branch>`), and remove
   it when the branch is merged or abandoned: `git worktree remove
