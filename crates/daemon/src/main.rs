@@ -7,9 +7,9 @@ use clap::{Parser, Subcommand};
 use daemon::host::{Host, HostOptions};
 use daemon::rtc::RtcOptions;
 use daemon::server::Conductor;
-use iroh::Endpoint;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
+use iroh::{Endpoint, RelayMode};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
 use proto::{AuthToken, Epoch, Ticket};
 
@@ -107,6 +107,7 @@ async fn s3_host(
 ) -> anyhow::Result<()> {
     let key = daemon::load_or_create_key(&data_dir)?;
     let endpoint = Endpoint::builder(presets::N0)
+        .relay_mode(RelayMode::Custom(n0_relays()))
         .secret_key(key)
         .address_lookup(MdnsAddressLookup::builder())
         .bind()
@@ -167,4 +168,15 @@ async fn s3_host(
     tokio::signal::ctrl_c().await?;
     router.shutdown().await?;
     Ok(())
+}
+
+/// n0's public relays without the root dot. A host advertises its home relay
+/// to peers, and a browser that dials the dotted name fails WebKit's
+/// certificate check (`proto::without_root_dot`).
+fn n0_relays() -> iroh::RelayMap {
+    iroh::defaults::prod::default_relay_map()
+        .urls::<Vec<_>>()
+        .iter()
+        .map(proto::without_root_dot)
+        .collect()
 }
