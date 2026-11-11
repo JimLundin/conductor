@@ -262,12 +262,11 @@ pub(crate) fn check_version(initialize: Value) -> Result<(), UnsupportedVersion>
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map_err(|_| UnsupportedVersion::Unreported)?
         .claude_code_version;
-    claude_codes::check_cli_version(&found)
-        .map(drop)
-        .map_err(|e| UnsupportedVersion::Outside {
-            found: e.found,
-            supported: claude_codes::version::supported_cli_versions(),
-        })
+    let _ = claude_codes::check_cli_version(&found).map_err(|e| UnsupportedVersion::Outside {
+        found: e.found,
+        supported: claude_codes::version::supported_cli_versions(),
+    })?;
+    Ok(())
 }
 
 /// A control request we originate.

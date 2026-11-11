@@ -193,13 +193,13 @@ impl ClaudeSession {
 
     /// Resolves once the CLI acknowledges; the turn's `result` follows as an event.
     pub async fn interrupt(&self) -> Result<(), Error> {
-        self.control(ControlCall::Interrupt).await.map(drop)
+        let _ = self.control(ControlCall::Interrupt).await?;
+        Ok(())
     }
 
     pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<(), Error> {
-        self.control(ControlCall::SetPermissionMode(mode))
-            .await
-            .map(drop)
+        let _ = self.control(ControlCall::SetPermissionMode(mode)).await?;
+        Ok(())
     }
 
     pub async fn respond(

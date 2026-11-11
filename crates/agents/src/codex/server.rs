@@ -205,7 +205,8 @@ impl CodexThread {
             thread: self.id.clone(),
             turn,
         };
-        request(&self.server.commands, call).await.map(drop)
+        let _ = request(&self.server.commands, call).await?;
+        Ok(())
     }
 }
 
