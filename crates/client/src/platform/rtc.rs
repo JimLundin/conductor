@@ -125,12 +125,12 @@ pub(crate) async fn negotiate(
     let state_pc = pc.clone();
     let state_inbox = inbox.clone();
     let on_state = Closure::<dyn FnMut()>::new(move || {
-        drop(state_inbox.send(Message::State(state_pc.connection_state())))
+        let _ = state_inbox.send(Message::State(state_pc.connection_state()));
     });
     pc.set_onconnectionstatechange(Some(on_state.as_ref().unchecked_ref()));
     let candidate_inbox = inbox.clone();
     let on_candidate = Closure::<dyn FnMut(RtcPeerConnectionIceEvent)>::new(move |event| {
-        drop(candidate_inbox.send(Message::Candidate(event)))
+        let _ = candidate_inbox.send(Message::Candidate(event));
     });
     pc.set_onicecandidate(Some(on_candidate.as_ref().unchecked_ref()));
 
@@ -180,7 +180,7 @@ pub(crate) async fn negotiate(
         Ok(()) => {
             let pair = selected_pair(&pc).await;
             tracing::info!(elapsed_ms, ?pair, "webrtc data channel open");
-            drop(inbox.send(Message::Opened(pair)));
+            let _ = inbox.send(Message::Opened(pair));
             Ok(Session {
                 inner: Rc::new(Inner {
                     pc,
@@ -195,11 +195,11 @@ pub(crate) async fn negotiate(
         }
         Err(why) => {
             let (reply, reason) = oneshot::channel();
-            drop(inbox.send(Message::Failed {
+            let _ = inbox.send(Message::Failed {
                 why,
                 elapsed_ms,
                 reply,
-            }));
+            });
             let reason = reason
                 .await
                 .unwrap_or_else(|_| String::from("the signaling actor stopped"));
@@ -322,7 +322,7 @@ impl Signaling {
                     self.remote,
                 );
                 tracing::warn!(reason, "webrtc upgrade failed");
-                drop(reply.send(reason.clone()));
+                let _ = reply.send(reason.clone());
                 Ok(self.send(host, Signal::Failed { reason }).await)
             }
             Input::Message(None) => Err(stop(host)),
@@ -422,7 +422,7 @@ impl Signaling {
 fn stop(host: Host) -> Stopped {
     match host {
         Host::Up { send, .. } => {
-            drop(send.finish());
+            let _ = send.finish();
             Stopped {}
         }
         Host::Gone => Stopped {},
@@ -564,11 +564,11 @@ impl Channel {
         });
         let close_events = events_tx.clone();
         let on_close = Closure::<dyn FnMut()>::new(move || {
-            drop(close_events.send(ChannelEvent::Closed));
+            let _ = close_events.send(ChannelEvent::Closed);
             state_tx.send_replace(ChannelState::Closed);
         });
         let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |event| {
-            drop(events_tx.send(ChannelEvent::Message(event)))
+            let _ = events_tx.send(ChannelEvent::Message(event));
         });
         dc.set_onopen(Some(on_open.as_ref().unchecked_ref()));
         dc.set_onclose(Some(on_close.as_ref().unchecked_ref()));

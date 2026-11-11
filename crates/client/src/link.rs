@@ -221,7 +221,7 @@ impl HostLink {
     /// Drops the current connection and connects again at once, as after a
     /// network change.
     pub async fn reconnect(&self) {
-        drop(self.requests.send(Request::Reconnect).await);
+        let _ = self.requests.send(Request::Reconnect).await;
     }
 }
 
@@ -391,7 +391,7 @@ impl Link {
                 Input::Dial | Input::Request(Some(Request::Reconnect)),
             ) => self.dial().await,
             (idle, Input::Request(Some(Request::Send { reply, .. }))) => {
-                drop(reply.send(Err(SendError::NotConnected)));
+                let _ = reply.send(Err(SendError::NotConnected));
                 Ok(idle)
             }
             (_, Input::Request(None)) => Err(Stopped {}),
@@ -575,7 +575,8 @@ impl Link {
         match subscribe(&transport, connected.epoch, self.cursor_seq()).await {
             Ok(halves) => {
                 // Replaces, and so retires, the relayed subscription.
-                drop(connected.feed);
+                let relayed = connected.feed;
+                drop(relayed);
                 let next = Connected {
                     carrier: rtc,
                     feed: frames(halves),
@@ -618,7 +619,8 @@ impl Link {
         let connected = connected.on_iroh();
         let iroh = Transport::Iroh(connected.conn.clone());
         let feed = frames(subscribe(&iroh, connected.epoch, self.cursor_seq()).await?);
-        drop(connected.feed);
+        let webrtc = connected.feed;
+        drop(webrtc);
         let next = Connected {
             feed,
             upgrade: connected.upgrade.retry_later(&connected.conn),
@@ -777,7 +779,7 @@ async fn answer(
     command: Command,
     reply: oneshot::Sender<Result<CommandResult, SendError>>,
 ) {
-    drop(reply.send(rpc(carrier, command).await));
+    let _ = reply.send(rpc(carrier, command).await);
 }
 
 async fn rpc(carrier: Transport, command: Command) -> Result<CommandResult, SendError> {
