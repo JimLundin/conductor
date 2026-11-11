@@ -264,7 +264,7 @@ async fn interrupted_turn(
     live: &mut Live,
     thread: &CodexThread,
     prompt: &str,
-) -> Result<(Turn, agents::codex::Result<()>)> {
+) -> Result<(Turn, std::result::Result<(), agents::codex::Error>)> {
     let turn_id = thread.send_turn(prompt.into()).await?;
     let mut t = Turn::default();
     let mut interrupted = None;
@@ -392,7 +392,7 @@ async fn observe(
                 })
                 .collect();
             t.approvals
-                .push(format!("{id} {what} options=[{}]", names.join(", ")));
+                .push(format!("{} {what} options=[{}]", id.0, names.join(", ")));
             let decision = match policy {
                 Policy::Approve => Decision::Accept,
                 Policy::Decline => Decision::Decline,

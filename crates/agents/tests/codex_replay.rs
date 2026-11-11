@@ -193,9 +193,9 @@ fn summary(event: &ThreadEvent) -> Option<String> {
                 ApprovalKind::Permissions { .. } => "permissions",
                 ApprovalKind::UserInput { .. } => "userInput",
             };
-            format!("approval {id} {kind} ({} options)", options.len())
+            format!("approval {} {kind} ({} options)", id.0, options.len())
         }
-        ThreadEvent::ApprovalCancelled { id } => format!("approval {id} cancelled"),
+        ThreadEvent::ApprovalCancelled { id } => format!("approval {} cancelled", id.0),
         ThreadEvent::Unknown(_) => return None,
     })
 }
