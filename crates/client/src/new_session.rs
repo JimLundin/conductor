@@ -47,6 +47,17 @@ pub enum Availability {
     Unknown,
 }
 
+impl Availability {
+    /// The word the form shows, and its `data-available`.
+    pub fn word(&self) -> String {
+        String::from(match self {
+            Availability::Available => "available",
+            Availability::Unavailable(_) => "unavailable",
+            Availability::Unknown => "unknown",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Unavailable {
     provider: Provider,

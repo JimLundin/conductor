@@ -515,10 +515,10 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 .segment:has(input:checked) { background: var(--segment); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
 .segment:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 .segment-name { font-weight: 600; }
-.segment-state { color: var(--muted); font-size: 0.75rem; }
-.segment-state:empty { display: none; }
-.segment[data-available="yes"] .segment-state { color: var(--green); }
-.segment[data-available="no"] .segment-state { color: var(--red); }
+.segment-state { color: var(--muted); font-size: 0.75rem; text-transform: capitalize; }
+.segment[data-available="unknown"] .segment-state { display: none; }
+.segment[data-available="available"] .segment-state { color: var(--green); }
+.segment[data-available="unavailable"] .segment-state { color: var(--red); }
 
 .field { display: block; }
 .field input {

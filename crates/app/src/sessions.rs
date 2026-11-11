@@ -1,7 +1,7 @@
 //! The session list and the form that starts a session.
 
 use client::host_view::{Attention, HostView, SessionStatus, SessionView};
-use client::new_session::{Attempt, Availability, PROVIDERS, Refusal, StartForm, label};
+use client::new_session::{Attempt, PROVIDERS, Refusal, StartForm, label};
 use dioxus::prelude::*;
 use proto::{CommandBody, CommandResult, HostPath, Provider, SessionId};
 
@@ -142,14 +142,8 @@ pub(crate) fn NewSession(
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",
-                        for choice in PROVIDERS.iter().copied() {
-                            label {
-                                class: "segment",
-                                "data-available": match form.read().availability(&host, choice) {
-                                    Availability::Available => "yes",
-                                    Availability::Unavailable(_) => "no",
-                                    Availability::Unknown => "unknown",
-                                },
+                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, form.read().availability(&host, *choice).word())) {
+                            label { class: "segment", "data-available": "{state}",
                                 input {
                                     r#type: "radio",
                                     name: "provider",
@@ -157,13 +151,7 @@ pub(crate) fn NewSession(
                                     onchange: move |_| provider.set(choice),
                                 }
                                 span { class: "segment-name", "{label(choice)}" }
-                                span { class: "segment-state",
-                                    match form.read().availability(&host, choice) {
-                                        Availability::Available => "Available",
-                                        Availability::Unavailable(_) => "Unavailable",
-                                        Availability::Unknown => "",
-                                    }
-                                }
+                                span { class: "segment-state", "{state}" }
                             }
                         }
                     }
