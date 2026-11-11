@@ -48,11 +48,11 @@ impl AuthToken {
     }
 
     /// The token as 32 lowercase hex digits.
-    pub fn to_text(&self) -> String {
+    pub(crate) fn to_text(self) -> String {
         HEXLOWER.encode(&self.0)
     }
 
-    pub fn parse(text: &str) -> Result<AuthToken, TicketError> {
+    pub(crate) fn parse(text: &str) -> Result<AuthToken, TicketError> {
         HEXLOWER
             .decode(text.as_bytes())
             .ok()

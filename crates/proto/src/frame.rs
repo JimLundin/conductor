@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 pub const HEADER_LEN: usize = 4;
 
 /// Larger frames are refused before their body is read. 16 MiB.
-pub const MAX_FRAME_LEN: u32 = 16_777_216;
+pub(crate) const MAX_FRAME_LEN: u32 = 16_777_216;
 
 /// The largest data channel message we send, 16 KiB. Every browser accepts
 /// 16 KiB messages (RFC 8831 §6.6), and the length prefix makes boundaries

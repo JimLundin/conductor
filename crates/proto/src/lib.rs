@@ -15,8 +15,7 @@ mod ticket;
 use serde::{Deserialize, Serialize};
 
 pub use frame::{
-    CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, MAX_FRAME_LEN, Reassembly, Remainder, body_len,
-    decode, encode,
+    CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode,
 };
 pub use ticket::{AuthToken, Ticket, TicketError};
 
