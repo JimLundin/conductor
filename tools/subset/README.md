@@ -19,7 +19,8 @@ subset ids
   construct that isn't allowed, as `path:line:col: <construct-id>: <reason>`.
   Paths in `include` are relative to the config file's directory. It exits
   with 0 when the files are clean, 1 when there are violations, and 2 on a
-  config or parse error.
+  config or parse error. The reason names the proposal's rule where one
+  applies, as described under Scopes.
 - `report` groups the same violations by id. Each line gives the count, the
   number of files and up to five example locations, most frequent id first.
   `--json` prints `{"total", "ids": [{"id", "reason", "count", "files",
@@ -34,6 +35,24 @@ subset ids
 
 `tools/check.sh` runs `subset check` when `SUBSET=1` is set. The flag goes
 away once `crates/` passes, and then the check runs on every commit.
+
+## Scopes
+
+A `[[scope]]` table allows ids only in the files its `paths` cover:
+
+```toml
+[[scope]]
+rule = "Dioxus only in crates/app (proposal 0018)"
+paths = ["crates/app/**"]
+allowed = ["macro.rsx", "macro.asset", "attr.component"]
+```
+
+`paths` are globs relative to the config file's directory, where `*` stays
+within one path component and `**` crosses any number. A file may use the
+global `allowed` ids and the ids of every scope that covers it. A use of a
+scoped id in any other file is reported with the scope's `rule` as its
+reason. Ids that a proposal forbids outright, such as compound assignment
+and interior mutability, are reported with that proposal's rule too.
 
 ## How constructs are classified
 
@@ -60,11 +79,16 @@ Some rules need context.
   the path as written, such as `attr.derive.serde::Serialize`.
 - `macro.allowed` is reported when the macro's full path (such as
   `tracing::info`) or its last segment (such as `format`) is in `macros`.
-  Inside a `#[cfg(test)]` item, a `#[test]` fn, or a file with a `tests`
-  directory in its path, `test_macros` count too. Any other macro is
+  Inside a `#[cfg(test)]` item, a `#[test]` or `#[tokio::test]` fn, or a
+  file with a `tests` directory in its path, `test_macros` count too. Any other macro is
   `macro.<path>`, such as `macro.println` or `macro.tracing::warn`.
 - `attr.cfg_test` covers `#[test]` and exactly `#[cfg(test)]`. Other `cfg`
   attributes are `attr.cfg`.
+- A path type or expression path that names `Cell`, `RefCell`, `OnceCell`,
+  `OnceLock`, `UnsafeCell`, `Mutex`, `RwLock` or an `Atomic*` type in any
+  segment is `type.interior_mut.<Name>` or `expr.interior_mut.<Name>`, such
+  as `type.interior_mut.RefCell` inside `Rc<RefCell<T>>` or
+  `expr.interior_mut.AtomicBool` for `AtomicBool::new`.
 
 ## Measuring
 
@@ -97,7 +121,7 @@ Some rules need context.
 
 ## Construct ids
 
-Every id the tool can emit. The last three rows are families whose final
+Every id the tool can emit. The last five rows are families whose final
 part comes from the source.
 
 | Id | Meaning |
@@ -291,3 +315,5 @@ part comes from the source.
 | `attr.derive.<Name>` | derive of a name not in `derives` |
 | `attr.<name>` | attribute not in the subset |
 | `macro.<path>` | macro not listed in `macros` |
+| `type.interior_mut.<Name>` | std cell, lock or atomic type |
+| `expr.interior_mut.<Name>` | std cell, lock or atomic type in an expression path |

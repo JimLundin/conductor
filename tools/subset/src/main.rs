@@ -3,6 +3,7 @@
 mod classify;
 mod ids;
 mod measure;
+mod rules;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -31,6 +32,35 @@ struct Config {
     macros: Vec<String>,
     #[serde(default)]
     test_macros: Vec<String>,
+    #[serde(default)]
+    scope: Vec<Scope>,
+}
+
+/// Ids allowed only in the files under `paths`. Elsewhere a use of one is
+/// reported with `rule` as its reason.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Scope {
+    rule: String,
+    paths: Vec<String>,
+    allowed: BTreeSet<String>,
+}
+
+impl Scope {
+    fn covers(&self, path: &Path) -> Result<bool, Fatal> {
+        let options = glob::MatchOptions {
+            require_literal_separator: true,
+            ..glob::MatchOptions::new()
+        };
+        for pattern in &self.paths {
+            let pattern = glob::Pattern::new(pattern)
+                .map_err(|e| Fatal(format!("scope path {pattern}: {e}")))?;
+            if pattern.matches_path_with(path, options) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 /// An error that ends the run with exit code 2.
@@ -38,15 +68,15 @@ struct Fatal(String);
 
 struct Violation {
     path: String,
-    occurrence: Occurrence,
+    id: String,
+    reason: String,
+    line: usize,
+    col: usize,
 }
 
 impl Violation {
     fn location(&self) -> String {
-        format!(
-            "{}:{}:{}",
-            self.path, self.occurrence.line, self.occurrence.col
-        )
+        format!("{}:{}:{}", self.path, self.line, self.col)
     }
 }
 
@@ -95,12 +125,7 @@ fn run(args: &[String]) -> Result<ExitCode, Fatal> {
 fn check(config: &Path) -> Result<ExitCode, Fatal> {
     let violations = violations(config)?;
     for v in &violations {
-        println!(
-            "{}: {}: {}",
-            v.location(),
-            v.occurrence.id,
-            v.occurrence.reason
-        );
+        println!("{}: {}: {}", v.location(), v.id, v.reason);
     }
     Ok(if violations.is_empty() {
         ExitCode::SUCCESS
@@ -112,7 +137,7 @@ fn check(config: &Path) -> Result<ExitCode, Fatal> {
 fn report(config: &Path, json: bool) -> Result<ExitCode, Fatal> {
     let mut by_id: BTreeMap<String, Vec<Violation>> = BTreeMap::new();
     for v in violations(config)? {
-        by_id.entry(v.occurrence.id.clone()).or_default().push(v);
+        by_id.entry(v.id.clone()).or_default().push(v);
     }
     let mut rows: Vec<(String, Vec<Violation>)> = by_id.into_iter().collect();
     rows.sort_by(|(a_id, a), (b_id, b)| b.len().cmp(&a.len()).then(a_id.cmp(b_id)));
@@ -128,7 +153,7 @@ fn report(config: &Path, json: bool) -> Result<ExitCode, Fatal> {
                 let (files, examples) = summarise(seen);
                 serde_json::json!({
                     "id": id,
-                    "reason": seen[0].occurrence.reason,
+                    "reason": seen[0].reason,
                     "count": seen.len(),
                     "files": files,
                     "examples": examples,
@@ -237,15 +262,19 @@ fn violations(config_path: &Path) -> Result<Vec<Violation>, Fatal> {
         let test_file = relative_path
             .components()
             .any(|c| c == Component::Normal("tests".as_ref()));
+        let allowed = Allowed::for_file(&config, relative_path)?;
         let mut found = classify::classify(&parsed, &rules, test_file);
         found.sort_by_key(|o| (o.line, o.col));
         out.extend(
             found
                 .into_iter()
-                .filter(|o| !config.allowed.contains(&o.id))
-                .map(|occurrence| Violation {
+                .filter(|o| !allowed.contains(&o.id))
+                .map(|o| Violation {
                     path: relative.clone(),
-                    occurrence,
+                    reason: allowed.reason(&o),
+                    id: o.id,
+                    line: o.line,
+                    col: o.col,
                 }),
         );
     }
@@ -253,6 +282,48 @@ fn violations(config_path: &Path) -> Result<Vec<Violation>, Fatal> {
         Ok(out)
     } else {
         Err(Fatal(parse_errors.join("\n")))
+    }
+}
+
+/// The ids one file may use: the global list and every scope that covers the
+/// file. Scopes that don't cover it give the reason for their ids.
+struct Allowed<'c> {
+    global: &'c BTreeSet<String>,
+    here: Vec<&'c Scope>,
+    elsewhere: Vec<&'c Scope>,
+}
+
+impl<'c> Allowed<'c> {
+    fn for_file(config: &'c Config, path: &Path) -> Result<Allowed<'c>, Fatal> {
+        let mut here = Vec::new();
+        let mut elsewhere = Vec::new();
+        for scope in &config.scope {
+            match scope.covers(path)? {
+                true => here.push(scope),
+                false => elsewhere.push(scope),
+            }
+        }
+        Ok(Allowed {
+            global: &config.allowed,
+            here,
+            elsewhere,
+        })
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.global.contains(id) || self.here.iter().any(|s| s.allowed.contains(id))
+    }
+
+    fn reason(&self, occurrence: &Occurrence) -> String {
+        let scoped = self
+            .elsewhere
+            .iter()
+            .find(|s| s.allowed.contains(&occurrence.id))
+            .map(|s| s.rule.as_str());
+        scoped
+            .or_else(|| rules::forbidden(&occurrence.id))
+            .unwrap_or(occurrence.reason)
+            .to_string()
     }
 }
 

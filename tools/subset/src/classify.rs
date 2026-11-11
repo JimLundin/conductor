@@ -336,13 +336,14 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                 return;
             }
             Expr::Paren(e) => self.emit(e.span(), "expr.paren"),
-            Expr::Path(e) => {
-                let id = match e.qself {
-                    Some(_) => "expr.path.qualified",
-                    None => "expr.path",
-                };
-                self.emit(e.span(), id);
-            }
+            Expr::Path(e) => match (&e.qself, interior_mut(&e.path)) {
+                (None, Some(name)) => {
+                    let id = format!("expr.interior_mut.{name}");
+                    self.emit_with(e.span(), id, ids::INTERIOR_MUT_EXPR);
+                }
+                (Some(_), _) => self.emit(e.span(), "expr.path.qualified"),
+                (None, None) => self.emit(e.span(), "expr.path"),
+            },
             Expr::Range(e) => self.emit(e.limits.span(), "expr.range"),
             Expr::RawAddr(e) => self.emit(e.span(), "expr.raw_addr"),
             Expr::Reference(e) => {
@@ -490,14 +491,20 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             Type::Macro(_) => {}
             Type::Never(t) => self.emit(t.span(), "type.never"),
             Type::Paren(t) => self.emit(t.span(), "type.paren"),
-            Type::Path(t) => {
-                let id = match (&t.qself, t.path.is_ident("bool")) {
-                    (Some(_), _) => "type.path.qualified",
-                    (None, true) => "type.bool",
-                    (None, false) => "type.path",
-                };
-                self.emit(t.span(), id);
-            }
+            Type::Path(t) => match (&t.qself, interior_mut(&t.path)) {
+                (None, Some(name)) => {
+                    let id = format!("type.interior_mut.{name}");
+                    self.emit_with(t.span(), id, ids::INTERIOR_MUT_TYPE);
+                }
+                _ => {
+                    let id = match (&t.qself, t.path.is_ident("bool")) {
+                        (Some(_), _) => "type.path.qualified",
+                        (None, true) => "type.bool",
+                        (None, false) => "type.path",
+                    };
+                    self.emit(t.span(), id);
+                }
+            },
             Type::Ptr(t) => self.emit(t.span(), "type.ptr"),
             Type::Reference(t) => {
                 let id = match t.mutability {
@@ -571,7 +578,7 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
         if path.is_ident("doc") {
             return self.emit(span, "attr.doc");
         }
-        if is_test_attr(attr) {
+        if path.is_ident("test") || is_cfg_test(attr) {
             return self.emit(span, "attr.cfg_test");
         }
         if path.is_ident("derive") {
@@ -662,14 +669,35 @@ fn binary_id(op: &BinOp) -> &'static str {
     }
 }
 
-/// `#[test]`, or `#[cfg(test)]` exactly.
+/// `#[test]`, `#[tokio::test]`, or `#[cfg(test)]` exactly.
 fn is_test_attr(attr: &Attribute) -> bool {
     let path = attr.path();
-    path.is_ident("test")
-        || (path.is_ident("cfg")
-            && attr
-                .parse_args::<syn::Ident>()
-                .is_ok_and(|arg| arg == "test"))
+    path.is_ident("test") || path_string(path) == "tokio::test" || is_cfg_test(attr)
+}
+
+fn is_cfg_test(attr: &Attribute) -> bool {
+    attr.path().is_ident("cfg")
+        && attr
+            .parse_args::<syn::Ident>()
+            .is_ok_and(|arg| arg == "test")
+}
+
+/// Std cell, lock and atomic types: the first path segment that names one.
+const INTERIOR_MUT: &[&str] = &[
+    "Cell",
+    "RefCell",
+    "OnceCell",
+    "OnceLock",
+    "UnsafeCell",
+    "Mutex",
+    "RwLock",
+];
+
+fn interior_mut(path: &Path) -> Option<String> {
+    path.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .find(|name| INTERIOR_MUT.contains(&name.as_str()) || name.starts_with("Atomic"))
 }
 
 fn path_string(path: &Path) -> String {

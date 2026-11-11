@@ -10,7 +10,8 @@ costing any of the qualities below, and the owner accepts it.
 `subset.toml` is the source of truth. `tools/subset check` enforces it on
 the paths under `include`. `tools/subset measure` counts the code volume
 used in proposals. `tools/subset report` summarises violations by
-construct.
+construct. A `[[scope]]` in `subset.toml` allows some ids only under the
+paths it lists, such as Dioxus only in `crates/app`.
 
 ## Qualities
 

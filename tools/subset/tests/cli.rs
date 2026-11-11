@@ -43,9 +43,22 @@ fn scratch(name: &str, config: &str, files: &[(&str, &str)]) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("subset.toml"), config).unwrap();
     for (path, text) in files {
-        std::fs::write(dir.join(path), text).unwrap();
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
     }
     dir.join("subset.toml")
+}
+
+/// `subset check` output for `files` laid out as in the repository, under
+/// the repository's own `subset.toml`.
+fn check_repo_config(name: &str, files: &[(&str, &str)]) -> String {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let config = std::fs::read_to_string(repo.join("subset.toml")).unwrap();
+    let config = scratch(name, &config, files);
+    let (_, stdout, stderr) = subset(&["check", "--config", config.to_str().unwrap()]);
+    assert_eq!(stderr, "");
+    stdout
 }
 
 #[test]
@@ -265,7 +278,7 @@ fn operators() {
             "operators.rs:9:18: expr.index: indexing",
             "operators.rs:10:17: expr.range: range expression",
             "operators.rs:11:7: expr.assign: assignment",
-            "operators.rs:12:7: expr.binary.add_assign: `+=` operator",
+            "operators.rs:12:7: expr.binary.add_assign: compound assignment is not allowed; write `x = x.checked_add(1)?` (proposal 0008)",
         ]
     );
 }
@@ -433,5 +446,110 @@ fn the_readme_lists_every_id_the_tool_emits() {
     assert!(
         readme.contains(&table),
         "README.md is out of date; paste the output of `subset ids` into it"
+    );
+}
+
+#[test]
+fn dioxus_is_allowed_only_in_the_app_crate() {
+    let ui = "use dioxus::prelude::*;\n\nfn view() -> Element {\n    rsx! { div {} }\n}\n";
+    assert_eq!(
+        check_repo_config(
+            "scope-rsx",
+            &[
+                ("crates/app/src/view.rs", ui),
+                ("crates/client/src/view.rs", ui)
+            ]
+        ),
+        "crates/client/src/view.rs:1:22: item.use.glob: a glob import only for `dioxus::prelude::*` in crates/app (proposal 0018)\n\
+         crates/client/src/view.rs:4:5: macro.rsx: Dioxus only in crates/app (proposal 0018)\n"
+    );
+}
+
+#[test]
+fn dyn_is_allowed_only_in_the_client_platform_module() {
+    let callback = "fn listen(on_open: Closure<dyn FnMut(Event)>) -> Listener {\n    Listener::new(on_open)\n}\n";
+    assert_eq!(
+        check_repo_config(
+            "scope-dyn",
+            &[
+                ("crates/client/src/platform/rtc.rs", callback),
+                ("crates/client/src/link.rs", callback),
+            ]
+        ),
+        "crates/client/src/link.rs:1:28: type.dyn: `dyn` only in crates/client/src/platform/ (proposal 0017)\n"
+    );
+}
+
+#[test]
+fn clap_is_allowed_only_in_a_binary_main_and_in_examples() {
+    let cli = "#[derive(Parser)]\nstruct Args {\n    #[arg(long)]\n    verbose: bool,\n}\n";
+    assert_eq!(
+        check_repo_config(
+            "scope-clap",
+            &[
+                ("crates/daemon/src/main.rs", cli),
+                ("crates/client/examples/headless.rs", cli),
+                ("crates/daemon/src/config.rs", cli),
+            ]
+        ),
+        "crates/daemon/src/config.rs:1:1: attr.derive.Parser: clap only in a binary's main.rs and in examples/ (proposal 0019)\n\
+         crates/daemon/src/config.rs:3:5: attr.arg: clap only in a binary's main.rs and in examples/ (proposal 0019)\n\
+         crates/daemon/src/config.rs:4:14: type.bool: clap only in a binary's main.rs and in examples/ (proposal 0019)\n"
+    );
+}
+
+#[test]
+fn serde_derives_are_allowed_only_on_wire_types() {
+    let wire = "#[derive(Serialize, Deserialize)]\n#[serde(transparent)]\nstruct Seq(u64);\n";
+    assert_eq!(
+        check_repo_config(
+            "scope-serde",
+            &[
+                ("crates/proto/src/lib.rs", wire),
+                ("crates/agents/src/claude/protocol.rs", wire),
+                ("crates/agents/src/claude/session.rs", wire),
+            ]
+        ),
+        "crates/agents/src/claude/session.rs:1:1: attr.derive.Serialize: serde derives only on wire types in crates/proto and the agents' provider protocol modules (proposal 0012)\n\
+         crates/agents/src/claude/session.rs:1:1: attr.derive.Deserialize: serde derives only on wire types in crates/proto and the agents' provider protocol modules (proposal 0012)\n\
+         crates/agents/src/claude/session.rs:2:1: attr.serde: serde derives only on wire types in crates/proto and the agents' provider protocol modules (proposal 0012)\n"
+    );
+}
+
+#[test]
+fn tokio_main_is_allowed_only_in_a_native_binary() {
+    let main = "#[tokio::main]\nasync fn main() {}\n";
+    assert_eq!(
+        check_repo_config(
+            "scope-tokio-main",
+            &[
+                ("crates/daemon/src/main.rs", main),
+                ("crates/agents/src/bin/s1.rs", main),
+                ("crates/daemon/src/lib.rs", main),
+            ]
+        ),
+        "crates/daemon/src/lib.rs:1:1: attr.tokio::main: `#[tokio::main]` only in a native binary (proposal 0006)\n"
+    );
+}
+
+#[test]
+fn interior_mutability_is_flagged_in_types_and_expressions() {
+    let shared = "fn shared(count: Rc<RefCell<u64>>, flag: Arc<AtomicBool>) -> Mutex<u64> {\n    Mutex::new(RefCell::new(0).into_inner())\n}\n";
+    assert_eq!(
+        check_repo_config("interior", &[("crates/daemon/src/shared.rs", shared)]),
+        "crates/daemon/src/shared.rs:1:21: type.interior_mut.RefCell: interior mutability stays out of the subset (proposal 0008)\n\
+         crates/daemon/src/shared.rs:1:46: type.interior_mut.AtomicBool: interior mutability stays out of the subset (proposal 0008)\n\
+         crates/daemon/src/shared.rs:1:62: type.interior_mut.Mutex: interior mutability stays out of the subset (proposal 0008)\n\
+         crates/daemon/src/shared.rs:2:5: expr.interior_mut.Mutex: interior mutability stays out of the subset (proposal 0008)\n\
+         crates/daemon/src/shared.rs:2:16: expr.interior_mut.RefCell: interior mutability stays out of the subset (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn tokio_test_fns_may_use_the_test_macros() {
+    let test = "#[tokio::test]\nasync fn adds() {\n    assert_eq!(1, 1);\n}\n";
+    assert_eq!(
+        check_repo_config("tokio-test", &[("crates/daemon/src/lib.rs", test)]),
+        ""
     );
 }

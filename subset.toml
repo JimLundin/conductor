@@ -111,3 +111,48 @@ macros = [
 
 # Extra macros allowed only inside #[cfg(test)] code and tests/.
 test_macros = ["assert_eq", "assert_ne"]
+
+# Ids allowed only under some paths. Elsewhere, a use of one is reported with
+# the scope's rule as the reason.
+
+[[scope]]
+rule = "Dioxus only in crates/app (proposal 0018)"
+paths = ["crates/app/**"]
+allowed = ["macro.rsx", "macro.asset", "attr.component"]
+
+[[scope]]
+rule = "a glob import only for `dioxus::prelude::*` in crates/app (proposal 0018)"
+paths = ["crates/app/**"]
+allowed = ["item.use.glob"]
+
+[[scope]]
+rule = "`#![allow]` only for `clippy::useless_format` at the root of crates/app (proposal 0018)"
+paths = ["crates/app/src/main.rs"]
+allowed = ["attr.allow"]
+
+[[scope]]
+rule = "`dyn` only in crates/client/src/platform/ (proposal 0017)"
+paths = ["crates/client/src/platform/**"]
+allowed = ["type.dyn"]
+
+[[scope]]
+rule = "serde derives only on wire types in crates/proto and the agents' provider protocol modules (proposal 0012)"
+paths = ["crates/proto/**", "crates/agents/src/*/protocol.rs"]
+allowed = ["attr.derive.Serialize", "attr.derive.Deserialize", "attr.serde"]
+
+[[scope]]
+rule = "clap only in a binary's main.rs and in examples/ (proposal 0019)"
+paths = ["crates/*/src/main.rs", "crates/*/examples/**"]
+allowed = [
+  "attr.derive.Parser",
+  "attr.derive.Subcommand",
+  "attr.derive.ValueEnum",
+  "attr.command",
+  "attr.arg",
+  "type.bool",                # an on/off flag field
+]
+
+[[scope]]
+rule = "`#[tokio::main]` only in a native binary (proposal 0006)"
+paths = ["crates/*/src/main.rs", "crates/*/src/bin/*.rs", "crates/*/examples/*.rs"]
+allowed = ["attr.tokio::main"]

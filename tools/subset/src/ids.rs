@@ -240,11 +240,15 @@ pub const FAMILIES: &[(&str, &str)] = &[
     ("attr.derive.<Name>", UNLISTED_DERIVE),
     ("attr.<name>", UNLISTED_ATTR),
     ("macro.<path>", UNLISTED_MACRO),
+    ("type.interior_mut.<Name>", INTERIOR_MUT_TYPE),
+    ("expr.interior_mut.<Name>", INTERIOR_MUT_EXPR),
 ];
 
 pub const UNLISTED_DERIVE: &str = "derive of a name not in `derives`";
 pub const UNLISTED_ATTR: &str = "attribute not in the subset";
 pub const UNLISTED_MACRO: &str = "macro not listed in `macros`";
+pub const INTERIOR_MUT_TYPE: &str = "std cell, lock or atomic type";
+pub const INTERIOR_MUT_EXPR: &str = "std cell, lock or atomic type in an expression path";
 
 pub fn reason(id: &str) -> &'static str {
     IDS.iter()
