@@ -359,9 +359,10 @@ struct LogActor {
 }
 ```
 
-`serve.rs` runs the subscribe feed exactly as `server.rs::feed` does today:
-attach, replay, then skip live events at or below the last replayed seq, and
-close the stream on `Lagged` so the client resubscribes from its cursor.
+`serve.rs` runs the subscribe feed: the replay, then the live events, and it
+closes the stream on `Lagged` so the client resubscribes from its cursor. The
+log takes the replay and attaches the live receiver in one actor turn, so the
+two neither overlap nor leave a gap.
 
 ### 2.4 The registry
 

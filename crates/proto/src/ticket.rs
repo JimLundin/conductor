@@ -6,9 +6,9 @@
 
 use std::fmt;
 
-use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
+use data_encoding::BASE64URL_NOPAD;
 use iroh_base::{EndpointId, RelayUrl};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 const VERSION: u8 = 0;
 const ID_LEN: usize = 32;
@@ -23,7 +23,7 @@ pub struct Ticket {
 
 /// S3 placeholder for the fleet certificates of §4: a random secret the host
 /// prints in its ticket and requires in every `Hello`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthToken([u8; TOKEN_LEN]);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -38,27 +38,11 @@ pub enum TicketError {
     HostId,
     #[error("ticket relay url is invalid")]
     RelayUrl,
-    #[error("token is not 32 lowercase hex digits")]
-    Token,
 }
 
 impl AuthToken {
     pub fn from_bytes(bytes: [u8; TOKEN_LEN]) -> AuthToken {
         AuthToken(bytes)
-    }
-
-    /// The token as 32 lowercase hex digits.
-    pub(crate) fn to_text(self) -> String {
-        HEXLOWER.encode(&self.0)
-    }
-
-    pub(crate) fn parse(text: &str) -> Result<AuthToken, TicketError> {
-        HEXLOWER
-            .decode(text.as_bytes())
-            .ok()
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(AuthToken)
-            .ok_or(TicketError::Token)
     }
 }
 
@@ -66,18 +50,6 @@ impl AuthToken {
 impl fmt::Debug for AuthToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("AuthToken(..)")
-    }
-}
-
-impl Serialize for AuthToken {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_text())
-    }
-}
-
-impl<'de> Deserialize<'de> for AuthToken {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        AuthToken::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -170,14 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn token_round_trips_as_hex_and_hides_in_debug() {
-        let token = AuthToken::parse("000102030405060708090a0b0c0d0e0f").unwrap();
-        assert_eq!(
-            token.0,
-            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-        );
-        assert_eq!(token.to_text(), "000102030405060708090a0b0c0d0e0f");
-        assert_eq!(format!("{token:?}"), "AuthToken(..)");
-        assert_eq!(AuthToken::parse("00"), Err(TicketError::Token));
+    fn token_hides_in_debug() {
+        assert_eq!(format!("{:?}", AuthToken([1; 16])), "AuthToken(..)");
     }
 }

@@ -178,7 +178,7 @@ mod tests {
                 token
             }))
             .unwrap(),
-            frame(b"\x00\x05phone\x20abababababababababababababababab")
+            frame(b"\x00\x05phone\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab\xab")
         );
         assert_eq!(
             encode(&Open::Subscribe(Subscribe {

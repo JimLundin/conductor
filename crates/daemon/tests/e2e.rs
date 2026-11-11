@@ -231,16 +231,17 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
             result: CommandResult::Rejected(Rejection::UnknownSession),
         },
     ]);
-    let (bodies, expected) = cases
-        .into_iter()
-        .map(|case| (case.body, case.result))
-        .unzip::<CommandBody, CommandResult, Vec<CommandBody>, Vec<CommandResult>>();
-    let results = n0_future::stream::iter(bodies)
-        .then(|body| link.send(body))
-        .map(Result::unwrap)
-        .collect::<Vec<CommandResult>>()
-        .await;
-    assert_eq!(results, expected);
+    let results = n0_future::join_all(cases.iter().map(|case| link.send(case.body.clone()))).await;
+    assert_eq!(
+        results
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<CommandResult>>(),
+        cases
+            .into_iter()
+            .map(|case| case.result)
+            .collect::<Vec<CommandResult>>()
+    );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
