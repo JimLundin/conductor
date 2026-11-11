@@ -1,4 +1,4 @@
 #!/bin/sh
-# The `codex` stand-in for codex_replay.rs, which writes fake-codex.py and
-# the recording into its working directory.
-exec /usr/bin/python3 -I fake-codex.py stdout.jsonl
+# The `codex` stand-in: fake-cli.py plays stdout.jsonl from the working
+# directory, gated on what the server writes.
+exec /usr/bin/python3 -I "$(dirname "$0")/fake-cli.py"

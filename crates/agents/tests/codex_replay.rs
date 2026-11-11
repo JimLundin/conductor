@@ -18,45 +18,16 @@ use n0_future::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const FAKE_CODEX: &str = r#"#!/usr/bin/python3 -I
-import json, sys, threading
-requests, answers = set(), set()
-seen = threading.Condition()
-def read_stdin():
-    for line in sys.stdin:
-        msg = json.loads(line)
-        with seen:
-            if "id" in msg:
-                (requests if "method" in msg else answers).add(msg["id"])
-            seen.notify_all()
-    with seen:
-        requests.add("eof")
-        seen.notify_all()
-reader = threading.Thread(target=read_stdin)
-reader.start()
-for line in open(sys.argv[-1]):
-    msg = json.loads(line)
-    with seen:
-        if "id" in msg and "method" not in msg:
-            seen.wait_for(lambda: msg["id"] in requests or "eof" in requests)
-        elif msg.get("method") == "serverRequest/resolved":
-            # Codex also resolves requests it withdrew, which nobody answers.
-            seen.wait_for(lambda: msg["params"]["requestId"] in answers, timeout=5)
-    sys.stdout.write(line)
-    sys.stdout.flush()
-reader.join()
-"#;
-
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/codex")
         .join(name)
 }
 
-/// A working directory for `tests/fake-codex.sh`, which runs `FAKE_CODEX`
-/// on the recording found there. The script is committed, not written here:
-/// executing a file another test thread may have just written fails with
-/// "Text file busy" when a concurrent fork still holds it open.
+/// A working directory for `tests/fake-codex.sh`, which plays the recording
+/// found there. The script is committed, not written here: executing a file
+/// another test thread may have just written fails with "Text file busy" when
+/// a concurrent fork still holds it open.
 fn fake_codex_dir(fixture: &Path) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "agents-codex-replay-{}-{}",
@@ -64,7 +35,6 @@ fn fake_codex_dir(fixture: &Path) -> PathBuf {
         fixture.file_stem().unwrap().to_str().unwrap()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("fake-codex.py"), FAKE_CODEX).unwrap();
     std::fs::copy(fixture, dir.join("stdout.jsonl")).unwrap();
     dir
 }
