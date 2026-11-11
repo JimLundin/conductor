@@ -27,19 +27,16 @@ pub(crate) use rtc::{ChannelRecv, ChannelSend, Session, negotiate};
 /// every relay URL a client dials goes through here. DNS treats both forms alike.
 pub(crate) fn without_root_dot(url: &iroh::RelayUrl) -> iroh::RelayUrl {
     let mut plain = url.deref().clone();
-    match plain
+    let host = plain
         .host_str()
         .and_then(|host| host.strip_suffix('.'))
-        .map(String::from)
-    {
-        Some(host) => {
-            plain
-                .set_host(Some(&host))
-                .expect("a relay host stays valid without its root dot");
-            plain.into()
-        }
-        None => plain.into(),
+        .map(String::from);
+    if let Some(host) = host {
+        plain
+            .set_host(Some(&host))
+            .expect("a relay host stays valid without its root dot");
     }
+    plain.into()
 }
 
 #[cfg(test)]
