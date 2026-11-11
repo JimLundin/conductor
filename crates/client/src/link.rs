@@ -679,7 +679,7 @@ impl Link {
     /// Goes live once the link has applied the host's head as of `Welcome`.
     async fn catch_up(&mut self, seq: HostSeq, live_at: HostSeq) -> Result<(), Stopped> {
         let state = self.outbox.state();
-        match (seq.0.cmp(&live_at.0), state) {
+        match (seq.cmp(&live_at), state) {
             (Ordering::Greater | Ordering::Equal, LinkState::CatchingUp) => self.go_live().await,
             _ => Ok(()),
         }

@@ -202,7 +202,7 @@ impl Session {
 
     async fn on_event(&mut self, event: Event) -> anyhow::Result<Flow> {
         self.last_seq = event.seq;
-        let origin = match self.prompted_after.map(|after| event.seq.0.cmp(&after.0)) {
+        let origin = match self.prompted_after.map(|after| event.seq.cmp(&after)) {
             Some(Ordering::Greater) => Origin::Ours,
             Some(Ordering::Less | Ordering::Equal) | None => Origin::History,
         };

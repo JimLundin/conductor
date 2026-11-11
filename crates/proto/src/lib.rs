@@ -23,7 +23,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 pub const ALPN: &[u8] = b"conductor/0";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct HostSeq(pub u64);
 
