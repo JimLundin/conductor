@@ -13,9 +13,7 @@ tokio.workspace = true
 tracing.workspace = true
 claude-codes.workspace = true
 codex-codes = { workspace = true, features = ["cli"] }
-# Used only by the s1 spike binary.
+# For the s1 and s2 live checks; the replay tests also use n0-future.
 anyhow.workspace = true
-tracing-subscriber.workspace = true
-
-[dev-dependencies]
 n0-future.workspace = true
+tracing-subscriber.workspace = true
