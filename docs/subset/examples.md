@@ -26,7 +26,7 @@ pub fn toggle(visibility: Visibility) -> Visibility {
 ## 2. IDs and counters are newtypes, and arithmetic is a checked method
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HostSeq(u64);
 
 impl HostSeq {
@@ -39,9 +39,11 @@ impl HostSeq {
 ```
 
 There are no `+ - * /` operators. Overflow is a `None` the caller has to
-handle.
+handle. `HostSeq` derives `PartialOrd` and `Ord` because its order means
+something (proposal 0024). An ID such as `RequestId`, whose order means
+nothing, doesn't.
 
-## 3. Comparison is an `Ordering`, matched
+## 3. Comparison is an `Ordering`, matched on the whole newtype
 
 ```rust
 use std::cmp::Ordering;
@@ -54,7 +56,7 @@ pub enum Freshness {
 
 impl HostSeq {
     pub fn freshness(self, head: HostSeq) -> Freshness {
-        match self.0.cmp(&head.0) {
+        match self.cmp(&head) {
             Ordering::Less => Freshness::Behind,
             Ordering::Equal => Freshness::Current,
             Ordering::Greater => Freshness::Ahead,
@@ -63,7 +65,8 @@ impl HostSeq {
 }
 ```
 
-This replaces `if seen < head { … } else if …`.
+This replaces `if seen < head { … } else if …`. Compare the ordered newtype
+itself with `a.cmp(&b)`, never its field with `a.0.cmp(&b.0)` (proposal 0024).
 
 ## 4. Choosing by value is a literal pattern
 
@@ -358,6 +361,7 @@ in the same file (proposal 0016).
   bounds of proposal 0013.
 - `Display`, `FromStr` and `From` impls. Write `label`, `parse` and `to_…`
   methods instead (proposal 0009).
-- Derives beyond the listed ones, such as `PartialOrd`, `Ord` and `Default`.
+- Derives beyond the listed ones, such as `Default`, and `PartialOrd` or
+  `Ord` on anything but an ordered newtype.
 - `if`, `while`, `for`, `return` and the operators. They stay rewrites into
   the core (`docs/subset/bootstrap-review.md`).

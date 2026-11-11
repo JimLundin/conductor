@@ -880,6 +880,21 @@ fn thiserror_only_on_error_types() {
 }
 
 #[test]
+fn ord_only_on_a_newtype_compared_as_a_whole() {
+    assert_eq!(
+        rule_case(
+            "ord",
+            "crates/daemon/src/a.rs",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct Seq(u64);\n\nfn fresh(seen: Seq, head: Seq) -> Freshness {\n    match seen.cmp(&head) {\n        Ordering::Less => Freshness::Behind,\n        Ordering::Equal | Ordering::Greater => Freshness::Current,\n    }\n}\n",
+            "#[derive(PartialEq, Eq, PartialOrd, Ord)]\nenum Phase {\n    Early,\n    Late,\n}\n\n#[derive(PartialEq, Eq, PartialOrd, Ord)]\npub struct Mark(u64);\n\nimpl Mark {\n    fn after(self, other: Mark) -> Ordering {\n        self.0.cmp(&other.0)\n    }\n}\n\nfn order(a: Mark, b: &Mark, c: Count) -> Ordering {\n    a.0.cmp(&b.0).then(c.0.cmp(&a.0))\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: attr.derive: `PartialOrd` and `Ord` only on a newtype struct whose order means something (proposal 0024)\n\
+         crates/daemon/src/a_fail.rs:12:16: expr.method_call: compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024)\n\
+         crates/daemon/src/a_fail.rs:17:9: expr.method_call: compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024)\n"
+    );
+}
+
+#[test]
 fn each_error_variant_has_one_message() {
     assert_eq!(
         rule_case(

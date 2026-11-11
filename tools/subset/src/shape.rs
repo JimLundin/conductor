@@ -116,6 +116,8 @@ struct FnCtx {
     state_names: Vec<String>,
     /// Plain names assigned with `=` anywhere in the body.
     assigned: BTreeSet<String>,
+    /// Each parameter bound to a plain name, with its type's last segment.
+    params: HashMap<String, String>,
 }
 
 const LIBRARY_TRAITS: &[&str] = &[
@@ -210,6 +212,7 @@ impl Checker<'_> {
                 .map(|s| actor::mut_bindings(&s.pat))
                 .unwrap_or_default(),
             assigned: assigned_names(block),
+            params: param_types(sig),
         });
         if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
             self.check_receiver(r);
@@ -308,6 +311,34 @@ impl Checker<'_> {
                 }
             }
         }
+    }
+
+    fn check_ord(&mut self, attrs: &[Attribute], newtype: bool) {
+        let ord = attrs
+            .iter()
+            .find(|a| facts::derives(a, "Ord") || facts::derives(a, "PartialOrd"));
+        if let (Some(derive), false) = (ord, newtype) {
+            self.flag(derive.pound_token.span, &rules::ORD_HOST);
+        }
+    }
+
+    /// Whether `x.0` reads the field of an ordered newtype: `x` is `self` in
+    /// an impl of one, or a parameter declared as one.
+    fn ordered_newtype_field(&self, expr: &Expr) -> bool {
+        let Expr::Field(field) = expr else {
+            return false;
+        };
+        let (syn::Member::Unnamed(index), Expr::Path(base)) = (&field.member, &*field.base) else {
+            return false;
+        };
+        let Some(name) = base.path.get_ident().map(ToString::to_string) else {
+            return false;
+        };
+        let ty = match name.as_str() {
+            "self" => self.impls.last().and_then(|i| i.self_ty.clone()),
+            _ => self.fns.last().and_then(|f| f.params.get(&name).cloned()),
+        };
+        index.index == 0 && ty.is_some_and(|t| self.facts.ord_newtypes.contains(&t))
     }
 
     fn check_message(&mut self, attrs: &[Attribute], at: Span) {
@@ -453,6 +484,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_struct(&mut self, i: &'ast syn::ItemStruct) {
         self.check_derived(&i.attrs, &i.ident, Derived::Struct(&i.fields));
+        self.check_ord(&i.attrs, facts::is_newtype(&i.fields));
         let clap = i
             .attrs
             .iter()
@@ -471,6 +503,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_enum(&mut self, i: &'ast syn::ItemEnum) {
         self.check_derived(&i.attrs, &i.ident, Derived::Enum(&i.variants));
+        self.check_ord(&i.attrs, false);
         self.check_from(&i.variants);
         visit::visit_item_enum(self, i);
     }
@@ -661,6 +694,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 }
             }
             Expr::MethodCall(e) => {
+                if e.method == "cmp" && self.ordered_newtype_field(&e.receiver) {
+                    self.flag(e.method.span(), &rules::ORD_INNER);
+                }
                 let on_self = matches!(&*e.receiver, Expr::Path(p) if p.path.is_ident("self"));
                 for arg in &e.args {
                     let slot = Slot::MethodArg {
@@ -994,6 +1030,19 @@ impl CfgItems {
         gather.visit_file(file);
         CfgItems(gather.0)
     }
+}
+
+fn param_types(sig: &syn::Signature) -> HashMap<String, String> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(t) => match (&*t.pat, facts::type_name(&t.ty)) {
+                (syn::Pat::Ident(p), Some(ty)) => Some((p.ident.to_string(), ty)),
+                _ => None,
+            },
+            FnArg::Receiver(_) => None,
+        })
+        .collect()
 }
 
 /// Plain names assigned with `=` in a fn body, outside nested items.

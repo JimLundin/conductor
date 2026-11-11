@@ -101,6 +101,7 @@ allowed = [
 derives = [
   "Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash",
   "thiserror::Error",         # proposal 0010
+  "PartialOrd", "Ord",        # proposal 0024; only on a newtype whose order means something
 ]
 
 macros = [

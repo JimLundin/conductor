@@ -27,6 +27,8 @@ pub struct Facts {
     /// Actor loop states: the `Self` of a `mut self` method whose body is an
     /// actor loop, and the type a loop's `let mut` state is built from.
     pub loop_states: BTreeSet<String>,
+    /// Newtype structs that derive `Ord` (proposal 0024).
+    pub ord_newtypes: BTreeSet<String>,
 }
 
 impl Facts {
@@ -86,6 +88,9 @@ impl Gather {
 impl<'ast> Visit<'ast> for Gather {
     fn visit_item_struct(&mut self, i: &'ast syn::ItemStruct) {
         self.facts.types.insert(i.ident.to_string());
+        if is_newtype(&i.fields) && i.attrs.iter().any(|a| derives(a, "Ord")) {
+            self.facts.ord_newtypes.insert(i.ident.to_string());
+        }
         visit::visit_item_struct(self, i);
     }
 
@@ -148,6 +153,24 @@ impl<'ast> Visit<'ast> for Gather {
         }
         visit::visit_path_segment(self, segment);
     }
+}
+
+pub fn is_newtype(fields: &syn::Fields) -> bool {
+    matches!(fields, syn::Fields::Unnamed(f) if f.unnamed.len() == 1)
+}
+
+/// Whether a `#[derive(..)]` lists `name`, matched on the last path segment.
+pub fn derives(attr: &syn::Attribute, name: &str) -> bool {
+    attr.path().is_ident("derive")
+        && attr
+            .parse_args_with(
+                syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+            )
+            .is_ok_and(|names| {
+                names
+                    .iter()
+                    .any(|n| n.segments.last().is_some_and(|s| s.ident == name))
+            })
 }
 
 /// The last path segment of a type, through references.

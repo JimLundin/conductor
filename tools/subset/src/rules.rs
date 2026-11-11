@@ -92,6 +92,14 @@ pub const THISERROR_HOST: Rule = rule(
     "attr.derive",
     "`thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010)",
 );
+pub const ORD_HOST: Rule = rule(
+    "attr.derive",
+    "`PartialOrd` and `Ord` only on a newtype struct whose order means something (proposal 0024)",
+);
+pub const ORD_INNER: Rule = rule(
+    "expr.method_call",
+    "compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024)",
+);
 pub const ERROR_MESSAGE: Rule = rule(
     "attr.error",
     "each error variant carries one `#[error(\"…\")]` message, never `transparent` (proposal 0010)",
@@ -194,6 +202,8 @@ pub const RULES: &[&Rule] = &[
     &LIFETIME_PARAM,
     &LIFETIME,
     &THISERROR_HOST,
+    &ORD_HOST,
+    &ORD_INNER,
     &ERROR_MESSAGE,
     &FROM_ONCE,
     &SERDE_KEYS,
