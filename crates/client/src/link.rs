@@ -210,18 +210,25 @@ impl HostLink {
     /// Runs one command on its own stream. Fails fast while not connected;
     /// the caller decides whether to retry.
     pub async fn send(&self, body: CommandBody) -> Result<CommandResult, SendError> {
-        let (reply, result) = oneshot::channel();
-        self.requests
-            .send(Request::Send { body, reply })
-            .await
-            .map_err(|_| SendError::Stopped)?;
-        result.await.map_err(|_| SendError::Stopped)?
+        self.ask(|reply| Request::Send { body, reply }).await?
     }
 
     /// Drops the current connection and connects again at once, as after a
     /// network change.
     pub async fn reconnect(&self) {
         let _ = self.requests.send(Request::Reconnect).await;
+    }
+
+    async fn ask<T>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<T>) -> Request,
+    ) -> Result<T, SendError> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(build(reply))
+            .await
+            .map_err(|_| SendError::Stopped)?;
+        answer.await.map_err(|_| SendError::Stopped)
     }
 }
 
