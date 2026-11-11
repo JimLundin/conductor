@@ -52,7 +52,7 @@ allowed = [
   "expr.reference.mut",       # proposals 0008, 0023
   "expr.array",               # proposal 0015
   "expr.repeat",              # proposal 0015
-  "expr.closure",             # proposals 0006, 0017, 0018; only as the listed calls' argument
+  "expr.closure",             # proposals 0006, 0017, 0018, 0026; only as the listed calls' argument
   "expr.lit.bool",            # proposals 0021, 0023
 
   # Statements
@@ -80,10 +80,11 @@ allowed = [
   "type.lifetime",            # proposal 0009
   "type.slice",               # proposal 0014
   "type.array",               # proposal 0015
+  "type.impl_trait.arg",      # proposal 0026; only `ask`'s `build` parameter
 
   # Generics
   "generics.lifetime",        # proposal 0009
-  "generics.type_param",      # proposal 0013
+  "generics.type_param",      # proposals 0013, 0026
 
   # Attributes
   "attr.doc",

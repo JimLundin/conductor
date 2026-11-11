@@ -114,7 +114,11 @@ pub const SERDE_KEYS: Rule = rule(
 );
 pub const TYPE_PARAM: Rule = rule(
     "generics.type_param",
-    "a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)",
+    "a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)",
+);
+pub const IMPL_TRAIT_ARG: Rule = rule(
+    "type.impl_trait.arg",
+    "`impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026)",
 );
 pub const SLICE: Rule = rule(
     "type.slice",
@@ -150,7 +154,7 @@ pub const DYN: Rule = rule(
 );
 pub const CLOSURE: Rule = rule(
     "expr.closure",
-    "a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018)",
+    "a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026)",
 );
 pub const GLOB: Rule = rule(
     "item.use.glob",
@@ -208,6 +212,7 @@ pub const RULES: &[&Rule] = &[
     &FROM_ONCE,
     &SERDE_KEYS,
     &TYPE_PARAM,
+    &IMPL_TRAIT_ARG,
     &SLICE,
     &ARRAY_TYPE,
     &ARRAY_VALUE,

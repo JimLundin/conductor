@@ -1,6 +1,6 @@
 ---
 construct: generics.type_param, type.impl_trait.arg, expr.closure (one request helper per actor handle)
-status: proposed
+status: accepted
 task: rewrite of crates/agents (rw-agents, friction rows C4, Y1)
 ---
 
@@ -99,3 +99,4 @@ Friction points removed: 2 (C4, Y1), plus §A11's host.rs site.
 6. One way: helped. Today the crate has two shapes for the round trip (claude's methods with `send` and `ask_control`, codex's free `request`, `ask` and `send`), and each handle method repeats the `oneshot` steps. After, every round trip is one `ask` call.
 
 ## Owner decision
+Accepted on 2026-11-11, in subset version 4, as narrowly as the syntax allows. `type.impl_trait.arg` joins the subset only for the `build` parameter of a private fn named `ask`, written as `impl FnOnce(oneshot::Sender<T>) -> Msg`, where `T` is the fn's one type parameter, with no bound and no `where`. A closure outside a method call is allowed as an argument of `ask`. That every round trip goes through `ask`, and that the closure only builds the variant, stay review checks.

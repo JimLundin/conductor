@@ -622,8 +622,8 @@ fn unit_in_our_result_alias_is_still_a_result() {
             )]
         ),
         "crates/agents/src/claude/session.rs:1:5: item.type: type alias\n\
-         crates/agents/src/claude/session.rs:1:17: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n\
-         crates/agents/src/claude/session.rs:1:20: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n"
+         crates/agents/src/claude/session.rs:1:17: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/agents/src/claude/session.rs:1:20: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n"
     );
 }
 
@@ -944,8 +944,50 @@ fn type_params_only_on_codec_fns() {
             "pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {\n    serde_json::to_vec(value)\n}\n",
             "pub struct Tagged<T> {\n    value: T,\n}\n\nfn copy<T: Clone>(value: &T) -> T {\n    value.clone()\n}\n",
         ),
-        "crates/proto/src/a_fail.rs:1:19: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n\
-         crates/proto/src/a_fail.rs:5:9: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n"
+        "crates/proto/src/a_fail.rs:1:19: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/proto/src/a_fail.rs:5:9: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n"
+    );
+}
+
+const ASK: &str = "impl Handle {
+    pub async fn head(&self) -> Result<HostSeq, Stopped> {
+        self.ask(|reply| Msg::Head { reply }).await
+    }
+
+    async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> Msg) -> Result<T, Stopped> {
+        let (reply, answer) = oneshot::channel();
+        self.commands.send(build(reply)).await.map_err(|_| Stopped {})?;
+        answer.await.map_err(|_| Stopped {})
+    }
+}
+
+async fn stop(commands: &mpsc::Sender<Msg>) -> Result<Summary, Stopped> {
+    ask(commands, |reply| Msg::Stop { reply }).await
+}
+
+async fn ask<T>(
+    commands: &mpsc::Sender<Msg>,
+    build: impl FnOnce(oneshot::Sender<T>) -> Msg,
+) -> Result<T, Stopped> {
+    let (reply, answer) = oneshot::channel();
+    commands.send(build(reply)).await.map_err(|_| Stopped {})?;
+    answer.await.map_err(|_| Stopped {})
+}
+";
+
+#[test]
+fn impl_trait_arguments_only_for_the_ask_helper() {
+    assert_eq!(
+        rule_case(
+            "ask",
+            "crates/daemon/src/a.rs",
+            ASK,
+            "impl Handle {\n    pub async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> Msg) -> Result<T, Stopped> {\n        self.send(build).await\n    }\n}\n\nasync fn request<T: Clone>(build: impl FnOnce(Sender<T>) -> Msg) -> T {\n    send(build).await\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:22: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/daemon/src/a_fail.rs:2:39: type.impl_trait.arg: `impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026)\n\
+         crates/daemon/src/a_fail.rs:7:18: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/daemon/src/a_fail.rs:7:35: type.impl_trait.arg: `impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026)\n"
     );
 }
 
@@ -1086,7 +1128,7 @@ fn closures_outside_method_calls_only_for_callbacks_streams_and_hooks() {
             "fn on_open(tx: Sender) -> Callback {\n    Closure::new(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
             "fn on_open(tx: Sender) -> Callback {\n    Callback::wrap(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
         ),
-        "crates/client/src/platform/a_fail.rs:2:20: expr.closure: a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018)\n"
+        "crates/client/src/platform/a_fail.rs:2:20: expr.closure: a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026)\n"
     );
 }
 
@@ -1245,7 +1287,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 18);
+    assert_eq!(files.len(), 19);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))

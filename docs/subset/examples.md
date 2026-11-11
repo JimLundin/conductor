@@ -355,6 +355,46 @@ pub fn platform() -> Platform {
 A `cfg` sits on a whole item, and the other platform's item sits next to it
 in the same file (proposal 0016).
 
+## 19. An actor handle asks through one `ask` helper
+
+```rust
+use tokio::sync::{mpsc, oneshot};
+
+pub enum LogMsg {
+    Head { reply: oneshot::Sender<HostSeq> },
+    Len { reply: oneshot::Sender<usize> },
+}
+
+/// The actor stopped before it answered.
+#[derive(Debug)]
+pub struct LogStopped {}
+
+pub struct LogHandle {
+    commands: mpsc::Sender<LogMsg>,
+}
+
+impl LogHandle {
+    pub async fn head(&self) -> Result<HostSeq, LogStopped> {
+        self.ask(|reply| LogMsg::Head { reply }).await
+    }
+
+    pub async fn len(&self) -> Result<usize, LogStopped> {
+        self.ask(|reply| LogMsg::Len { reply }).await
+    }
+
+    async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> LogMsg) -> Result<T, LogStopped> {
+        let (reply, answer) = oneshot::channel();
+        self.commands.send(build(reply)).await.map_err(|_| LogStopped {})?;
+        answer.await.map_err(|_| LogStopped {})
+    }
+}
+```
+
+Every request and reply round trip goes through `ask`, a private helper of
+exactly this shape (proposal 0026). The closure only builds the message
+variant. `ask` is the one place outside a codec where a fn takes a type
+parameter, and the one `impl Trait` argument in the subset.
+
 ## Still outside the subset
 
 - Generic structs, enums and traits, and any bound other than the codec

@@ -42,6 +42,8 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
         fns: Vec::new(),
         loops: Vec::new(),
         sig_generics: None,
+        ask_generics: None,
+        in_return: false,
         in_let: false,
         out: Vec::new(),
     };
@@ -55,16 +57,26 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
 enum Slot {
     Other,
     CallArg(Callee),
-    MethodArg { method: String, on_self: bool },
-    FieldValue { ours: bool },
+    MethodArg {
+        method: String,
+        on_self: bool,
+    },
+    FieldValue {
+        ours: bool,
+    },
     ClosureBody(Box<Slot>),
     ConstInit,
     ConstType,
     Param,
     RefTarget(Box<Slot>),
-    GenericArg { segment: String, ours: bool },
+    GenericArg {
+        segment: String,
+        ours: bool,
+    },
     MainReturn,
     ClapField,
+    /// The `build` parameter of an `ask` helper (proposal 0026).
+    AskBuild,
 }
 
 #[derive(Clone, PartialEq)]
@@ -128,7 +140,7 @@ const LIBRARY_TRAITS: &[&str] = &[
     "ProtocolHandler",
 ];
 const CODEC_BOUNDS: &[&str] = &["Serialize", "DeserializeOwned"];
-const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook"];
+const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook", "ask"];
 const SERDE_KEYS: &[&str] = &["transparent", "tag", "content", "rename_all", "rename"];
 const CFG_PAIRS: &[(&str, &str)] = &[
     ("target_family=\"wasm\"", "not(target_family=\"wasm\")"),
@@ -150,6 +162,9 @@ struct Checker<'a> {
     /// For each enclosing loop, whether it is an actor loop.
     loops: Vec<bool>,
     sig_generics: Option<*const syn::Generics>,
+    /// The generics of an `ask` helper in the shape of proposal 0026.
+    ask_generics: Option<*const syn::Generics>,
+    in_return: bool,
     in_let: bool,
     out: Vec<Finding>,
 }
@@ -190,6 +205,13 @@ impl Checker<'_> {
         self.impls
             .last()
             .is_some_and(|i| i.kind == ImplKind::Library)
+    }
+
+    fn mark_ask(&mut self, vis: &Visibility, sig: &syn::Signature) {
+        if let Some(build) = ask_build(vis, sig) {
+            self.ask_generics = Some(std::ptr::from_ref(&sig.generics));
+            self.set_type(build, Slot::AskBuild);
+        }
     }
 
     fn enter_fn(&mut self, sig: &syn::Signature, block: &syn::Block) {
@@ -441,6 +463,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {
         self.check_fn_attrs(&i.attrs, &i.sig);
+        self.mark_ask(&i.vis, &i.sig);
         if let (true, ReturnType::Type(_, ty)) = (i.sig.ident == "main", &i.sig.output) {
             self.set_type(ty, Slot::MainReturn);
         }
@@ -451,6 +474,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_impl_item_fn(&mut self, i: &'ast syn::ImplItemFn) {
         self.check_fn_attrs(&i.attrs, &i.sig);
+        self.mark_ask(&i.vis, &i.sig);
         self.enter_fn(&i.sig, &i.block);
         visit::visit_impl_item_fn(self, i);
         self.fns.pop();
@@ -528,15 +552,25 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_signature(&mut self, sig: &'ast syn::Signature) {
         self.sig_generics = Some(std::ptr::from_ref(&sig.generics));
         for arg in &sig.inputs {
-            if let FnArg::Typed(t) = arg {
+            if let (FnArg::Typed(t), false) = (
+                arg,
+                self.ask_generics == Some(std::ptr::from_ref(&sig.generics)),
+            ) {
                 self.set_type(&t.ty, Slot::Param);
             }
         }
-        visit::visit_signature(self, sig);
+        self.visit_generics(&sig.generics);
+        for arg in &sig.inputs {
+            self.visit_fn_arg(arg);
+        }
+        let outer = std::mem::replace(&mut self.in_return, true);
+        self.visit_return_type(&sig.output);
+        self.in_return = outer;
     }
 
     fn visit_generics(&mut self, generics: &'ast syn::Generics) {
         let on_fn = self.sig_generics == Some(std::ptr::from_ref(generics));
+        let ask = self.ask_generics == Some(std::ptr::from_ref(generics));
         let library = self.in_library_impl();
         for param in &generics.params {
             match param {
@@ -547,7 +581,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                             t.bounds.iter().collect::<Vec<_>>().as_slice(),
                             [TypeParamBound::Trait(b)] if b.path.segments.last().is_some_and(|s| CODEC_BOUNDS.contains(&s.ident.to_string().as_str()))
                         );
-                    if !(library || codec) {
+                    if !(library || codec || ask) {
                         self.flag(param.span(), &rules::TYPE_PARAM);
                     }
                 }
@@ -646,6 +680,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 if !bytes {
                     self.flag(t.span(), &rules::ARRAY_TYPE);
                 }
+            }
+            Type::ImplTrait(t) if !self.in_return && slot != Slot::AskBuild => {
+                self.flag(t.impl_token.span, &rules::IMPL_TRAIT_ARG);
             }
             Type::TraitObject(t) => {
                 let fn_mut = matches!(
@@ -1030,6 +1067,57 @@ impl CfgItems {
         gather.visit_file(file);
         CfgItems(gather.0)
     }
+}
+
+/// The `build` parameter of a private fn `ask<T>` with no bound on `T`, no
+/// `where` and two parameters, the last `impl FnOnce(oneshot::Sender<T>) ->
+/// Msg` (proposal 0026).
+fn ask_build<'s>(vis: &Visibility, sig: &'s syn::Signature) -> Option<&'s Type> {
+    let [GenericParam::Type(t)] = sig.generics.params.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let plain_t = t.bounds.is_empty() && t.default.is_none() && sig.generics.where_clause.is_none();
+    let private = matches!(vis, Visibility::Inherited);
+    let (true, true, true, 2) = (sig.ident == "ask", private, plain_t, sig.inputs.len()) else {
+        return None;
+    };
+    let Some(FnArg::Typed(build)) = sig.inputs.last() else {
+        return None;
+    };
+    let Type::ImplTrait(bound) = &*build.ty else {
+        return None;
+    };
+    let [TypeParamBound::Trait(fn_once)] = bound.bounds.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let segment = fn_once.path.segments.last()?;
+    let PathArguments::Parenthesized(args) = &segment.arguments else {
+        return None;
+    };
+    let [Type::Path(sender)] = args.inputs.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let names: Vec<String> = sender
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    let reply = match &sender.path.segments.last()?.arguments {
+        PathArguments::AngleBracketed(a) => match a.args.iter().collect::<Vec<_>>()[..] {
+            [GenericArgument::Type(Type::Path(p))] => p.path.is_ident(&t.ident),
+            _ => false,
+        },
+        _ => false,
+    };
+    let builds_msg =
+        matches!(&args.output, ReturnType::Type(_, ty) if matches!(**ty, Type::Path(_)));
+    let shaped = fn_once.path.segments.len() == 1
+        && segment.ident == "FnOnce"
+        && names.ends_with(&["oneshot".to_string(), "Sender".to_string()])
+        && reply
+        && builds_msg;
+    shaped.then_some(&*build.ty)
 }
 
 fn param_types(sig: &syn::Signature) -> HashMap<String, String> {
