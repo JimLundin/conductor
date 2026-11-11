@@ -84,6 +84,21 @@ pub const OK_DISCARD: Rule = rule(
     "expr.method_call",
     "`.ok()` is not a discard; write `let _ = value;` (proposal 0025)",
 );
+const PREDICATE: &str = "a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)";
+pub const PREDICATE_MATCHES: Rule = rule("macro.matches", PREDICATE);
+pub const PREDICATE_EQ: Rule = rule("expr.binary.eq", PREDICATE);
+pub const PREDICATE_NE: Rule = rule("expr.binary.ne", PREDICATE);
+pub const PREDICATE_LT: Rule = rule("expr.binary.lt", PREDICATE);
+pub const PREDICATE_LE: Rule = rule("expr.binary.le", PREDICATE);
+pub const PREDICATE_GT: Rule = rule("expr.binary.gt", PREDICATE);
+pub const PREDICATE_GE: Rule = rule("expr.binary.ge", PREDICATE);
+pub const PREDICATE_AND: Rule = rule("expr.binary.and", PREDICATE);
+pub const PREDICATE_OR: Rule = rule("expr.binary.or", PREDICATE);
+pub const PREDICATE_NOT: Rule = rule("expr.unary.not", PREDICATE);
+pub const COUNT: Rule = rule(
+    "expr.method_call",
+    "count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)",
+);
 pub const IMPL_TRAIT: Rule = rule(
     "item.impl.trait",
     "trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)",
@@ -212,6 +227,17 @@ pub const RULES: &[&Rule] = &[
     &REF_MUT_OURS,
     &DROP_DISCARD,
     &OK_DISCARD,
+    &PREDICATE_MATCHES,
+    &PREDICATE_EQ,
+    &PREDICATE_NE,
+    &PREDICATE_LT,
+    &PREDICATE_LE,
+    &PREDICATE_GT,
+    &PREDICATE_GE,
+    &PREDICATE_AND,
+    &PREDICATE_OR,
+    &PREDICATE_NOT,
+    &COUNT,
     &IMPL_TRAIT,
     &LIFETIME_PARAM,
     &LIFETIME,

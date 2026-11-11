@@ -2,7 +2,7 @@
 //! takes. Each finding names the rule it breaks. `main` reports a finding only
 //! where the rule's id is allowed, since elsewhere the id itself is reported.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use proc_macro2::{Span, TokenTree};
 use syn::punctuated::Punctuated;
@@ -45,6 +45,8 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
         ask_generics: None,
         in_return: false,
         in_let: false,
+        predicates: HashSet::new(),
+        predicate_macros: HashSet::new(),
         out: Vec::new(),
     };
     checker.visit_file(file);
@@ -141,6 +143,16 @@ const LIBRARY_TRAITS: &[&str] = &[
 ];
 const CODEC_BOUNDS: &[&str] = &["Serialize", "DeserializeOwned"];
 const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook", "ask"];
+const PREDICATE_ADAPTERS: &[&str] = &[
+    "filter",
+    "find",
+    "any",
+    "all",
+    "position",
+    "take_while",
+    "skip_while",
+    "retain",
+];
 const SERDE_KEYS: &[&str] = &["transparent", "tag", "content", "rename_all", "rename"];
 const CFG_PAIRS: &[(&str, &str)] = &[
     ("target_family=\"wasm\"", "not(target_family=\"wasm\")"),
@@ -166,6 +178,10 @@ struct Checker<'a> {
     ask_generics: Option<*const syn::Generics>,
     in_return: bool,
     in_let: bool,
+    /// The boolean expressions and `matches!` calls that make up a
+    /// predicate closure's body (proposal 0028).
+    predicates: HashSet<*const Expr>,
+    predicate_macros: HashSet<*const syn::Macro>,
     out: Vec<Finding>,
 }
 
@@ -362,6 +378,43 @@ impl Checker<'_> {
             _ => self.fns.last().and_then(|f| f.params.get(&name).cloned()),
         };
         index.index == 0 && ty.is_some_and(|t| self.facts.ord_newtypes.contains(&t))
+    }
+
+    /// Marks the boolean tree of a predicate closure's body: `&&`, `||` and
+    /// `!` over comparisons, `matches!` and other leaves.
+    fn mark_predicate(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Paren(e) => self.mark_predicate(&e.expr),
+            Expr::Block(e) if e.label.is_none() => {
+                if let [syn::Stmt::Expr(tail, None)] = e.block.stmts.as_slice() {
+                    self.mark_predicate(tail);
+                }
+            }
+            Expr::Binary(e) => match e.op {
+                syn::BinOp::And(_) | syn::BinOp::Or(_) => {
+                    self.predicates.insert(std::ptr::from_ref(expr));
+                    self.mark_predicate(&e.left);
+                    self.mark_predicate(&e.right);
+                }
+                syn::BinOp::Eq(_)
+                | syn::BinOp::Ne(_)
+                | syn::BinOp::Lt(_)
+                | syn::BinOp::Le(_)
+                | syn::BinOp::Gt(_)
+                | syn::BinOp::Ge(_) => {
+                    self.predicates.insert(std::ptr::from_ref(expr));
+                }
+                _ => {}
+            },
+            Expr::Unary(e) if matches!(e.op, syn::UnOp::Not(_)) => {
+                self.predicates.insert(std::ptr::from_ref(expr));
+                self.mark_predicate(&e.expr);
+            }
+            Expr::Macro(e) if e.mac.path.is_ident("matches") => {
+                self.predicate_macros.insert(std::ptr::from_ref(&e.mac));
+            }
+            _ => {}
+        }
     }
 
     fn check_message(&mut self, attrs: &[Attribute], at: Span) {
@@ -741,6 +794,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 if e.method == "cmp" && self.ordered_newtype_field(&e.receiver) {
                     self.flag(e.method.span(), &rules::ORD_INNER);
                 }
+                if e.method == "count"
+                    && e.args.is_empty()
+                    && matches!(&*e.receiver, Expr::MethodCall(m) if m.method == "filter_map")
+                {
+                    self.flag(e.method.span(), &rules::COUNT);
+                }
                 let on_self = matches!(&*e.receiver, Expr::Path(p) if p.path.is_ident("self"));
                 for arg in &e.args {
                     let slot = Slot::MethodArg {
@@ -762,6 +821,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 }
             }
             Expr::Closure(e) => {
+                if let Slot::MethodArg { method, .. } = &slot
+                    && PREDICATE_ADAPTERS.contains(&method.as_str())
+                {
+                    self.mark_predicate(&e.body);
+                }
                 let known = match &slot {
                     Slot::MethodArg { .. } => true,
                     Slot::CallArg(callee) => {
@@ -814,6 +878,17 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                     self.flag(e.span(), &rules::ARRAY_VALUE);
                 }
             }
+            Expr::Binary(e) if !self.predicates.contains(&std::ptr::from_ref(expr)) => {
+                if let Some(rule) = predicate_rule(&e.op) {
+                    self.flag(e.op.span(), rule);
+                }
+            }
+            Expr::Unary(e)
+                if matches!(e.op, syn::UnOp::Not(_))
+                    && !self.predicates.contains(&std::ptr::from_ref(expr)) =>
+            {
+                self.flag(e.op.span(), &rules::PREDICATE_NOT);
+            }
             Expr::Repeat(e) => {
                 if !matches!(*e.expr, Expr::Lit(_)) {
                     self.flag(e.span(), &rules::REPEAT);
@@ -861,6 +936,14 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         visit::visit_expr(self, expr);
     }
 
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if mac.path.is_ident("matches") && !self.predicate_macros.contains(&std::ptr::from_ref(mac))
+        {
+            self.flag(mac.path.span(), &rules::PREDICATE_MATCHES);
+        }
+        visit::visit_macro(self, mac);
+    }
+
     fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
         if let syn::Stmt::Expr(Expr::MethodCall(e), Some(_)) = stmt
             && e.method == "ok"
@@ -897,6 +980,20 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             self.flag(p.span(), &rules::PAT_MUT);
         }
         visit::visit_pat_ident(self, p);
+    }
+}
+
+fn predicate_rule(op: &syn::BinOp) -> Option<&'static Rule> {
+    match op {
+        syn::BinOp::Eq(_) => Some(&rules::PREDICATE_EQ),
+        syn::BinOp::Ne(_) => Some(&rules::PREDICATE_NE),
+        syn::BinOp::Lt(_) => Some(&rules::PREDICATE_LT),
+        syn::BinOp::Le(_) => Some(&rules::PREDICATE_LE),
+        syn::BinOp::Gt(_) => Some(&rules::PREDICATE_GT),
+        syn::BinOp::Ge(_) => Some(&rules::PREDICATE_GE),
+        syn::BinOp::And(_) => Some(&rules::PREDICATE_AND),
+        syn::BinOp::Or(_) => Some(&rules::PREDICATE_OR),
+        _ => None,
     }
 }
 

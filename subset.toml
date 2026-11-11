@@ -55,6 +55,14 @@ allowed = [
   "expr.closure",             # proposals 0006, 0017, 0018, 0026; only as the listed calls' argument
   "expr.lit.bool",            # proposals 0021, 0023
   "expr.if_let.single",       # proposal 0027; `if let` with no `else`, `else if` or let-chain
+  # Proposal 0028: a boolean expression only as the body of a closure passed
+  # straight to `filter`, `find`, `any`, `all`, `position`, `take_while`,
+  # `skip_while` or `retain`.
+  "expr.binary.eq", "expr.binary.ne",
+  "expr.binary.lt", "expr.binary.le", "expr.binary.gt", "expr.binary.ge",
+  "expr.binary.and", "expr.binary.or",
+  "expr.unary.not",
+  "macro.matches",
 
   # Statements
   "stmt.let",                 # immutable, with a pattern; no `else`

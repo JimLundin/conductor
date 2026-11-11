@@ -167,8 +167,10 @@ pub fn pending(requests: &[Request]) -> Vec<RequestId> {
 }
 ```
 
-Use `filter_map` with a `match` rather than `filter` with a condition. A
-function that only reads a sequence takes `&[T]` (proposal 0014).
+To select and transform in one step, use `filter_map` with a `match`. To
+select items without transforming them, or to count them, use `filter` with
+a predicate (§22). A function that only reads a sequence takes `&[T]`
+(proposal 0014).
 
 ## 9. Totals are folds with checked arithmetic
 
@@ -429,6 +431,28 @@ with no `else`, no `else if` and no `&&` let-chain (proposal 0027). It
 replaces a `match` whose other arm is `None => {}`, which clippy's
 `single_match` rejects. As soon as another case needs something, it is a
 `match` with every arm written out (§6).
+
+## 22. Counting and searching take a predicate closure
+
+```rust
+pub fn open_count(requests: &[Request]) -> usize {
+    requests
+        .iter()
+        .filter(|request| matches!(request.state, RequestState::Open))
+        .count()
+}
+
+pub fn first_after(events: &[Event], seen: HostSeq) -> Option<&Event> {
+    events.iter().find(|event| event.seq > seen)
+}
+```
+
+A closure passed straight to `filter`, `find`, `any`, `all`, `position`,
+`take_while`, `skip_while` or `retain` may have a boolean expression as its
+body: `matches!`, a comparison, `&&`, `||` or `!` (proposal 0028). Nowhere
+else. `filter(..).count()` is the one way to count, in place of
+`filter_map(..).count()` or a `fold` that adds one. A `bool` still never
+becomes a binding, a field, a parameter or a return type of our own.
 
 ## Still outside the subset
 

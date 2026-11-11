@@ -225,7 +225,7 @@ fn if_let_only_with_a_single_branch() {
          crates/daemon/src/a_fail.rs:10:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:15:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:15:8: expr.let: `let` inside a condition chain\n\
-         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: `&&` operator\n\
+         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
          crates/daemon/src/a_fail.rs:15:33: expr.let: `let` inside a condition chain\n"
     );
 }
@@ -925,6 +925,27 @@ fn discard_with_let_underscore() {
 }
 
 #[test]
+fn boolean_expressions_only_in_predicate_closures() {
+    assert_eq!(
+        rule_case(
+            "predicate",
+            "crates/daemon/src/a.rs",
+            "fn finished(events: &[Event]) -> usize {\n    events.iter().filter(|e| matches!(e.kind, Kind::TurnFinished)).count()\n}\n\nfn seen(events: &[Event], seq: HostSeq) -> Option<&Event> {\n    events.iter().find(|e| e.seq == seq)\n}\n\nfn first_live(events: &[Event], seq: HostSeq) -> Option<usize> {\n    events.iter().position(|e| e.seq >= seq && !matches!(e.kind, Kind::Replayed))\n}\n",
+            "fn same(a: HostSeq, b: HostSeq) -> Same {\n    let same = a == b;\n    Same::from(same)\n}\n\nfn done(next: Option<Event>) {\n    if let Some(event) = next && matches!(event.kind, Kind::TurnFinished) {\n        finish(event);\n    }\n}\n\nfn label(next: Option<Event>) -> Label {\n    match next {\n        Some(e) if matches!(e.kind, Kind::TurnFinished) => Label::Done,\n        _ => Label::Busy,\n    }\n}\n\nfn all(events: &[Event]) -> usize {\n    events.iter().filter(|_| true).count()\n}\n\nfn counted(events: &[Event]) -> usize {\n    events.iter().filter_map(|e| match e.kind {\n        Kind::TurnFinished => Some(()),\n        _ => None,\n    }).count()\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:18: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:7:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:7:8: expr.let: `let` inside a condition chain\n\
+         crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:14:17: expr.match.guard: `if` guard on a match arm\n\
+         crates/daemon/src/a_fail.rs:14:20: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:20:30: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n\
+         crates/daemon/src/a_fail.rs:27:8: expr.method_call: count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)\n"
+    );
+}
+
+#[test]
 fn trait_impls_only_for_library_traits() {
     assert_eq!(
         rule_case(
@@ -1373,7 +1394,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 21);
+    assert_eq!(files.len(), 22);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))
