@@ -246,6 +246,7 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
         .command(&opts.claude_path)
         .working_directory(&opts.cwd)
         .permission_prompt_tool("stdio")
+        .include_partial_messages(true)
         .permission_mode(opts.permission_mode.to_cli())
         .resume(opts.resume.as_ref().map(|id| id.0.clone()));
     let builder = match &opts.model {
@@ -563,6 +564,7 @@ mod tests {
                 "haiku",
                 "--setting-sources",
                 "project,local",
+                "--include-partial-messages",
                 "--permission-prompt-tool",
                 "stdio",
             ]

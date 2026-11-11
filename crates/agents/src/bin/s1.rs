@@ -91,6 +91,8 @@ struct Turn {
     permissions: Vec<String>,
     cancelled_permissions: usize,
     text: String,
+    /// The text of every `StreamDelta`, joined.
+    streamed: String,
     finished: Option<Finished>,
     session_id: Option<SessionId>,
     /// What `interrupt()` returned, once the plan called it.
@@ -108,6 +110,7 @@ impl Turn {
             permissions: Vec::new(),
             cancelled_permissions: 0,
             text: String::new(),
+            streamed: String::new(),
             finished: None,
             session_id: None,
             interrupted: None,
@@ -148,6 +151,10 @@ impl Turn {
                 content,
             } => {
                 self.on_reply(content);
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::StreamDelta { text } => {
+                self.streamed.push_str(&text);
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
@@ -280,16 +287,20 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
                 .then_some(&t.permissions),
             presence(&a),
             t.result(),
+            t.streamed.eq(&t.text).then_some(&t.streamed),
         ) {
-            (Some(_), Presence::Present, Some(("success", Outcome::Succeeded))) => Verdict::Pass,
+            (Some(_), Presence::Present, Some(("success", Outcome::Succeeded)), Some(_)) => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
-            "permissions={:?} a.txt {:?} contents={:?} finished={:?}",
+            "permissions={:?} a.txt {:?} contents={:?} finished={:?} streamed={:?}",
             t.permissions,
             presence(&a),
             std::fs::read_to_string(&a).ok(),
-            t.finished
+            t.finished,
+            t.streamed
         ),
     )?;
     let session_id = t.session_id.clone().context("no session id in turn 1")?;

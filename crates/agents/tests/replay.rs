@@ -92,6 +92,7 @@ fn summary(event: &ClaudeEvent) -> String {
         ClaudeEvent::PermissionRequested {
             tool_name, detail, ..
         } => format!("permission {tool_name} {detail:?}"),
+        ClaudeEvent::StreamDelta { text } => format!("delta {text:?}"),
         ClaudeEvent::PermissionCancelled { .. } => String::from("permission_cancelled"),
         ClaudeEvent::TurnFinished {
             subtype,

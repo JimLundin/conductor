@@ -141,6 +141,11 @@ pub enum ClaudeEvent {
         role: Role,
         content: Vec<Block>,
     },
+    /// A piece of assistant text as it streams (`--include-partial-messages`).
+    /// The whole text follows in a `Message`.
+    StreamDelta {
+        text: String,
+    },
     PermissionRequested {
         id: PermissionRequestId,
         tool_name: String,
@@ -210,6 +215,15 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
         },
         ClaudeOutput::Assistant(msg) => message(Role::Assistant, msg.message.content, raw),
         ClaudeOutput::User(msg) => message(Role::User, msg.message.content, raw),
+        ClaudeOutput::StreamEvent(msg) => match (
+            msg.event.pointer("/delta/type").and_then(Value::as_str),
+            msg.event.pointer("/delta/text").and_then(Value::as_str),
+        ) {
+            (Some("text_delta"), Some(text)) => Inbound::Event(ClaudeEvent::StreamDelta {
+                text: text.to_owned(),
+            }),
+            _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
+        },
         ClaudeOutput::Result(msg) => Inbound::Event(ClaudeEvent::TurnFinished {
             subtype: msg.subtype.as_str().to_owned(),
             outcome: match msg.is_error.then_some(Outcome::Failed) {
