@@ -6,7 +6,6 @@
 // rsx! expands each "{text}" node to format!, which clippy flags.
 #![allow(clippy::useless_format)]
 
-mod fixture;
 mod session;
 mod sessions;
 mod ticket;
@@ -40,7 +39,6 @@ pub(crate) enum Screen {
 pub(crate) enum Link {
     Waiting,
     Live(Rc<HostLink>),
-    Fixture,
 }
 
 #[component]
@@ -62,7 +60,6 @@ fn App() -> Element {
                     },
                 }
             },
-            Opening::Fixture => rsx! { fixture::Fixture {} },
             Opening::Unpaired => rsx! {
                 Pair {
                     error: first_error,
@@ -112,23 +109,13 @@ fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
     }
 }
 
+/// The screens over one host's view.
 #[component]
 fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     let status = use_signal(|| None::<Status>);
     let view = use_signal(HostView::empty);
     let link = use_signal(|| Link::Waiting);
     use_future(move || run_link(ticket.clone(), status, view, link));
-    rsx! { Shell { status, view, link, on_change_host } }
-}
-
-/// The screens over one host's view, whichever link feeds it.
-#[component]
-pub(crate) fn Shell(
-    status: Signal<Option<Status>>,
-    view: Signal<HostView>,
-    link: Signal<Link>,
-    on_change_host: EventHandler<()>,
-) -> Element {
     let mut screen = use_signal(|| Screen::Sessions);
     let notice = use_signal(|| None::<String>);
     let session = match screen() {
@@ -244,7 +231,6 @@ async fn follow(
 pub(crate) async fn send(link: Link, body: CommandBody) -> Result<CommandResult, String> {
     match link {
         Link::Live(link) => link.send(body).await.map_err(|err| err.to_string()),
-        Link::Fixture => Ok(fixture::answer(&body)),
         Link::Waiting => Err(String::from("Not connected to the host yet.")),
     }
 }
