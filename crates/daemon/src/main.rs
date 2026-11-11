@@ -11,7 +11,7 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
-use proto::{AuthToken, Epoch, Ticket};
+use proto::Ticket;
 
 #[derive(Parser)]
 #[command(name = "conductord", about = "The Conductor host daemon")]
@@ -121,10 +121,10 @@ async fn s3_host(
         .cloned()
         .context("online, but no home relay")?;
 
-    let token = AuthToken::from_bytes(daemon::random());
+    let token = daemon::random_token();
     let host = Host::spawn(HostOptions {
         name,
-        epoch: Epoch(u64::from_le_bytes(daemon::random())),
+        epoch: daemon::random_epoch(),
         delta_interval,
     });
     let router = Router::builder(endpoint.clone())

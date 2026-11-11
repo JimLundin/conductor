@@ -163,6 +163,12 @@ async fn lookup(server: String) -> Option<Server> {
     addr.map(|addr| Server { name: server, addr })
 }
 
+fn transaction_id() -> [u8; 12] {
+    let mut id = [0u8; 12];
+    getrandom::fill(&mut id).expect("the OS has a random source");
+    id
+}
+
 impl Probe {
     fn new(server: &Server, socket: &Socket) -> Probe {
         Probe {
@@ -170,7 +176,7 @@ impl Probe {
             addr: server.addr,
             socket: socket.udp.clone(),
             local: socket.addr,
-            trans: crate::random(),
+            trans: transaction_id(),
             progress: Progress::Sent(0),
         }
     }
