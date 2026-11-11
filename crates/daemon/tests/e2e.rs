@@ -1,6 +1,7 @@
 //! Host and client in one process over real iroh connections on loopback, with
 //! relays off so the test needs no network.
 
+use std::str::FromStr;
 use std::time::Duration;
 
 use client::{Cursor, HostLink, LinkOptions, LinkState, PathKind, Target, Update};
@@ -8,7 +9,7 @@ use daemon::host::{Host, HostOptions};
 use daemon::server::Conductor;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
-use iroh::{Endpoint, RelayMode};
+use iroh::{Endpoint, RelayMode, RelayUrl};
 use proto::{
     AuthToken, CommandBody, CommandResult, Decision, Epoch, Event, EventKind, HostSeq, RequestId,
 };
@@ -306,5 +307,55 @@ async fn a_wrong_token_is_refused_and_never_goes_live() {
         }
     };
     assert_eq!(error, "the host refused us: wrong token");
+    fx.router.shutdown().await.unwrap();
+}
+
+/// What a reload is allowed: the 1.5 s hedge delay plus a loopback connect.
+const HEDGED_LIVE: Duration = Duration::from_secs(3);
+
+/// An endpoint whose only way out is a relay that takes the TCP connection
+/// and never answers, like a relay WebSocket that stalls in the browser.
+async fn stalled_endpoint(relay: RelayUrl) -> Endpoint {
+    Endpoint::builder(presets::Minimal)
+        .relay_mode(RelayMode::custom([relay]))
+        .clear_ip_transports()
+        .bind()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_stalled_dial_goes_live_through_a_fresh_endpoint() {
+    let fx = host().await;
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay = RelayUrl::from_str(&format!("http://{}", silent.local_addr().unwrap())).unwrap();
+    let target = Target {
+        addr: fx.target.addr.clone().with_relay_url(relay.clone()),
+        ..fx.target.clone()
+    };
+    let (_link, mut updates) = HostLink::spawn(
+        stalled_endpoint(relay).await,
+        target,
+        LinkOptions::new(String::from("test-client")),
+    );
+
+    let states = tokio::time::timeout(HEDGED_LIVE, until_live(&mut updates))
+        .await
+        .expect("live within the hedge delay plus a connect")
+        .into_iter()
+        .filter_map(|u| match u {
+            Update::Status(s) => Some(s.state),
+            _ => None,
+        })
+        .collect::<Vec<LinkState>>();
+    assert_eq!(
+        states,
+        [
+            LinkState::Connecting,
+            LinkState::Authenticating,
+            LinkState::CatchingUp,
+            LinkState::Live
+        ]
+    );
     fx.router.shutdown().await.unwrap();
 }

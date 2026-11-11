@@ -17,7 +17,7 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use iroh::endpoint::{Connection, PathEvent, PathList};
+use iroh::endpoint::{ConnectError, Connection, PathEvent, PathList};
 use iroh::{Endpoint, EndpointAddr, TransportAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::sleep;
@@ -28,13 +28,18 @@ use proto::{
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::platform::Session;
+use crate::platform::{self, Session};
 use crate::upgrade::Upgrade;
 use crate::wire::{RecvHalf, SendHalf, Transport, WireError};
 
 const UPDATE_BUFFER: usize = 1024;
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
 const BACKOFF_CEILING: Duration = Duration::from_secs(10);
+/// How long a dial may run before a second one starts on a fresh endpoint.
+/// A relay connection can stall at the network level for seconds while a
+/// fresh one is up in well under a second (docs/forensics/reconnect on the
+/// `reconnect-forensics` branch).
+const HEDGE_AFTER: Duration = Duration::from_millis(1500);
 
 /// Where a host is and the secret it expects in `Hello`.
 #[derive(Debug, Clone)]
@@ -165,6 +170,9 @@ enum Request {
 }
 
 impl HostLink {
+    /// The link owns `endpoint`. A dial that stalls is retried on a fresh
+    /// endpoint, and the link then runs on whichever connected and closes
+    /// the other, so `endpoint` may be closed while the link lives on.
     pub fn spawn(
         endpoint: Endpoint,
         target: Target,
@@ -459,10 +467,9 @@ impl Link {
 
     async fn connect(&mut self) -> Result<Connected, Lost> {
         self.outbox.set_state(LinkState::Connecting).await?;
-        let conn = self
-            .endpoint
-            .connect(self.target.addr.clone(), proto::ALPN)
-            .await?;
+        let dialed = dial_hedged(self.endpoint.clone(), self.target.addr.clone()).await;
+        self.endpoint = dialed.endpoint;
+        let conn = dialed.conn?;
         match self.start(&conn).await {
             Ok(connected) => Ok(connected),
             Err(lost) => {
@@ -742,6 +749,97 @@ impl Outbox {
     async fn emit(&self, update: Update) -> Result<(), Stopped> {
         self.updates.send(update).await.map_err(|_| Stopped {})
     }
+}
+
+/// A dial in flight and the endpoint it runs on.
+struct Attempt {
+    endpoint: Endpoint,
+    connecting: BoxFuture<Result<Connection, ConnectError>>,
+}
+
+impl Attempt {
+    fn start(endpoint: Endpoint, addr: EndpointAddr) -> Attempt {
+        Attempt {
+            connecting: Box::pin(dial(endpoint.clone(), addr)),
+            endpoint,
+        }
+    }
+}
+
+/// How a dial ended, and the endpoint the link runs on from now on.
+struct Dialed {
+    endpoint: Endpoint,
+    conn: Result<Connection, ConnectError>,
+}
+
+async fn dial(endpoint: Endpoint, addr: EndpointAddr) -> Result<Connection, ConnectError> {
+    endpoint.connect(addr, proto::ALPN).await
+}
+
+/// Dials from `endpoint`, and from a fresh endpoint too if the first dial
+/// hasn't returned after [`HEDGE_AFTER`].
+async fn dial_hedged(endpoint: Endpoint, addr: EndpointAddr) -> Dialed {
+    let mut first = Attempt::start(endpoint, addr.clone());
+    tokio::select! {
+        conn = &mut first.connecting => Dialed { endpoint: first.endpoint, conn },
+        () = sleep(HEDGE_AFTER) => hedge(first, addr).await,
+    }
+}
+
+async fn hedge(first: Attempt, addr: EndpointAddr) -> Dialed {
+    tracing::info!("dial stalled; dialing again on a fresh endpoint");
+    match platform::bind_endpoint().await {
+        Ok(fresh) => race(first, Attempt::start(fresh, addr)).await,
+        Err(err) => {
+            tracing::warn!(%err, "no fresh endpoint to hedge with");
+            finish(first).await
+        }
+    }
+}
+
+/// Keeps whichever attempt connects first.
+async fn race(mut first: Attempt, mut second: Attempt) -> Dialed {
+    tokio::select! {
+        conn = &mut first.connecting => {
+            settle(Dialed { endpoint: first.endpoint, conn }, second).await
+        }
+        conn = &mut second.connecting => {
+            settle(Dialed { endpoint: second.endpoint, conn }, first).await
+        }
+    }
+}
+
+/// One attempt returned. If it connected, the other is dropped and its
+/// endpoint closed; if it failed, its endpoint is closed and the other
+/// decides.
+async fn settle(done: Dialed, other: Attempt) -> Dialed {
+    match done.conn {
+        Ok(conn) => {
+            tracing::info!(endpoint = %done.endpoint.id().fmt_short(), "hedged dial connected");
+            retire(other.endpoint);
+            Dialed {
+                endpoint: done.endpoint,
+                conn: Ok(conn),
+            }
+        }
+        Err(err) => {
+            tracing::debug!(%err, "one hedged dial failed");
+            retire(done.endpoint);
+            finish(other).await
+        }
+    }
+}
+
+async fn finish(attempt: Attempt) -> Dialed {
+    Dialed {
+        conn: attempt.connecting.await,
+        endpoint: attempt.endpoint,
+    }
+}
+
+/// Closes an endpoint the link no longer uses, without waiting for it.
+fn retire(endpoint: Endpoint) {
+    task::spawn(async move { endpoint.close().await });
 }
 
 /// Opens a subscription on `carrier` after `after_seq`.
