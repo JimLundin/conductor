@@ -268,9 +268,17 @@ async fn spawn(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> Result
     Ok(Live { session, events })
 }
 
-/// Interrupts a counting turn at `cue`, then checks that the turn ended
-/// `aborted_streaming` and that the next turn works.
-async fn interrupted(live: Live, step: &str, cue: Cue) -> Result<(Live, Verdict)> {
+/// What an interrupt at a cue does to the turn.
+enum Expect {
+    Interrupted,
+    /// The CLI acknowledges an interrupt sent before it reads the message,
+    /// and then either aborts the turn or runs it to the end.
+    Either,
+}
+
+/// Interrupts a counting turn at `cue`, then checks what the interrupt did
+/// and that the next turn works.
+async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result<(Live, Verdict)> {
     let t = Turn::start(
         live,
         "Count from 1 to 200, one number per line.",
@@ -290,6 +298,7 @@ async fn interrupted(live: Live, step: &str, cue: Cue) -> Result<(Live, Verdict)
     let verdict = report(
         step,
         match (
+            expect,
             interrupted,
             t.finished
                 .as_ref()
@@ -298,8 +307,16 @@ async fn interrupted(live: Live, step: &str, cue: Cue) -> Result<(Live, Verdict)
             after.text.to_lowercase().find("pong"),
         ) {
             (
+                Expect::Interrupted | Expect::Either,
                 Ok(()),
                 Some((Outcome::Failed, Some("aborted_streaming"))),
+                Some(("success", Outcome::Succeeded)),
+                Some(_),
+            )
+            | (
+                Expect::Either,
+                Ok(()),
+                Some((Outcome::Succeeded, Some("completed"))),
                 Some(("success", Outcome::Succeeded)),
                 Some(_),
             ) => Verdict::Pass,
@@ -379,9 +396,22 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     )?;
 
-    let (live, interrupt) = interrupted(t.live, "3 interrupt at start", Cue::Start).await?;
-    let (live, mid_stream) = interrupted(live, "3c interrupt mid-stream", Cue::Delta).await?;
-    let (live, at_send) = interrupted(live, "3d interrupt at send", Cue::Send).await?;
+    let (live, interrupt) = interrupted(
+        t.live,
+        "3 interrupt at start",
+        Cue::Start,
+        Expect::Interrupted,
+    )
+    .await?;
+    let (live, mid_stream) = interrupted(
+        live,
+        "3c interrupt mid-stream",
+        Cue::Delta,
+        Expect::Interrupted,
+    )
+    .await?;
+    let (live, at_send) =
+        interrupted(live, "3d interrupt at send", Cue::Send, Expect::Either).await?;
 
     let t = Turn::start(
         live,
