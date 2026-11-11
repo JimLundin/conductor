@@ -437,14 +437,14 @@ fn scored<'c>(
     let (analysed, facts) = analyse(config, sources)?;
     let mut out = Vec::new();
     for a in analysed {
-        let starts = measure::token_starts(&a.src)
+        let tokens = measure::tokens(&a.src)
             .map_err(|e| Fatal(format!("{}: cannot lex: {e}", display(&a.path))))?;
         let context = context::gather(&a.parsed, &facts, &typing, external.cover(&a.path));
         let judged = judge(&a, &context, weights);
         out.push(score::ScoredFile {
             path: display(&a.path),
             krate: crate_of(&a.path, has_manifest),
-            tally: score::tally(a.src.len(), &starts, &judged, &context),
+            tally: score::tally(a.src.len(), &tokens, &judged, &context),
             violations: a.violations.len(),
         });
     }

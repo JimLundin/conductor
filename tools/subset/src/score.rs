@@ -1,10 +1,11 @@
 //! The weighted score: every token `measure` counts costs the weight of the
 //! innermost construct that contains it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{AddAssign, Range};
 
 use crate::context::{Context, Place, TypeClass};
+use crate::measure::Token;
 use crate::weights::{Tier, TierWeights};
 
 /// One construct occurrence, with the id and tier the score charges it.
@@ -48,12 +49,16 @@ impl AddAssign for TierTokens {
 pub struct Count {
     pub count: usize,
     pub tokens: usize,
+    /// Lines on which the construct owns a token.
+    pub lines: usize,
 }
 
 pub struct FnTally {
     pub name: String,
     pub line: usize,
     pub tiers: TierTokens,
+    /// Lines holding a token of the fn, as `measure` counts them.
+    pub lines: usize,
     /// Tokens of primitive types in the fn's signature.
     pub signature_primitives: usize,
 }
@@ -61,6 +66,8 @@ pub struct FnTally {
 #[derive(Default)]
 pub struct FileTally {
     pub tiers: TierTokens,
+    /// Lines holding a token, as `measure` counts them.
+    pub lines: usize,
     /// Occurrences and tokens per id and the tier it was charged at.
     pub constructs: BTreeMap<(String, Tier), Count>,
     pub fns: Vec<FnTally>,
@@ -72,10 +79,10 @@ pub struct FileTally {
 /// The id of tokens that no construct contains.
 pub const NO_CONSTRUCT: &str = "(no construct)";
 
-/// Attributes each token at `starts` to the innermost construct containing
-/// it. A construct inside a folded node owns no tokens, unless it is a
-/// violation: the folded node's own construct takes them.
-pub fn tally(src_len: usize, starts: &[usize], judged: &[Judged], context: &Context) -> FileTally {
+/// Attributes each token to the innermost construct containing it. A
+/// construct inside a folded node owns no tokens, unless it is a violation:
+/// the folded node's own construct takes them.
+pub fn tally(src_len: usize, tokens: &[Token], judged: &[Judged], context: &Context) -> FileTally {
     let folded = |j: &Judged| {
         j.tier != Tier::Outside
             && context
@@ -99,25 +106,33 @@ pub fn tally(src_len: usize, starts: &[usize], judged: &[Judged], context: &Cont
     let mut out = FileTally::default();
     let mut fn_tiers = vec![TierTokens::default(); context.fns.len()];
     let mut fn_primitives = vec![0; context.fns.len()];
+    let mut file_lines: BTreeSet<usize> = BTreeSet::new();
+    let mut fn_lines: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); context.fns.len()];
+    let mut construct_lines: BTreeMap<(String, Tier), BTreeSet<usize>> = BTreeMap::new();
     for j in judged {
         out.constructs
             .entry((j.id.clone(), j.tier))
             .or_default()
             .count += 1;
     }
-    for &start in starts {
+    for token in tokens {
+        let start = token.start;
         let (id, tier) = match owners.get(start).copied().flatten() {
             Some(i) => (judged[i].id.as_str(), judged[i].tier),
             None => (NO_CONSTRUCT, Tier::Neutral),
         };
-        out.constructs
-            .entry((id.to_string(), tier))
+        let key = (id.to_string(), tier);
+        construct_lines
+            .entry(key.clone())
             .or_default()
-            .tokens += 1;
+            .extend(&token.lines);
+        out.constructs.entry(key).or_default().tokens += 1;
         out.tiers.0[tier.index()] += 1;
+        file_lines.extend(&token.lines);
         let in_fn = fn_owners.get(start).copied().flatten();
         if let Some(f) = in_fn {
             fn_tiers[f].0[tier.index()] += 1;
+            fn_lines[f].extend(&token.lines);
         }
         if let Some(t) = typed_owners.get(start).copied().flatten() {
             let typed = &context.typed[t];
@@ -129,15 +144,21 @@ pub fn tally(src_len: usize, starts: &[usize], judged: &[Judged], context: &Cont
             }
         }
     }
+    for (key, lines) in construct_lines {
+        out.constructs.entry(key).or_default().lines = lines.len();
+    }
+    out.lines = file_lines.len();
     out.fns = context
         .fns
         .iter()
         .zip(fn_tiers)
         .zip(fn_primitives)
-        .map(|((f, tiers), signature_primitives)| FnTally {
+        .zip(fn_lines)
+        .map(|(((f, tiers), signature_primitives), lines)| FnTally {
             name: f.name.clone(),
             line: f.line,
             tiers,
+            lines: lines.len(),
             signature_primitives,
         })
         .collect();
@@ -204,6 +225,10 @@ pub struct Row {
     /// The tier a construct row was charged at.
     pub tier: Option<Tier>,
     pub tiers: TierTokens,
+    /// Lines holding the row's tokens, as `measure` counts them. A
+    /// construct row counts the lines where the construct owns a token, so
+    /// construct rows overlap.
+    pub lines: usize,
 }
 
 impl Row {
@@ -215,6 +240,15 @@ impl Row {
         match self.tiers.tokens() {
             0 => 0.0,
             n => self.score(w) / n as f64,
+        }
+    }
+
+    /// The score in lines: the score over the row's tokens per line. Only
+    /// an approximation, since tokens per line vary.
+    pub fn approx_lines(&self, w: &TierWeights) -> f64 {
+        match self.tiers.tokens() {
+            0 => 0.0,
+            n => self.score(w) * self.lines as f64 / n as f64,
         }
     }
 
@@ -241,6 +275,7 @@ pub fn total(files: &[ScoredFile]) -> Row {
         count: None,
         tier: None,
         tiers,
+        lines: files.iter().map(|f| f.tally.lines).sum(),
     }
 }
 
@@ -249,26 +284,31 @@ pub fn total(files: &[ScoredFile]) -> Row {
 pub fn rows(files: &[ScoredFile], level: Level, w: &TierWeights) -> Vec<Row> {
     let mut rows: Vec<Row> = match level {
         Level::Crate => {
-            let mut crates: BTreeMap<&str, TierTokens> = BTreeMap::new();
+            let mut crates: BTreeMap<&str, (TierTokens, usize)> = BTreeMap::new();
             for f in files {
-                *crates.entry(&f.krate).or_default() += f.tally.tiers;
+                let entry = crates.entry(&f.krate).or_default();
+                entry.0 += f.tally.tiers;
+                entry.1 += f.tally.lines;
             }
             crates
                 .into_iter()
-                .map(|(name, tiers)| plain(name.to_string(), tiers))
+                .map(|(name, (tiers, lines))| plain(name.to_string(), tiers, lines))
                 .collect()
         }
         Level::File => files
             .iter()
-            .map(|f| plain(f.path.clone(), f.tally.tiers))
+            .map(|f| plain(f.path.clone(), f.tally.tiers, f.tally.lines))
             .collect(),
         Level::Fn => files
             .iter()
             .flat_map(|f| {
-                f.tally
-                    .fns
-                    .iter()
-                    .map(|n| plain(format!("{}:{} {}", f.path, n.line, n.name), n.tiers))
+                f.tally.fns.iter().map(|n| {
+                    plain(
+                        format!("{}:{} {}", f.path, n.line, n.name),
+                        n.tiers,
+                        n.lines,
+                    )
+                })
             })
             .collect(),
         Level::Construct => {
@@ -278,6 +318,7 @@ pub fn rows(files: &[ScoredFile], level: Level, w: &TierWeights) -> Vec<Row> {
                     let entry = all.entry(key.clone()).or_default();
                     entry.count += c.count;
                     entry.tokens += c.tokens;
+                    entry.lines += c.lines;
                 }
             }
             all.into_iter()
@@ -289,6 +330,7 @@ pub fn rows(files: &[ScoredFile], level: Level, w: &TierWeights) -> Vec<Row> {
                         count: Some(c.count),
                         tier: Some(tier),
                         tiers,
+                        lines: c.lines,
                     }
                 })
                 .collect()
@@ -300,21 +342,23 @@ pub fn rows(files: &[ScoredFile], level: Level, w: &TierWeights) -> Vec<Row> {
     rows
 }
 
-fn plain(name: String, tiers: TierTokens) -> Row {
+fn plain(name: String, tiers: TierTokens, lines: usize) -> Row {
     Row {
         name,
         count: None,
         tier: None,
         tiers,
+        lines,
     }
 }
 
 pub fn text(rows: &[Row], total: &Row, level: Level, w: &TierWeights) -> String {
     let construct = level == Level::Construct;
     let mut out = format!(
-        "{:>10} {:>8} {:>9} {:>9} {:>6}{} {}\n",
+        "{:>10} {:>8} {:>7} {:>9} {:>9} {:>6}{} {}\n",
         "score",
         "tokens",
+        "lines",
         "per token",
         "boundary",
         "share",
@@ -331,9 +375,10 @@ pub fn text(rows: &[Row], total: &Row, level: Level, w: &TierWeights) -> String 
             _ => String::new(),
         };
         out.push_str(&format!(
-            "{:>10.1} {:>8} {:>9.3} {:>9.1} {:>5.1}%{extra} {}\n",
+            "{:>10.1} {:>8} {:>7} {:>9.3} {:>9.1} {:>5.1}%{extra} {}\n",
             row.score(w),
             row.tiers.tokens(),
+            row.lines,
             row.per_token(w),
             row.boundary(w),
             row.boundary_share(w),
@@ -349,6 +394,7 @@ pub fn json(rows: &[Row], total: &Row, level: Level, w: &TierWeights) -> serde_j
             "name": row.name,
             "score": row.score(w),
             "tokens": row.tiers.tokens(),
+            "lines": row.lines,
             "per_token": row.per_token(w),
             "boundary": row.boundary(w),
             "boundary_share": row.boundary_share(w),

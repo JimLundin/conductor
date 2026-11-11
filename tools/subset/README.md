@@ -36,11 +36,14 @@ subset rules
 - `score` prints the weighted score of `paths`, or of the files under
   `include` when none are given, at one level: per crate (the default), per
   file, per fn or per construct. Each row gives the score, the tokens, the
-  score per token, the boundary score and the boundary's share of the
-  score. Fns and constructs are sorted by score, highest first. `--json`
-  prints `{"by", "rows": [{"name", "score", "tokens", "per_token",
-  "boundary", "boundary_share"}], "total"}`, with `count` and `tier` on
-  construct rows. See "The weighted score" below.
+  lines, the score per token, the boundary score and the boundary's share
+  of the score. Lines are counted as `measure` counts them. A construct
+  row's lines are those on which the construct owns a token, so construct
+  rows overlap and don't add up to the total. Fns and constructs are
+  sorted by score, highest first. `--json` prints `{"by", "rows":
+  [{"name", "score", "tokens", "lines", "per_token", "boundary",
+  "boundary_share"}], "total"}`, with `count` and `tier` on construct
+  rows. See "The weighted score" below.
 - `report-html` writes `<dir>/index.html`, a static page that breaks the
   score down with charts. See "The HTML report" below.
 - `score-ids` prints the table of score-only ids under "The weighted
@@ -425,10 +428,11 @@ a group of every `*.rs` file under that directory, scored under the same
 config and labelled as a comparison, for code outside the subset such as
 the checker itself or vendored crates. For each group the page shows:
 
-1. **Tiles**: the score, tokens, score per token, violations and boundary
-   share.
+1. **Tiles**: the score, the score in lines, tokens and lines, score per
+   token, violations and boundary share.
 2. **Score per crate, by tier**: a stacked bar per crate, with the
-   boundary score as its own segment.
+   boundary score as its own segment, and the score in lines beside it on
+   wide screens.
 3. **Files**: a treemap with each file's area set by its score and its
    colour by its score per token, so concentrations of compromise stand
    out. The tooltip gives the file's boundary share and violations.
@@ -440,6 +444,11 @@ the checker itself or vendored crates. For each group the page shows:
    score, sorted by contribution.
 6. **Functions**: the top 20 by score, and by score per token among fns
    of at least 30 tokens, with `file:line`.
+
+The **score in lines** is approximate: the score divided by the tokens per
+line of the scope shown, `score ÷ (tokens ÷ lines)`, for a sense of scale.
+Wherever the page gives tokens, in tiles, tooltips and tables, it gives
+lines beside them, except the typing shares, which count type tokens.
 
 `--history <n>` adds a line chart of the score per crate at each of the
 last `n` commits that changed files under `include`, read with `git` and

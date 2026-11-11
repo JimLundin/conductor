@@ -1517,17 +1517,36 @@ fn score_charges_each_token_the_weight_of_its_innermost_construct() {
     );
     assert_eq!(
         score_output(&config, "fn"),
-        "     score   tokens per token  boundary  share fn\n\
-         \x20     30.5       22     1.386       0.0   0.0% lights/src/lib.rs:6 first\n\
-         \x20     26.0       34     0.765       0.0   0.0% lights/src/lib.rs:3 flip\n\
-         \x20     59.5       62     0.960       0.0   0.0% total\n"
+        "     score   tokens   lines per token  boundary  share fn\n\
+         \x20     30.5       22       3     1.386       0.0   0.0% lights/src/lib.rs:6 first\n\
+         \x20     26.0       34       3     0.765       0.0   0.0% lights/src/lib.rs:3 flip\n\
+         \x20     59.5       62       7     0.960       0.0   0.0% total\n"
     );
     assert_eq!(
         score_output(&config, "crate"),
-        "     score   tokens per token  boundary  share crate\n\
-         \x20     59.5       62     0.960       0.0   0.0% lights\n\
-         \x20     59.5       62     0.960       0.0   0.0% total\n"
+        "     score   tokens   lines per token  boundary  share crate\n\
+         \x20     59.5       62       7     0.960       0.0   0.0% lights\n\
+         \x20     59.5       62       7     0.960       0.0   0.0% total\n"
     );
+    let (code, stdout, _) = subset(&[
+        "score",
+        "--config",
+        config.to_str().unwrap(),
+        "--by",
+        "fn",
+        "--json",
+    ]);
+    assert_eq!(code, 0);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        (
+            &json["rows"][1]["name"],
+            &json["rows"][1]["tokens"],
+            &json["rows"][1]["lines"]
+        ),
+        (&"lights/src/lib.rs:3 flip".into(), &34.into(), &3.into())
+    );
+    assert_eq!(json["total"]["lines"], 7);
 }
 
 #[test]
@@ -1577,26 +1596,26 @@ fn the_same_construct_costs_the_boundary_weight_where_a_library_fixes_its_shape(
     // (3), the serde derive (5) and the `false` passed to `watch::channel`.
     assert_eq!(
         score_output(&config, "construct"),
-        "     score   tokens per token  boundary  share  count tier       construct\n\
-         \x20     23.0       23     1.000       0.0   0.0%      4 neutral    item.fn\n\
-         \x20     15.0        3     5.000       0.0   0.0%      1 outside    expr.loop\n\
-         \x20     11.0       11     1.000       0.0   0.0%      5 neutral    expr.path\n\
-         \x20      9.0        3     3.000       0.0   0.0%      1 costly     stmt.let.mut\n\
-         \x20      6.0        6     1.000       0.0   0.0%      2 neutral    expr.method_call\n\
-         \x20      5.0        5     1.000       5.0 100.0%      1 boundary   attr.derive.Serialize\n\
-         \x20      5.0        5     1.000       0.0   0.0%      5 neutral    type.path\n\
-         \x20      4.0        4     1.000       0.0   0.0%      1 neutral    expr.struct\n\
-         \x20      4.0        4     1.000       4.0 100.0%      1 boundary   item.impl.trait\n\
-         \x20      3.0        1     3.000       0.0   0.0%      1 costly     expr.assign\n\
-         \x20      3.0        3     1.000       3.0 100.0%      1 boundary   item.fn.receiver.mut\n\
-         \x20      3.0        6     0.500       0.0   0.0%      1 encouraged item.struct.named\n\
-         \x20      3.0        3     1.000       3.0 100.0%      1 boundary   stmt.let.mut\n\
-         \x20      2.5        5     0.500       0.0   0.0%      3 encouraged pat.ident\n\
-         \x20      2.0        2     1.000       0.0   0.0%      2 neutral    expr.call\n\
-         \x20      2.0        2     1.000       0.0   0.0%      2 neutral    expr.lit\n\
-         \x20      2.0        1     2.000       0.0   0.0%      1 tolerated  type.primitive\n\
-         \x20      1.0        1     1.000       1.0 100.0%      1 boundary   expr.lit.bool\n\
-         \x20    103.5       88     1.176      16.0  15.5%                   total\n"
+        "     score   tokens   lines per token  boundary  share  count tier       construct\n\
+         \x20     23.0       23       7     1.000       0.0   0.0%      4 neutral    item.fn\n\
+         \x20     15.0        3       3     5.000       0.0   0.0%      1 outside    expr.loop\n\
+         \x20     11.0       11       4     1.000       0.0   0.0%      5 neutral    expr.path\n\
+         \x20      9.0        3       1     3.000       0.0   0.0%      1 costly     stmt.let.mut\n\
+         \x20      6.0        6       2     1.000       0.0   0.0%      2 neutral    expr.method_call\n\
+         \x20      5.0        5       1     1.000       5.0 100.0%      1 boundary   attr.derive.Serialize\n\
+         \x20      5.0        5       4     1.000       0.0   0.0%      5 neutral    type.path\n\
+         \x20      4.0        4       1     1.000       0.0   0.0%      1 neutral    expr.struct\n\
+         \x20      4.0        4       2     1.000       4.0 100.0%      1 boundary   item.impl.trait\n\
+         \x20      3.0        1       1     3.000       0.0   0.0%      1 costly     expr.assign\n\
+         \x20      3.0        3       1     1.000       3.0 100.0%      1 boundary   item.fn.receiver.mut\n\
+         \x20      3.0        6       3     0.500       0.0   0.0%      1 encouraged item.struct.named\n\
+         \x20      3.0        3       1     1.000       3.0 100.0%      1 boundary   stmt.let.mut\n\
+         \x20      2.5        5       3     0.500       0.0   0.0%      3 encouraged pat.ident\n\
+         \x20      2.0        2       2     1.000       0.0   0.0%      2 neutral    expr.call\n\
+         \x20      2.0        2       2     1.000       0.0   0.0%      2 neutral    expr.lit\n\
+         \x20      2.0        1       1     2.000       0.0   0.0%      1 tolerated  type.primitive\n\
+         \x20      1.0        1       1     1.000       1.0 100.0%      1 boundary   expr.lit.bool\n\
+         \x20    103.5       88      20     1.176      16.0  15.5%                   total\n"
     );
 }
 
@@ -1654,14 +1673,14 @@ fn typing_charges_primitives_in_signatures_and_fields_and_std_containers_and_unt
     // field costs `body :` 0.5 each and `Vec<u8>` 2.0 a token.
     assert_eq!(
         score_output(&config, "file"),
-        "     score   tokens per token  boundary  share file\n\
-         \x20     10.5       17     0.618       1.0   9.5% contained.rs\n\
-         \x20      7.5        7     1.071       0.0   0.0% primitive.rs\n\
-         \x20     16.0       15     1.067       5.0  31.2% proto/lib.rs\n\
-         \x20      9.0       12     0.750       0.0   0.0% typed.rs\n\
-         \x20      6.0        7     0.857       0.0   0.0% untyped.rs\n\
-         \x20     13.0       15     0.867      11.0  84.6% wire/lib.rs\n\
-         \x20     62.0       73     0.849      17.0  27.4% total\n"
+        "     score   tokens   lines per token  boundary  share file\n\
+         \x20     10.5       17       4     0.618       1.0   9.5% contained.rs\n\
+         \x20      7.5        7       1     1.071       0.0   0.0% primitive.rs\n\
+         \x20     16.0       15       4     1.067       5.0  31.2% proto/lib.rs\n\
+         \x20      9.0       12       2     0.750       0.0   0.0% typed.rs\n\
+         \x20      6.0        7       3     0.857       0.0   0.0% untyped.rs\n\
+         \x20     13.0       15       4     0.867      11.0  84.6% wire/lib.rs\n\
+         \x20     62.0       73      18     0.849      17.0  27.4% total\n"
     );
 }
 
@@ -1750,11 +1769,16 @@ fn report_html_writes_one_static_page_with_history() {
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
     let html = std::fs::read_to_string(out.join("index.html")).unwrap();
     assert!(!html.contains("<script"), "the page has no script");
-    // Tiles: `flip` and `Light` score 29.0 over 40 tokens, as in the score
-    // test. History: the first commit's enum alone scored 3.0.
+    // Tiles: `flip` and `Light` score 29.0 over 40 tokens on 4 lines, as in
+    // the score test, so the score is about 29.0 / (40 / 4) = 2.9 lines.
+    // History: the first commit's enum alone scored 3.0.
     for expected in [
         "<div class=\"value\">29</div>",
+        "<div class=\"value\">≈ 3 lines</div>",
         "<div class=\"value\">40</div>",
+        "4 lines, comments excluded",
+        "40 tokens · 4 lines, score ≈ 3 lines",
+        "<td>29</td><td>≈ 3 lines</td><td>40</td><td>4</td>",
         "<div class=\"value\">0.725</div>",
         "<span class=\"badge\">Comparison</span>",
         "Score per crate at each of the last 2 commits",

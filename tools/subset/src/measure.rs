@@ -11,40 +11,47 @@ pub struct Volume {
     pub lines: usize,
 }
 
+/// One token `measure` counts.
+pub struct Token {
+    /// The byte offset of the token, or of a delimited group's opening
+    /// delimiter.
+    pub start: usize,
+    /// The lines the token counts on: those a leaf spans, or a group's
+    /// opening and closing lines.
+    pub lines: Vec<usize>,
+}
+
 /// Idents, puncts and literals count one each, and so does each delimited
 /// group. A line counts when a counted token starts, ends or spans it.
 pub fn measure(src: &str) -> Result<Volume, proc_macro2::LexError> {
-    let tally = Tally::of(src)?;
+    let tokens = tokens(src)?;
+    let lines: BTreeSet<usize> = tokens
+        .iter()
+        .flat_map(|t| t.lines.iter().copied())
+        .collect();
     Ok(Volume {
-        tokens: tally.starts.len(),
-        lines: tally.lines.len(),
+        tokens: tokens.len(),
+        lines: lines.len(),
     })
 }
 
-/// The byte offset of each token `measure` counts, in source order. A
-/// delimited group's offset is that of its opening delimiter.
-pub fn token_starts(src: &str) -> Result<Vec<usize>, proc_macro2::LexError> {
-    Ok(Tally::of(src)?.starts)
+/// Each token `measure` counts, in source order.
+pub fn tokens(src: &str) -> Result<Vec<Token>, proc_macro2::LexError> {
+    let stream: TokenStream = src.parse()?;
+    let mut tally = Tally {
+        src,
+        tokens: Vec::new(),
+    };
+    tally.walk(stream);
+    Ok(tally.tokens)
 }
 
 struct Tally<'a> {
     src: &'a str,
-    starts: Vec<usize>,
-    lines: BTreeSet<usize>,
+    tokens: Vec<Token>,
 }
 
-impl<'a> Tally<'a> {
-    fn of(src: &'a str) -> Result<Tally<'a>, proc_macro2::LexError> {
-        let stream: TokenStream = src.parse()?;
-        let mut tally = Tally {
-            src,
-            starts: Vec::new(),
-            lines: BTreeSet::new(),
-        };
-        tally.walk(stream);
-        Ok(tally)
-    }
-
+impl Tally<'_> {
     fn walk(&mut self, stream: TokenStream) {
         let mut trees = stream.into_iter().peekable();
         while let Some(tree) = trees.next() {
@@ -59,16 +66,24 @@ impl<'a> Tally<'a> {
             match tree {
                 TokenTree::Group(group) => {
                     if group.delimiter() != Delimiter::None {
-                        self.starts.push(group.span_open().byte_range().start);
-                        self.lines.insert(group.span_open().start().line);
-                        self.lines.insert(group.span_close().end().line);
+                        let open = group.span_open().start().line;
+                        let close = group.span_close().end().line;
+                        self.tokens.push(Token {
+                            start: group.span_open().byte_range().start,
+                            lines: match open == close {
+                                true => vec![open],
+                                false => vec![open, close],
+                            },
+                        });
                     }
                     self.walk(group.stream());
                 }
                 leaf => {
                     let span = leaf.span();
-                    self.starts.push(span.byte_range().start);
-                    self.lines.extend(span.start().line..=span.end().line);
+                    self.tokens.push(Token {
+                        start: span.byte_range().start,
+                        lines: (span.start().line..=span.end().line).collect(),
+                    });
                 }
             }
         }
