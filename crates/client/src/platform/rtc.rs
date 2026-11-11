@@ -285,33 +285,36 @@ impl Signaling {
     }
 
     async fn on(&mut self, input: Input) -> Result<(), Stopped> {
-        let host = std::mem::replace(&mut self.host, Host::Gone);
-        self.host = self.step(host, input).await?;
-        Ok(())
+        match input {
+            Input::Message(Some(message)) => {
+                self.on_message(message).await;
+                Ok(())
+            }
+            Input::Message(None) => Err(self.stop()),
+            Input::Signal(signal) => {
+                self.on_signal(signal).await;
+                Ok(())
+            }
+        }
     }
 
-    async fn step(&mut self, host: Host, input: Input) -> Result<Host, Stopped> {
-        match input {
-            Input::Message(Some(Message::State(state))) => {
-                self.on_state(state);
-                Ok(host)
-            }
-            Input::Message(Some(Message::Candidate(event))) => {
-                Ok(self.on_candidate(host, event).await)
-            }
-            Input::Message(Some(Message::Opened(Some(pair)))) => {
+    async fn on_message(&mut self, message: Message) {
+        match message {
+            Message::State(state) => self.on_state(state),
+            Message::Candidate(event) => self.on_candidate(event).await,
+            Message::Opened(Some(pair)) => {
                 let selected = Signal::Selected {
                     local: pair.local,
                     remote: pair.remote,
                 };
-                Ok(self.send(host, selected).await)
+                self.send(selected).await;
             }
-            Input::Message(Some(Message::Opened(None))) => Ok(host),
-            Input::Message(Some(Message::Failed {
+            Message::Opened(None) => {}
+            Message::Failed {
                 why,
                 elapsed_ms,
                 reply,
-            })) => {
+            } => {
                 let reason = format!(
                     "{why} after {elapsed_ms} ms: ice {:?}, connection {:?}, gathering {:?}; \
                      browser gathered {:?}; host sent {:?}",
@@ -323,17 +326,22 @@ impl Signaling {
                 );
                 tracing::warn!(reason, "webrtc upgrade failed");
                 let _ = reply.send(reason.clone());
-                Ok(self.send(host, Signal::Failed { reason }).await)
+                self.send(Signal::Failed { reason }).await;
             }
-            Input::Message(None) => Err(stop(host)),
-            Input::Signal(Some(Ok(Some(signal)))) => match self.apply(signal).await {
-                Ok(()) => Ok(host),
-                Err(reason) => Ok(self.ended(reason)),
-            },
-            Input::Signal(Some(Ok(None)) | None) => {
-                Ok(self.ended(String::from("the host closed the signaling stream")))
+        }
+    }
+
+    async fn on_signal(&mut self, signal: Option<Result<Option<Signal>, WireError>>) {
+        match signal {
+            Some(Ok(Some(signal))) => {
+                if let Err(reason) = self.apply(signal).await {
+                    self.ended(reason);
+                }
             }
-            Input::Signal(Some(Err(err))) => Ok(self.ended(err.to_string())),
+            Some(Ok(None)) | None => {
+                self.ended(String::from("the host closed the signaling stream"));
+            }
+            Some(Err(err)) => self.ended(err.to_string()),
         }
     }
 
@@ -347,35 +355,43 @@ impl Signaling {
         }
     }
 
-    async fn on_candidate(&mut self, host: Host, event: RtcPeerConnectionIceEvent) -> Host {
-        match event.candidate().map(|candidate| candidate.candidate()) {
-            Some(text) => match text.as_str() {
-                "" => host,
-                _ => {
-                    let kind = CandidateType::of_candidate(&text);
-                    tracing::info!(?kind, "webrtc local candidate");
-                    self.gathered.extend(kind);
-                    self.send(host, Signal::Candidate { candidate: text }).await
-                }
-            },
-            None => host,
+    async fn on_candidate(&mut self, event: RtcPeerConnectionIceEvent) {
+        let text = event
+            .candidate()
+            .map(|candidate| candidate.candidate())
+            .filter(|text| !text.is_empty());
+        if let Some(text) = text {
+            let kind = CandidateType::of_candidate(&text);
+            tracing::info!(?kind, "webrtc local candidate");
+            self.gathered.extend(kind);
+            self.send(Signal::Candidate { candidate: text }).await;
         }
     }
 
-    async fn send(&self, host: Host, signal: Signal) -> Host {
-        match host {
-            Host::Up { send, incoming } => match send.write(&signal).await {
-                Ok(send) => Host::Up { send, incoming },
+    /// A failed write ends signaling.
+    async fn send(&mut self, signal: Signal) {
+        let host = std::mem::replace(&mut self.host, Host::Gone);
+        if let Host::Up { send, incoming } = host {
+            match send.write(&signal).await {
+                Ok(send) => self.host = Host::Up { send, incoming },
                 Err(err) => self.ended(err.to_string()),
-            },
-            Host::Gone => Host::Gone,
+            }
         }
     }
 
-    fn ended(&self, reason: String) -> Host {
+    fn ended(&mut self, reason: String) {
         tracing::info!(reason, "webrtc signaling ended");
         self.peer.send_replace(Peer::Lost);
-        Host::Gone
+        self.host = Host::Gone;
+    }
+
+    /// Ends the signaling stream once nobody needs it.
+    fn stop(&mut self) -> Stopped {
+        let host = std::mem::replace(&mut self.host, Host::Gone);
+        if let Host::Up { send, .. } = host {
+            let _ = send.finish();
+        }
+        Stopped {}
     }
 
     async fn apply(&mut self, signal: Signal) -> Result<(), String> {
@@ -413,17 +429,6 @@ impl Signaling {
             }
             Signal::Selected { .. } | Signal::Failed { .. } => Ok(()),
         }
-    }
-}
-
-/// Ends the signaling stream once nobody needs it.
-fn stop(host: Host) -> Stopped {
-    match host {
-        Host::Up { send, .. } => {
-            let _ = send.finish();
-            Stopped {}
-        }
-        Host::Gone => Stopped {},
     }
 }
 
