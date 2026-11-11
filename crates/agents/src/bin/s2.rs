@@ -14,6 +14,7 @@ use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
     Error, Item, Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
 };
+use agents::live::{Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
 use serde_json::Value;
@@ -93,10 +94,29 @@ impl Turn {
             outcome: None,
         }
     }
-}
 
-fn pushed(list: Vec<String>, item: String) -> Vec<String> {
-    list.into_iter().chain(std::iter::once(item)).collect()
+    fn record(&mut self, event: ThreadEvent) {
+        match event {
+            ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {}
+            ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
+            ThreadEvent::AgentMessage { text, .. } => {
+                self.text = match self.text.as_str() {
+                    "" => text,
+                    earlier => format!("{earlier}\n{text}"),
+                };
+            }
+            ThreadEvent::Item { phase, item, .. } => self.items.push(item_label(item, phase)),
+            ThreadEvent::ApprovalRequested {
+                id, kind, options, ..
+            } => {
+                self.approvals.push(approval_label(&id, kind, &options));
+                self.answered.push(id);
+            }
+            ThreadEvent::ApprovalCancelled { .. } => {
+                self.cancelled = self.cancelled.saturating_add(1);
+            }
+        }
+    }
 }
 
 /// The turn an event names, if it names one.
@@ -191,18 +211,21 @@ impl Run {
     async fn on(&mut self, event: CodexEvent) -> Result<Progress> {
         match event {
             CodexEvent::Thread { thread, event } => {
-                let turn = self.turns.remove(&thread).with_context(|| {
+                let turn = self.turns.get(&thread).with_context(|| {
                     format!("event for a thread with no turn running: {}", thread.0)
                 })?;
-                match event_turn(&event).and_then(|got| got.ne(&turn.id).then_some(got)) {
+                match event_turn(&event).filter(|got| got != &&turn.id) {
                     Some(got) => Err(anyhow::Error::msg(format!(
                         "event for turn {} during turn {}",
                         got.0, turn.id.0
                     ))),
                     None => Ok(()),
                 }?;
-                let turn = self.apply(turn, event).await?;
-                self.turns.insert(thread, turn);
+                self.react(&thread, &event).await?;
+                self.turns
+                    .get_mut(&thread)
+                    .context("turn left the run while reacting")?
+                    .record(event);
                 Ok(match self.running {
                     0 => Progress::Done,
                     _ => Progress::Playing,
@@ -216,66 +239,37 @@ impl Run {
         }
     }
 
-    async fn apply(&mut self, turn: Turn, event: ThreadEvent) -> Result<Turn> {
+    /// Does what the plan asks of an event before its turn records it.
+    async fn react(&mut self, thread: &ThreadId, event: &ThreadEvent) -> Result<()> {
         match event {
-            ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {
-                Ok(turn)
+            ThreadEvent::Started
+            | ThreadEvent::Unknown(_)
+            | ThreadEvent::TurnStarted { .. }
+            | ThreadEvent::ApprovalCancelled { .. } => {}
+            ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
+            ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. } => {
+                self.after_output(thread).await?;
             }
-            ThreadEvent::TurnCompleted { outcome, .. } => {
-                self.running = self.running.saturating_sub(1);
-                Ok(Turn {
-                    outcome: Some(outcome),
-                    ..turn
-                })
-            }
-            ThreadEvent::AgentMessage { text, .. } => {
-                let text = match turn.text.as_str() {
-                    "" => text,
-                    earlier => format!("{earlier}\n{text}"),
-                };
-                self.after_output(&turn).await;
-                Ok(Turn { text, ..turn })
-            }
-            ThreadEvent::Item { phase, item, .. } => {
-                self.after_output(&turn).await;
-                Ok(Turn {
-                    items: pushed(turn.items, item_label(item, phase)),
-                    ..turn
-                })
-            }
-            ThreadEvent::ApprovalRequested {
-                id, kind, options, ..
-            } => {
-                let label = approval_label(&id, kind, &options);
+            ThreadEvent::ApprovalRequested { id, .. } => {
                 let decision = match &self.plan {
                     Plan::Answer(policy) => policy.decision(),
                     Plan::InterruptOnFirstOutput => Decision::Accept,
                 };
                 self.live.server.respond(id.clone(), decision).await?;
-                Ok(Turn {
-                    approvals: pushed(turn.approvals, label),
-                    answered: turn
-                        .answered
-                        .into_iter()
-                        .chain(std::iter::once(id))
-                        .collect(),
-                    ..turn
-                })
             }
-            ThreadEvent::ApprovalCancelled { .. } => Ok(Turn {
-                cancelled: turn.cancelled.saturating_add(1),
-                ..turn
-            }),
         }
+        Ok(())
     }
 
-    async fn after_output(&mut self, turn: &Turn) {
-        match (&self.plan, &self.interrupted) {
-            (Plan::InterruptOnFirstOutput, None) => {
-                self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
-            }
-            (Plan::InterruptOnFirstOutput, Some(_)) | (Plan::Answer(_), _) => {}
+    async fn after_output(&mut self, thread: &ThreadId) -> Result<()> {
+        let turn = self
+            .turns
+            .get(thread)
+            .context("turn left the run while reacting")?;
+        if let (Plan::InterruptOnFirstOutput, None) = (&self.plan, &self.interrupted) {
+            self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
         }
+        Ok(())
     }
 }
 
@@ -306,42 +300,6 @@ async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> R
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Presence {
-    Present,
-    Missing,
-}
-
-fn presence(path: &Path) -> Presence {
-    match std::fs::metadata(path) {
-        Ok(_) => Presence::Present,
-        Err(_) => Presence::Missing,
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Verdict {
-    Pass,
-    Fail,
-}
-
-fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
-    let label = match verdict {
-        Verdict::Pass => "PASS",
-        Verdict::Fail => "FAIL",
-    };
-    writeln!(std::io::stdout(), "{label} {step}: {detail}")?;
-    Ok(verdict)
-}
-
-fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
-    fixtures.map(|dir| {
-        let path = dir.join(format!("{name}.jsonl"));
-        drop(std::fs::remove_file(&path));
-        path
-    })
-}
-
 async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: PathBuf::from(CODEX),
@@ -352,25 +310,8 @@ async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
     Ok(Live { server, events })
 }
 
-fn fresh_scratch() -> Result<()> {
-    let scratch = Path::new(SCRATCH);
-    match presence(scratch) {
-        Presence::Present => std::fs::remove_dir_all(scratch)?,
-        Presence::Missing => {}
-    }
-    std::fs::create_dir_all(scratch)?;
-    let git = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(scratch)
-        .status()?;
-    match git.code() {
-        Some(0) => Ok(()),
-        _ => Err(anyhow::Error::msg(format!("git init failed in {SCRATCH}"))),
-    }
-}
-
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
-    fresh_scratch()?;
+    fresh_scratch(Path::new(SCRATCH))?;
     let scratch = Path::new(SCRATCH);
     fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
     let fixtures = fixtures.as_deref();
@@ -594,10 +535,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let failed = Vec::from([approve, decline, interrupt, two_threads, resume, ids])
         .into_iter()
-        .fold(0_usize, |failed, verdict| match verdict {
-            Verdict::Pass => failed,
-            Verdict::Fail => failed.saturating_add(1),
-        });
+        .filter(|verdict| matches!(verdict, Verdict::Fail))
+        .count();
     match failed {
         0 => Ok(()),
         failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),

@@ -3,6 +3,7 @@
 //! where the rule's id is allowed, since elsewhere the id itself is reported.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::Range;
 
 use proc_macro2::{Span, TokenTree};
 use syn::punctuated::Punctuated;
@@ -21,6 +22,32 @@ pub struct Finding {
     pub rule: &'static Rule,
     pub line: usize,
     pub col: usize,
+    /// The byte offset of the token the finding points at.
+    pub at: usize,
+}
+
+/// A node whose shape an item we don't define fixes: the score charges its
+/// tokens the boundary weight.
+pub struct Mark {
+    /// The node's bytes, equal to the extent of its occurrence.
+    pub extent: Range<usize>,
+    pub when: Fixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fixed {
+    /// The node exists only because the library demands it: a trait impl,
+    /// a library attribute or macro, a binding lent to a library as `&mut`.
+    Always,
+    /// The node is an argument, field value or type argument of an item we
+    /// don't define. Any construct can stand there; the score relieves only
+    /// the restricted ones.
+    IfRestricted,
+}
+
+pub struct Shape {
+    pub findings: Vec<Finding>,
+    pub boundary: Vec<Mark>,
 }
 
 /// What a file is, as far as rules that depend on the file care.
@@ -29,7 +56,7 @@ pub struct FileKind {
     pub crate_root: bool,
 }
 
-pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
+pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Shape {
     let mut checker = Checker {
         facts,
         kind,
@@ -48,9 +75,13 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
         predicates: HashSet::new(),
         predicate_macros: HashSet::new(),
         out: Vec::new(),
+        boundary: Vec::new(),
     };
     checker.visit_file(file);
-    checker.out
+    Shape {
+        findings: checker.out,
+        boundary: checker.boundary,
+    }
 }
 
 /// The syntactic slot a node fills in its parent. Nodes not registered by a
@@ -112,6 +143,8 @@ enum ImplKind {
 struct ImplCtx {
     self_ty: Option<String>,
     kind: ImplKind,
+    /// The trait is not one we define.
+    foreign: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -153,6 +186,65 @@ const PREDICATE_ADAPTERS: &[&str] = &[
     "skip_while",
     "retain",
 ];
+/// Macros of the standard library. Every other macro is a library's.
+const STD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "compile_error",
+    "concat",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "eprint",
+    "eprintln",
+    "file",
+    "format",
+    "format_args",
+    "include_bytes",
+    "include_str",
+    "line",
+    "matches",
+    "panic",
+    "print",
+    "println",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
+/// Attributes of the language. Every other attribute is a library's.
+const BUILTIN_ATTRS: &[&str] = &[
+    "allow",
+    "automatically_derived",
+    "cfg",
+    "cfg_attr",
+    "cold",
+    "deny",
+    "deprecated",
+    "derive",
+    "doc",
+    "expect",
+    "forbid",
+    "ignore",
+    "inline",
+    "macro_export",
+    "must_use",
+    "non_exhaustive",
+    "path",
+    "repr",
+    "should_panic",
+    "test",
+    "track_caller",
+    "warn",
+];
 const SERDE_KEYS: &[&str] = &["transparent", "tag", "content", "rename_all", "rename"];
 const CFG_PAIRS: &[(&str, &str)] = &[
     ("target_family=\"wasm\"", "not(target_family=\"wasm\")"),
@@ -183,6 +275,7 @@ struct Checker<'a> {
     predicates: HashSet<*const Expr>,
     predicate_macros: HashSet<*const syn::Macro>,
     out: Vec<Finding>,
+    boundary: Vec<Mark>,
 }
 
 impl Checker<'_> {
@@ -192,7 +285,19 @@ impl Checker<'_> {
             rule,
             line: start.line,
             col: start.column + 1,
+            at: span.byte_range().start,
         });
+    }
+
+    fn mark(&mut self, node: Span, when: Fixed) {
+        self.boundary.push(Mark {
+            extent: node.byte_range(),
+            when,
+        });
+    }
+
+    fn in_foreign_impl(&self) -> bool {
+        self.impls.last().is_some_and(|i| i.foreign)
     }
 
     fn expr_slot(&self, expr: &Expr) -> Slot {
@@ -261,6 +366,9 @@ impl Checker<'_> {
         let Some(token) = r.mutability else {
             return;
         };
+        if self.in_foreign_impl() {
+            self.mark(r.span(), Fixed::Always);
+        }
         let ctx = self
             .fns
             .last()
@@ -535,6 +643,13 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     }
 
     fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
+        let foreign = i
+            .trait_
+            .as_ref()
+            .is_some_and(|(_, path, _)| !self.facts.is_ours(path));
+        if foreign {
+            self.mark(i.span(), Fixed::Always);
+        }
         let kind = match &i.trait_ {
             None => ImplKind::Inherent,
             Some((_, path, _)) => {
@@ -555,6 +670,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         self.impls.push(ImplCtx {
             self_ty: facts::type_name(&i.self_ty),
             kind,
+            foreign,
         });
         visit::visit_item_impl(self, i);
         self.impls.pop();
@@ -626,7 +742,18 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         let on_fn = self.sig_generics == Some(std::ptr::from_ref(generics));
         let ask = self.ask_generics == Some(std::ptr::from_ref(generics));
         let library = self.in_library_impl();
+        let foreign = self.in_foreign_impl();
         for param in &generics.params {
+            let library_bounds = match param {
+                GenericParam::Type(t) => !t.bounds.is_empty()
+                    && t.bounds.iter().all(
+                        |b| matches!(b, TypeParamBound::Trait(b) if !self.facts.is_ours(&b.path)),
+                    ),
+                _ => false,
+            };
+            if foreign || library_bounds {
+                self.mark(param.span(), Fixed::Always);
+            }
             match param {
                 GenericParam::Type(t) => {
                     let codec = on_fn
@@ -653,6 +780,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_label(&mut self, _: &'ast syn::Label) {}
 
     fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
+        if self.in_foreign_impl() {
+            self.mark(lifetime.span(), Fixed::Always);
+        }
         if !self.in_library_impl() {
             self.flag(lifetime.span(), &rules::LIFETIME);
         }
@@ -666,6 +796,15 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_attribute(&mut self, attr: &'ast Attribute) {
         let path = path_string(attr.path());
+        let library = match path.as_str() {
+            "derive" => derive_names(attr)
+                .iter()
+                .any(|name| !crate::context::STD_DERIVES.contains(&name.as_str())),
+            _ => !BUILTIN_ATTRS.contains(&path.as_str()),
+        };
+        if library {
+            self.mark(attr.span(), Fixed::Always);
+        }
         match path.as_str() {
             "cfg" if !is_cfg_test(attr) => self.check_cfg(attr),
             "allow" if !self.root_allows.contains(&std::ptr::from_ref(attr)) => {
@@ -709,6 +848,15 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_type(&mut self, ty: &'ast Type) {
         let slot = self.type_slot(ty);
+        if library_type_arg(&slot) || matches!(slot, Slot::ClapField | Slot::MainReturn) {
+            self.mark(ty.span(), Fixed::IfRestricted);
+        }
+        if let Type::Reference(t) = ty
+            && t.mutability.is_some()
+            && !matches!(&*t.elem, Type::Path(p) if self.facts.is_ours(&p.path))
+        {
+            self.mark(ty.span(), Fixed::Always);
+        }
         match ty {
             Type::Tuple(t) if t.elems.is_empty() => {
                 if !(library_type_arg(&slot) || slot == Slot::MainReturn) {
@@ -763,6 +911,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_expr(&mut self, expr: &'ast Expr) {
         let slot = self.expr_slot(expr);
+        if library_value(&slot) {
+            self.mark(expr.span(), Fixed::IfRestricted);
+        }
         match expr {
             Expr::Call(e) => {
                 let callee = match &*e.func {
@@ -937,6 +1088,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if !STD_MACROS.contains(&path_string(&mac.path).as_str()) {
+            self.mark(mac.span(), Fixed::Always);
+        }
         if mac.path.is_ident("matches") && !self.predicate_macros.contains(&std::ptr::from_ref(mac))
         {
             self.flag(mac.path.span(), &rules::PREDICATE_MATCHES);
@@ -964,6 +1118,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         if !names.is_empty() && !state && self.assigned_here(&names) {
             self.flag(local.let_token.span, &rules::LET_MUT);
         }
+        if !names.is_empty() && !state {
+            self.mark(local.span(), Fixed::Always);
+        }
         for attr in &local.attrs {
             self.visit_attribute(attr);
         }
@@ -978,6 +1135,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_pat_ident(&mut self, p: &'ast syn::PatIdent) {
         if p.mutability.is_some() && !self.in_let && self.assigned_here(&[p.ident.to_string()]) {
             self.flag(p.span(), &rules::PAT_MUT);
+        }
+        if p.mutability.is_some() && !self.in_let {
+            self.mark(p.span(), Fixed::Always);
         }
         visit::visit_pat_ident(self, p);
     }
@@ -1033,6 +1193,18 @@ fn field_of_self(expr: &Expr) -> bool {
         },
         _ => false,
     }
+}
+
+/// The last path segment of each name a `#[derive(..)]` lists.
+fn derive_names(attr: &Attribute) -> Vec<String> {
+    attr.parse_args_with(Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|n| n.segments.last().map(|s| s.ident.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn derives(attr: &Attribute, name: &str) -> bool {

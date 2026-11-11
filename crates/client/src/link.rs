@@ -47,7 +47,7 @@ impl Target {
     pub fn of_ticket(ticket: &Ticket) -> Target {
         Target {
             addr: EndpointAddr::new(ticket.host)
-                .with_relay_url(crate::platform::without_root_dot(&ticket.relay)),
+                .with_relay_url(proto::without_root_dot(&ticket.relay)),
             token: ticket.token,
         }
     }

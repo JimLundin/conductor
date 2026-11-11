@@ -13,6 +13,7 @@ use agents::claude::{
     PermissionDecision, PermissionMode, PermissionRequestId, Role, SessionId, SettingSource,
     VersionPolicy,
 };
+use agents::live::{Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
@@ -188,12 +189,8 @@ impl Turn {
             })
             .collect::<String>();
         self.text.push_str(&text);
-        match (&self.plan, &self.interrupted) {
-            (Plan::InterruptOnFirstReply, None) => {
-                self.interrupted = Some(self.live.session.interrupt().await);
-            }
-            (Plan::InterruptOnFirstReply, Some(_))
-            | (Plan::Answer(_) | Plan::InterruptOnPermission, _) => {}
+        if let (Plan::InterruptOnFirstReply, None) = (&self.plan, &self.interrupted) {
+            self.interrupted = Some(self.live.session.interrupt().await);
         }
     }
 
@@ -235,42 +232,6 @@ impl Turn {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Presence {
-    Present,
-    Missing,
-}
-
-fn presence(path: &Path) -> Presence {
-    match std::fs::metadata(path) {
-        Ok(_) => Presence::Present,
-        Err(_) => Presence::Missing,
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Verdict {
-    Pass,
-    Fail,
-}
-
-fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
-    let label = match verdict {
-        Verdict::Pass => "PASS",
-        Verdict::Fail => "FAIL",
-    };
-    writeln!(std::io::stdout(), "{label} {step}: {detail}")?;
-    Ok(verdict)
-}
-
-fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
-    fixtures.map(|dir| {
-        let path = dir.join(format!("{name}.jsonl"));
-        drop(std::fs::remove_file(&path));
-        path
-    })
-}
-
 fn options(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
     ClaudeOptions {
         claude_path: PathBuf::from(CLAUDE),
@@ -290,25 +251,8 @@ async fn spawn(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> Result
     Ok(Live { session, events })
 }
 
-fn fresh_scratch() -> Result<()> {
-    let scratch = Path::new(SCRATCH);
-    match presence(scratch) {
-        Presence::Present => std::fs::remove_dir_all(scratch)?,
-        Presence::Missing => {}
-    }
-    std::fs::create_dir_all(scratch)?;
-    let git = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(scratch)
-        .status()?;
-    match git.code() {
-        Some(0) => Ok(()),
-        _ => Err(anyhow::Error::msg(format!("git init failed in {SCRATCH}"))),
-    }
-}
-
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
-    fresh_scratch()?;
+    fresh_scratch(Path::new(SCRATCH))?;
     let scratch = Path::new(SCRATCH);
     fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
     let fixtures = fixtures.as_deref();
@@ -537,10 +481,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         unknown_id,
     ])
     .into_iter()
-    .fold(0_usize, |failed, verdict| match verdict {
-        Verdict::Pass => failed,
-        Verdict::Fail => failed.saturating_add(1),
-    });
+    .filter(|verdict| matches!(verdict, Verdict::Fail))
+    .count();
     match failed {
         0 => Ok(()),
         failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),

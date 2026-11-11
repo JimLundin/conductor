@@ -10,6 +10,7 @@
 //! [`Signal`]s both ways for as long as that connection lives.
 
 mod frame;
+mod relay;
 mod ticket;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 pub use frame::{
     CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode,
 };
+pub use relay::without_root_dot;
 pub use ticket::{AuthToken, Ticket, TicketError};
 
 /// The ALPN for the S3 protocol. P1 moves to `conductor/1` (§5.1).
@@ -55,7 +57,7 @@ pub enum Open {
 
 /// Public STUN servers both ends ask for their public address by default.
 /// They are stateless and see no traffic; nothing relays (§5.4).
-pub const DEFAULT_STUN_SERVERS: [&str; 2] = [
+pub const DEFAULT_STUN_SERVERS: &[&str] = &[
     "stun:stun.l.google.com:19302",
     "stun:stun.cloudflare.com:3478",
 ];

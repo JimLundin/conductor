@@ -1,5 +1,5 @@
-use iroh::Endpoint;
 use iroh::endpoint::{BindError, Connection, presets};
+use iroh::{Endpoint, RelayMode};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
 
 use crate::CandidatePair;
@@ -9,6 +9,7 @@ use crate::wire::WireError;
 /// with no relay (§5.3).
 pub async fn bind_endpoint() -> Result<Endpoint, BindError> {
     Endpoint::builder(presets::N0)
+        .relay_mode(RelayMode::Custom(super::n0_relays()))
         .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await

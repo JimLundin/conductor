@@ -167,3 +167,135 @@ allowed = [
 rule = "`#[tokio::main]` only in a native binary (proposal 0006)"
 paths = ["crates/*/src/main.rs", "crates/*/src/bin/*.rs", "crates/*/examples/*.rs"]
 allowed = ["attr.tokio::main"]
+
+# The weighted score (`subset score`, docs/subset.md "Weights"): each token
+# costs the weight of the tier of the innermost construct that contains it.
+# A violation costs `outside` whatever its id, and a construct whose shape an
+# item we don't define fixes costs `boundary`. An allowed id missing from
+# `ids` is neutral; a test keeps every allowed id listed here.
+
+[weights]
+# Modules that mirror a protocol someone else defines. A field of a type with
+# a library derive there is wire data and costs `boundary`.
+external_protocols = ["crates/agents/src/claude/**", "crates/agents/src/codex/**"]
+# Types that hold data without a type: `type.untyped` wherever they appear.
+untyped = ["serde_json::Value", "HashMap<String, _>", "BTreeMap<String, _>", "dyn Any"]
+# `adapters` (iterator method names) and `primitives` (type patterns) keep
+# the tool's std defaults, listed in tools/subset/README.md.
+
+[weights.tiers]
+encouraged = 0.5
+neutral = 1.0
+tolerated = 2.0
+costly = 3.0
+outside = 5.0
+boundary = 1.0
+
+[weights.ids]
+# Encouraged: data as types, decisions as `match`, iteration as adapters.
+"item.struct.named" = "encouraged"
+"item.struct.newtype" = "encouraged"
+"item.enum" = "encouraged"
+"type.field" = "encouraged"
+"expr.match" = "encouraged"
+"pat.ident" = "encouraged"
+"pat.path" = "encouraged"
+"pat.struct" = "encouraged"
+"pat.tuple_struct" = "encouraged"
+"pat.lit" = "encouraged"
+"pat.or" = "encouraged"
+"pat.wild" = "encouraged"
+"expr.method_call.adapter" = "encouraged"
+"expr.try" = "encouraged"
+
+# Neutral: the rest of the core.
+"item.fn" = "neutral"
+"item.impl.inherent" = "neutral"
+"item.const" = "neutral"
+"item.use" = "neutral"
+"item.mod" = "neutral"
+"vis.pub" = "neutral"
+"vis.restricted" = "neutral"
+"expr.call" = "neutral"
+"expr.method_call" = "neutral"
+"expr.field" = "neutral"
+"expr.struct" = "neutral"
+"expr.struct.update" = "neutral"
+"expr.path" = "neutral"
+"expr.lit" = "neutral"
+"expr.block" = "neutral"
+"expr.paren" = "neutral"
+"expr.reference" = "neutral"
+"expr.closure.adapter" = "neutral"
+"expr.array" = "neutral"
+"expr.repeat" = "neutral"
+"stmt.let" = "neutral"
+"type.path" = "neutral"
+"type.reference" = "neutral"
+"type.slice" = "neutral"
+"type.array" = "neutral"
+"attr.doc" = "neutral"
+"attr.derive" = "neutral"
+"attr.cfg_test" = "neutral"
+"attr.error" = "neutral"
+"attr.from" = "neutral"
+"attr.tokio::test" = "neutral"
+"attr.serde" = "neutral"
+"attr.derive.Serialize" = "neutral"
+"attr.derive.Deserialize" = "neutral"
+"attr.derive.Parser" = "neutral"
+"attr.derive.Subcommand" = "neutral"
+"attr.derive.ValueEnum" = "neutral"
+"attr.command" = "neutral"
+"attr.arg" = "neutral"
+"attr.component" = "neutral"
+"attr.allow" = "neutral"
+"item.use.glob" = "neutral"
+"macro.allowed" = "neutral"
+"macro.asset" = "neutral"
+
+# Tolerated: accepted compromises.
+"item.fn.async" = "tolerated"         # 0006
+"expr.async" = "tolerated"
+"expr.await" = "tolerated"
+"attr.tokio::main" = "tolerated"
+"expr.if_let.single" = "tolerated"    # 0027
+"stmt.let.discard" = "tolerated"      # 0025
+"expr.binary.eq" = "tolerated"        # 0028
+"expr.binary.ne" = "tolerated"
+"expr.binary.lt" = "tolerated"
+"expr.binary.le" = "tolerated"
+"expr.binary.gt" = "tolerated"
+"expr.binary.ge" = "tolerated"
+"expr.binary.and" = "tolerated"
+"expr.binary.or" = "tolerated"
+"expr.unary.not" = "tolerated"
+"macro.matches" = "tolerated"
+"type.impl_trait.arg" = "tolerated"   # 0026
+"expr.closure" = "tolerated"          # 0006, 0017, 0018, 0026
+"generics.type_param" = "tolerated"   # 0013, 0026
+"generics.lifetime" = "tolerated"     # 0009
+"type.lifetime" = "tolerated"
+"item.impl.trait" = "tolerated"       # 0009
+"attr.cfg" = "tolerated"              # 0016
+"expr.tuple" = "tolerated"            # 0001
+"pat.tuple" = "tolerated"
+"type.tuple" = "tolerated"
+"type.unit" = "tolerated"             # 0005, 0023
+"expr.unit" = "tolerated"
+"type.bool" = "tolerated"             # 0019, 0023
+"expr.lit.bool" = "tolerated"         # 0021, 0023
+"type.primitive" = "tolerated"
+
+# Costly: mutation, the actor loop, trait objects, UI markup, untyped data.
+"item.fn.receiver.mut" = "costly"     # 0008
+"stmt.let.mut" = "costly"
+"pat.ident.mut" = "costly"
+"expr.assign" = "costly"
+"expr.reference.mut" = "costly"
+"type.reference.mut" = "costly"
+"expr.loop" = "costly"                # 0007
+"expr.break" = "costly"
+"type.dyn" = "costly"                 # 0017
+"macro.rsx" = "costly"                # 0018
+"type.untyped" = "costly"

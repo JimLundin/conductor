@@ -22,7 +22,6 @@ use super::protocol::{
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
-const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingSource {
@@ -187,20 +186,19 @@ impl ClaudeSession {
     }
 
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
-        let (reply, answer) = oneshot::channel();
-        self.send(CommandMsg::SendUser { text, reply }).await?;
-        answer.await.map_err(|_| Error::Exited)?
+        self.ask(|reply| CommandMsg::SendUser { text, reply })
+            .await?
     }
 
     /// Resolves once the CLI acknowledges; the turn's `result` follows as an event.
     pub async fn interrupt(&self) -> Result<(), Error> {
-        self.control(ControlCall::Interrupt).await.map(drop)
+        let _ = self.control(ControlCall::Interrupt).await?;
+        Ok(())
     }
 
     pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<(), Error> {
-        self.control(ControlCall::SetPermissionMode(mode))
-            .await
-            .map(drop)
+        let _ = self.control(ControlCall::SetPermissionMode(mode)).await?;
+        Ok(())
     }
 
     pub async fn respond(
@@ -208,37 +206,38 @@ impl ClaudeSession {
         id: PermissionRequestId,
         decision: PermissionDecision,
     ) -> Result<(), Error> {
-        let (reply, answer) = oneshot::channel();
-        self.send(CommandMsg::Respond {
+        self.ask(|reply| CommandMsg::Respond {
             id,
             decision,
             reply,
         })
-        .await?;
-        answer.await.map_err(|_| Error::Exited)?
+        .await?
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
     pub async fn shutdown(self) -> Result<Exit, Error> {
-        let (reply, answer) = oneshot::channel();
-        self.send(CommandMsg::Shutdown { reply }).await?;
-        answer.await.map_err(|_| Error::Exited)
+        self.ask(|reply| CommandMsg::Shutdown { reply }).await
     }
 
     async fn control(&self, call: ControlCall) -> Result<Value, Error> {
-        tokio::time::timeout(CONTROL_TIMEOUT, self.ask_control(call))
-            .await
-            .map_err(|_| Error::Timeout(String::from(call.subtype())))?
+        tokio::time::timeout(
+            CONTROL_TIMEOUT,
+            self.ask(|reply| CommandMsg::Control { call, reply }),
+        )
+        .await
+        .map_err(|_| Error::Timeout(String::from(call.subtype())))??
     }
 
-    async fn ask_control(&self, call: ControlCall) -> Result<Value, Error> {
+    async fn ask<T>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<T>) -> CommandMsg,
+    ) -> Result<T, Error> {
         let (reply, answer) = oneshot::channel();
-        self.send(CommandMsg::Control { call, reply }).await?;
-        answer.await.map_err(|_| Error::Exited)?
-    }
-
-    async fn send(&self, msg: CommandMsg) -> Result<(), Error> {
-        self.commands.send(msg).await.map_err(|_| Error::Exited)
+        self.commands
+            .send(build(reply))
+            .await
+            .map_err(|_| Error::Exited)?;
+        answer.await.map_err(|_| Error::Exited)
     }
 }
 
@@ -282,21 +281,11 @@ struct Running {
 impl Running {
     async fn stop(self) -> Exit {
         let Running {
-            mut child,
+            child,
             stdin,
             stdout: _,
         } = self;
-        drop(stdin);
-        match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
-            Ok(Ok(status)) => Exit::Status(status),
-            Ok(Err(_)) | Err(_) => {
-                drop(child.start_kill());
-                match child.wait().await {
-                    Ok(status) => Exit::Status(status),
-                    Err(e) => Exit::Unknown(e.to_string()),
-                }
-            }
-        }
+        crate::process::stop(child, stdin).await
     }
 }
 
@@ -389,10 +378,8 @@ impl Actor {
     }
 
     async fn on_line(&mut self, line: &str) {
-        match self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
-            Some(Ok(())) => {}
-            Some(Err(e)) => tracing::warn!("writing stdout log: {e}"),
-            None => {}
+        if let Some(Err(e)) = self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
+            tracing::warn!("writing stdout log: {e}");
         }
         let inbound = match parse_line(line) {
             Ok(inbound) => inbound,
@@ -402,19 +389,20 @@ impl Actor {
             }
         };
         match inbound {
-            Inbound::Event(event) => match self.track(&event) {
-                News::Fresh => self.emit(event).await,
-                News::Repeat => {}
-            },
+            Inbound::Event(event) => {
+                if let News::Fresh = self.track(&event) {
+                    self.emit(event).await;
+                }
+            }
             Inbound::ControlResponse {
                 request_id,
                 outcome,
             } => match self.pending.remove(&request_id) {
                 Some(Pending { call, reply }) => {
-                    drop(reply.send(outcome.map_err(|message| Error::Control {
+                    let _ = reply.send(outcome.map_err(|message| Error::Control {
                         subtype: String::from(call.subtype()),
                         message,
-                    })))
+                    }));
                 }
                 None => tracing::warn!("control_response for unknown request {request_id}"),
             },
@@ -424,15 +412,14 @@ impl Actor {
             } => {
                 let message = format!("unsupported control request subtype: {subtype}");
                 tracing::warn!("{message}");
-                match self
+                if let Err(e) = self
                     .write(Outbound::ControlError {
                         request_id,
                         message,
                     })
                     .await
                 {
-                    Ok(()) => {}
-                    Err(e) => tracing::error!("replying to {subtype}: {e}"),
+                    tracing::error!("replying to {subtype}: {e}");
                 }
             }
         }
@@ -452,9 +439,9 @@ impl Actor {
             ClaudeEvent::SessionStarted { session_id } => match self
                 .session_id
                 .replace(session_id.clone())
-                .and_then(|seen| seen.eq(session_id).then_some(News::Repeat))
+                .filter(|seen| seen == session_id)
             {
-                Some(repeat) => repeat,
+                Some(_) => News::Repeat,
                 None => News::Fresh,
             },
             _ => News::Fresh,
@@ -464,7 +451,7 @@ impl Actor {
     async fn on_command(&mut self, cmd: CommandMsg) {
         match cmd {
             CommandMsg::SendUser { text, reply } => {
-                drop(reply.send(self.write(Outbound::User(text)).await));
+                let _ = reply.send(self.write(Outbound::User(text)).await);
             }
             CommandMsg::Control { call, reply } => {
                 self.next_request = self.next_request.saturating_add(1);
@@ -479,7 +466,9 @@ impl Actor {
                     Ok(()) => {
                         self.pending.insert(request_id, Pending { call, reply });
                     }
-                    Err(e) => drop(reply.send(Err(e))),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             CommandMsg::Respond {
@@ -498,10 +487,10 @@ impl Actor {
                         .await
                     }
                 };
-                drop(reply.send(result));
+                let _ = reply.send(result);
             }
             CommandMsg::Shutdown { reply } => {
-                reply.send(self.stop().await).ok();
+                let _ = reply.send(self.stop().await);
             }
         }
     }
@@ -526,9 +515,9 @@ impl Actor {
             Process::Running(running) => {
                 let status = running.stop().await;
                 self.process = Process::Exited(status.clone());
-                self.pending
-                    .drain()
-                    .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
+                self.pending.drain().for_each(|(_, Pending { reply, .. })| {
+                    let _ = reply.send(Err(Error::Exited));
+                });
                 self.open_permissions.clear();
                 self.emit(ClaudeEvent::Exited {
                     status: status.clone(),
@@ -545,7 +534,7 @@ impl Actor {
 
     async fn emit(&self, event: ClaudeEvent) {
         // A dropped receiver only means nobody is listening any more.
-        drop(self.events.send(event).await);
+        let _ = self.events.send(event).await;
     }
 }
 

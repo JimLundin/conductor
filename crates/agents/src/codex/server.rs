@@ -27,7 +27,6 @@ use super::protocol::{
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
@@ -168,24 +167,17 @@ impl CodexServer {
 
     /// Answers an open approval or user-input request exactly once.
     pub async fn respond(&self, id: ApprovalId, decision: Decision) -> Result<(), Error> {
-        let (reply, answer) = oneshot::channel();
-        send(
-            &self.commands,
-            CommandMsg::Respond {
-                id,
-                decision,
-                reply,
-            },
-        )
-        .await?;
-        answer.await.map_err(|_| Error::Exited)?
+        ask(&self.commands, |reply| CommandMsg::Respond {
+            id,
+            decision,
+            reply,
+        })
+        .await?
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
     pub async fn shutdown(&self) -> Result<Exit, Error> {
-        let (reply, answer) = oneshot::channel();
-        send(&self.commands, CommandMsg::Shutdown { reply }).await?;
-        answer.await.map_err(|_| Error::Exited)
+        ask(&self.commands, |reply| CommandMsg::Shutdown { reply }).await
     }
 
     fn thread(&self, id: ThreadId) -> CodexThread {
@@ -212,26 +204,32 @@ impl CodexThread {
             thread: self.id.clone(),
             turn,
         };
-        request(&self.server.commands, call).await.map(drop)
+        let _ = request(&self.server.commands, call).await?;
+        Ok(())
     }
 }
 
 /// Sends `call` to the actor and waits for Codex's answer.
 async fn request(commands: &mpsc::Sender<CommandMsg>, call: Call) -> Result<Value, Error> {
     let method = String::from(call.method());
-    tokio::time::timeout(REQUEST_TIMEOUT, ask(commands, call))
-        .await
-        .map_err(|_| Error::Timeout(method))?
+    tokio::time::timeout(
+        REQUEST_TIMEOUT,
+        ask(commands, |reply| CommandMsg::Request { call, reply }),
+    )
+    .await
+    .map_err(|_| Error::Timeout(method))??
 }
 
-async fn ask(commands: &mpsc::Sender<CommandMsg>, call: Call) -> Result<Value, Error> {
+async fn ask<T>(
+    commands: &mpsc::Sender<CommandMsg>,
+    build: impl FnOnce(oneshot::Sender<T>) -> CommandMsg,
+) -> Result<T, Error> {
     let (reply, answer) = oneshot::channel();
-    send(commands, CommandMsg::Request { call, reply }).await?;
-    answer.await.map_err(|_| Error::Exited)?
-}
-
-async fn send(commands: &mpsc::Sender<CommandMsg>, msg: CommandMsg) -> Result<(), Error> {
-    commands.send(msg).await.map_err(|_| Error::Exited)
+    commands
+        .send(build(reply))
+        .await
+        .map_err(|_| Error::Exited)?;
+    answer.await.map_err(|_| Error::Exited)
 }
 
 pub(crate) fn command(opts: &ServerOptions) -> Result<Command, Error> {
@@ -268,21 +266,11 @@ struct Running {
 impl Running {
     async fn stop(self) -> Exit {
         let Running {
-            mut child,
+            child,
             stdin,
             stdout: _,
         } = self;
-        drop(stdin);
-        match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
-            Ok(Ok(status)) => Exit::Status(status),
-            Ok(Err(_)) | Err(_) => {
-                drop(child.start_kill());
-                match child.wait().await {
-                    Ok(status) => Exit::Status(status),
-                    Err(e) => Exit::Unknown(e.to_string()),
-                }
-            }
-        }
+        crate::process::stop(child, stdin).await
     }
 }
 
@@ -373,10 +361,8 @@ impl Actor {
     }
 
     async fn on_line(&mut self, line: &str) {
-        match self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
-            Some(Ok(())) => {}
-            Some(Err(e)) => tracing::warn!("writing stdout log: {e}"),
-            None => {}
+        if let Some(Err(e)) = self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
+            tracing::warn!("writing stdout log: {e}");
         }
         let inbound = match parse_line(line) {
             Ok(inbound) => inbound,
@@ -408,15 +394,12 @@ impl Actor {
                 let id = ApprovalId::of(&rpc_id);
                 // Codex also resolves requests we answered; only an unanswered
                 // one means Codex withdrew it.
-                match self.open.remove(&id) {
-                    Some(_) => {
-                        self.emit(CodexEvent::Thread {
-                            thread,
-                            event: ThreadEvent::ApprovalCancelled { id },
-                        })
-                        .await;
-                    }
-                    None => tracing::trace!("codex resolved {}, which we answered", id.0),
+                if let Some(Open { .. }) = self.open.remove(&id) {
+                    self.emit(CodexEvent::Thread {
+                        thread,
+                        event: ThreadEvent::ApprovalCancelled { id },
+                    })
+                    .await;
                 }
             }
             Inbound::Unsupported {
@@ -426,9 +409,8 @@ impl Actor {
             } => {
                 let message = format!("conductor does not handle {method}");
                 tracing::warn!("{message}");
-                match self.write(Outbound::Reject { rpc_id, message }).await {
-                    Ok(()) => {}
-                    Err(e) => tracing::error!("rejecting {method}: {e}"),
+                if let Err(e) = self.write(Outbound::Reject { rpc_id, message }).await {
+                    tracing::error!("rejecting {method}: {e}");
                 }
                 self.emit(event).await;
             }
@@ -442,19 +424,18 @@ impl Actor {
         };
         match pending {
             Some(Pending { method, reply }) => {
-                match (method.as_str(), &outcome) {
-                    (methods::INITIALIZE, Ok(_)) => match self.write(Outbound::Initialized).await {
-                        Ok(()) => {}
-                        Err(e) => tracing::error!("sending initialized: {e}"),
-                    },
-                    (methods::INITIALIZE, Err(message)) => {
-                        tracing::debug!("codex refused initialize: {message}")
-                    }
-                    _ => {}
+                if let (methods::INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
+                    self.initialized().await;
                 }
-                drop(reply.send(outcome.map_err(|message| Error::Rpc { method, message })));
+                let _ = reply.send(outcome.map_err(|message| Error::Rpc { method, message }));
             }
             None => tracing::warn!("response for unknown request {id}"),
+        }
+    }
+
+    async fn initialized(&mut self) {
+        if let Err(e) = self.write(Outbound::Initialized).await {
+            tracing::error!("sending initialized: {e}");
         }
     }
 
@@ -468,7 +449,9 @@ impl Actor {
                     Ok(()) => {
                         self.pending.insert(id, Pending { method, reply });
                     }
-                    Err(e) => drop(reply.send(Err(e))),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             CommandMsg::Respond {
@@ -476,10 +459,10 @@ impl Actor {
                 decision,
                 reply,
             } => {
-                drop(reply.send(self.respond(id, decision).await));
+                let _ = reply.send(self.respond(id, decision).await);
             }
             CommandMsg::Shutdown { reply } => {
-                reply.send(self.stop().await).ok();
+                let _ = reply.send(self.stop().await);
             }
         }
     }
@@ -537,9 +520,9 @@ impl Actor {
             Process::Running(running) => {
                 let status = running.stop().await;
                 self.process = Process::Exited(status.clone());
-                self.pending
-                    .drain()
-                    .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
+                self.pending.drain().for_each(|(_, Pending { reply, .. })| {
+                    let _ = reply.send(Err(Error::Exited));
+                });
                 self.open.clear();
                 self.emit(CodexEvent::Exited {
                     status: status.clone(),
@@ -556,7 +539,7 @@ impl Actor {
 
     async fn emit(&self, event: CodexEvent) {
         // A dropped receiver only means nobody is listening any more.
-        drop(self.events.send(event).await);
+        let _ = self.events.send(event).await;
     }
 }
 
