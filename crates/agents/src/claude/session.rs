@@ -31,7 +31,7 @@ pub enum SettingSource {
 }
 
 impl SettingSource {
-    pub fn to_cli(self) -> claude_codes::SettingSource {
+    pub(crate) fn to_cli(self) -> claude_codes::SettingSource {
         match self {
             SettingSource::User => claude_codes::SettingSource::User,
             SettingSource::Project => claude_codes::SettingSource::Project,

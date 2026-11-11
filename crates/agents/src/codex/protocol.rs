@@ -10,7 +10,7 @@ use codex_codes::{
     FileChangeRequestApprovalResponse, InitializeCapabilities, InitializeParams, JsonRpcMessage,
     ModelListParams, Notification, PatchChangeKind, ReasoningEffort, RequestId, SandboxMode,
     ServerRequest, ThreadItemPayload, ThreadResumeParams, ThreadStartParams, TurnInterruptParams,
-    TurnStartParams, TurnStatus, TurnSteerParams, UserInput,
+    TurnStartParams, TurnStatus, UserInput,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -520,19 +520,8 @@ pub(crate) enum Call {
     ModelList,
     ThreadStart(ThreadOptions),
     ThreadResume(ThreadId, ThreadOptions),
-    TurnStart {
-        thread: ThreadId,
-        text: String,
-    },
-    TurnSteer {
-        thread: ThreadId,
-        expected_turn: TurnId,
-        text: String,
-    },
-    TurnInterrupt {
-        thread: ThreadId,
-        turn: TurnId,
-    },
+    TurnStart { thread: ThreadId, text: String },
+    TurnInterrupt { thread: ThreadId, turn: TurnId },
 }
 
 impl Call {
@@ -543,7 +532,6 @@ impl Call {
             Self::ThreadStart(_) => methods::THREAD_START,
             Self::ThreadResume(_, _) => methods::THREAD_RESUME,
             Self::TurnStart { .. } => methods::TURN_START,
-            Self::TurnSteer { .. } => methods::TURN_STEER,
             Self::TurnInterrupt { .. } => methods::TURN_INTERRUPT,
         }
     }
@@ -581,16 +569,6 @@ impl Call {
             }),
             Self::TurnStart { thread, text } => serde_json::to_value(TurnStartParams {
                 thread_id: thread.0.clone(),
-                input: text_input(text),
-                ..Default::default()
-            }),
-            Self::TurnSteer {
-                thread,
-                expected_turn,
-                text,
-            } => serde_json::to_value(TurnSteerParams {
-                thread_id: thread.0.clone(),
-                expected_turn_id: expected_turn.0.clone(),
                 input: text_input(text),
                 ..Default::default()
             }),
@@ -897,18 +875,6 @@ mod tests {
             json(
                 r#"{"id": 7, "method": "turn/start", "params": {
                 "threadId": "th_1", "input": [{"type": "text", "text": "create a.txt"}]}}"#
-            )
-        );
-        assert_eq!(
-            request(Call::TurnSteer {
-                thread: ThreadId(String::from("th_1")),
-                expected_turn: TurnId(String::from("tu_2")),
-                text: String::from("also b")
-            }),
-            json(
-                r#"{"id": 7, "method": "turn/steer", "params": {
-                "threadId": "th_1", "expectedTurnId": "tu_2",
-                "input": [{"type": "text", "text": "also b"}]}}"#
             )
         );
         assert_eq!(

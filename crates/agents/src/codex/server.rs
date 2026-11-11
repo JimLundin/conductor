@@ -204,16 +204,6 @@ impl CodexThread {
         Ok(turn_id(request(&self.server.commands, call).await?)?)
     }
 
-    /// Adds input to the running turn `expected_turn`.
-    pub async fn steer(&self, expected_turn: TurnId, text: String) -> Result<(), Error> {
-        let call = Call::TurnSteer {
-            thread: self.id.clone(),
-            expected_turn,
-            text,
-        };
-        request(&self.server.commands, call).await.map(drop)
-    }
-
     /// Resolves once Codex accepts; `TurnCompleted` follows as an event.
     pub async fn interrupt(&self, turn: TurnId) -> Result<(), Error> {
         let call = Call::TurnInterrupt {

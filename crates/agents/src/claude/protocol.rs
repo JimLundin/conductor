@@ -29,7 +29,7 @@ pub enum PermissionMode {
 }
 
 impl PermissionMode {
-    pub fn to_cli(self) -> claude_codes::PermissionMode {
+    pub(crate) fn to_cli(self) -> claude_codes::PermissionMode {
         match self {
             PermissionMode::Default => claude_codes::PermissionMode::Default,
             PermissionMode::AcceptEdits => claude_codes::PermissionMode::AcceptEdits,
