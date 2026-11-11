@@ -436,14 +436,17 @@ impl Actor {
         match pending {
             Some(Pending { method, reply }) => {
                 if let (methods::INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
-                    match self.write(Outbound::Initialized).await {
-                        Ok(()) => {}
-                        Err(e) => tracing::error!("sending initialized: {e}"),
-                    }
+                    self.initialized().await;
                 }
                 let _ = reply.send(outcome.map_err(|message| Error::Rpc { method, message }));
             }
             None => tracing::warn!("response for unknown request {id}"),
+        }
+    }
+
+    async fn initialized(&mut self) {
+        if let Err(e) = self.write(Outbound::Initialized).await {
+            tracing::error!("sending initialized: {e}");
         }
     }
 
