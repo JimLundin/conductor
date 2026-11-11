@@ -51,7 +51,6 @@ pub enum TypeClass {
     Other,
 }
 
-#[expect(dead_code, reason = "the HTML report reads them")]
 impl TypeClass {
     pub const ALL: [TypeClass; 4] = [
         TypeClass::Own,

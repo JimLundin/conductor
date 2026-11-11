@@ -11,7 +11,9 @@ qualities below, and the owner accepts it.
 `subset.toml` is the source of truth. `tools/subset check` enforces it on
 the paths under `include`. `tools/subset score` and `tools/subset measure`
 give the weighted score and the token count that proposals report (see
-Weights). `tools/subset report` summarises violations by construct. A `[[scope]]` in `subset.toml` allows some ids only under the
+Weights). `tools/subset report` summarises violations by construct, and
+`tools/subset report-html` draws the score of the repository as a page,
+published at <https://jimlundin.github.io/conductor/report/>. A `[[scope]]` in `subset.toml` allows some ids only under the
 paths it lists, such as Dioxus only in `crates/app`.
 
 ## Qualities

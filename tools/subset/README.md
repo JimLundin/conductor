@@ -13,6 +13,7 @@ subset check [--config subset.toml]
 subset report [--config subset.toml] [--json]
 subset measure <paths...> [--json]
 subset score [paths...] [--config subset.toml] [--json] [--by crate|file|fn|construct]
+subset report-html --out <dir> [--config subset.toml] [--compare <dir>]... [--history <n>]
 subset ids
 subset score-ids
 subset rules
@@ -40,6 +41,8 @@ subset rules
   prints `{"by", "rows": [{"name", "score", "tokens", "per_token",
   "boundary", "boundary_share"}], "total"}`, with `count` and `tier` on
   construct rows. See "The weighted score" below.
+- `report-html` writes `<dir>/index.html`, a static page that breaks the
+  score down with charts. See "The HTML report" below.
 - `score-ids` prints the table of score-only ids under "The weighted
   score", kept equal to this file the same way as `ids`.
 - `ids` prints the id table below. A test keeps the table in this file equal
@@ -368,6 +371,42 @@ it is a name we define.
 Positions 1 to 3 of the boundary context apply to these ids too: a
 primitive passed as a type argument of a library type, as in
 `Result<String, E>` or `Option<String>`, costs the boundary weight.
+
+## The HTML report
+
+`subset report-html --out <dir>` writes one self-contained page,
+`<dir>/index.html`: HTML with inline SVG charts and no JavaScript. Hovering
+a mark shows its numbers in a native tooltip, and every chart has a table
+with the same numbers. The page follows the system's light or dark mode,
+and each chart is drawn twice, for wide and narrow screens, so its text
+stays legible on a phone.
+
+The first group is the files under `include`. Each `--compare <dir>` adds
+a group of every `*.rs` file under that directory, scored under the same
+config and labelled as a comparison, for code outside the subset such as
+the checker itself or vendored crates. For each group the page shows:
+
+1. **Tiles**: the score, tokens, score per token, violations and boundary
+   share.
+2. **Score per crate, by tier**: a stacked bar per crate, with the
+   boundary score as its own segment.
+3. **Files**: a treemap with each file's area set by its score and its
+   colour by its score per token, so concentrations of compromise stand
+   out. The tooltip gives the file's boundary share and violations.
+4. **Typing**: per crate, the share of field and signature type tokens
+   that are our own named types, primitives, untyped data, or other types,
+   and the 20 fns with the most primitive tokens in their signatures, as
+   candidates for newtypes.
+5. **Constructs**: each id's count, tokens, tier, weight and share of the
+   score, sorted by contribution.
+6. **Functions**: the top 20 by score, and by score per token among fns
+   of at least 30 tokens, with `file:line`.
+
+`--history <n>` adds a line chart of the score per crate at each of the
+last `n` commits that changed files under `include`, read with `git` and
+scored under the current config. The config must sit at the root of a git
+repository with that history, so a shallow clone needs a full fetch. A
+commit whose files don't parse is left out, with a note on stderr.
 
 ## Known limits
 

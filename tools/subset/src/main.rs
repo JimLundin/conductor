@@ -4,8 +4,10 @@ mod actor;
 mod classify;
 mod context;
 mod facts;
+mod history;
 mod ids;
 mod measure;
+mod report;
 mod rules;
 mod score;
 mod shape;
@@ -24,6 +26,7 @@ const USAGE: &str = "usage:
   subset report [--config subset.toml] [--json]
   subset measure <paths...> [--json]
   subset score [paths...] [--config subset.toml] [--json] [--by crate|file|fn|construct]
+  subset report-html --out <dir> [--config subset.toml] [--compare <dir>]... [--history <n>]
   subset ids
   subset score-ids
   subset rules";
@@ -117,6 +120,9 @@ fn run(args: &[String]) -> Result<ExitCode, Fatal> {
     let mut config = PathBuf::from("subset.toml");
     let mut json = false;
     let mut by = score::Level::Crate;
+    let mut out = None;
+    let mut compare = Vec::new();
+    let mut history = None;
     let mut paths = Vec::new();
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
@@ -126,6 +132,22 @@ fn run(args: &[String]) -> Result<ExitCode, Fatal> {
                 config = PathBuf::from(value);
             }
             "--json" => json = true,
+            "--out" => {
+                out = Some(PathBuf::from(
+                    rest.next().ok_or_else(|| Fatal(USAGE.to_string()))?,
+                ))
+            }
+            "--compare" => compare.push(PathBuf::from(
+                rest.next().ok_or_else(|| Fatal(USAGE.to_string()))?,
+            )),
+            "--history" => {
+                let value = rest.next().ok_or_else(|| Fatal(USAGE.to_string()))?;
+                history = Some(
+                    value
+                        .parse()
+                        .map_err(|_| Fatal(format!("--history takes a count, not {value}")))?,
+                );
+            }
             "--by" => {
                 let value = rest.next().ok_or_else(|| Fatal(USAGE.to_string()))?;
                 by = score::Level::parse(value)
@@ -142,6 +164,10 @@ fn run(args: &[String]) -> Result<ExitCode, Fatal> {
         "report" => report(&config, json),
         "measure" if !paths.is_empty() => measure(&paths, json),
         "score" => score_command(&config, &paths, by, json),
+        "report-html" => match out {
+            Some(out) => report_html(&config, &out, &compare, history),
+            None => Err(Fatal(format!("report-html needs --out <dir>\n{USAGE}"))),
+        },
         "ids" => {
             print!("{}", ids::markdown_table());
             Ok(ExitCode::SUCCESS)
@@ -288,6 +314,99 @@ fn score_command(
         false => print!("{}", score::text(&rows, &total, by, w)),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn report_html(
+    config_path: &Path,
+    out: &Path,
+    compare: &[PathBuf],
+    history: Option<usize>,
+) -> Result<ExitCode, Fatal> {
+    let config = load(config_path)?;
+    let root = root_of(config_path);
+    let has_manifest = |dir: &Path| root.join(dir).join("Cargo.toml").is_file();
+    let (files, weights) = scored(
+        &config,
+        config_path,
+        sources(root, &included(&config, root)?)?,
+        &has_manifest,
+    )?;
+    let mut groups = vec![report::Group {
+        title: config.include.join(", "),
+        note: "The files under <code>include</code> in the config: the code written in the subset."
+            .to_string(),
+        comparison: false,
+        files,
+    }];
+    for dir in compare {
+        let (files, _) = scored(
+            &config,
+            config_path,
+            sources(root, &rust_files(std::slice::from_ref(dir))?)?,
+            &has_manifest,
+        )?;
+        groups.push(report::Group {
+            title: format!("{}/", display(dir).trim_end_matches('/')),
+            note: "Outside <code>include</code>, scored under the same rules for comparison. \
+                   Code the subset doesn't cover counts as violations."
+                .to_string(),
+            comparison: true,
+            files,
+        });
+    }
+    let history = match history {
+        Some(n) => snapshots(&config, config_path, root, n),
+        None => Err("History wasn't generated. Pass --history <n> to add it.".to_string()),
+    };
+    let stamp = match history::head(root) {
+        Some(head) => format!("{} at {head}.", config.include.join(", ")),
+        None => format!("{}.", config.include.join(", ")),
+    };
+    let html = report::render(&report::Page {
+        stamp,
+        groups: &groups,
+        history,
+        weights: &weights.tiers,
+    });
+    std::fs::create_dir_all(out).map_err(|e| Fatal(format!("{}: {e}", display(out))))?;
+    let index = out.join("index.html");
+    std::fs::write(&index, html).map_err(|e| Fatal(format!("{}: {e}", display(&index))))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The score per crate at each of the last `n` commits that changed files
+/// under `include`, under today's config.
+fn snapshots(
+    config: &Config,
+    config_path: &Path,
+    root: &Path,
+    n: usize,
+) -> Result<Vec<report::Snapshot>, String> {
+    let include = Globs::new(&config.include).map_err(|Fatal(e)| e)?;
+    let mut out = Vec::new();
+    for commit in history::commits(root, &config.include, n)? {
+        let tree = history::tree(root, &commit.sha)?;
+        let manifests: BTreeSet<&Path> = tree
+            .iter()
+            .filter(|p| p.file_name().is_some_and(|n| n == "Cargo.toml"))
+            .filter_map(|p| p.parent())
+            .collect();
+        let rust: Vec<PathBuf> = tree.iter().filter(|p| include.cover(p)).cloned().collect();
+        let sources = history::read(root, &commit.sha, &rust)?;
+        let has_manifest = |dir: &Path| manifests.contains(dir);
+        match scored(config, config_path, sources, &has_manifest) {
+            Ok((files, weights)) => out.push(report::Snapshot {
+                crates: score::rows(&files, score::Level::Crate, &weights.tiers)
+                    .iter()
+                    .map(|r| (r.name.clone(), r.score(&weights.tiers)))
+                    .collect(),
+                sha: commit.sha,
+                date: commit.date,
+            }),
+            Err(Fatal(e)) => eprintln!("subset: history: skipping {}: {e}", commit.sha),
+        }
+    }
+    Ok(out)
 }
 
 /// Scores `sources` under the config's allowed ids and weights.

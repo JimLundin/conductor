@@ -1620,3 +1620,92 @@ fn the_readme_lists_every_score_only_id() {
         "README.md is out of date; paste the output of `subset score-ids` into it"
     );
 }
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .status()
+        .expect("run git");
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn report_html_writes_one_static_page_with_history() {
+    let config = score_config(
+        &[
+            "item.fn",
+            "item.enum",
+            "expr.match",
+            "expr.path",
+            "pat.path",
+            "pat.ident",
+            "type.path",
+        ],
+        &[
+            ("item.enum", "encouraged"),
+            ("expr.match", "encouraged"),
+            ("pat.path", "encouraged"),
+            ("pat.ident", "encouraged"),
+        ],
+        "",
+    )
+    .replace("**/*.rs", "lights/**/*.rs");
+    let config = scratch(
+        "report-html",
+        &config,
+        &[
+            ("lights/Cargo.toml", ""),
+            ("lights/src/lib.rs", "enum Light { On, Off }\n"),
+            ("other/main.rs", "fn main() { loop {} }\n"),
+        ],
+    );
+    let root = config.parent().unwrap();
+    git(root, &["init", "-q"]);
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "one"]);
+    std::fs::write(
+        root.join("lights/src/lib.rs"),
+        "enum Light { On, Off }\n\nfn flip(l: Light) -> Light {\n    match l { Light::On => Light::Off, Light::Off => Light::On }\n}\n",
+    )
+    .unwrap();
+    git(root, &["commit", "-q", "-am", "two"]);
+    let out = root.join("site");
+    let (code, stdout, stderr) = subset(&[
+        "report-html",
+        "--config",
+        config.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--compare",
+        root.join("other").to_str().unwrap(),
+        "--history",
+        "5",
+    ]);
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+    let html = std::fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(!html.contains("<script"), "the page has no script");
+    // Tiles: `flip` and `Light` score 29.0 over 40 tokens, as in the score
+    // test. History: the first commit's enum alone scored 3.0.
+    for expected in [
+        "<div class=\"value\">29</div>",
+        "<div class=\"value\">40</div>",
+        "<div class=\"value\">0.725</div>",
+        "<span class=\"badge\">Comparison</span>",
+        "Score per crate at each of the last 2 commits",
+        "<td>29</td></tr>",
+        "<td>3</td></tr>",
+        "<code>flip</code>",
+    ] {
+        assert!(html.contains(expected), "missing {expected}");
+    }
+}

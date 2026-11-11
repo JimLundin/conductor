@@ -55,7 +55,6 @@ pub struct FnTally {
     pub line: usize,
     pub tiers: TierTokens,
     /// Tokens of primitive types in the fn's signature.
-    #[expect(dead_code, reason = "the HTML report reads it")]
     pub signature_primitives: usize,
 }
 
@@ -166,7 +165,6 @@ pub struct ScoredFile {
     pub path: String,
     pub krate: String,
     pub tally: FileTally,
-    #[expect(dead_code, reason = "the HTML report reads it")]
     pub violations: usize,
 }
 
