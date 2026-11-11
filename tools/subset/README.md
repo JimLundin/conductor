@@ -95,7 +95,10 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 `let mut` state is built from), the types of ours named in a loop-state
 type's fields or in the variants of an enum of ours it owns, and the
 newtypes that derive `Ord`. The facts
-are names, not resolved paths.
+are names, not resolved paths. Within one file, a bare type name is ours
+only when the file defines it, imports it from a path of ours, or has a
+glob import of a path of ours. A name the file imports from a library is
+never ours, even when one of our crates defines a type of the same name.
 
 Some rules read a list of names from the config, so a project tunes them
 without changing the tool:
@@ -139,6 +142,8 @@ A list that is given replaces its default. To extend a default, copy it.
 | `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
+| `stmt.let.mut` | `mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035) |
+| `pat.ident.mut` | `mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
 | `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
 | `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |

@@ -885,6 +885,30 @@ fn ref_mut_self_on_a_listed_endpoint_anywhere() {
     );
 }
 
+const MUT_OURS: &str = "`mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035)";
+
+#[test]
+fn mut_binds_a_value_of_ours_only_as_loop_state_or_an_endpoint() {
+    let ours = "pub(crate) struct Attempt {\n    endpoint: Endpoint,\n    connecting: Connecting,\n}\n\nimpl Attempt {\n    fn start(endpoint: Endpoint) -> Attempt {\n        Attempt { connecting: endpoint.connect(), endpoint }\n    }\n}\n\npub(crate) enum RecvHalf {\n    Iroh(RecvStream),\n}\n";
+    let pass = "use tokio::process::Command;\n\nuse crate::a::{Attempt, RecvHalf};\n\nasync fn race(first: Attempt) -> Result<Connection, Lost> {\n    let Attempt { endpoint, mut connecting } = first;\n    let _ = endpoint;\n    connecting.poll().await\n}\n\nasync fn read(mut recv: RecvHalf) -> Frame {\n    recv.read().await\n}\n\nfn command() -> Command {\n    let mut cmd = Command::new(\"ls\");\n    cmd.kill_on_drop(true);\n    cmd\n}\n";
+    let fail = "use crate::a::Attempt;\n\nasync fn race(mut first: Attempt) -> Result<Connection, Lost> {\n    first.connecting.poll().await\n}\n\nasync fn dial(endpoint: Endpoint) -> Result<Connection, Lost> {\n    let mut first = Attempt::start(endpoint);\n    first.connecting.poll().await\n}\n\nfn built(endpoint: Endpoint, connecting: Connecting) -> Attempt {\n    let mut attempt = Attempt { endpoint, connecting };\n    attempt.connecting.reset();\n    attempt\n}\n";
+    assert_eq!(
+        check_repo_config(
+            "mut-ours",
+            &[
+                ("crates/client/src/a.rs", ours),
+                ("crates/client/src/b.rs", pass),
+                ("crates/client/src/b_fail.rs", fail),
+            ],
+        ),
+        format!(
+            "crates/client/src/b_fail.rs:3:15: pat.ident.mut: {MUT_OURS}\n\
+             crates/client/src/b_fail.rs:8:5: stmt.let.mut: {MUT_OURS}\n\
+             crates/client/src/b_fail.rs:13:5: stmt.let.mut: {MUT_OURS}\n"
+        )
+    );
+}
+
 #[test]
 fn let_mut_is_loop_state_or_lent_as_mut() {
     assert_eq!(

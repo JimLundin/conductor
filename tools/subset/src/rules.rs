@@ -68,6 +68,9 @@ pub const PAT_MUT: Rule = rule(
     "pat.ident.mut",
     "a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008)",
 );
+const MUT_OURS: &str = "`mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035)";
+pub const LET_MUT_OURS: Rule = rule("stmt.let.mut", MUT_OURS);
+pub const PARAM_MUT_OURS: Rule = rule("pat.ident.mut", MUT_OURS);
 pub const ASSIGN: Rule = rule(
     "expr.assign",
     "assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)",
@@ -231,6 +234,8 @@ pub const RULES: &[&Rule] = &[
     &REF_MUT_SELF,
     &LET_MUT,
     &PAT_MUT,
+    &LET_MUT_OURS,
+    &PARAM_MUT_OURS,
     &ASSIGN,
     &REF_MUT_OURS,
     &DROP_DISCARD,

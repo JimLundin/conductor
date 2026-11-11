@@ -16,6 +16,7 @@ use syn::{
 
 use crate::actor;
 use crate::facts::{self, Facts};
+use crate::imports::FileNames;
 use crate::rules::{self, Rule};
 
 pub struct Finding {
@@ -144,6 +145,7 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) ->
         types: HashMap::new(),
         cfg_hosts: HashMap::new(),
         cfg_items: CfgItems::gather(file),
+        names: FileNames::gather(file, facts),
         root_allows: Vec::new(),
         impls: Vec::new(),
         fns: Vec::new(),
@@ -331,6 +333,7 @@ struct Checker<'a> {
     /// counterpart for.
     cfg_hosts: HashMap<*const Attribute, Option<CfgItem>>,
     cfg_items: CfgItems,
+    names: FileNames,
     root_allows: Vec<*const Attribute>,
     impls: Vec<ImplCtx>,
     fns: Vec<FnCtx>,
@@ -431,6 +434,7 @@ impl Checker<'_> {
         if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
             self.check_receiver(r);
         }
+        self.check_mut_params(sig);
     }
 
     fn check_receiver(&mut self, r: &syn::Receiver) {
@@ -460,6 +464,61 @@ impl Checker<'_> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// The type of ours that `segments` name, as in `Attempt`, `Self` or
+    /// `crate::link::Attempt`.
+    fn our_type(&self, segments: &[String]) -> Option<String> {
+        let (last, before) = segments.split_last()?;
+        let name = match (last.as_str(), before.first()) {
+            ("Self", None) => return self.impls.last()?.self_ty.clone(),
+            (_, None) => {
+                return self
+                    .names
+                    .bare_type_is_ours(last, self.facts)
+                    .then(|| last.clone());
+            }
+            (_, Some(first)) => self
+                .names
+                .rooted_in_ours(first, self.facts)
+                .then(|| last.clone())?,
+        };
+        self.facts.types.contains(&name).then_some(name)
+    }
+
+    /// The type of ours a `mut` binding holds, where the syntax names it:
+    /// its declared type, the struct or variant its value builds, or the
+    /// type whose associated fn its value comes from. A type that 0008 or
+    /// 0035 lets a binding hold `mut` doesn't count.
+    fn mut_of_ours(&self, ty: Option<&Type>, init: Option<&Expr>) -> Option<String> {
+        let ours = match (ty, init.map(actor::strip)) {
+            (Some(Type::Path(t)), _) if t.qself.is_none() => self.our_type(&segments(&t.path)),
+            (Some(_), _) => None,
+            (None, Some(Expr::Struct(e))) => {
+                let names = segments(&e.path);
+                self.our_type(&names)
+                    .or_else(|| self.our_type(names.split_last()?.1))
+            }
+            (None, Some(Expr::Call(call))) => match &*call.func {
+                Expr::Path(p) => self.our_type(segments(&p.path).split_last()?.1),
+                _ => None,
+            },
+            (None, _) => None,
+        }?;
+        let exempt = self.facts.loop_states.contains(&ours) || self.lists.endpoints.contains(&ours);
+        (!exempt).then_some(ours)
+    }
+
+    fn check_mut_params(&mut self, sig: &syn::Signature) {
+        for arg in &sig.inputs {
+            if let FnArg::Typed(t) = arg
+                && let syn::Pat::Ident(p) = &*t.pat
+                && p.mutability.is_some()
+                && self.mut_of_ours(Some(&t.ty), None).is_some()
+            {
+                self.flag(p.span(), &rules::PARAM_MUT_OURS);
+            }
         }
     }
 
@@ -1201,6 +1260,18 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         if !names.is_empty() && !state && self.assigned_here(&names) {
             self.flag(local.let_token.span, &rules::LET_MUT);
         }
+        let (binding, ty) = match &local.pat {
+            syn::Pat::Type(t) => (&*t.pat, Some(&*t.ty)),
+            pat => (pat, None),
+        };
+        let init = local.init.as_ref().map(|i| &*i.expr);
+        if let syn::Pat::Ident(p) = binding
+            && p.mutability.is_some()
+            && !state
+            && self.mut_of_ours(ty, init).is_some()
+        {
+            self.flag(local.let_token.span, &rules::LET_MUT_OURS);
+        }
         if !names.is_empty() && !state {
             self.mark(local.span(), Fixed::Always);
         }
@@ -1493,6 +1564,10 @@ fn ask_build<'s>(vis: &Visibility, sig: &'s syn::Signature) -> Option<&'s Type> 
         && reply
         && builds_msg;
     shaped.then_some(&*build.ty)
+}
+
+fn segments(path: &syn::Path) -> Vec<String> {
+    path.segments.iter().map(|s| s.ident.to_string()).collect()
 }
 
 fn param_types(sig: &syn::Signature) -> HashMap<String, String> {
