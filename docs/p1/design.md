@@ -1173,9 +1173,14 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   breaking `proto` change bumps the ALPN (`conductor/1` → `/2`). The event log
   stores the same encoding, and `conductord dump` prints it as text. The CLI
   adapters stay JSON: that is the CLIs' own protocol (boundary).
-- **Storage (proposed, awaiting the owner's confirmation): Turso**, the
-  pure-Rust, in-process, SQLite-compatible engine (0.8.x, pre-1.0, in
-  production at several organisations; it also runs in the browser as WASM,
-  which suits the phone's offline cache). It sits behind a small `store`
-  module so a move to `redb` stays cheap. Durability is a later slice, not
+- **Storage: `redb`** (decided 2026-11-11). The owner's rule: durable data
+  stays Rust types, with no SQL and no text formats. `redb` is a pure-Rust,
+  embedded, ACID, crash-safe key-value store with a stable file format, and
+  typed tables (`TableDefinition<K, V>`) that are read and written only
+  through Rust calls. One `store` module owns it. Values are the `proto`
+  types encoded with `postcard` (the wire encoding), keys are our typed ids,
+  and extra lookups are extra typed tables. `conductord dump` prints the store
+  as text. Turso was considered and rejected because it is queried in SQL
+  text. The browser's offline cache, a later item, uses the browser's own
+  storage with the same postcard bytes. Durability is a later slice, not
   slice 1.
