@@ -22,7 +22,7 @@ pub const PUB_FIELD: Rule = rule(
 );
 pub const STRUCT_UPDATE: Rule = rule(
     "expr.struct.update",
-    "the base of `..base` is a path or a constructor call (proposal 0004)",
+    "the base of `..base` is a path, a constructor call or a method call (proposals 0004, 0036)",
 );
 pub const UNIT_TYPE: Rule = rule(
     "type.unit",
@@ -58,7 +58,7 @@ pub const MUT_SELF: Rule = rule(
 );
 pub const REF_MUT_SELF: Rule = rule(
     "item.fn.receiver.mut",
-    "`&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)",
+    "`&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)",
 );
 pub const LET_MUT: Rule = rule(
     "stmt.let.mut",
@@ -80,11 +80,15 @@ pub const DROP_DISCARD: Rule = rule(
     "expr.call",
     "`drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)",
 );
+pub const DROP_FN: Rule = rule(
+    "expr.path",
+    "`drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025)",
+);
 pub const OK_DISCARD: Rule = rule(
     "expr.method_call",
     "`.ok()` is not a discard; write `let _ = value;` (proposal 0025)",
 );
-const PREDICATE: &str = "a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)";
+const PREDICATE: &str = "a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)";
 pub const PREDICATE_MATCHES: Rule = rule("macro.matches", PREDICATE);
 pub const PREDICATE_EQ: Rule = rule("expr.binary.eq", PREDICATE);
 pub const PREDICATE_NE: Rule = rule("expr.binary.ne", PREDICATE);
@@ -175,6 +179,10 @@ pub const DYN: Rule = rule(
     "type.dyn",
     "`dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017)",
 );
+pub const CLOSURE_METHOD: Rule = rule(
+    "expr.closure.adapter",
+    "a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037)",
+);
 pub const CLOSURE: Rule = rule(
     "expr.closure",
     "a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026)",
@@ -226,6 +234,7 @@ pub const RULES: &[&Rule] = &[
     &ASSIGN,
     &REF_MUT_OURS,
     &DROP_DISCARD,
+    &DROP_FN,
     &OK_DISCARD,
     &PREDICATE_MATCHES,
     &PREDICATE_EQ,
@@ -257,6 +266,7 @@ pub const RULES: &[&Rule] = &[
     &CFG_HOST,
     &CFG_PAIR,
     &DYN,
+    &CLOSURE_METHOD,
     &CLOSURE,
     &GLOB,
     &ALLOW,

@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 4) look like in practice.
+What the constructs in `subset.toml` (version 5) look like in practice.
 Every example passes `subset check`, and a test in `tools/subset` keeps it
 that way. A first-line comment naming a path, such as
 `// crates/proto/src/frame.rs`, places an example where a location rule
@@ -424,6 +424,16 @@ pub fn announce(host_name: Option<&str>) {
         tracing::info!(host = %name, "host named");
     }
 }
+
+pub struct Pending {
+    reply: oneshot::Sender<HostSeq>,
+}
+
+pub fn cancel(open: Option<Pending>) {
+    if let Some(Pending { .. }) = open {
+        tracing::info!("request cancelled");
+    }
+}
 ```
 
 When only one case needs doing and the rest need nothing, write `if let`
@@ -431,6 +441,10 @@ with no `else`, no `else if` and no `&&` let-chain (proposal 0027). It
 replaces a `match` whose other arm is `None => {}`, which clippy's
 `single_match` rejects. As soon as another case needs something, it is a
 `match` with every arm written out (§6).
+
+To act only when a value is present, name the payload's pattern with its
+fields elided, as `cancel` does. clippy's `redundant_pattern_matching`
+rejects `Some(_)`, and `Some(..)` is `pat.rest`, which isn't allowed.
 
 ## 22. Counting and searching take a predicate closure
 
@@ -447,12 +461,61 @@ pub fn first_after(events: &[Event], seen: HostSeq) -> Option<&Event> {
 }
 ```
 
-A closure passed straight to `filter`, `find`, `any`, `all`, `position`,
-`take_while`, `skip_while` or `retain` may have a boolean expression as its
-body: `matches!`, a comparison, `&&`, `||` or `!` (proposal 0028). Nowhere
-else. `filter(..).count()` is the one way to count, in place of
+A closure passed straight to a method in `predicate_adapters` (`filter`,
+`find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`,
+`retain`, and tokio's `wait_for`) may have a boolean expression as its body:
+`matches!`, a comparison, `&&`, `||` or `!` (proposals 0028 and 0037).
+Nowhere else, so `state.wait_for(|s| s == &State::Closed)` reads like
+`filter`, not `State::Closed.eq(s)`. `filter(..).count()` is the one way to count, in place of
 `filter_map(..).count()` or a `fold` that adds one. A `bool` still never
 becomes a binding, a field, a parameter or a return type of our own.
+
+## 23. A stream endpoint changes in place
+
+```rust
+pub enum SendHalf {
+    Iroh(iroh::endpoint::SendStream),
+}
+
+impl SendHalf {
+    pub async fn write(&mut self, frame: &[u8]) -> Result<(), WireError> {
+        match self {
+            Self::Iroh(send) => send.write_all(frame).await?,
+        }
+        Ok(())
+    }
+}
+
+pub async fn greet(transport: Transport, hello: &[u8], ready: &[u8]) -> Result<(), WireError> {
+    let mut send = transport.open_send().await?;
+    send.write(hello).await?;
+    send.write(ready).await?;
+    send.finish()
+}
+```
+
+A type on the `endpoints` list in `subset.toml` wraps a library stream
+whose own API takes `&mut`, so its methods take `&mut self` and any code
+may call them on a `let mut` binding (proposal 0035). Without the list, each
+write would take the half by value and hand it back, and every caller would
+rebind it. Every other type of ours keeps 0008's reach: its value-returning
+methods stay, and no fn takes a `&mut` of it.
+
+## 24. A changed copy of what a method returns
+
+```rust
+pub fn catching_up(outbox: &Outbox, host: HostName) -> Status {
+    Status {
+        host: Some(host),
+        state: LinkState::CatchingUp,
+        ..outbox.current()
+    }
+}
+```
+
+The base of a struct update may be a method call that returns a fresh
+value of the struct's type (proposal 0036). Write the call in place, as
+here, rather than binding it with `let current = outbox.current();` first.
 
 ## Still outside the subset
 

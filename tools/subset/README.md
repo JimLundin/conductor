@@ -36,11 +36,14 @@ subset rules
 - `score` prints the weighted score of `paths`, or of the files under
   `include` when none are given, at one level: per crate (the default), per
   file, per fn or per construct. Each row gives the score, the tokens, the
-  score per token, the boundary score and the boundary's share of the
-  score. Fns and constructs are sorted by score, highest first. `--json`
-  prints `{"by", "rows": [{"name", "score", "tokens", "per_token",
-  "boundary", "boundary_share"}], "total"}`, with `count` and `tier` on
-  construct rows. See "The weighted score" below.
+  lines, the score per token, the boundary score and the boundary's share
+  of the score. Lines are counted as `measure` counts them. A construct
+  row's lines are those on which the construct owns a token, so construct
+  rows overlap and don't add up to the total. Fns and constructs are
+  sorted by score, highest first. `--json` prints `{"by", "rows":
+  [{"name", "score", "tokens", "lines", "per_token", "boundary",
+  "boundary_share"}], "total"}`, with `count` and `tier` on construct
+  rows. See "The weighted score" below.
 - `report-html` writes `<dir>/index.html`, a static page that breaks the
   score down with charts. See "The HTML report" below.
 - `score-ids` prints the table of score-only ids under "The weighted
@@ -90,14 +93,41 @@ facts from other files, so `check` first gathers, from every file under
 types used as a `Result`'s error, the actor loop-state types (the `Self`
 of a `run(mut self)` whose body is an actor loop, and the type a loop's
 `let mut` state is built from), the types of ours named in a loop-state
-type's fields, and the newtypes that derive `Ord`. The facts
+type's fields or in the variants of an enum of ours it owns, and the
+newtypes that derive `Ord`. The facts
 are names, not resolved paths.
+
+Some rules read a list of names from the config, so a project tunes them
+without changing the tool:
+
+```toml
+# Types of ours whose methods may take `&mut self` anywhere (0035).
+endpoints = ["SendHalf", "RecvHalf"]
+```
+
+- `endpoints` names types of ours, matched on the impl's type name, whose
+  methods may take `&mut self` wherever they are, not only as loop state.
+  The default is none.
+- `predicate_adapters` names the methods whose closure argument may have a
+  boolean expression as its body (0028, 0037). The default is `filter`,
+  `find`, `any`, `all`, `position`, `take_while`, `skip_while` and `retain`.
+- `closure_methods` names the other methods a closure may be passed to
+  (`expr.closure.adapter`). A closure passed to a method on neither list is
+  flagged. The default is the std `Iterator`, `Option` and `Result` methods
+  that take a closure: `and_then`, `filter_map`, `find_map`, `flat_map`,
+  `fold`, `for_each`, `get_or_insert_with`, `inspect`, `inspect_err`,
+  `is_err_and`, `is_none_or`, `is_ok_and`, `is_some_and`, `map`, `map_err`,
+  `map_or`, `map_or_else`, `map_while`, `max_by`, `max_by_key`, `min_by`,
+  `min_by_key`, `ok_or_else`, `or_else`, `partition`, `reduce`, `rfind`,
+  `rposition`, `scan`, `try_fold`, `try_for_each` and `unwrap_or_else`.
+
+A list that is given replaces its default. To extend a default, copy it.
 
 | Id | Rule |
 |---|---|
 | `vis.restricted` | only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003) |
 | `vis.pub` | a field of a `pub(crate)` struct is `pub(crate)`, never `pub` (proposal 0003) |
-| `expr.struct.update` | the base of `..base` is a path or a constructor call (proposal 0004) |
+| `expr.struct.update` | the base of `..base` is a path, a constructor call or a method call (proposals 0004, 0036) |
 | `type.unit` | `()` as a type only in a type argument of a type we don't define, as in `Result<(), E>`, or as `fn main`'s return type (proposals 0005, 0023) |
 | `expr.unit` | `()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023) |
 | `expr.async` | an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006) |
@@ -106,23 +136,24 @@ are names, not resolved paths.
 | `expr.loop` | a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007) |
 | `expr.break` | `break` only with a value, out of an actor loop (proposal 0007) |
 | `item.fn.receiver.mut` | `mut self` only on a fn whose body is an actor loop (proposal 0008) |
-| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008) |
+| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
 | `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
 | `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |
+| `expr.path` | `drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025) |
 | `expr.method_call` | `.ok()` is not a discard; write `let _ = value;` (proposal 0025) |
-| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
 | `expr.method_call` | count matching items with `filter(\|x\| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
@@ -143,6 +174,7 @@ are names, not resolved paths.
 | `attr.cfg` | `cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016) |
 | `attr.cfg` | a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016) |
 | `type.dyn` | `dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017) |
+| `expr.closure.adapter` | a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037) |
 | `expr.closure` | a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026) |
 | `item.use.glob` | a glob import only for `dioxus::prelude::*` (proposal 0018) |
 | `attr.allow` | only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018) |
@@ -245,7 +277,7 @@ comparing two versions of the same code.
 [weights]
 external_protocols = ["src/vendor_api/**"]   # optional, default none
 untyped = ["serde_json::Value", "dyn Any"]  # optional, default below
-# adapters = [...], primitives = [...]      # optional, default below
+# adapters, primitives, transparent         # optional, default below
 
 [weights.tiers]
 encouraged = 0.5
@@ -275,8 +307,8 @@ boundary = 1.0
   `position`, `product`, `reduce`, `rev`, `rposition`, `scan`, `skip`,
   `skip_while`, `step_by`, `sum`, `take`, `take_while`, `try_fold`, `unzip`
   and `zip`. The name is all the tool sees, so `Option::map` counts too.
-- `primitives`, `untyped` and `external_protocols` are described under
-  Typing.
+- `primitives`, `untyped`, `transparent` and `external_protocols` are
+  described under Typing.
 
 A list that is given replaces its default. To extend a default, copy it.
 
@@ -368,9 +400,19 @@ pattern's leading segments must agree where the code spells them too. A
 bare name in the code, such as `Value`, matches `serde_json::Value` unless
 it is a name we define.
 
+- **Std containers are transparent.** A type whose last segment is in
+  `transparent`, and isn't a name we define, holds its arguments without
+  typing them. A primitive held only by such containers in our own field or
+  signature, as `String` in `Option<String>` or `Vec<Option<String>>`, is
+  `type.primitive` at its own tier, not boundary. The container's own
+  tokens are left out of the typing shares, so `Option<SessionId>` counts
+  as our own type. The default `transparent` is `Option`, `Result`, `Vec`,
+  `VecDeque`, `Box`, `Rc`, `Arc`, `Cow`, `HashMap`, `HashSet`, `BTreeMap`
+  and `BTreeSet`.
+
 Positions 1 to 3 of the boundary context apply to these ids too: a
-primitive passed as a type argument of a library type, as in
-`Result<String, E>` or `Option<String>`, costs the boundary weight.
+primitive passed as a type argument of a library type that isn't
+transparent, as in `mpsc::Sender<String>`, costs the boundary weight.
 
 ## The HTML report
 
@@ -386,10 +428,11 @@ a group of every `*.rs` file under that directory, scored under the same
 config and labelled as a comparison, for code outside the subset such as
 the checker itself or vendored crates. For each group the page shows:
 
-1. **Tiles**: the score, tokens, score per token, violations and boundary
-   share.
+1. **Tiles**: the score, the score in lines, tokens and lines, score per
+   token, violations and boundary share.
 2. **Score per crate, by tier**: a stacked bar per crate, with the
-   boundary score as its own segment.
+   boundary score as its own segment, and the score in lines beside it on
+   wide screens.
 3. **Files**: a treemap with each file's area set by its score and its
    colour by its score per token, so concentrations of compromise stand
    out. The tooltip gives the file's boundary share and violations.
@@ -401,6 +444,11 @@ the checker itself or vendored crates. For each group the page shows:
    score, sorted by contribution.
 6. **Functions**: the top 20 by score, and by score per token among fns
    of at least 30 tokens, with `file:line`.
+
+The **score in lines** is approximate: the score divided by the tokens per
+line of the scope shown, `score ÷ (tokens ÷ lines)`, for a sense of scale.
+Wherever the page gives tokens, in tiles, tooltips and tables, it gives
+lines beside them, except the typing shares, which count type tokens.
 
 `--history <n>` adds a line chart of the score per crate at each of the
 last `n` commits that changed files under `include`, read with `git` and
@@ -414,8 +462,10 @@ commit whose files don't parse is left out, with a note on stderr.
   doesn't look inside it. Code in `format!` arguments, `tracing` fields or
   Dioxus `rsx!` can use any construct.
 - **`expr.closure.adapter` can't see types.** syn has no type information,
-  so the rule can't verify that the receiver is an iterator, `Option` or
-  `Result`. A closure passed to any method passes.
+  so the rule checks the method's name against `closure_methods` and
+  `predicate_adapters`, not that the receiver is an iterator, `Option` or
+  `Result`. A method of ours that shares a listed name, such as a `map` of
+  our own, passes.
 - **`type.bool` matches the path `bool` only.** A type alias for `bool`, or
   a `bool` returned by a std method, isn't detected.
 - **Attribute arguments are only partly read.** The rules read the keys of
@@ -434,20 +484,25 @@ commit whose files don't parse is left out, with a note on stderr.
   is there: 0002 `pub` only for another crate, 0006 `async fn` only for I/O,
   0012 serde only on wire types (checked by location), 0013 generics only at
   the wire boundary (checked by bound), 0014 a slice only for a read-only
-  sequence, 0015 a byte array only where its size is part of a format,
-  0009 generics only where the trait demands them (any are allowed inside a
+  sequence, 0015 a byte array only where its size is part of a format, 0009
+  generics only where the trait demands them (any are allowed inside a
   listed trait impl), 0024 an order that means something, 0025 `drop` only
   of a value that owns a resource (checked as "the argument is a plain
-  name"), 0026 every round trip going through `ask` (the helper's shape is
-  checked), and 0028 a `fold` that only counts (`filter_map(..).count()` is
-  checked). Neither can it see what a body does: 0017's callback
-  only forwards to a channel, and 0019's `main` turns its `bool` into an
-  enum. `docs/subset/compromises.md` lists these.
+  name", and `drop` passed as a function is flagged), 0026 every round trip
+  going through `ask` (the helper's shape is checked), 0036 a struct
+  update's method-call base returning the struct's own type (any method call
+  passes), and 0028 a `fold` that only counts (`filter_map(..).count()` is
+  checked). Neither can it see what a body does: 0017's callback only
+  forwards to a channel, and 0019's `main` turns its `bool` into an enum.
+  `docs/subset/compromises.md` lists these.
 - **Ownership and receivers are approximated by name.** 0008's "a value
   that loop state owns" is a type of ours named anywhere in a field type of
-  a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down. A
-  type that a loop state merely mentions, say in `PhantomData<T>`, counts
-  too, and a value two fields down doesn't. 0024's `.0.cmp(` is flagged
+  a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down.
+  An enum of ours is transparent, as `Option` is: the types in its
+  variants' payloads are owned wherever the enum is, so `Connected` in
+  `phase: Phase` with `Phase::Connected(Connected)` is owned. A type that a
+  loop state merely mentions, say in `PhantomData<T>`, counts too, and a
+  value two struct fields down doesn't. 0024's `.0.cmp(` is flagged
   only where the receiver is `self` in an impl of an ordered newtype or a
   parameter declared as one; `event.seq.0.cmp(..)` passes.
 - **`cfg` pairs are matched by name.** A `cfg` fn or impl is paired when an

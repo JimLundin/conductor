@@ -16,6 +16,8 @@ pub struct Typing {
     pub adapters: Vec<String>,
     pub primitives: Vec<Type>,
     pub untyped: Vec<Type>,
+    /// Names of std containers that typing sees through.
+    pub transparent: Vec<String>,
 }
 
 /// Which occurrences a refinement applies to.
@@ -108,6 +110,10 @@ pub struct Context {
     /// Fields of a type with a library derive in an external protocol module.
     pub wire_fields: Vec<Range<usize>>,
     pub typed: Vec<Typed>,
+    /// Primitives in our own fields and signatures held only by transparent
+    /// containers, as `String` in `Option<String>`: they keep their tier
+    /// where the boundary would relieve a library type's argument.
+    pub kept: Vec<Range<usize>>,
     pub fns: Vec<FnSpan>,
 }
 
@@ -134,6 +140,7 @@ pub fn gather(file: &syn::File, facts: &Facts, typing: &Typing, external: bool) 
         self_ty: None,
         foreign_impl: false,
         place: None,
+        through: false,
         item: ItemKind::Other,
     };
     gather.visit_file(file);
@@ -157,6 +164,9 @@ struct Gather<'a> {
     /// trait fixes.
     foreign_impl: bool,
     place: Option<Place>,
+    /// Every type between here and the field or signature type is a
+    /// transparent container.
+    through: bool,
     item: ItemKind,
 }
 
@@ -190,9 +200,30 @@ impl Gather<'_> {
     }
 
     fn in_place(&mut self, place: Place, ty: &Type) {
-        let outer = self.place.replace(place);
+        let outer = (self.place.replace(place), self.through);
+        self.through = true;
         self.visit_type(ty);
-        self.place = outer;
+        (self.place, self.through) = outer;
+    }
+
+    /// A std container that typing sees through, such as `Option<T>`.
+    fn transparent(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Path(p) if p.qself.is_none() && !self.facts.is_ours(&p.path) => p
+                .path
+                .segments
+                .last()
+                .is_some_and(|s| self.typing.transparent.iter().any(|t| s.ident == t)),
+            _ => false,
+        }
+    }
+
+    /// Visits the types inside `ty`, which holds them transparently or not.
+    fn visit_inside(&mut self, ty: &Type, transparent: bool) {
+        let outer = self.through;
+        self.through = outer && transparent;
+        visit::visit_type(self, ty);
+        self.through = outer;
     }
 
     fn class(&self, ty: &Type) -> TypeClass {
@@ -307,15 +338,19 @@ impl<'ast> Visit<'ast> for Gather<'_> {
                 self.refine(ty, "type.primitive");
                 self.context.folded.push(ty.span().byte_range());
                 self.typed(ty, class, place);
+                if self.through {
+                    self.context.kept.push(ty.span().byte_range());
+                }
             }
-            (Some(Place::Field), _) => {
-                self.refine(ty, "type.field");
-                self.typed(ty, class, Place::Field);
-                visit::visit_type(self, ty);
-            }
-            (Some(Place::Signature), _) => {
-                self.typed(ty, class, Place::Signature);
-                visit::visit_type(self, ty);
+            (Some(place), _) => {
+                if place == Place::Field {
+                    self.refine(ty, "type.field");
+                }
+                let transparent = self.transparent(ty);
+                if !transparent {
+                    self.typed(ty, class, place);
+                }
+                self.visit_inside(ty, transparent);
             }
             (None, _) => visit::visit_type(self, ty),
         }

@@ -42,7 +42,9 @@ Give the reviewer the diff, the friction log, `docs/subset.md`,
    is a required fix, not a proposal. Once `subset repeats` exists, run it
    on the change: repeated shapes the subset can already express as data
    are required fixes, and those that need a new construct become
-   proposals.
+   proposals. A group of tests becomes a table only at **4 or more
+   cases**. At three, the named struct that 0001 requires costs about 20%
+   more than it saves, so three similar tests are not a breach.
 2. **Ratchet.** Pick the candidate constructs from the friction log and
    from patterns repeated in the diff. For each candidate:
    - Rewrite the affected code with the construct, in a scratch copy.

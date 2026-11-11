@@ -225,7 +225,7 @@ fn if_let_only_with_a_single_branch() {
          crates/daemon/src/a_fail.rs:10:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:15:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:15:8: expr.let: `let` inside a condition chain\n\
-         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
          crates/daemon/src/a_fail.rs:15:33: expr.let: `let` inside a condition chain\n"
     );
 }
@@ -604,15 +604,15 @@ fn a_pub_crate_struct_has_no_pub_fields() {
 }
 
 #[test]
-fn struct_update_takes_a_path_or_a_constructor_call() {
+fn struct_update_takes_a_path_or_a_call() {
     assert_eq!(
         rule_case(
             "struct-update",
             "crates/daemon/src/a.rs",
-            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host }\n}\n\nfn options(model: String) -> Options {\n    Options { model, ..Options::new() }\n}\n",
-            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host.clone() }\n}\n",
+            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host }\n}\n\nfn options(model: String) -> Options {\n    Options { model, ..Options::new() }\n}\n\nfn live(outbox: &Outbox) -> Status {\n    Status { state: LinkState::Live, ..outbox.current() }\n}\n",
+            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..{ host } }\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:5: expr.struct.update: the base of `..base` is a path or a constructor call (proposal 0004)\n"
+        "crates/daemon/src/a_fail.rs:2:5: expr.struct.update: the base of `..base` is a path, a constructor call or a method call (proposals 0004, 0036)\n"
     );
 }
 
@@ -798,13 +798,29 @@ fn ref_mut_self_only_on_loop_state_methods() {
             ACTOR,
             "impl Host {\n    fn rename(&mut self, name: String) {\n        self.name = name;\n    }\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)\n"
+        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n"
     );
 }
 
 const OWNED: &str = "struct Reader {
     frames: FrameBuffer,
     turns: HashMap<ThreadId, Turn>,
+    phase: Phase,
+}
+
+enum Phase {
+    Idle,
+    Live(Live),
+}
+
+struct Live {
+    conn: Conn,
+}
+
+impl Live {
+    fn arm(&mut self) {
+        self.conn = Conn {};
+    }
 }
 
 struct FrameBuffer {
@@ -848,10 +864,24 @@ fn ref_mut_self_reaches_a_value_that_loop_state_owns() {
             "ref-mut-owned",
             "crates/daemon/src/a.rs",
             OWNED,
-            "struct Session {\n    turn: Turn,\n}\n\nimpl Session {\n    fn finish(&mut self, outcome: Outcome) {\n        self.turn.finish(outcome);\n    }\n}\n\nfn apply(turn: &mut Turn, outcome: Outcome) {\n    turn.finish(outcome);\n}\n",
+            "struct Session {\n    turn: Turn,\n}\n\nimpl Session {\n    fn finish(&mut self, outcome: Outcome) {\n        self.turn.finish(outcome);\n    }\n}\n\nfn apply(turn: &mut Turn, outcome: Outcome) {\n    turn.finish(outcome);\n}\n\nstruct Conn {}\n\nimpl Conn {\n    fn close(&mut self) {}\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:6:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)\n\
-         crates/daemon/src/a_fail.rs:11:17: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)\n"
+        "crates/daemon/src/a_fail.rs:6:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n\
+         crates/daemon/src/a_fail.rs:11:17: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)\n\
+         crates/daemon/src/a_fail.rs:18:15: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n"
+    );
+}
+
+#[test]
+fn ref_mut_self_on_a_listed_endpoint_anywhere() {
+    assert_eq!(
+        rule_case(
+            "ref-mut-endpoint",
+            "crates/client/src/a.rs",
+            "pub(crate) enum SendHalf {\n    Iroh(SendStream),\n}\n\nimpl SendHalf {\n    pub(crate) async fn write(&mut self, frame: &[u8]) -> Result<(), WireError> {\n        match self {\n            Self::Iroh(send) => send.write_all(frame).await?,\n        }\n        Ok(())\n    }\n}\n\nasync fn rpc(transport: Transport, frame: Vec<u8>) -> Result<(), WireError> {\n    let mut send = transport.open().await?;\n    send.write(&frame).await?;\n    Ok(())\n}\n",
+            "struct Transcript {\n    items: Vec<Item>,\n}\n\nimpl Transcript {\n    fn push(&mut self, item: Item) {\n        self.items.push(item);\n    }\n}\n",
+        ),
+        "crates/client/src/a_fail.rs:6:14: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n"
     );
 }
 
@@ -916,11 +946,12 @@ fn discard_with_let_underscore() {
             "discard",
             "crates/daemon/src/a.rs",
             "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, guard: Lease) {\n    let _ = reply.send(head);\n    drop(guard);\n}\n",
-            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, lost: oneshot::Sender<HostSeq>) {\n    drop(reply.send(head));\n    lost.send(head).ok();\n    std::mem::drop(tokio::spawn(work()));\n}\n",
+            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, lost: oneshot::Sender<HostSeq>) {\n    drop(reply.send(head));\n    lost.send(head).ok();\n    std::mem::drop(tokio::spawn(work()));\n}\n\nfn sent(reply: Reply) -> Result<(), Lost> {\n    reply.send().map(drop)\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:2:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n\
          crates/daemon/src/a_fail.rs:3:21: expr.method_call: `.ok()` is not a discard; write `let _ = value;` (proposal 0025)\n\
-         crates/daemon/src/a_fail.rs:4:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n"
+         crates/daemon/src/a_fail.rs:4:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n\
+         crates/daemon/src/a_fail.rs:8:22: expr.path: `drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025)\n"
     );
 }
 
@@ -933,15 +964,31 @@ fn boolean_expressions_only_in_predicate_closures() {
             "fn finished(events: &[Event]) -> usize {\n    events.iter().filter(|e| matches!(e.kind, Kind::TurnFinished)).count()\n}\n\nfn seen(events: &[Event], seq: HostSeq) -> Option<&Event> {\n    events.iter().find(|e| e.seq == seq)\n}\n\nfn first_live(events: &[Event], seq: HostSeq) -> Option<usize> {\n    events.iter().position(|e| e.seq >= seq && !matches!(e.kind, Kind::Replayed))\n}\n",
             "fn same(a: HostSeq, b: HostSeq) -> Same {\n    let same = a == b;\n    Same::from(same)\n}\n\nfn done(next: Option<Event>) {\n    if let Some(event) = next && matches!(event.kind, Kind::TurnFinished) {\n        finish(event);\n    }\n}\n\nfn label(next: Option<Event>) -> Label {\n    match next {\n        Some(e) if matches!(e.kind, Kind::TurnFinished) => Label::Done,\n        _ => Label::Busy,\n    }\n}\n\nfn all(events: &[Event]) -> usize {\n    events.iter().filter(|_| true).count()\n}\n\nfn counted(events: &[Event]) -> usize {\n    events.iter().filter_map(|e| match e.kind {\n        Kind::TurnFinished => Some(()),\n        _ => None,\n    }).count()\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:18: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+        "crates/daemon/src/a_fail.rs:2:18: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
          crates/daemon/src/a_fail.rs:7:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:7:8: expr.let: `let` inside a condition chain\n\
-         crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
-         crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
+         crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
          crates/daemon/src/a_fail.rs:14:17: expr.match.guard: `if` guard on a match arm\n\
-         crates/daemon/src/a_fail.rs:14:20: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:14:20: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
          crates/daemon/src/a_fail.rs:20:30: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n\
          crates/daemon/src/a_fail.rs:27:8: expr.method_call: count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)\n"
+    );
+}
+
+#[test]
+fn a_closure_goes_only_to_a_listed_method() {
+    assert_eq!(
+        rule_case(
+            "closure-method",
+            "crates/daemon/src/a.rs",
+            "fn last_seen(events: &[Event], seq: HostSeq) -> Option<&Event> {\n    events.iter().rfind(|e| e.seq == seq)\n}\n\nasync fn closed(mut state: watch::Receiver<ChannelState>) -> Result<(), Lost> {\n    state.wait_for(|s| s == &ChannelState::Closed).await.map_err(Lost::from_watch)?;\n    Ok(())\n}\n\nfn label(name: Option<Name>) -> Option<Label> {\n    name.map(|n| n.label())\n}\n",
+            "async fn arm(link: Link, state: LinkState) {\n    link.update(|s| s.state = state).await;\n}\n\nasync fn connecting(mut state: watch::Receiver<ChannelState>) {\n    let _ = state.wait_until(|s| s != &ChannelState::Connecting).await;\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:17: expr.closure.adapter: a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037)\n\
+         crates/daemon/src/a_fail.rs:2:29: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:6:30: expr.closure.adapter: a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037)\n\
+         crates/daemon/src/a_fail.rs:6:36: expr.binary.ne: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n"
     );
 }
 
@@ -1394,7 +1441,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 22);
+    assert_eq!(files.len(), 24);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))
@@ -1470,17 +1517,36 @@ fn score_charges_each_token_the_weight_of_its_innermost_construct() {
     );
     assert_eq!(
         score_output(&config, "fn"),
-        "     score   tokens per token  boundary  share fn\n\
-         \x20     30.5       22     1.386       0.0   0.0% lights/src/lib.rs:6 first\n\
-         \x20     26.0       34     0.765       0.0   0.0% lights/src/lib.rs:3 flip\n\
-         \x20     59.5       62     0.960       0.0   0.0% total\n"
+        "     score   tokens   lines per token  boundary  share fn\n\
+         \x20     30.5       22       3     1.386       0.0   0.0% lights/src/lib.rs:6 first\n\
+         \x20     26.0       34       3     0.765       0.0   0.0% lights/src/lib.rs:3 flip\n\
+         \x20     59.5       62       7     0.960       0.0   0.0% total\n"
     );
     assert_eq!(
         score_output(&config, "crate"),
-        "     score   tokens per token  boundary  share crate\n\
-         \x20     59.5       62     0.960       0.0   0.0% lights\n\
-         \x20     59.5       62     0.960       0.0   0.0% total\n"
+        "     score   tokens   lines per token  boundary  share crate\n\
+         \x20     59.5       62       7     0.960       0.0   0.0% lights\n\
+         \x20     59.5       62       7     0.960       0.0   0.0% total\n"
     );
+    let (code, stdout, _) = subset(&[
+        "score",
+        "--config",
+        config.to_str().unwrap(),
+        "--by",
+        "fn",
+        "--json",
+    ]);
+    assert_eq!(code, 0);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        (
+            &json["rows"][1]["name"],
+            &json["rows"][1]["tokens"],
+            &json["rows"][1]["lines"]
+        ),
+        (&"lights/src/lib.rs:3 flip".into(), &34.into(), &3.into())
+    );
+    assert_eq!(json["total"]["lines"], 7);
 }
 
 #[test]
@@ -1530,31 +1596,31 @@ fn the_same_construct_costs_the_boundary_weight_where_a_library_fixes_its_shape(
     // (3), the serde derive (5) and the `false` passed to `watch::channel`.
     assert_eq!(
         score_output(&config, "construct"),
-        "     score   tokens per token  boundary  share  count tier       construct\n\
-         \x20     23.0       23     1.000       0.0   0.0%      4 neutral    item.fn\n\
-         \x20     15.0        3     5.000       0.0   0.0%      1 outside    expr.loop\n\
-         \x20     11.0       11     1.000       0.0   0.0%      5 neutral    expr.path\n\
-         \x20      9.0        3     3.000       0.0   0.0%      1 costly     stmt.let.mut\n\
-         \x20      6.0        6     1.000       0.0   0.0%      2 neutral    expr.method_call\n\
-         \x20      5.0        5     1.000       5.0 100.0%      1 boundary   attr.derive.Serialize\n\
-         \x20      5.0        5     1.000       0.0   0.0%      5 neutral    type.path\n\
-         \x20      4.0        4     1.000       0.0   0.0%      1 neutral    expr.struct\n\
-         \x20      4.0        4     1.000       4.0 100.0%      1 boundary   item.impl.trait\n\
-         \x20      3.0        1     3.000       0.0   0.0%      1 costly     expr.assign\n\
-         \x20      3.0        3     1.000       3.0 100.0%      1 boundary   item.fn.receiver.mut\n\
-         \x20      3.0        6     0.500       0.0   0.0%      1 encouraged item.struct.named\n\
-         \x20      3.0        3     1.000       3.0 100.0%      1 boundary   stmt.let.mut\n\
-         \x20      2.5        5     0.500       0.0   0.0%      3 encouraged pat.ident\n\
-         \x20      2.0        2     1.000       0.0   0.0%      2 neutral    expr.call\n\
-         \x20      2.0        2     1.000       0.0   0.0%      2 neutral    expr.lit\n\
-         \x20      2.0        1     2.000       0.0   0.0%      1 tolerated  type.primitive\n\
-         \x20      1.0        1     1.000       1.0 100.0%      1 boundary   expr.lit.bool\n\
-         \x20    103.5       88     1.176      16.0  15.5%                   total\n"
+        "     score   tokens   lines per token  boundary  share  count tier       construct\n\
+         \x20     23.0       23       7     1.000       0.0   0.0%      4 neutral    item.fn\n\
+         \x20     15.0        3       3     5.000       0.0   0.0%      1 outside    expr.loop\n\
+         \x20     11.0       11       4     1.000       0.0   0.0%      5 neutral    expr.path\n\
+         \x20      9.0        3       1     3.000       0.0   0.0%      1 costly     stmt.let.mut\n\
+         \x20      6.0        6       2     1.000       0.0   0.0%      2 neutral    expr.method_call\n\
+         \x20      5.0        5       1     1.000       5.0 100.0%      1 boundary   attr.derive.Serialize\n\
+         \x20      5.0        5       4     1.000       0.0   0.0%      5 neutral    type.path\n\
+         \x20      4.0        4       1     1.000       0.0   0.0%      1 neutral    expr.struct\n\
+         \x20      4.0        4       2     1.000       4.0 100.0%      1 boundary   item.impl.trait\n\
+         \x20      3.0        1       1     3.000       0.0   0.0%      1 costly     expr.assign\n\
+         \x20      3.0        3       1     1.000       3.0 100.0%      1 boundary   item.fn.receiver.mut\n\
+         \x20      3.0        6       3     0.500       0.0   0.0%      1 encouraged item.struct.named\n\
+         \x20      3.0        3       1     1.000       3.0 100.0%      1 boundary   stmt.let.mut\n\
+         \x20      2.5        5       3     0.500       0.0   0.0%      3 encouraged pat.ident\n\
+         \x20      2.0        2       2     1.000       0.0   0.0%      2 neutral    expr.call\n\
+         \x20      2.0        2       2     1.000       0.0   0.0%      2 neutral    expr.lit\n\
+         \x20      2.0        1       1     2.000       0.0   0.0%      1 tolerated  type.primitive\n\
+         \x20      1.0        1       1     1.000       1.0 100.0%      1 boundary   expr.lit.bool\n\
+         \x20    103.5       88      20     1.176      16.0  15.5%                   total\n"
     );
 }
 
 #[test]
-fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
+fn typing_charges_primitives_in_signatures_and_fields_and_std_containers_and_untyped_data() {
     let derive = "#[derive(Serialize)]\nstruct Msg {\n    body: Vec<u8>,\n}\n";
     let config = score_config(
         &[
@@ -1585,10 +1651,18 @@ fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
                 "struct SessionId(String);\n\nfn resume(session: SessionId) {}\n",
             ),
             ("untyped.rs", "struct Event {\n    body: Value,\n}\n"),
+            (
+                "contained.rs",
+                "struct Peer {\n    name: Option<String>,\n    tx: Sender<String>,\n}\n",
+            ),
             ("wire/lib.rs", derive),
             ("proto/lib.rs", derive),
         ],
     );
+    // contained.rs: `struct Peer {`, both fields' `name : ,` and the
+    // containers' `Option < >` and `Sender < >` cost 0.5 each (7.5). The
+    // `String` in std's `Option` is a primitive (2.0); the one in a library's
+    // `Sender` is a type argument the library fixes (boundary, 1.0).
     // primitive.rs: `fn resume ( : {` 5.0, `session` 0.5, `String` 2.0.
     // typed.rs: the newtype's `struct SessionId ( ;` and its `String` cost
     // 0.5 each (2.5), and the fn 6.5 with `SessionId` at 1.0.
@@ -1599,13 +1673,14 @@ fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
     // field costs `body :` 0.5 each and `Vec<u8>` 2.0 a token.
     assert_eq!(
         score_output(&config, "file"),
-        "     score   tokens per token  boundary  share file\n\
-         \x20      7.5        7     1.071       0.0   0.0% primitive.rs\n\
-         \x20     16.0       15     1.067       5.0  31.2% proto/lib.rs\n\
-         \x20      9.0       12     0.750       0.0   0.0% typed.rs\n\
-         \x20      6.0        7     0.857       0.0   0.0% untyped.rs\n\
-         \x20     13.0       15     0.867      11.0  84.6% wire/lib.rs\n\
-         \x20     51.5       56     0.920      16.0  31.1% total\n"
+        "     score   tokens   lines per token  boundary  share file\n\
+         \x20     10.5       17       4     0.618       1.0   9.5% contained.rs\n\
+         \x20      7.5        7       1     1.071       0.0   0.0% primitive.rs\n\
+         \x20     16.0       15       4     1.067       5.0  31.2% proto/lib.rs\n\
+         \x20      9.0       12       2     0.750       0.0   0.0% typed.rs\n\
+         \x20      6.0        7       3     0.857       0.0   0.0% untyped.rs\n\
+         \x20     13.0       15       4     0.867      11.0  84.6% wire/lib.rs\n\
+         \x20     62.0       73      18     0.849      17.0  27.4% total\n"
     );
 }
 
@@ -1694,11 +1769,16 @@ fn report_html_writes_one_static_page_with_history() {
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
     let html = std::fs::read_to_string(out.join("index.html")).unwrap();
     assert!(!html.contains("<script"), "the page has no script");
-    // Tiles: `flip` and `Light` score 29.0 over 40 tokens, as in the score
-    // test. History: the first commit's enum alone scored 3.0.
+    // Tiles: `flip` and `Light` score 29.0 over 40 tokens on 4 lines, as in
+    // the score test, so the score is about 29.0 / (40 / 4) = 2.9 lines.
+    // History: the first commit's enum alone scored 3.0.
     for expected in [
         "<div class=\"value\">29</div>",
+        "<div class=\"value\">≈ 3</div>",
         "<div class=\"value\">40</div>",
+        "4 lines, comments excluded",
+        "40 tokens · 4 lines, score ≈ 3 lines",
+        "<td>29</td><td>≈ 3 lines</td><td>40</td><td>4</td>",
         "<div class=\"value\">0.725</div>",
         "<span class=\"badge\">Comparison</span>",
         "Score per crate at each of the last 2 commits",

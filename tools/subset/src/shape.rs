@@ -56,10 +56,90 @@ pub struct FileKind {
     pub crate_root: bool,
 }
 
-pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Shape {
+/// The name lists in the config that shape rules read.
+pub struct Lists<'a> {
+    /// Types of ours whose methods may take `&mut self` anywhere (proposal
+    /// 0035).
+    pub endpoints: &'a [String],
+    /// Methods whose closure argument may have a boolean expression as its
+    /// body (proposals 0028, 0037).
+    pub predicate_adapters: &'a [String],
+    /// Methods that may take a closure argument, besides the predicate
+    /// adapters.
+    pub closure_methods: &'a [String],
+}
+
+impl Lists<'_> {
+    fn predicate(&self, method: &str) -> bool {
+        self.predicate_adapters.iter().any(|m| m == method)
+    }
+
+    fn takes_closure(&self, method: &str) -> bool {
+        self.predicate(method) || self.closure_methods.iter().any(|m| m == method)
+    }
+}
+
+/// The filtering adapters of proposal 0028: the default `predicate_adapters`.
+pub const PREDICATE_ADAPTERS: &[&str] = &[
+    "filter",
+    "find",
+    "any",
+    "all",
+    "position",
+    "take_while",
+    "skip_while",
+    "retain",
+];
+/// The standard library's `Iterator`, `Option` and `Result` methods that
+/// take a closure: the default `closure_methods`.
+pub const CLOSURE_METHODS: &[&str] = &[
+    "and_then",
+    "filter_map",
+    "find_map",
+    "flat_map",
+    "fold",
+    "for_each",
+    "get_or_insert_with",
+    "inspect",
+    "inspect_err",
+    "is_err_and",
+    "is_none_or",
+    "is_ok_and",
+    "is_some_and",
+    "map",
+    "map_err",
+    "map_or",
+    "map_or_else",
+    "map_while",
+    "max_by",
+    "max_by_key",
+    "min_by",
+    "min_by_key",
+    "ok_or_else",
+    "or_else",
+    "partition",
+    "reduce",
+    "rfind",
+    "rposition",
+    "scan",
+    "try_fold",
+    "try_for_each",
+    "unwrap_or_else",
+];
+
+pub fn default_predicate_adapters() -> Vec<String> {
+    PREDICATE_ADAPTERS.iter().map(ToString::to_string).collect()
+}
+
+pub fn default_closure_methods() -> Vec<String> {
+    CLOSURE_METHODS.iter().map(ToString::to_string).collect()
+}
+
+pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) -> Shape {
     let mut checker = Checker {
         facts,
         kind,
+        lists,
         exprs: HashMap::new(),
         types: HashMap::new(),
         cfg_hosts: HashMap::new(),
@@ -176,16 +256,6 @@ const LIBRARY_TRAITS: &[&str] = &[
 ];
 const CODEC_BOUNDS: &[&str] = &["Serialize", "DeserializeOwned"];
 const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook", "ask"];
-const PREDICATE_ADAPTERS: &[&str] = &[
-    "filter",
-    "find",
-    "any",
-    "all",
-    "position",
-    "take_while",
-    "skip_while",
-    "retain",
-];
 /// Macros of the standard library. Every other macro is a library's.
 const STD_MACROS: &[&str] = &[
     "assert",
@@ -254,6 +324,7 @@ const CFG_PAIRS: &[(&str, &str)] = &[
 struct Checker<'a> {
     facts: &'a Facts,
     kind: &'a FileKind,
+    lists: &'a Lists<'a>,
     exprs: HashMap<*const Expr, Slot>,
     types: HashMap<*const Type, Slot>,
     /// `cfg` attributes on a host the rule allows, with the item they need a
@@ -381,6 +452,7 @@ impl Checker<'_> {
                         || i.self_ty.as_ref().is_some_and(|t| {
                             self.facts.loop_states.contains(t)
                                 || self.facts.owned_by_state.contains(t)
+                                || self.lists.endpoints.contains(t)
                         })
                 });
                 if !state {
@@ -931,7 +1003,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                         ours: false,
                     },
                 };
-                let drop = callee.path == ["drop"] || callee.ends_with(&["mem", "drop"]);
+                let drop = matches!(&*e.func, Expr::Path(p) if is_drop(&p.path));
                 let named =
                     matches!(e.args.first(), Some(Expr::Path(p)) if p.path.get_ident().is_some());
                 if drop && !named {
@@ -966,16 +1038,21 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                     self.set_expr(&field.expr, Slot::FieldValue { ours });
                 }
                 if let Some(rest) = &e.rest
-                    && !matches!(**rest, Expr::Path(_) | Expr::Call(_))
+                    && !matches!(**rest, Expr::Path(_) | Expr::Call(_) | Expr::MethodCall(_))
                 {
                     self.flag(e.span(), &rules::STRUCT_UPDATE);
                 }
             }
             Expr::Closure(e) => {
                 if let Slot::MethodArg { method, .. } = &slot
-                    && PREDICATE_ADAPTERS.contains(&method.as_str())
+                    && self.lists.predicate(method)
                 {
                     self.mark_predicate(&e.body);
+                }
+                if let Slot::MethodArg { method, .. } = &slot
+                    && !self.lists.takes_closure(method)
+                {
+                    self.flag(e.span(), &rules::CLOSURE_METHOD);
                 }
                 let known = match &slot {
                     Slot::MethodArg { .. } => true,
@@ -1003,6 +1080,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 if !placed {
                     self.flag(e.async_token.span, &rules::ASYNC_BLOCK);
                 }
+            }
+            Expr::Path(e)
+                if matches!(slot, Slot::CallArg(_) | Slot::MethodArg { .. })
+                    && is_drop(&e.path) =>
+            {
+                self.flag(e.span(), &rules::DROP_FN);
             }
             Expr::Lit(e) if matches!(e.lit, Lit::Bool(_)) && !library_value(&slot) => {
                 self.flag(e.span(), &rules::BOOL_LIT);
@@ -1171,6 +1254,12 @@ fn library_value(slot: &Slot) -> bool {
             | Slot::MethodArg { on_self: false, .. }
             | Slot::FieldValue { ours: false }
     )
+}
+
+/// `drop`, `mem::drop` or `std::mem::drop`.
+fn is_drop(path: &syn::Path) -> bool {
+    let names: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    names == ["drop"] || names.ends_with(&["mem".to_string(), "drop".to_string()])
 }
 
 fn path_string(path: &syn::Path) -> String {

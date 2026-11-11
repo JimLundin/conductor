@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 4
+version = 5
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -124,6 +124,34 @@ macros = [
 # Extra macros allowed only inside #[cfg(test)] code and tests/.
 test_macros = ["assert_eq", "assert_ne"]
 
+# Proposal 0035: stream endpoints of ours, whose methods may take `&mut self`
+# anywhere. A type joins by review: it wraps a library stream or channel
+# whose own API takes `&mut`, or it is the reassembly buffer of one.
+endpoints = ["SendHalf", "RecvHalf", "ChannelRecv", "FrameBuffer"]
+
+# Proposals 0028 and 0037: methods whose closure argument may have a boolean
+# expression (`matches!`, a comparison, `&&`, `||`, `!`) as its body.
+predicate_adapters = [
+  "filter", "find", "rfind", "any", "all", "position",
+  "take_while", "skip_while", "retain",
+  "wait_for",                 # tokio's watch::Receiver::wait_for (0037)
+]
+
+# Methods that may take a closure (`expr.closure.adapter`), besides the
+# predicate adapters: the std `Iterator`, `Option` and `Result` methods, and
+# the library and helper methods that stand where they would.
+closure_methods = [
+  "and_then", "filter_map", "find_map", "flat_map", "fold", "for_each",
+  "get_or_insert_with", "inspect", "inspect_err", "is_err_and", "is_none_or",
+  "is_ok_and", "is_some_and", "map", "map_err", "map_or", "map_or_else",
+  "map_while", "max_by", "max_by_key", "min_by", "min_by_key", "ok_or_else",
+  "or_else", "partition", "reduce", "rposition", "scan", "try_fold",
+  "try_for_each", "unwrap_or_else",
+  "with_context",             # anyhow's `Result` extension
+  "then",                     # a stream's `then`, whose body is an async block (0006)
+  "ask",                      # an actor handle's request helper (0026)
+]
+
 # Ids allowed only under some paths. Elsewhere, a use of one is reported with
 # the scope's rule as the reason.
 
@@ -180,8 +208,9 @@ allowed = ["attr.tokio::main"]
 external_protocols = ["crates/agents/src/claude/**", "crates/agents/src/codex/**"]
 # Types that hold data without a type: `type.untyped` wherever they appear.
 untyped = ["serde_json::Value", "HashMap<String, _>", "BTreeMap<String, _>", "dyn Any"]
-# `adapters` (iterator method names) and `primitives` (type patterns) keep
-# the tool's std defaults, listed in tools/subset/README.md.
+# `adapters` (iterator method names), `primitives` (type patterns) and
+# `transparent` (std containers that typing sees through, such as `Option`)
+# keep the tool's std defaults, listed in tools/subset/README.md.
 
 [weights.tiers]
 encouraged = 0.5

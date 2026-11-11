@@ -104,13 +104,17 @@ fn tiles(total: &Row, violations: usize, w: &TierWeights) -> String {
             "<div class=\"tile\"><div class=\"label\">{label}</div><div class=\"value\">{value}</div><div class=\"hint\">{hint}</div></div>"
         )
     };
+    let in_lines = format!(
+        "<div class=\"tile\" title=\"{APPROX_LINES}\"><div class=\"label\">Score in lines</div><div class=\"value\">≈ {}</div><div class=\"hint\">approximate: score ÷ tokens per line</div></div>",
+        whole(total.approx_lines(w))
+    );
     format!(
-        "<div class=\"tiles\">{}{}{}{}{}</div>",
+        "<div class=\"tiles\">{}{in_lines}{}{}{}{}</div>",
         tile("Score", whole(total.score(w)), "weighted tokens"),
         tile(
             "Tokens",
             whole(total.tiers.tokens() as f64),
-            "comments excluded"
+            &format!("{} lines, comments excluded", whole(total.lines as f64))
         ),
         tile(
             "Score per token",
@@ -143,10 +147,9 @@ fn crate_breakdown(crates: &[Row], w: &TierWeights) -> String {
     let names: Vec<&str> = crates.iter().map(|r| r.name.as_str()).collect();
     let prefix = common_prefix(&names);
     let max = crates.iter().map(|r| r.score(w)).fold(0.0, f64::max);
-    let chart = |width: f64, label_w: f64| {
+    let chart = |width: f64, label_w: f64, value_w: f64| {
         let row_h = 30.0;
         let bar_h = 16.0;
-        let value_w = 64.0;
         let plot = width - label_w - value_w;
         let height = row_h * crates.len() as f64 + 4.0;
         let mut svg = svg_open(width, height, "Score per crate, split by tier");
@@ -176,23 +179,29 @@ fn crate_breakdown(crates: &[Row], w: &TierWeights) -> String {
                 &segments,
                 |t, s| {
                     format!(
-                        "{}: {} {} of {} ({:.1}%)",
+                        "{}: {} {} of {} ({:.1}%)\n{}, score {}",
                         row.name,
                         whole(s),
                         t.name(),
                         whole(row.score(w)),
-                        100.0 * s / row.score(w)
+                        100.0 * s / row.score(w),
+                        volume(row.tiers.tokens(), row.lines),
+                        approx_lines(row, w)
                     )
                 },
                 |t| format!("var(--tier-{})", t.name()),
             ));
             let end = label_w + row.score(w) / max.max(1.0) * plot;
+            let label = match value_w > 100.0 {
+                true => format!("{} · {}", whole(row.score(w)), approx_lines(row, w)),
+                false => whole(row.score(w)),
+            };
             let _ = write!(
                 svg,
-                "<text class=\"value-label\" x=\"{:.1}\" y=\"{:.1}\">{}</text>",
+                "<text class=\"value-label\" x=\"{:.1}\" y=\"{:.1}\">{}<title>{APPROX_LINES}</title></text>",
                 end + 6.0,
                 y + row_h / 2.0 + 4.0,
-                whole(row.score(w))
+                label
             );
         }
         let _ = write!(
@@ -209,10 +218,12 @@ fn crate_breakdown(crates: &[Row], w: &TierWeights) -> String {
                 .map(|t| format!("<td>{}</td>", whole(r.tiers.score_of(*t, w))))
                 .collect();
             format!(
-                "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{:.3}</td>{cells}<td>{:.1}%</td></tr>",
+                "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.3}</td>{cells}<td>{:.1}%</td></tr>",
                 esc(&r.name),
                 whole(r.score(w)),
+                approx_lines(r, w),
                 whole(r.tiers.tokens() as f64),
+                whole(r.lines as f64),
                 r.per_token(w),
                 r.boundary_share(w)
             )
@@ -223,10 +234,27 @@ fn crate_breakdown(crates: &[Row], w: &TierWeights) -> String {
         .map(|t| format!("<th>{}</th>", t.name()))
         .collect();
     format!(
-        "<h3>Score per crate, by tier</h3>{}{}<details><summary>Table</summary><div class=\"scroll\"><table><thead><tr><th>Crate</th><th>Score</th><th>Tokens</th><th>Per token</th>{tier_heads}<th>Boundary share</th></tr></thead><tbody>{table_rows}</tbody></table></div></details>",
+        "<h3>Score per crate, by tier</h3>{}{}<details><summary>Table</summary><div class=\"scroll\"><table><thead><tr><th>Crate</th><th>Score</th><th title=\"{APPROX_LINES}\">Score in lines</th><th>Tokens</th><th>Lines</th><th>Per token</th>{tier_heads}<th>Boundary share</th></tr></thead><tbody>{table_rows}</tbody></table></div></details>",
         legend_tiers(),
-        two_widths(chart(WIDE, 220.0), chart(NARROW, 110.0)),
+        two_widths(chart(WIDE, 220.0, 170.0), chart(NARROW, 110.0, 64.0)),
     )
+}
+
+/// What "score in lines" means, for its tooltips.
+const APPROX_LINES: &str = "Approximate. The weighted score converted to lines at this scope's own tokens per line: score ÷ (tokens ÷ lines). Tokens per line vary, so read it as a sense of scale, not a count.";
+
+/// "55,266 tokens · 8,740 lines".
+fn volume(tokens: usize, lines: usize) -> String {
+    format!(
+        "{} tokens · {} lines",
+        whole(tokens as f64),
+        whole(lines as f64)
+    )
+}
+
+/// The score as approximate lines, "≈ 7,452 lines".
+fn approx_lines(row: &Row, w: &TierWeights) -> String {
+    format!("≈ {} lines", whole(row.approx_lines(w)))
 }
 
 /// A horizontal bar of `segments` laid end to end from `x`, with a 2px
@@ -375,12 +403,14 @@ fn treemap_section(group: usize, files: &[ScoredFile], w: &TierWeights) -> Strin
                 count: None,
                 tier: None,
                 tiers: f.tally.tiers,
+                lines: f.tally.lines,
             };
             format!(
-                "<tr><th scope=\"row\">{}</th><td>{}</td><td class=\"opt\">{}</td><td>{:.3}</td><td class=\"opt\">{:.1}%</td><td>{}</td></tr>",
+                "<tr><th scope=\"row\">{}</th><td>{}</td><td class=\"opt\">{}</td><td class=\"opt\">{}</td><td>{:.3}</td><td class=\"opt\">{:.1}%</td><td>{}</td></tr>",
                 breakable(&f.path),
                 whole(*s),
                 whole(f.tally.tiers.tokens() as f64),
+                whole(f.tally.lines as f64),
                 row.per_token(w),
                 row.boundary_share(w),
                 f.violations
@@ -388,7 +418,7 @@ fn treemap_section(group: usize, files: &[ScoredFile], w: &TierWeights) -> Strin
         })
         .collect();
     format!(
-        "<h3 id=\"files-{group}\">Files</h3><p class=\"caption\">Each file's area is its score. Darker means more score per token: code that leans on compromises or breaks the subset.</p><div class=\"legend\" aria-label=\"Score per token\"><span class=\"legend-title\">Score per token</span>{steps}</div>{}<details><summary>Table</summary><div class=\"scroll\"><table><thead><tr><th>File</th><th>Score</th><th class=\"opt\">Tokens</th><th>Per token</th><th class=\"opt\">Boundary share</th><th>Violations</th></tr></thead><tbody>{table_rows}</tbody></table></div></details>",
+        "<h3 id=\"files-{group}\">Files</h3><p class=\"caption\">Each file's area is its score. Darker means more score per token: code that leans on compromises or breaks the subset.</p><div class=\"legend\" aria-label=\"Score per token\"><span class=\"legend-title\">Score per token</span>{steps}</div>{}<details><summary>Table</summary><div class=\"scroll\"><table><thead><tr><th>File</th><th>Score</th><th class=\"opt\">Tokens</th><th class=\"opt\">Lines</th><th>Per token</th><th class=\"opt\">Boundary share</th><th>Violations</th></tr></thead><tbody>{table_rows}</tbody></table></div></details>",
         two_widths(chart(WIDE, 560.0), chart(NARROW, 640.0))
     )
 }
@@ -428,14 +458,14 @@ fn file_cell(file: &ScoredFile, name: &str, score: f64, rect: Rect, w: &TierWeig
         h: (rect.h - 2.0).max(0.0),
     };
     let mut out = format!(
-        "<g><rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"2\" fill=\"var(--seq-{b})\"/><title>{}\nscore {} over {} tokens\n{:.3} per token, boundary {:.1}%\n{} violations</title>",
+        "<g><rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"2\" fill=\"var(--seq-{b})\"/><title>{}\nscore {} over {}\n{:.3} per token, boundary {:.1}%\n{} violations</title>",
         inner.x,
         inner.y,
         inner.w,
         inner.h,
         esc(&file.path),
         whole(score),
-        whole(tiers.tokens() as f64),
+        volume(tiers.tokens(), file.tally.lines),
         per,
         boundary,
         file.violations
@@ -673,7 +703,7 @@ fn typing_section(files: &[ScoredFile], w: &TierWeights) -> String {
         .map(|c| format!("<th>{}</th>", c.name()))
         .collect();
     format!(
-        "<h3>Typing</h3><p class=\"caption\">Tokens of the types in our own fields and signatures: our own named types, primitives (<code>String</code>, integers, <code>Vec&lt;u8&gt;</code> and the like), untyped data, and other types such as std containers and library types.</p><div class=\"legend\" aria-label=\"Type classes\">{legend}</div>{}<details><summary>Table</summary><div class=\"scroll\"><table><thead><tr><th>Crate</th>{class_heads}</tr></thead><tbody>{table_rows}</tbody></table></div></details><h4>Newtype candidates: most primitive tokens in a signature</h4><div class=\"scroll\"><table><thead><tr><th>#</th><th class=\"l\">Function</th><th class=\"l\">Location</th><th>Primitive tokens</th><th class=\"opt\">Score</th></tr></thead><tbody>{fn_rows}</tbody></table></div>",
+        "<h3>Typing</h3><p class=\"caption\">Tokens of the types in our own fields and signatures: our own named types, primitives (<code>String</code>, integers, <code>Vec&lt;u8&gt;</code> and the like), untyped data, and other types such as library types. A std container such as <code>Option</code> counts as what it holds.</p><div class=\"legend\" aria-label=\"Type classes\">{legend}</div>{}<details><summary>Table</summary><div class=\"scroll\"><table><thead><tr><th>Crate</th>{class_heads}</tr></thead><tbody>{table_rows}</tbody></table></div></details><h4>Newtype candidates: most primitive tokens in a signature</h4><div class=\"scroll\"><table><thead><tr><th>#</th><th class=\"l\">Function</th><th class=\"l\">Location</th><th>Primitive tokens</th><th class=\"opt\">Score</th></tr></thead><tbody>{fn_rows}</tbody></table></div>",
         two_widths(chart(WIDE, 220.0), chart(NARROW, 110.0))
     )
 }
@@ -689,10 +719,11 @@ fn construct_table(files: &[ScoredFile], total: &Row, comparison: bool, w: &Tier
             let share = 100.0 * r.score(w) / whole_score;
             let bar = (64.0 * r.score(w) / max).max(1.0);
             format!(
-                "<tr><th scope=\"row\"><code>{id}</code></th><td class=\"tier\"><span class=\"swatch\" style=\"background:var(--tier-{tier})\"></span>{tier}</td><td class=\"opt\">{count}</td><td class=\"opt\">{tokens}</td><td class=\"opt\">{weight}</td><td>{score}</td><td class=\"share opt\"><svg width=\"64\" height=\"8\" aria-hidden=\"true\"><rect width=\"{bar:.1}\" height=\"8\" rx=\"2\" fill=\"var(--tier-{tier})\"/></svg> {share:.1}%</td></tr>",
+                "<tr><th scope=\"row\"><code>{id}</code></th><td class=\"tier\"><span class=\"swatch\" style=\"background:var(--tier-{tier})\"></span>{tier}</td><td class=\"opt\">{count}</td><td class=\"opt\">{tokens}</td><td class=\"opt\">{lines}</td><td class=\"opt\">{weight}</td><td>{score}</td><td class=\"share opt\"><svg width=\"64\" height=\"8\" aria-hidden=\"true\"><rect width=\"{bar:.1}\" height=\"8\" rx=\"2\" fill=\"var(--tier-{tier})\"/></svg> {share:.1}%</td></tr>",
                 id = esc(&r.name),
                 count = whole(r.count.unwrap_or(0) as f64),
                 tokens = whole(r.tiers.tokens() as f64),
+                lines = whole(r.lines as f64),
                 weight = w.of(r.tier.unwrap_or(Tier::Neutral)),
                 score = whole(r.score(w)),
             )
@@ -700,7 +731,7 @@ fn construct_table(files: &[ScoredFile], total: &Row, comparison: bool, w: &Tier
         .collect();
     let table = |rows: &[String]| {
         format!(
-            "<div class=\"scroll\"><table><thead><tr><th>Id</th><th class=\"l\">Tier</th><th class=\"opt\">Count</th><th class=\"opt\">Tokens</th><th class=\"opt\">Weight</th><th>Score</th><th class=\"opt\">Share</th></tr></thead><tbody>{}</tbody></table></div>",
+            "<div class=\"scroll\"><table><thead><tr><th>Id</th><th class=\"l\">Tier</th><th class=\"opt\">Count</th><th class=\"opt\">Tokens</th><th class=\"opt\" title=\"Lines on which the id owns a token. A line holds several ids, so the rows overlap.\">Lines</th><th class=\"opt\">Weight</th><th>Score</th><th class=\"opt\">Share</th></tr></thead><tbody>{}</tbody></table></div>",
             rows.concat()
         )
     };
@@ -743,22 +774,24 @@ fn top_fns(files: &[ScoredFile], w: &TierWeights) -> String {
                     count: None,
                     tier: None,
                     tiers: n.tiers,
+                    lines: n.lines,
                 };
                 format!(
-                    "<tr><td>{}</td><th scope=\"row\"><code>{}</code></th><td class=\"path\">{}:{}</td><td>{}</td><td class=\"opt\">{}</td><td>{:.3}</td><td class=\"opt\">{:.1}%</td></tr>",
+                    "<tr><td>{}</td><th scope=\"row\"><code>{}</code></th><td class=\"path\">{}:{}</td><td>{}</td><td class=\"opt\">{}</td><td class=\"opt\">{}</td><td>{:.3}</td><td class=\"opt\">{:.1}%</td></tr>",
                     i + 1,
                     breakable(&n.name),
                     breakable(&f.path),
                     n.line,
                     whole(row.score(w)),
                     whole(row.tiers.tokens() as f64),
+                    whole(row.lines as f64),
                     row.per_token(w),
                     row.boundary_share(w)
                 )
             })
             .collect();
         format!(
-            "<div class=\"scroll\"><table><thead><tr><th>#</th><th class=\"l\">Function</th><th class=\"l\">Location</th><th>Score</th><th class=\"opt\">Tokens</th><th>Per token</th><th class=\"opt\">Boundary</th></tr></thead><tbody>{rows}</tbody></table></div>"
+            "<div class=\"scroll\"><table><thead><tr><th>#</th><th class=\"l\">Function</th><th class=\"l\">Location</th><th>Score</th><th class=\"opt\">Tokens</th><th class=\"opt\">Lines</th><th>Per token</th><th class=\"opt\">Boundary</th></tr></thead><tbody>{rows}</tbody></table></div>"
         )
     };
     format!(
@@ -1093,7 +1126,7 @@ h2 { font-size: 22px; margin: 0 0 4px; }
 h3 { font-size: 17px; margin: 32px 0 4px; }
 h4 { font-size: 15px; margin: 20px 0 8px; color: var(--text-secondary); font-weight: 600; }
 .badge { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--axis); border-radius: 4px; padding: 1px 6px; vertical-align: 3px; color: var(--text-secondary); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
 .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
 .tile .label { font-size: 13px; color: var(--text-secondary); }
 .tile .value { font-size: 26px; font-weight: 600; margin: 2px 0; }

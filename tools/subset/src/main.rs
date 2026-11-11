@@ -44,6 +44,18 @@ struct Config {
     macros: Vec<String>,
     #[serde(default)]
     test_macros: Vec<String>,
+    /// Types of ours whose methods may take `&mut self` anywhere (proposal
+    /// 0035).
+    #[serde(default)]
+    endpoints: Vec<String>,
+    /// Methods whose closure argument may have a boolean expression as its
+    /// body (proposals 0028, 0037).
+    #[serde(default = "shape::default_predicate_adapters")]
+    predicate_adapters: Vec<String>,
+    /// Methods that may take a closure argument (`expr.closure.adapter`),
+    /// besides the predicate adapters.
+    #[serde(default = "shape::default_closure_methods")]
+    closure_methods: Vec<String>,
     #[serde(default)]
     scope: Vec<Scope>,
     weights: Option<weights::Weights>,
@@ -425,14 +437,14 @@ fn scored<'c>(
     let (analysed, facts) = analyse(config, sources)?;
     let mut out = Vec::new();
     for a in analysed {
-        let starts = measure::token_starts(&a.src)
+        let tokens = measure::tokens(&a.src)
             .map_err(|e| Fatal(format!("{}: cannot lex: {e}", display(&a.path))))?;
         let context = context::gather(&a.parsed, &facts, &typing, external.cover(&a.path));
         let judged = judge(&a, &context, weights);
         out.push(score::ScoredFile {
             path: display(&a.path),
             krate: crate_of(&a.path, has_manifest),
-            tally: score::tally(a.src.len(), &starts, &judged, &context),
+            tally: score::tally(a.src.len(), &tokens, &judged, &context),
             violations: a.violations.len(),
         });
     }
@@ -481,7 +493,9 @@ fn judge(
                 (true, _) => weights::Tier::Outside,
                 (false, _) if wire(&o.extent) => weights::Tier::Boundary,
                 (false, Some(shape::Fixed::Always)) => weights::Tier::Boundary,
-                (false, Some(shape::Fixed::IfRestricted)) if tier.restricted() => {
+                (false, Some(shape::Fixed::IfRestricted))
+                    if tier.restricted() && !context.kept.contains(&o.extent) =>
+                {
                     weights::Tier::Boundary
                 }
                 _ => tier,
@@ -622,7 +636,12 @@ fn analyse(
                 line: o.line,
                 col: o.col,
             });
-        let shape = shape::check(&parsed, &kind, &facts);
+        let lists = shape::Lists {
+            endpoints: &config.endpoints,
+            predicate_adapters: &config.predicate_adapters,
+            closure_methods: &config.closure_methods,
+        };
+        let shape = shape::check(&parsed, &kind, &facts, &lists);
         let findings: Vec<&shape::Finding> = shape
             .findings
             .iter()

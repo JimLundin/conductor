@@ -46,7 +46,12 @@ is rejected, however much code it saves.
      as in `fn label(kind: Kind) -> &'static str { match kind { .. } }`;
    - enum variants that carry their data, as in `Exit::Code(i32)` rather
      than one variant per code;
-   - test cases as a table with one assertion over them.
+   - test cases as a table with one assertion over them, once a group has
+     **4 or more cases**. Three cases written as a table cost about 20%
+     more than three tests, because the named struct that 0001 requires
+     for a lasting table outweighs what the shared assertion saves
+     (`docs/subset/reviews/v4-agents-proto.md`). Below four cases, the
+     tests stay separate.
 
 ## Core
 
@@ -56,20 +61,21 @@ The ids are those used in `subset.toml`.
 |---|---|---|
 | Data | `item.struct.named`, `item.struct.newtype`, `item.enum` | `bool` is not a type in our code: a two-state value is a two-variant enum. IDs and units are newtypes. |
 | Behaviour | `item.fn`, `item.impl.inherent`, `item.const` | Free functions and inherent methods. |
-| Branching | `expr.match`, `pat.*` | Matches are exhaustive. `true` / `false` are not patterns, because that would be a boolean check written as a match. A single-branch `if let` (0027) is the one other branching form. |
+| Branching | `expr.match`, `pat.ident`, `pat.path`, `pat.struct`, `pat.tuple_struct`, `pat.lit`, `pat.or`, `pat.wild` | Matches are exhaustive. `true` / `false` are not patterns, because that would be a boolean check written as a match. `&pat` (`pat.reference`) and the rest pattern `..` in a tuple or tuple struct (`pat.rest`, as in `Some(..)`) are not allowed; `..` that elides fields in a struct pattern (`Open { .. }`) is part of `pat.struct`. A single-branch `if let` (0027) is the one other branching form. |
 | Building values | `expr.call`, `expr.method_call`, `expr.field`, `expr.struct`, `expr.path`, `expr.lit`, `expr.reference`, `expr.block`, `expr.paren` | |
 | Errors | `expr.try`, plus `Result` / `Option` through the core | `?` is the only early exit. |
-| Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method. |
-| Predicates | `macro.matches`, `expr.binary.{eq,ne,lt,le,gt,ge,and,or}`, `expr.unary.not` | Proposal 0028. A closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` may have a boolean expression as its body: `matches!`, a comparison, `&&`, `\|\|`, `!`. Nowhere else, and never a `true`/`false` literal. Counting is `filter(\|x\| matches!(x, ..)).count()`. |
+| Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method, or of a library or helper method that stands where one would (`with_context`, a stream's `then`, 0026's `ask`). `closure_methods` and `predicate_adapters` in `subset.toml` list them, and the checker rejects a closure passed to any other method. |
+| Predicates | `macro.matches`, `expr.binary.{eq,ne,lt,le,gt,ge,and,or}`, `expr.unary.not` | Proposals 0028 and 0037. A closure passed straight to a method in `predicate_adapters` in `subset.toml` (`filter`, `find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`, `retain`, and tokio's `wait_for`) may have a boolean expression as its body: `matches!`, a comparison, `&&`, `\|\|`, `!`. Nowhere else, and never a `true`/`false` literal. Counting is `filter(\|x\| matches!(x, ..)).count()`. |
 | Bindings | `stmt.let` | Immutable, with a pattern. |
 | Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
 | Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
 | Crate-internal sharing | `vis.restricted` | Proposal 0003. Only `pub(crate)`, never `pub(super)` or `pub(in …)`, and a `pub(crate)` struct has no `pub` fields. |
-| Changed copies | `expr.struct.update` | Proposal 0004. `..base` only where the base is an existing value of the same type or an external crate's `Default::default()` or named constructor. |
+| Changed copies | `expr.struct.update` | Proposals 0004 and 0036. `..base` only where the base is an existing value of the same type, an external crate's `Default::default()` or named constructor, or a method call that returns a fresh value of the struct's type (`..self.outbox.current()`). A base used once is written in place, not bound first. |
 | Unit | `type.unit`, `expr.unit` | Proposal 0005, with its boundary part replaced by 0023. `()` only at a library boundary (0023), which covers `Result<(), E>` and `Ok(())`, and as `fn main`'s return type. |
 | Async | `item.fn.async`, `expr.await`, `expr.async`, `attr.tokio::main` | Proposal 0006. `async fn` for I/O, and an `async` block only as a spawn argument or the whole body of a stream closure. |
 | Actor loop | `expr.loop`, `expr.break`, `macro.allowed` for `tokio::select` | Proposal 0007. `loop` only as the whole body of an actor's `run` fn or a drive fn, taking one input per turn and handling it with one call or `match`. |
-| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008, widened in version 4. Mutation only of an actor's loop state, of a value that loop state owns (its methods may take `&mut self`, called on `self.field`), and of external values whose API takes `&mut`. Never a `&mut` parameter of our own types, and never compound assignment. |
+| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008, widened in version 4. Mutation only of an actor's loop state, of a value that loop state owns (its methods may take `&mut self`, called on `self.field`), and of external values whose API takes `&mut`. A value is owned when its type is named in a field type of the loop state, or in a variant payload of an enum of ours that the loop state owns (version 5), so a value in `HashMap<_, Turn>` and one in `Phase::Connected(Connected)` count alike. Never a `&mut` parameter of our own types, and never compound assignment. |
+| Stream endpoints | `item.fn.receiver.mut` | Proposal 0035. A type of ours on the `endpoints` list in `subset.toml` (`SendHalf`, `RecvHalf`, `ChannelRecv`, `FrameBuffer`) may have `&mut self` methods, called anywhere on a `let mut` binding, a `mut` pattern or a field. A type joins the list by review: it wraps a library stream or channel whose own API takes `&mut`, or it is the reassembly buffer of one. The rest of 0008 holds: no `&mut` parameter of our types, no compound assignment, and data types keep value-returning methods. |
 | Library traits | `item.impl.trait`, `generics.lifetime`, `type.lifetime` | Proposal 0009. Trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler`, with lifetimes only where the trait's signature demands them. |
 | Error enums | `attr.derive` of `thiserror::Error`, `attr.error` | Proposal 0010. `thiserror::Error` on an error type, with one `#[error("…")]` message per variant. |
 | Error conversion | `attr.from` | Proposal 0011. `#[from]` only on the one variant of an enum that holds a given error type, ours or a library's. |
@@ -86,8 +92,8 @@ The ids are those used in `subset.toml`.
 | Library boundary | `type.unit`, `expr.unit`, `type.bool`, `expr.lit.bool`, `expr.reference.mut`, `type.reference.mut` | Proposal 0023. Where a library API demands `()`, `bool` or `&mut`, the shape is allowed in a type argument, call argument or field value of something we don't define, and only there. It never becomes a field, a variant payload, a parameter or a return type of our own items. |
 | Ordered newtypes | `attr.derive` of `PartialOrd`, `Ord` | Proposal 0024. Only on a newtype whose order means something, such as `HostSeq`. Callers compare with `a.cmp(&b)` and match the `Ordering`, never through `.0`. |
 | Request helper | `type.impl_trait.arg`, `generics.type_param`, `expr.closure` | Proposal 0026. Each actor handle may have one private `ask<T>` helper taking `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, and every request/reply round trip goes through it. Nothing else takes an `impl Trait` argument. |
-| One-case branch | `expr.if_let.single` | Proposal 0027. `if let Pattern = expr { … }` with no `else`, no `else if` and no `&&` let-chain, the one form for "act only on this case". Anything with an alternative branch is a `match`. |
-| Discarding | `stmt.let` with `_` | Proposal 0025, revised. `let _ = value;` is the one way to discard a value. `drop(..)` only releases a resource early, and `.ok()` is never a discard. No lint is switched off. |
+| One-case branch | `expr.if_let.single` | Proposal 0027. `if let Pattern = expr { … }` with no `else`, no `else if` and no `&&` let-chain, the one form for "act only on this case". Anything with an alternative branch is a `match`. To act when a value is present and ignore it, name its pattern with the fields elided, `if let Some(Open { .. }) = ..`: clippy's `redundant_pattern_matching` rejects `Some(_)`, and `Some(..)` is `pat.rest`. |
+| Discarding | `stmt.let` with `_` | Proposal 0025, revised. `let _ = value;` is the one way to discard a value. `drop(..)` only releases a resource early, `drop` passed as a function (`.map(drop)`) is a discard and not allowed, and `.ok()` is never a discard. No lint is switched off. |
 | Build-time constants | `macro.allowed` for `env` | Proposal 0022. `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR`. |
 | Modules | `item.use`, `item.mod` | |
 | Attributes | `attr.doc`, `attr.derive` (the listed derives), `attr.cfg_test` | |
@@ -124,7 +130,7 @@ live in `[weights]` in `subset.toml`, where the owner tunes them.
 |---|---|---|
 | encouraged | 0.5 | Type definitions (structs, newtypes, enums, the types in their fields), `match` with its arms and patterns, iterator adapter calls, `?`. |
 | neutral | 1.0 | The rest of the core: calls, paths, literals, `let`, field access, `pub`, references, slices. An allowed id missing from the map is neutral. |
-| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields. |
+| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields, also inside std containers. |
 | costly | 3.0 | Mutation and its kin: `mut`, `&mut self`, assignment (0008), the actor `loop` (0007), `dyn` (0017), `rsx!` (0018), untyped data. |
 | outside | 5.0 | Any violation of the current subset, whatever its id, so code not yet rewritten scores badly. |
 | boundary | 1.0 | Any construct whose shape a library fixes (below). |
@@ -155,6 +161,13 @@ The score also rewards naming data with types.
   own struct or variant or as a parameter or return type of our own fn.
   Inside fn bodies they are neutral. A newtype's one field is exempt, since
   it is where the primitive belongs.
+- **Std containers are transparent.** `Option`, `Result`, `Vec`, `Box` and
+  the other std containers (`transparent` in `[weights]`) don't change what
+  they hold: `Option<String>` as our field is a primitive in an `Option`,
+  tolerated, not a library type argument at the boundary weight. A primitive
+  in a library's generic type, such as `mpsc::Sender<String>`, stays
+  boundary. The typing chart counts the contents of a container, not the
+  container.
 - **Untyped data is costly**, wherever it appears: `serde_json::Value`,
   `HashMap<String, _>` or `BTreeMap<String, _>`, and `dyn Any`.
 - **Wire types of an external protocol are boundary.** A field of a type
@@ -184,7 +197,13 @@ pass of the pair loop therefore runs on the existing code:
 The owner accepted 0002 to 0022 as version 2, then 0023 and the 0011
 amendment as version 3. Version 4 accepts 0024, 0026, 0027 and 0028,
 accepts 0025 in a revised form, widens 0008 and amends 0014 and 0015.
-The rewrite works from `docs/subset/rewrite-report.txt`, the report under version 4.
+Version 5 accepts 0035 (`&mut self` on the `endpoints` list), 0036 (a
+method call as a struct update's base) and 0037 (`rfind` and `wait_for` as
+predicate adapters, with the list in `subset.toml`). It also checks which
+method a closure is passed to, flags `drop` passed as a function, counts
+enum payloads as owned by loop state, and scores a primitive inside a std
+container as a primitive. The rewrite works from
+`docs/subset/rewrite-report.txt`, the report under version 5.
 
 ## Growing the subset
 
