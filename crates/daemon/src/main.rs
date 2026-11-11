@@ -137,6 +137,7 @@ async fn s3_host(
     println!("data dir: {}", data_dir.display());
     println!("host id:  {}", endpoint.id());
     println!("relay:    {}", ticket.relay);
+    let ticket = ticket.to_text();
     println!("ticket:   {ticket}");
     let join = format!("{web_url}#join={ticket}");
     println!("join:     {join}");

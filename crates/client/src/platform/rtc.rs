@@ -95,7 +95,7 @@ impl Session {
             ChannelRecv {
                 _channel: channel,
                 messages,
-                buffer: proto::FrameBuffer::default(),
+                buffer: proto::FrameBuffer::empty(),
             },
         ))
     }
@@ -476,12 +476,16 @@ impl ChannelRecv {
     /// Cancel-safe: a partly received frame stays in the buffer.
     pub async fn read_body(&mut self) -> Result<Option<Vec<u8>>, WireError> {
         loop {
-            if let Some(body) = self.buffer.next_body()? {
+            if let proto::Reassembly::Frame { body, rest } = self.buffer.next_body()? {
+                self.buffer = rest;
                 return Ok(Some(body));
             }
             match self.messages.recv().await {
-                Some(message) => self.buffer.push(&message),
-                None if self.buffer.is_empty() => return Ok(None),
+                Some(message) => {
+                    let buffer = std::mem::replace(&mut self.buffer, proto::FrameBuffer::empty());
+                    self.buffer = buffer.push(&message);
+                }
+                None if self.buffer.remainder() == proto::Remainder::Nothing => return Ok(None),
                 None => {
                     return Err(WireError::Channel("closed in the middle of a frame".into()));
                 }

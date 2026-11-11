@@ -155,7 +155,7 @@ fn run_command(
         let result = link.send(body).await;
         notice.set(match result {
             Ok(CommandResult::Accepted) => None,
-            Ok(CommandResult::Rejected(rejection)) => Some(rejection.to_string()),
+            Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
             Err(err) => Some(err.to_string()),
         });
     });
@@ -174,14 +174,15 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
     let (path_attr, path) = match status.path {
         PathKind::Direct => ("Direct", "Direct".to_string()),
         PathKind::Relayed => ("Relayed", "Relayed".to_string()),
-        PathKind::WebRtc(Some(pair)) => {
-            ("WebRtc", format!("WebRTC {}/{}", pair.local, pair.remote))
-        }
+        PathKind::WebRtc(Some(pair)) => (
+            "WebRtc",
+            format!("WebRTC {}/{}", pair.local.as_str(), pair.remote.as_str()),
+        ),
         PathKind::WebRtc(None) => ("WebRtc", "WebRTC".to_string()),
         PathKind::Unknown => ("Unknown", "path unknown".to_string()),
     };
     let candidates = match status.path {
-        PathKind::WebRtc(Some(pair)) => format!("{}/{}", pair.local, pair.remote),
+        PathKind::WebRtc(Some(pair)) => format!("{}/{}", pair.local.as_str(), pair.remote.as_str()),
         _ => String::new(),
     };
     let upgrade_error = status.upgrade_error.unwrap_or_default();

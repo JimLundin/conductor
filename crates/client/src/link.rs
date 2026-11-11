@@ -316,7 +316,7 @@ impl Link {
             s.state = LinkState::CatchingUp;
         })
         .await?;
-        if live_at <= self.cursor_seq() {
+        if live_at.0 <= self.cursor_seq().0 {
             self.go_live(failures).await?;
         }
 
@@ -456,7 +456,7 @@ impl Link {
         failures: &mut u32,
     ) -> Result<(), Lost> {
         let cursor = self.cursor.as_mut().expect("adopt() sets the cursor");
-        if event.seq <= cursor.seq {
+        if event.seq.0 <= cursor.seq.0 {
             return Ok(());
         }
         if event.seq.0 != cursor.seq.0 + 1 {
@@ -466,7 +466,7 @@ impl Link {
             });
         }
         cursor.seq = event.seq;
-        let reached = event.seq >= live_at;
+        let reached = event.seq.0 >= live_at.0;
         self.emit(Update::Event(event)).await?;
         if reached && self.status.borrow().state == LinkState::CatchingUp {
             self.go_live(failures).await?;

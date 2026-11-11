@@ -222,7 +222,7 @@ impl Conductor {
                         return Ok(());
                     }
                 };
-                if event.seq <= last {
+                if event.seq.0 <= last.0 {
                     continue;
                 }
                 send.write(&event).await?;

@@ -135,7 +135,7 @@ impl Actor {
                     let replay = self
                         .log
                         .iter()
-                        .filter(|e| e.seq > after_seq)
+                        .filter(|e| e.seq.0 > after_seq.0)
                         .cloned()
                         .collect();
                     reply.send(Subscription { replay, live }).ok();

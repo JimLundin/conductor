@@ -12,6 +12,7 @@ use proto::{CommandBody, Decision, EventKind, HostSeq, Ticket};
 
 #[derive(Parser)]
 struct Args {
+    #[arg(value_parser = Ticket::parse)]
     ticket: Ticket,
     #[arg(long, default_value = "what is the answer?")]
     prompt: String,
@@ -98,7 +99,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             }
             Update::Event(event) => {
                 last_seq = event.seq;
-                let ours = prompted_after.is_some_and(|after| event.seq > after);
+                let ours = prompted_after.is_some_and(|after| event.seq.0 > after.0);
                 log(format!(
                     "event #{} {}{:?}",
                     event.seq.0,

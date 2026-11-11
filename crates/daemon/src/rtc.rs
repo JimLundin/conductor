@@ -132,12 +132,16 @@ impl ChannelRecv {
     /// Cancel-safe: a partly received frame stays in the buffer.
     pub async fn read_body(&mut self) -> Result<Option<Vec<u8>>, crate::wire::WireError> {
         loop {
-            if let Some(body) = self.buffer.next_body()? {
+            if let proto::Reassembly::Frame { body, rest } = self.buffer.next_body()? {
+                self.buffer = rest;
                 return Ok(Some(body));
             }
             match self.messages.recv().await {
-                Some(message) => self.buffer.push(&message),
-                None if self.buffer.is_empty() => return Ok(None),
+                Some(message) => {
+                    let buffer = std::mem::replace(&mut self.buffer, proto::FrameBuffer::empty());
+                    self.buffer = buffer.push(&message);
+                }
+                None if self.buffer.remainder() == proto::Remainder::Nothing => return Ok(None),
                 None => return Err(ChannelError::Truncated.into()),
             }
         }
@@ -497,7 +501,7 @@ impl Driver {
                 };
                 let recv = ChannelRecv {
                     messages,
-                    buffer: proto::FrameBuffer::default(),
+                    buffer: proto::FrameBuffer::empty(),
                 };
                 tracing::debug!(label, "webrtc data channel opened");
                 if self
@@ -607,8 +611,8 @@ impl Driver {
             }
             Signal::Selected { local, remote } => tracing::info!(
                 client = self.client,
-                browser_side = %local,
-                host_side = %remote,
+                browser_side = local.as_str(),
+                host_side = remote.as_str(),
                 "webrtc selected candidate pair, as the browser reports it"
             ),
             Signal::Failed { reason } => {

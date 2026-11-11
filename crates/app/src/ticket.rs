@@ -13,7 +13,7 @@ pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
     let ticket = text
         .rsplit_once("#join=")
         .map_or(text, |(_, ticket)| ticket);
-    ticket.parse()
+    Ticket::parse(ticket)
 }
 
 /// Remembers the host so the next launch reconnects. A Home Screen web app on
@@ -21,7 +21,7 @@ pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
 #[cfg(target_family = "wasm")]
 pub fn save(ticket: &Ticket) {
     if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        storage.set_item(KEY, &ticket.to_string()).ok();
+        storage.set_item(KEY, &ticket.to_text()).ok();
     }
 }
 
@@ -47,7 +47,7 @@ pub fn initial() -> Result<Option<Ticket>, TicketError> {
     let storage = window.local_storage().ok().flatten();
     let hash = window.location().hash().unwrap_or_default();
     if let Some(text) = hash.strip_prefix("#join=") {
-        let ticket: Ticket = text.parse()?;
+        let ticket = Ticket::parse(text)?;
         save(&ticket);
         let path = window.location().pathname().unwrap_or_default();
         if let Ok(history) = window.history() {
@@ -58,7 +58,7 @@ pub fn initial() -> Result<Option<Ticket>, TicketError> {
         return Ok(Some(ticket));
     }
     match storage.and_then(|s| s.get_item(KEY).ok().flatten()) {
-        Some(text) => text.parse().map(Some),
+        Some(text) => Ticket::parse(&text).map(Some),
         None => Ok(None),
     }
 }
@@ -68,7 +68,7 @@ pub fn initial() -> Result<Option<Ticket>, TicketError> {
 pub fn initial() -> Result<Option<Ticket>, TicketError> {
     std::env::var("CONDUCTOR_TICKET")
         .ok()
-        .map(|text| text.parse())
+        .map(|text| Ticket::parse(&text))
         .transpose()
 }
 
@@ -86,8 +86,8 @@ mod tests {
     #[test]
     fn accepts_a_whole_join_link_or_a_bare_ticket() {
         let link = format!("  https://jimlundin.github.io/conductor/#join={TICKET}\n");
-        assert_eq!(parse_join(&link).unwrap().to_string(), TICKET);
-        assert_eq!(parse_join(TICKET).unwrap().to_string(), TICKET);
+        assert_eq!(parse_join(&link).unwrap().to_text(), TICKET);
+        assert_eq!(parse_join(TICKET).unwrap().to_text(), TICKET);
         assert!(parse_join("https://jimlundin.github.io/conductor/").is_err());
     }
 }

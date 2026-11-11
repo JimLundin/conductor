@@ -15,7 +15,8 @@ mod ticket;
 use serde::{Deserialize, Serialize};
 
 pub use frame::{
-    CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, MAX_FRAME_LEN, body_len, decode, encode,
+    CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, MAX_FRAME_LEN, Reassembly, Remainder, body_len,
+    decode, encode,
 };
 pub use ticket::{AuthToken, Ticket, TicketError};
 
@@ -23,7 +24,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 pub const ALPN: &[u8] = b"conductor/0";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct HostSeq(pub u64);
 
@@ -55,7 +56,7 @@ pub enum Open {
 
 /// Public STUN servers both ends ask for their public address by default.
 /// They are stateless and see no traffic; nothing relays (§5.4).
-pub const DEFAULT_STUN_SERVERS: &[&str] = &[
+pub const DEFAULT_STUN_SERVERS: [&str; 2] = [
     "stun:stun.l.google.com:19302",
     "stun:stun.cloudflare.com:3478",
 ];
@@ -103,10 +104,16 @@ pub enum CandidateType {
 
 impl CandidateType {
     /// Reads the `typ` field of an SDP `candidate:` attribute value.
-    pub fn of_candidate(candidate: &str) -> Option<Self> {
-        let mut words = candidate.split_ascii_whitespace();
-        words.find(|w| *w == "typ")?;
-        Self::parse(words.next()?)
+    pub fn of_candidate(candidate: &str) -> Option<CandidateType> {
+        let words = candidate.split_ascii_whitespace();
+        words
+            .clone()
+            .zip(words.skip(1))
+            .find_map(|(key, value)| match key {
+                "typ" => Some(value),
+                _ => None,
+            })
+            .and_then(CandidateType::parse)
     }
 
     /// Parses the names browsers use in `RTCIceCandidateStats.candidateType`.
@@ -120,19 +127,13 @@ impl CandidateType {
         }
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Host => "host",
             Self::Srflx => "srflx",
             Self::Prflx => "prflx",
             Self::Relay => "relay",
         }
-    }
-}
-
-impl std::fmt::Display for CandidateType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
     }
 }
 
@@ -227,13 +228,21 @@ pub enum CommandResult {
     Rejected(Rejection),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Rejection {
-    #[error("a turn is already running")]
     TurnInProgress,
-    #[error("no approval with that id")]
     UnknownApproval,
-    #[error("already resolved by {by}")]
     AlreadyResolved { by: String },
+}
+
+impl Rejection {
+    /// Why the host refused the command, for a person to read.
+    pub fn label(&self) -> String {
+        match self {
+            Rejection::TurnInProgress => String::from("a turn is already running"),
+            Rejection::UnknownApproval => String::from("no approval with that id"),
+            Rejection::AlreadyResolved { by } => format!("already resolved by {by}"),
+        }
+    }
 }
