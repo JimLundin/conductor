@@ -2,6 +2,16 @@
 
 use proto::{ClientName, Ticket, TicketError};
 
+/// What the app opens on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    Host(Ticket),
+    /// A fixed set of sessions with no host, for screenshots and design work:
+    /// `#fixture` in the browser, `CONDUCTOR_FIXTURE` natively.
+    Fixture,
+    Unpaired,
+}
+
 /// Accepts what a person pastes: the whole join link, or the bare ticket.
 pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
     let text = text.trim();
@@ -60,11 +70,12 @@ pub fn forget() {
 pub fn forget() {}
 
 #[cfg(target_family = "wasm")]
-pub fn initial() -> Result<Option<Ticket>, TicketError> {
+pub fn initial() -> Result<Opening, TicketError> {
     let window = web_sys::window().expect("running in a browser window");
     let hash = window.location().hash().unwrap_or_default();
-    match hash.strip_prefix("#join=") {
-        Some(text) => {
+    match (hash.as_str(), hash.strip_prefix("#join=")) {
+        ("#fixture", _) => Ok(Opening::Fixture),
+        (_, Some(text)) => {
             let ticket = Ticket::parse(text)?;
             save(&ticket);
             let path = window.location().pathname().unwrap_or_default();
@@ -75,19 +86,27 @@ pub fn initial() -> Result<Option<Ticket>, TicketError> {
                     Some(&path),
                 );
             }
-            Ok(Some(ticket))
+            Ok(Opening::Host(ticket))
         }
-        None => storage::get().map(|text| Ticket::parse(&text)).transpose(),
+        (_, None) => opening(storage::get()),
     }
 }
 
-/// Natively: the `CONDUCTOR_TICKET` environment variable.
+/// Natively: the `CONDUCTOR_FIXTURE` and `CONDUCTOR_TICKET` environment
+/// variables.
 #[cfg(not(target_family = "wasm"))]
-pub fn initial() -> Result<Option<Ticket>, TicketError> {
-    std::env::var("CONDUCTOR_TICKET")
-        .ok()
-        .map(|text| Ticket::parse(&text))
-        .transpose()
+pub fn initial() -> Result<Opening, TicketError> {
+    match std::env::var("CONDUCTOR_FIXTURE") {
+        Ok(_) => Ok(Opening::Fixture),
+        Err(_) => opening(std::env::var("CONDUCTOR_TICKET").ok()),
+    }
+}
+
+fn opening(saved: Option<String>) -> Result<Opening, TicketError> {
+    match saved {
+        Some(text) => Ticket::parse(&text).map(Opening::Host),
+        None => Ok(Opening::Unpaired),
+    }
 }
 
 /// Shown as "by" on what this client does.

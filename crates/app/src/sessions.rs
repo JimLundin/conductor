@@ -1,0 +1,259 @@
+//! The session list and the form that starts a session.
+
+use client::host_view::{Attention, HostView, SessionStatus, SessionView};
+use client::new_session::{Attempt, Availability, PROVIDERS, Refusal, StartForm, label};
+use dioxus::prelude::*;
+use proto::{CommandBody, CommandResult, HostPath, Provider, SessionId};
+
+use crate::{Link, PaneHeader, Screen, send};
+
+/// The last segment of a host path, which names the project. The host's OS
+/// may separate with either slash.
+pub(crate) fn short(path: &HostPath) -> &str {
+    path.0
+        .rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(&path.0)
+}
+
+#[component]
+pub(crate) fn SessionList(
+    view: Signal<HostView>,
+    screen: Screen,
+    on_select: EventHandler<Screen>,
+) -> Element {
+    let host = view.read();
+    let rows = host
+        .recent()
+        .into_iter()
+        .filter_map(|id| host.sessions.get(&id).cloned().map(|session| (id, session)))
+        .collect::<Vec<(SessionId, SessionView)>>();
+    rsx! {
+        nav { class: "sidebar",
+            header { class: "list-head",
+                h1 { "Sessions" }
+                button {
+                    class: "new",
+                    "aria-current": screen == Screen::NewSession,
+                    onclick: move |_| on_select(Screen::NewSession),
+                    "New session"
+                }
+            }
+            match rows.first() {
+                Some(_) => rsx! {
+                    ul { class: "session-list",
+                        for (id, session) in rows {
+                            SessionRow { key: "{id.0}", id, session, screen, on_select }
+                        }
+                    }
+                },
+                None => rsx! { p { class: "list-empty", "No sessions yet. Start one in a directory on the host." } },
+            }
+        }
+    }
+}
+
+#[component]
+fn SessionRow(
+    id: SessionId,
+    session: SessionView,
+    screen: Screen,
+    on_select: EventHandler<Screen>,
+) -> Element {
+    let (status, text) = match (&session.status, session.attention()) {
+        (SessionStatus::Closed(_), _) => ("closed", String::from("Closed")),
+        (_, Attention::Requests(1)) => ("approval", String::from("Needs approval")),
+        (_, Attention::Requests(open)) => ("approval", format!("{open} need approval")),
+        (SessionStatus::Starting, Attention::Quiet) => ("starting", String::from("Starting")),
+        (SessionStatus::Idle, Attention::Quiet) => ("idle", String::from("Idle")),
+        (SessionStatus::Running, Attention::Quiet) => ("running", String::from("Running")),
+    };
+    let badge = match session.attention() {
+        Attention::Requests(open) => format!("{open}"),
+        Attention::Quiet => String::new(),
+    };
+    rsx! {
+        li {
+            button {
+                class: "session-row",
+                "data-status": status,
+                "aria-current": screen == Screen::Session(id),
+                onclick: move |_| on_select(Screen::Session(id)),
+                span { class: "dot", "aria-hidden": "true" }
+                span { class: "row-text",
+                    span { class: "row-title", "{short(&session.directory)}" }
+                    span { class: "row-sub", "{label(session.provider)}, {text.to_lowercase()}" }
+                }
+                span { class: "badge", "{badge}" }
+            }
+        }
+    }
+}
+
+#[component]
+pub(crate) fn NewSession(
+    view: Signal<HostView>,
+    link: Signal<Link>,
+    on_back: EventHandler<()>,
+    on_started: EventHandler<SessionId>,
+) -> Element {
+    let mut provider = use_signal(|| Provider::Claude);
+    let mut directory = use_signal(String::new);
+    let form = use_signal(StartForm::empty);
+    let host = view.read();
+    let suggestions = host.directories();
+    let attempt = form.read().attempt.clone();
+    let (directory_error, provider_error, form_error) = match &attempt {
+        Attempt::Refused(Refusal::Directory) => (
+            Some(String::from(
+                "There is no directory at that path on the host.",
+            )),
+            None,
+            None,
+        ),
+        Attempt::Refused(Refusal::Provider(reason)) => (
+            None,
+            Some(format!(
+                "{} can't run on this host: {reason}",
+                label(provider())
+            )),
+            None,
+        ),
+        Attempt::Refused(Refusal::Other(message)) => (None, None, Some(message.clone())),
+        Attempt::Editing | Attempt::Starting => (None, None, None),
+    };
+    let start = match (&attempt, directory().trim()) {
+        (Attempt::Starting, _) => Start::Busy,
+        (_, "") => Start::Empty,
+        (_, _) => Start::Ready,
+    };
+    rsx! {
+        section { class: "pane new-pane",
+            PaneHeader { title: "New session", subtitle: "Runs on the host, in a directory you choose.", on_back }
+            form {
+                class: "new-session",
+                onsubmit: move |event: FormEvent| {
+                    event.prevent_default();
+                    begin(link, form, provider(), HostPath(directory().trim().to_string()), on_started);
+                },
+                fieldset { class: "providers",
+                    legend { "Agent" }
+                    div { class: "segments",
+                        for choice in PROVIDERS.iter().copied() {
+                            label {
+                                class: "segment",
+                                "data-available": match form.read().availability(&host, choice) {
+                                    Availability::Available => "yes",
+                                    Availability::Unavailable(_) => "no",
+                                    Availability::Unknown => "unknown",
+                                },
+                                input {
+                                    r#type: "radio",
+                                    name: "provider",
+                                    checked: provider() == choice,
+                                    onchange: move |_| provider.set(choice),
+                                }
+                                span { class: "segment-name", "{label(choice)}" }
+                                span { class: "segment-state",
+                                    match form.read().availability(&host, choice) {
+                                        Availability::Available => "Available",
+                                        Availability::Unavailable(_) => "Unavailable",
+                                        Availability::Unknown => "",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Hint { error: provider_error }
+                }
+                label { class: "field",
+                    span { class: "field-label", "Directory" }
+                    input {
+                        r#type: "text",
+                        name: "directory",
+                        placeholder: "/home/you/src/project",
+                        autocomplete: "off",
+                        autocapitalize: "off",
+                        autocorrect: "off",
+                        spellcheck: "false",
+                        enterkeyhint: "go",
+                        "aria-invalid": directory_error.is_some(),
+                        value: "{directory}",
+                        oninput: move |event| directory.set(event.value()),
+                    }
+                    Hint { error: directory_error.clone() }
+                }
+                match suggestions.first() {
+                    Some(_) => rsx! {
+                        div { class: "suggestions",
+                            p { class: "field-label", "Recent" }
+                            ul {
+                                for path in suggestions {
+                                    li {
+                                        button {
+                                            r#type: "button",
+                                            class: "suggestion",
+                                            onclick: move |_| directory.set(path.0.clone()),
+                                            span { class: "suggestion-name", "{short(&path)}" }
+                                            span { class: "suggestion-path", "{path.0}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    None => rsx! {},
+                }
+                Hint { error: form_error }
+                button {
+                    r#type: "submit",
+                    class: "start",
+                    disabled: !matches!(start, Start::Ready),
+                    match start {
+                        Start::Busy => "Starting…",
+                        Start::Empty | Start::Ready => "Start session",
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Whether the form can be sent.
+enum Start {
+    Empty,
+    Ready,
+    Busy,
+}
+
+#[component]
+fn Hint(error: Option<String>) -> Element {
+    match error {
+        Some(error) => rsx! { p { class: "hint error", role: "alert", "{error}" } },
+        None => rsx! {},
+    }
+}
+
+fn begin(
+    link: Signal<Link>,
+    mut form: Signal<StartForm>,
+    provider: Provider,
+    directory: HostPath,
+    on_started: EventHandler<SessionId>,
+) {
+    form.set(form().attempt(Attempt::Starting));
+    spawn(async move {
+        let answer = send(
+            link(),
+            CommandBody::StartSession {
+                provider,
+                directory,
+            },
+        )
+        .await;
+        if let Ok(CommandResult::Started { session }) = &answer {
+            on_started(SessionId(session.0));
+        }
+        form.set(form().answered(provider, answer));
+    });
+}
