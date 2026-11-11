@@ -27,11 +27,15 @@ RECORDINGS = {
     "claude-approve.jsonl": [0],
     "claude-deny-interrupt.jsonl": [1, 4, 5],
     "claude-held-interrupt.jsonl": [2],
+    "claude-hang-up.jsonl": [],
 }
 
 # The turn starts only once the test has sent its interrupt, so the session
 # must hold it until `init` (docs/p1/design.md §11).
 RELEASED = {"claude-held-interrupt.jsonl"}
+
+# The stand-in stops reading after `initialize`, so the first message fails.
+HUNG_UP = {"claude-hang-up.jsonl"}
 
 
 def wait(match):
@@ -67,5 +71,6 @@ def renumbered(lines):
 initialize, played = turns(SOURCE.read_text().splitlines())
 for name, picked in RECORDINGS.items():
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
-    out = [m for line in lines for m in gated(line, name in RELEASED)]
+    hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
+    out = hang_up + [m for line in lines for m in gated(line, name in RELEASED)]
     (HERE / name).write_text("\n".join(out) + "\n")

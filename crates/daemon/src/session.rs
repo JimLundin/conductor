@@ -1,7 +1,7 @@
 //! One session's actor: it owns the agent, the turn and the open requests, so
 //! a slow agent call stalls only its own session.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use agents::claude::{
 use n0_future::StreamExt;
 use proto::{
     ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath, Rejection, RequestId,
-    Resolution, SessionId,
+    Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -88,7 +88,10 @@ enum Turn {
 /// resolution, so a late answer is told who made the first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Pending {
-    Open(NativeRequest),
+    Open {
+        native: NativeRequest,
+        call: Option<ToolCallId>,
+    },
     Resolved(Resolution),
 }
 
@@ -100,6 +103,8 @@ struct SessionActor {
     turn: Turn,
     requests: HashMap<RequestId, Pending>,
     last_request: RequestId,
+    /// Tool calls the user denied, whose failed result means `Declined`.
+    declined: HashSet<ToolCallId>,
 }
 
 /// What a settled step leaves the actor to do, outside its own state.
@@ -163,6 +168,7 @@ async fn run(
                 turn: Turn::Idle,
                 requests: HashMap::new(),
                 last_request: RequestId(0),
+                declined: HashSet::new(),
             };
             actor.run(inbox).await
         }
@@ -195,6 +201,15 @@ async fn start(
             })
             .await?;
             Ok((Agent::Claude(session), Feed::Claude(events)))
+        }
+    }
+}
+
+impl Pending {
+    fn native(&self) -> Option<&NativeRequest> {
+        match self {
+            Pending::Open { native, .. } => Some(native),
+            Pending::Resolved(_) => None,
         }
     }
 }
@@ -248,11 +263,19 @@ impl SessionActor {
                     by,
                 })
                 .await?;
-                self.turn = Turn::Starting(Held::Nothing);
                 let sent = match &self.agent {
                     Agent::Claude(claude) => claude.send_user(text).await,
                 };
-                self.note(sent).await?;
+                // A message the agent never got starts no turn.
+                match sent {
+                    Ok(()) => self.turn = Turn::Starting(Held::Nothing),
+                    Err(err) => {
+                        let outcome = TurnOutcome::Failed {
+                            message: err.to_string(),
+                        };
+                        self.emit(EventKind::TurnCompleted { outcome }).await?;
+                    }
+                }
                 Ok(CommandResult::Accepted)
             }
             (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_)) => {
@@ -298,7 +321,13 @@ impl SessionActor {
                     by: first,
                 }))
             }
-            Some(Pending::Open(NativeRequest::Claude(id))) => {
+            Some(Pending::Open {
+                native: NativeRequest::Claude(id),
+                call,
+            }) => {
+                if let (Decision::Deny, Some(call)) = (decision, call) {
+                    self.declined.insert(call);
+                }
                 let resolution = Resolution::Decided {
                     decision,
                     by: by.clone(),
@@ -365,16 +394,28 @@ impl SessionActor {
             Step::Emit(kind) => Vec::from([Effect::Emit(kind)]),
             Step::Open {
                 native,
+                call,
                 tool,
                 detail,
             } => {
                 let request = self.last_request.next();
                 self.last_request = request;
-                self.requests.insert(request, Pending::Open(native));
+                self.requests
+                    .insert(request, Pending::Open { native, call });
                 Vec::from([Effect::Emit(EventKind::RequestOpened {
                     request,
                     tool,
                     detail,
+                })])
+            }
+            Step::ToolFinished { call, outcome } => {
+                let outcome = match (outcome, self.declined.take(&call)) {
+                    (ToolOutcome::Failed, Some(_)) => ToolOutcome::Declined,
+                    (outcome, _) => outcome,
+                };
+                Vec::from([Effect::Emit(EventKind::ToolCall {
+                    call,
+                    phase: ToolPhase::Finished { outcome },
                 })])
             }
             Step::Withdraw(native) => self.withdraw(native),
@@ -403,11 +444,10 @@ impl SessionActor {
     }
 
     fn withdraw(&mut self, native: NativeRequest) -> Vec<Effect> {
-        let open = Pending::Open(native);
         let found = self
             .requests
             .iter()
-            .find(|(_, pending)| pending == &&open)
+            .find(|(_, pending)| pending.native() == Some(&native))
             .map(|(request, _)| request)
             .copied();
         match found {

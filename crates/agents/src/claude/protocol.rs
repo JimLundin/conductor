@@ -137,6 +137,8 @@ pub enum ClaudeEvent {
         id: PermissionRequestId,
         tool_name: String,
         detail: ToolDetail,
+        /// The `ToolUse` block this asks about, when the CLI names it.
+        tool_use_id: Option<String>,
     },
     /// The CLI withdrew a permission request; answering it is now an error.
     PermissionCancelled {
@@ -166,6 +168,7 @@ pub(crate) enum Inbound {
         id: PermissionRequestId,
         tool_name: String,
         input: Value,
+        tool_use_id: Option<String>,
     },
     /// Answer to a control request we sent.
     ControlResponse {
@@ -225,6 +228,7 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
                 id: PermissionRequestId(req.request_id),
                 tool_name: perm.tool_name,
                 input: perm.input,
+                tool_use_id: perm.tool_use_id,
             },
             other => Inbound::UnsupportedControlRequest {
                 request_id: req.request_id,

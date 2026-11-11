@@ -577,7 +577,7 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
-            decided(Decision::Deny, DENIED_CALL, ToolOutcome::Failed),
+            decided(Decision::Deny, DENIED_CALL, ToolOutcome::Declined),
             [
                 "The write to",
                 " `",
@@ -640,6 +640,37 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
             Vec::from([user("count to 100"), turn_end(TurnOutcome::Interrupted)]),
         ]
         .concat()
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// The stand-in stops reading after `initialize`, so the message can't
+/// reach it. The turn must end, or every client shows it running forever.
+#[tokio::test]
+async fn a_message_the_agent_never_gets_fails_its_turn() {
+    let fx = host().await;
+    let dir = scratch("hang-up", "claude-hang-up.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    assert_eq!(send(&link, message("hi")).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            opening(&dir),
+            Vec::from([
+                user("hi"),
+                turn_end(TurnOutcome::Failed {
+                    message: String::from("claude i/o: Broken pipe (os error 32)")
+                }),
+            ]),
+        ]
+        .concat()
+    );
+    assert_eq!(
+        send(&link, interrupt()).await,
+        CommandResult::Rejected(Rejection::NoTurnRunning)
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
