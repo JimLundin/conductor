@@ -206,9 +206,6 @@ fn Composer(
                 class: "send",
                 "aria-label": "Send",
                 disabled: !matches!(composer, host_view::Composer::Open),
-                svg { view_box: "0 0 20 20", width: "20", height: "20", "aria-hidden": "true",
-                    path { d: "M10 16V4M4.5 9.5 10 4l5.5 5.5", fill: "none", stroke: "currentColor", stroke_width: "2.2", stroke_linecap: "round", stroke_linejoin: "round" }
-                }
             }
         }
     }

@@ -177,9 +177,6 @@ pub(crate) fn PaneHeader(
     rsx! {
         header { class: "pane-head",
             button { class: "back", "aria-label": "Sessions", onclick: move |_| on_back(()),
-                svg { view_box: "0 0 12 20", width: "12", height: "20", "aria-hidden": "true",
-                    path { d: "M10 2 2 10l8 8", fill: "none", stroke: "currentColor", stroke_width: "2.4", stroke_linecap: "round", stroke_linejoin: "round" }
-                }
             }
             div { class: "pane-title",
                 h2 { "{title}" }
