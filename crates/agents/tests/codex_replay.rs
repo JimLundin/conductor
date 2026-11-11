@@ -8,7 +8,6 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -55,29 +54,20 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// A `codex` stand-in that ignores its arguments except the fixture path,
-/// which `command()` cannot pass, so it is baked into a wrapper script.
-fn fake_codex(fixture: &Path) -> PathBuf {
+/// A working directory for `tests/fake-codex.sh`, which runs `FAKE_CODEX`
+/// on the recording found there. The script is committed, not written here:
+/// executing a file another test thread may have just written fails with
+/// "Text file busy" when a concurrent fork still holds it open.
+fn fake_codex_dir(fixture: &Path) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "agents-codex-replay-{}-{}",
         std::process::id(),
         fixture.file_stem().unwrap().to_str().unwrap()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let fake = dir.join("fake-codex.py");
-    std::fs::write(&fake, FAKE_CODEX).unwrap();
-    let script = dir.join("codex");
-    std::fs::write(
-        &script,
-        format!(
-            "#!/bin/sh\nexec /usr/bin/python3 -I '{}' '{}'\n",
-            fake.display(),
-            fixture.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    script
+    std::fs::write(dir.join("fake-codex.py"), FAKE_CODEX).unwrap();
+    std::fs::copy(fixture, dir.join("stdout.jsonl")).unwrap();
+    dir
 }
 
 fn opts() -> ThreadOptions {
@@ -303,8 +293,8 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 
 async fn spawn(name: &str) -> Recorder {
     let (server, events) = CodexServer::spawn(ServerOptions {
-        codex_path: fake_codex(&fixture(name)),
-        cwd: std::env::temp_dir(),
+        codex_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        cwd: fake_codex_dir(&fixture(name)),
         stdout_log: None,
     })
     .await

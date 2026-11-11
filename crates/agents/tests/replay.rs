@@ -5,7 +5,6 @@
 #![cfg(unix)]
 
 use std::cmp::Ordering;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use agents::claude::{
@@ -22,35 +21,35 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// A stand-in `claude` that prints a recording and logs what it reads.
+/// A working directory for `tests/fake-claude.sh`, which prints the
+/// recording found there and logs what it reads. The script is committed, not
+/// written here: executing a file another test thread may have just written
+/// fails with "Text file busy" when a concurrent fork still holds it open.
 struct FakeClaude {
-    script: PathBuf,
+    dir: PathBuf,
     /// Every line the session wrote to the stand-in's stdin.
     stdin_log: PathBuf,
 }
 
-fn fake_claude(name: &str, stdout: &Path) -> FakeClaude {
+fn test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("agents-replay-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let script = dir.join("claude");
-    let stdin_log = dir.join("stdin.jsonl");
-    std::fs::write(
-        &script,
-        format!(
-            "#!/bin/sh\ncat '{}'\ncat >'{}'\n",
-            stdout.display(),
-            stdin_log.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    FakeClaude { script, stdin_log }
+    dir
 }
 
-fn options(claude_path: PathBuf) -> ClaudeOptions {
+fn fake_claude(name: &str, stdout: &Path) -> FakeClaude {
+    let dir = test_dir(name);
+    std::fs::copy(stdout, dir.join("stdout.jsonl")).unwrap();
+    FakeClaude {
+        stdin_log: dir.join("stdin.jsonl"),
+        dir,
+    }
+}
+
+fn options(claude: &FakeClaude) -> ClaudeOptions {
     ClaudeOptions {
-        claude_path,
-        cwd: std::env::temp_dir(),
+        claude_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-claude.sh"),
+        cwd: claude.dir.clone(),
         model: None,
         permission_mode: PermissionMode::Default,
         resume: None,
@@ -209,7 +208,7 @@ async fn answer_again(session: &ClaudeSession, id: PermissionRequestId) -> Strin
 
 async fn replay(name: &str, decisions: Vec<PermissionDecision>) -> Replayed {
     let path = fixture(name);
-    let (session, events) = ClaudeSession::spawn(options(fake_claude(name, &path).script))
+    let (session, events) = ClaudeSession::spawn(options(&fake_claude(name, &path)))
         .await
         .expect("initialize is answered by the recording's first line");
 
@@ -316,11 +315,9 @@ async fn resume_and_accept_edits_recording() {
     assert_eq!(replayed.second, Vec::<String>::new());
 }
 
-/// Writes `lines` to a fresh stdout recording and returns its path.
+/// Writes `lines` to a fresh recording and returns its path.
 fn recording(name: &str, lines: Vec<&str>) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("agents-replay-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("stdout.jsonl");
+    let path = test_dir(name).join("recording.jsonl");
     std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
     path
 }
@@ -352,7 +349,7 @@ async fn unknown_control_request_gets_an_error_reply() {
         ]),
     );
     let claude = fake_claude("unknown-control", &stdout);
-    let (session, events) = ClaudeSession::spawn(options(claude.script)).await.unwrap();
+    let (session, events) = ClaudeSession::spawn(options(&claude)).await.unwrap();
     let played = Replay::new(session, events, Vec::new(), 1).run().await;
     played.session.shutdown().await.unwrap();
     assert_eq!(
@@ -389,7 +386,7 @@ const FUTURE_CLI: &str = r#"{"type":"control_response","response":{"subtype":"su
 async fn unsupported_cli_version_is_refused() {
     let stdout = recording("future-cli", Vec::from([FUTURE_CLI]));
     let claude = fake_claude("future-cli", &stdout);
-    let refused = ClaudeSession::spawn(options(claude.script))
+    let refused = ClaudeSession::spawn(options(&claude))
         .await
         .err()
         .map(|e| e.to_string());
@@ -407,7 +404,7 @@ async fn allow_untested_version_runs_it_anyway() {
     let claude = fake_claude("future-cli-allowed", &stdout);
     let opts = ClaudeOptions {
         versions: VersionPolicy::AllowUntested,
-        ..options(claude.script)
+        ..options(&claude)
     };
     let (session, _events) = ClaudeSession::spawn(opts).await.unwrap();
     assert_eq!(session.shutdown().await.unwrap().code(), Some(0));
