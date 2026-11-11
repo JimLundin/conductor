@@ -222,6 +222,15 @@ if (scenario === 'upgrade') {
 }
 
 check(linkErrors.length === 0, `the link never reported an error${linkErrors.length ? `: ${linkErrors.join(' | ')}` : ''}`);
-check(consoleErrors.length === 0, `no console errors${consoleErrors.length ? `: ${consoleErrors.join(' | ')}` : ''}`);
+// n0's public relays are best-effort: a correctly named relay can reset a
+// WebSocket handshake, and the client retries. Those are reported, not failed.
+// A relay named with the root dot is still a failure (Safari rejects it).
+const relayHiccup = /^WebSocket connection to 'wss:\/\/[a-z0-9-]+\.relay\.n0\.iroh\.link\/relay' failed/;
+const dottedRelay = /relay\.n0\.iroh\.link\.\//;
+const hiccups = consoleErrors.filter((e) => relayHiccup.test(e) && !dottedRelay.test(e));
+const realErrors = consoleErrors.filter((e) => !hiccups.includes(e));
+if (hiccups.length) log(`warning: ${hiccups.length} relay connection hiccup(s), retried by the client: ${hiccups[0]}`);
+check(!consoleErrors.some((e) => dottedRelay.test(e)), 'no relay dialled with the root dot');
+check(realErrors.length === 0, `no console errors${realErrors.length ? `: ${realErrors.join(' | ')}` : ''}`);
 await browser.close();
 log('PASS');

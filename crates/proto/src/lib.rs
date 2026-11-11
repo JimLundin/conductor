@@ -10,6 +10,7 @@
 //! [`Signal`]s both ways for as long as that connection lives.
 
 mod frame;
+mod relay;
 mod ticket;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 pub use frame::{
     CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode,
 };
+pub use relay::without_root_dot;
 pub use ticket::{AuthToken, Ticket, TicketError};
 
 /// The ALPN for the S3 protocol. P1 moves to `conductor/1` (§5.1).
