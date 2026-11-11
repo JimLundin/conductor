@@ -657,7 +657,7 @@ pub(crate) enum Step {
     /// The actor sets `Turn::Idle` and logs `TurnCompleted`.
     TurnEnded(TurnOutcome),
     /// Codex's own turn id, which `send_turn` also returns.
-    TurnStarted(TurnId),
+    TurnStarted(NativeTurn), // NativeTurn::Claude | NativeTurn::Codex(TurnId)
 }
 
 pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> { todo!() }
@@ -673,7 +673,7 @@ form). The two tables below are those matches.
 
 | Claude event | Steps |
 |---|---|
-| `SessionStarted { .. }` | none (`SessionReady` is logged after `spawn` returns) |
+| `TurnStarted { .. }` | `TurnStarted(NativeTurn::Claude)`. It fires on every `system/init`, once per turn (drift-check change). `SessionReady` is still logged after `spawn` returns |
 | `Message { Assistant, [Text(t)] }`, per block | `Emit(AssistantMessage { t })` |
 | `Message { Assistant, [ToolUse { id, name, detail }] }`, per block | `Emit(ToolCall { id, Started { tool_kind(name, detail) } })` |
 | `Message { User, [ToolResult { tool_use_id, outcome }] }`, per block | `Emit(ToolCall { tool_use_id, Finished { outcome } })` |
@@ -692,7 +692,7 @@ form). The two tables below are those matches.
 | Codex thread event | Steps |
 |---|---|
 | `Started` | none |
-| `TurnStarted { turn }` | `TurnStarted(turn)` |
+| `TurnStarted { turn }` | `TurnStarted(NativeTurn::Codex(turn))` |
 | `AgentDelta { text, .. }` (added in unit 2) | `Emit(AssistantDelta { text })` |
 | `AgentMessage { text, .. }` | `Emit(AssistantMessage { text })` |
 | `Item { Started, Command { id, command, .. } }` | `Emit(ToolCall { id, Started { Command { command } } })` |
@@ -964,7 +964,7 @@ plus markers:
 | Recording | From | Plays |
 |---|---|---|
 | `claude-approve.jsonl` | `fixtures/claude/session1-…` turn 1 | message, deltas, one `Write` permission, tool result, final text, `result` |
-| `claude-deny-interrupt.jsonl` | `session1-…` turns 2 and 3 | a denied permission, then a long turn that ends `aborted_streaming` |
+| `claude-deny-interrupt.jsonl` | unit 2's new `s1` mid-stream interrupt step (interrupt on the first `StreamDelta`) | a denied permission, then a turn with deltas that ends `aborted_streaming` |
 | `codex-two-threads.jsonl` | `fixtures/codex/server1.jsonl` | two threads: command approval accepted on one, declined on the other, deltas on both |
 | `codex-interrupt.jsonl` | `server1.jsonl` | a turn interrupted mid-stream |
 
@@ -1053,11 +1053,11 @@ green `tools/check.sh` commit, and leaves the system working
 | # | Unit | Depends on | Parallel with | Done when |
 |---|---|---|---|---|
 | 1 | **Gated fake CLI.** `fake-cli.py`, the two `.sh` wrappers, `fixtures/e2e/claude-approve.jsonl` (provisional). A small agents test drives `ClaudeSession` through `claude-approve.jsonl`: no event before `send_user`, nothing after the permission before `respond` | none | 2, 3, T | the new test and the existing replay tests pass |
-| 2 | **Agents boundary.** Codex `item/agentMessage/delta` as `ThreadEvent::AgentDelta`; Claude `ToolDetail` (§2.7); Claude `--include-partial-messages` and `StreamDelta`, with a new `s1` recording, from which it rebuilds `claude-approve.jsonl` and builds `claude-deny-interrupt.jsonl`; originally: a new `s1` recording if open question 2 says yes | none | 1, 3, T | replay tests assert the deltas and details as literal lists; `s1` and `s2` pass live |
+| 2 | **Agents boundary.** Codex `item/agentMessage/delta` as `ThreadEvent::AgentDelta`; Claude `ToolDetail` (§2.7); Claude `--include-partial-messages` and `StreamDelta`, with a new `s1` recording, from which it rebuilds `claude-approve.jsonl` and builds `claude-deny-interrupt.jsonl` | none | 1, 3, T | replay tests assert the deltas and details as literal lists; `s1` and `s2` pass live, including the new mid-stream interrupt step (interrupt on the first delta) and the immediate interrupt step (before `system/init`), 5 runs in a row; it also carries the drift-check fixes (`docs/subset/reviews/drift-checks.md`) |
 | 3 | **Protocol swap.** New `proto` types and `ALPN`; client `host_view.rs` with its fold tests; daemon `log.rs`, `registry.rs` (both providers `Unavailable`, the permanent path for a missing CLI), `serve.rs`, `main.rs` as `host`; `host.rs` and the spike types deleted; the app compiles against `HostView` and shows each session's transcript in order (the screens are unit 6) | T | 1, 2 | e2e: the wrong-token and epoch tests pass, and `StartSession` answers `ProviderUnavailable`; `log.rs` unit tests cover replay after the cursor; the app builds for web and desktop |
 | 4 | **Claude sessions.** `session.rs`, `mapping.rs` (Claude half), Claude in the registry | 1, 2, 3 | 6, T | the Claude e2e tests in §4.2 pass |
 | 5 | **Codex sessions.** `codex_hub.rs`, `mapping.rs` (Codex half), Codex in the registry; builds `codex-two-threads.jsonl` and `codex-interrupt.jsonl` | 4 | 6, T | the Codex e2e tests pass, including two sessions on one server |
-| 6 | **App screens.** `SessionList`, `NewSession`, `SessionPane`, the new items, phone layout | 3 | 4, 5, T | `dx serve` against a unit-4 host runs a Claude turn by hand; screenshots at desktop and 390x844 |
+| 6 | **App screens.** `SessionList`, `NewSession`, `SessionPane`, the new items, phone layout, and `ticket.rs` into the subset | 3 | 4, 5, T | `dx serve` against a unit-4 host runs a Claude turn by hand; screenshots at desktop and 390x844 |
 | T | **Transport port.** `wire.rs`, `rtc.rs`, `stun.rs` into the subset, same behaviour, against today's simulated host (open question 1) | none | 1, 2, and 3's development; lands before 3 | `subset check` is clean on those files; `tools/s3-browser.sh` passes all three scenarios |
 | 7 | **Browser e2e.** `tools/e2e-browser.sh`, `browser.mjs` on the real daemon and the fakes | 4, 6, T | 5 | all three scenarios pass in Chromium and WebKit |
 | 8 | **Smoke and docs.** Run `docs/p1/smoke.md`; update architecture §12 and the subset report | 5, 7 | none | the owner has run the checklist; `SUBSET=1 tools/check.sh` reports nothing under `crates/daemon` |
@@ -1116,7 +1116,7 @@ against today).
 unit T is about +1,400 tokens of pure subset inflation, which is the price of
 open question 1. The rest is new behaviour: real agents, several sessions,
 tool calls, and the screens for them. Every daemon violation is gone at the
-end, so `crates/` is left with only `app/src/ticket.rs`'s 8.
+end. `app/src/ticket.rs`'s 8 violations are assigned to unit 6, which rewrites the app's screens: after unit 6, `crates/` is fully in the subset.
 
 ## 7. Open questions
 
@@ -1152,3 +1152,57 @@ All four open questions are answered as recommended:
 4. The directory is a text field the host validates, with earlier sessions' directories offered as suggestions.
 
 Also approved: the hedged dial from the reconnect forensics (`docs/forensics/reconnect/` on the local branch `reconnect-forensics`), as its own `client` unit. Git worktrees stay out of slice 1. The volume estimate (~25,800 added tokens) is treated as P1's budget.
+
+## 9. Changes from the drift-check review (2026-11-11)
+
+- Claude's adapter now emits `TurnStarted` on every `system/init` (§2.7),
+  and the live step 3 interrupts at turn start. Nothing interrupted
+  mid-stream any more, so unit 2 adds a mid-stream step (interrupt on the
+  first delta) to `s1` and `s2`, and `claude-deny-interrupt.jsonl` is built
+  from it (§4.1, §5).
+- Interrupting before `system/init` was unobserved, and P1 marks a turn
+  running on `Send` (§2.5). Unit 2 adds an immediate-interrupt step and
+  records the behaviour in `claude/PROTOCOL.md`.
+- `codex-interrupt.jsonl` stays mid-stream because it is built from
+  `fixtures/codex/server1.jsonl` (unit 5).
+
+## 10. Owner decisions on storage and wire format (2026-11-11)
+
+- **Wire format: `postcard`, not JSON.** Frames keep their length prefix; the
+  body is postcard-encoded `proto` types. postcard is not self-describing, so a
+  breaking `proto` change bumps the ALPN (`conductor/1` → `/2`). The event log
+  stores the same encoding, and `conductord dump` prints it as text. The CLI
+  adapters stay JSON: that is the CLIs' own protocol (boundary).
+- **Storage: `redb`** (decided 2026-11-11). The owner's rule: durable data
+  stays Rust types, with no SQL and no text formats. `redb` is a pure-Rust,
+  embedded, ACID, crash-safe key-value store with a stable file format, and
+  typed tables (`TableDefinition<K, V>`) that are read and written only
+  through Rust calls. One `store` module owns it. Values are the `proto`
+  types encoded with `postcard` (the wire encoding), keys are our typed ids,
+  and extra lookups are extra typed tables. `conductord dump` prints the store
+  as text. Turso was considered and rejected because it is queried in SQL
+  text. The browser's offline cache, a later item, uses the browser's own
+  storage with the same postcard bytes. Durability is a later slice, not
+  slice 1.
+
+## 11. Changes from the unit 2 review (2026-11-11)
+
+- **Interrupts are held until the turn starts** (§2.5). Sent before the
+  CLI's turn-started event, Claude acknowledges and then runs the whole turn
+  (10 of 10 logs) and Codex refuses with "no active turn" (10 of 10). Sent
+  on the turn-started event, both work every time. The session's turn is a
+  state machine:
+  `Turn = Idle | Starting(Held) | Running(NativeTurn)`, `Held = Nothing | Interrupt`.
+  `Send` moves to `Starting(Nothing)`. `Interrupt` while `Starting` is
+  `Accepted` and stored as `Starting(Interrupt)`, with nothing sent yet.
+  `Step::TurnStarted(native)` moves to `Running(native)` and sends a held
+  interrupt then. Turn end returns to `Idle` and drops a held interrupt.
+  Units 4 and 5 each add a gated test that interrupts before the turn starts.
+- **`Step::TurnStarted` carries `NativeTurn`** (§2.7): `Claude`, or
+  `Codex(TurnId)` because Codex interrupts by turn id.
+- **The §2.7 lookup tables are `match`es**, not `const` lists:
+  `tool_detail` (done in unit 2) and `CODEX_OUTCOMES` (unit 5). A string-keyed
+  table measured about +100% against the `match`.
+- **`s2` step 1 runs under `ApprovalPolicy::Untrusted` with a writable
+  workspace**, so Codex itself asks before every command and the step no
+  longer depends on the model.

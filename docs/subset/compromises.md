@@ -1,8 +1,9 @@
 # Where the subset gives ground
 
 The thesis is that **every state is a named enum variant and every decision is
-a `match`**, protected by seven qualities (`docs/subset.md`). Version 5 accepts
-30 proposals. Most keep all the qualities. The ones below don't, or they bend
+a `match`**, protected by seven qualities (`docs/subset.md`). Version 6 accepts
+32 proposals, two of which (0038, 0039) only narrow the checker. Most keep all
+the qualities. The ones below don't, or they bend
 the thesis at its edges. Each is confined by its rule, and this page is the
 list to revisit first when one of them starts to spread.
 
@@ -33,8 +34,14 @@ doesn't expand macros, so a reviewer still checks these:
 
 - **Whose type it is.** The tool knows our types and functions only by name.
   0008(b) `let mut` for an external value is approximated as "never
-  reassigned", and 0023's "something we don't define" as "not a name we
-  define", with a method call's receiver ours only when it is `self`. A
+  reassigned" and "not of a type of ours where the syntax names it": a
+  declared parameter type, a struct literal, or an associated fn of a type
+  of ours (assumed to return that type). A `mut` binding from a method
+  call or a fn of ours, or one bound in a `match` arm, is not typed and
+  passes. A cursor is the case to watch: `let mut rest = bytes;` passes as
+  a library value lent as `&mut`, and only the 0039 list stops the reader
+  that would reassign it. 0023's "something we don't define" is
+  approximated as "not a name we define", with a method call's receiver ours only when it is `self`. A
   library wrapper hides where a value ends up: the tool allows
   `Option<bool>` as a field of our struct and `Some(true)` as its value,
   because `Option` and `Some` aren't ours. The reviewer checks that a
@@ -60,6 +67,12 @@ doesn't expand macros, so a reviewer still checks these:
   struct's own type (the tool accepts any method call), and 0028 a `fold` or
   `map(..).sum()` used only to count (the tool flags
   `filter_map(..).count()`).
+- **Which trait a method belongs to.** 0038 matches a method call by
+  name, and only in a file that imports a listed operator trait. A
+  library prelude that re-exports one through a glob hides it, and in a
+  file that imports `Add`, a method `add` of ours is flagged as well. 0039
+  stops a consuming reader where the code names it (`use bytes::Buf`), not
+  its methods, and only the readers on the list.
 - **Macro bodies.** 0007's "each `select!` arm is a single call", Dioxus
   markup (0018) and `tracing` fields are not parsed.
 - **What a body does.** 0017's callback only forwards the event to a
