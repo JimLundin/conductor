@@ -95,7 +95,10 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 `let mut` state is built from), the types of ours named in a loop-state
 type's fields or in the variants of an enum of ours it owns, and the
 newtypes that derive `Ord`. The facts
-are names, not resolved paths.
+are names, not resolved paths. Within one file, a bare type name is ours
+only when the file defines it, imports it from a path of ours, or has a
+glob import of a path of ours. A name the file imports from a library is
+never ours, even when one of our crates defines a type of the same name.
 
 Some rules read a list of names from the config, so a project tunes them
 without changing the tool:
@@ -121,6 +124,26 @@ endpoints = ["SendHalf", "RecvHalf"]
   `min_by_key`, `ok_or_else`, `or_else`, `partition`, `reduce`, `rfind`,
   `rposition`, `scan`, `try_fold`, `try_for_each` and `unwrap_or_else`.
 
+- `fallible_operators` maps each operator trait whose operation can
+  overflow or panic to its methods (0038). A `use` of a listed trait, a
+  path through it, and a call of one of its methods in a file that imports
+  the trait are flagged. The default is `std::ops::Add`, `Sub`, `Mul`,
+  `Div`, `Rem`, `Neg`, `Shl` and `Shr`, each with its lowercase method, and
+  their `*Assign` forms with `add_assign` and so on.
+- `consuming_readers` names types and traits that read by changing their
+  buffer (0039). A `use` of one and a path through one are flagged. The
+  default is `bytes::Buf`.
+
+Both lists hold paths, matched against paths as the code writes them: the
+path's segment names the item, and the segments written before it agree
+with the listed path, so `ops::Add` matches `std::ops::Add`. `core::` and
+`alloc::` read as `std::`. A bare name that the file defines or imports
+from a path of ours is not the listed item. Method calls are matched by
+name, which is ambiguous without types, so 0038 matches them only in a
+file that imports the trait by name or through a glob of its module: a
+method `add` of ours is flagged in such a file, and a trait brought in
+through a library prelude's glob is not seen.
+
 A list that is given replaces its default. To extend a default, copy it.
 
 | Id | Rule |
@@ -139,11 +162,20 @@ A list that is given replaces its default. To extend a default, copy it.
 | `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
+| `stmt.let.mut` | `mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035) |
+| `pat.ident.mut` | `mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
 | `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
 | `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |
 | `expr.path` | `drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025) |
 | `expr.method_call` | `.ok()` is not a discard; write `let _ = value;` (proposal 0025) |
+| `item.use` | a trait in `fallible_operators` is never imported, named in a path or called as a method; write `checked_*` or `saturating_*` (proposal 0038) |
+| `expr.path` | a trait in `fallible_operators` is never imported, named in a path or called as a method; write `checked_*` or `saturating_*` (proposal 0038) |
+| `type.path` | a trait in `fallible_operators` is never imported, named in a path or called as a method; write `checked_*` or `saturating_*` (proposal 0038) |
+| `expr.method_call` | a trait in `fallible_operators` is never imported, named in a path or called as a method; write `checked_*` or `saturating_*` (proposal 0038) |
+| `item.use` | a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039) |
+| `expr.path` | a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039) |
+| `type.path` | a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039) |
 | `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
 | `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
 | `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |

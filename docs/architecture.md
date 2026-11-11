@@ -1,9 +1,11 @@
 # Conductor: architecture sketch (draft for review)
 
-Status: draft, revised 2026-11-10 after these decisions: iPhone with no Apple Developer
-account; hosts on Windows, WSL and macOS; no relay of our own; a static web client on a
-dedicated domain; Dioxus for the UI. Nothing here is built yet. Items marked **[verify]**
-are assumptions that a spike must confirm before we depend on them.
+Status: the original design sketch from 2026-11-10, kept as the reference
+for the overall system. **What is built and what is in progress is on the
+generated architecture page** (`https://jimlundin.github.io/conductor/architecture/`,
+from `docs/status.toml`); the current plan for the host is `docs/p1/design.md`.
+Where this document and those disagree, they win: the crate list in §6 and the
+build order in §12 are the original sketch, not the current state.
 
 ## 1. What we are building
 
@@ -67,7 +69,7 @@ the closest code to borrow (§14).
 | D5 | Trust comes from a **fleet root key** that signs device certificates | Hosts store only the root public key, so pairing a phone once gives it access to every host. Hosts never sync allowlists with each other. | Allowlists replicated between daemons. A compromised host could enrol keys on every other host. |
 | D6 | Talk to each agent in its **native protocol**: Claude stream-json control protocol, Codex app-server JSON-RPC. **Vendor `claude-codes` and `codex-codes`** (Apache-2.0, from `meawoppl/rust-code-agent-sdks`) into `vendor/` and own them from here on; fixes go straight into our copies, with no upstream contributions | These carry the full feature set: approvals, interrupts, resume, fork. T3 Code and Orchestrator.inc do the same for Codex. | ACP. It is the lowest common denominator, built for one client per agent, and Claude would still need a TypeScript adapter. |
 | D7 | Shell out to the `git` CLI, not `gix`/`git2` | Worktrees, hooks and the user's git config all behave exactly as on the command line. T3 Code and Orchestrator.inc do the same. | gix has incomplete worktree support. git2 adds a C dependency. |
-| D8 | Wire format is length-prefixed JSON over **bidirectional streams**: QUIC streams on iroh, data channels on WebRTC | Easy to debug, tolerant of schema changes, and agent payloads are already JSON. Both transports implement one small `Transport` trait (§5.1), so the protocol doesn't care which carries it. | postcard or bincode. Possible later; the bandwidth isn't a problem. |
+| D8 | Wire format is length-prefixed **`postcard`** (binary serde over our own Rust types; decided 2026-11-11, see `docs/p1/design.md` §10) over **bidirectional streams**: QUIC streams on iroh, data channels on WebRTC | Easy to debug, tolerant of schema changes, and agent payloads are already JSON. Both transports implement one small `Transport` trait (§5.1), so the protocol doesn't care which carries it. | postcard or bincode. Possible later; the bandwidth isn't a problem. |
 | D9 | Hosts run on **Linux/WSL, macOS and Windows**. Development and the local desktop app target **Linux (WSL, shown through WSLg)**; Windows and macOS builds come from CI | The developer works in WSL. Windows is a low-priority target with no Windows-specific code; CI builds it. | Native Windows development (no toolchain there, and it isn't worth one). |
 
 ## 3. Topology and process model
@@ -101,7 +103,7 @@ the closest code to borrow (§14).
     ├ session actors ── claude ×N (process per active session)
     │                 └ codex app-server ×1 (process per host, many threads)
     ├ worktrees  <data>/worktrees/<project>/<session>
-    ├ conductor.db (SQLite event log, the source of truth for this host)
+    ├ conductor.redb (redb event log, the source of truth for this host)
     └ Web Push sender ──HTTPS──► Apple's web push service ──► iPhone   (content-free payload)
 ```
 
@@ -207,10 +209,10 @@ streams used:
 |---|---|---|
 | 1st bi-stream | client→host | `Hello { cert, client_version }` → `Welcome { host_info, roster_version, head_seq }` |
 | one bi-stream per RPC | client→host | `Command` → `CommandResult`. The stream then closes. |
-| one long-lived bi-stream | client→host | `Subscribe { epoch, after_seq }`. The host replays the log from SQLite, then streams live events, or replies `SnapshotRequired` (§8). |
+| one long-lived bi-stream | client→host | `Subscribe { epoch, after_seq }`. The host replays the log from its store (redb), then streams live events, or replies `SnapshotRequired` (§8). |
 | one bi-stream per WebRTC upgrade | browser→host, iroh only | `Rtc { sdp }` → `Answer`, then trickled `Candidate`s both ways while the WebRTC connection lives (§5.4). |
 
-Each frame is a `u32` length followed by a JSON body.
+Each frame is a `u32` length followed by a `postcard` body. The CLI adapters still speak JSON to the CLIs: that is the CLIs' own protocol, at the boundary.
 
 ### 5.2 Core types (sketch)
 
@@ -367,7 +369,7 @@ conductor/
 ├── crates/
 │   ├── proto/                    # wire + event types, framing codec, Ticket. No I/O.
 │   ├── trust/                    # fleet keys, DeviceCert, Roster, sign/verify. No I/O.
-│   ├── store/                    # SQLite event log, receipts, pending requests, migrations
+│   ├── (daemon::store)           # redb event log and session tables (P1 later slice; a module, not a crate)
 │   ├── agents/                   # Agent trait + claude/ + codex/ adapters, fixture tests
 │   ├── git/                      # worktrees, checkpoints (hidden refs), unified-diff parsing
 │   ├── daemon/                   # bin `conductord`: session actors, iroh server, CLI
@@ -406,7 +408,7 @@ agents ──► proto            fake-agent ──► (nothing internal)
 |---|---|---|
 | `proto` | `Command`, `EventKind`, IDs, frame codec, `Ticket` | `serde 1.0.229`, `serde_json`, `ulid 3.0`, `jiff 0.2`. **[S3 uses]** `iroh-base 1.4` (feature `key`) for `EndpointId` and `RelayUrl`, and `data-encoding 2.11` for the base64url ticket; IDs are `u64` newtypes until P1 needs ULIDs |
 | `trust` | Root/device keys, certs, roster, verification | `ed25519-dalek 3.0`, `iroh` (key types only) |
-| `store` | Single-writer append, replay `after_seq`, command receipts, pending requests | `rusqlite 0.41` (feature `bundled`); migrations via `PRAGMA user_version` |
+| `store` | Single-writer append, replay `after_seq`, command receipts, pending requests | **`redb` 4.x** with typed tables and `postcard` values (decided 2026-11-11, replacing the earlier `rusqlite` plan); was: `rusqlite 0.41` (feature `bundled`); migrations via `PRAGMA user_version` |
 | `agents` | Spawning providers, protocol I/O, mapping to `EventKind` | `tokio 1.54` (process, io-util), `serde_json`; `jsonschema` in tests [verify version] |
 | `git` | Create/remove worktrees, per-turn checkpoints, diffs between checkpoints | `tokio::process` calling `git`; a unified-diff parser (`diffy` or our own) [decide] |
 | `daemon` | Session actors, iroh router, auth, service install, `pair` QR code, WebRTC answerer, Web Push | `iroh 1.4` (feature `tls-ring`), `iroh-mdns-address-lookup 0.6` **[S3]**, `str0m 0.25` (P3), `web-push 0.11` (P3), `clap 4.6`, `qrcode 0.14`, `tracing 0.1`, `directories 6` (**[S3]** `ProjectDirs::from("", "", "conductor")` gives `~/.local/share/conductor` on Linux), `service-manager 0.11` (launchd, systemd; check its Task Scheduler support), `sd-notify 0.5` |
@@ -554,11 +556,11 @@ How it works: `codex app-server` speaks JSON-RPC over stdio. Codex is itself Rus
 
 - **Session actor:** one tokio task per session owns its `AgentSession`, worktree and
   turn state. Commands arrive on an `mpsc` channel; there are no locks around session state.
-- **Event writer:** a single task appends to SQLite and assigns `seq`, then
+- **Event writer:** a single task appends to the store (redb) and assigns `seq`, then
   `broadcast`s to subscribers. Every durable event goes through it.
 - **Subscribe without gaps:**
   1. Attach to the broadcast first.
-  2. Replay rows `> after_seq` from SQLite up to the current head.
+  2. Replay entries `> after_seq` from the store up to the current head.
   3. Drain the broadcast, dropping `seq <= last_replayed`.
 
   A subscriber that falls behind on the broadcast is disconnected and re-subscribes from
@@ -594,7 +596,7 @@ How it works: `codex app-server` speaks JSON-RPC over stdio. Codex is itself Rus
   next message. Later: detached per-session host processes, like Orchestrator.inc's
   `persistenthost`.
 
-SQLite schema (daemon):
+Store tables (daemon; originally drafted as a SQLite schema, now redb typed tables keyed the same way, values postcard-encoded):
 
 ```sql
 projects(id TEXT PK, path TEXT UNIQUE, name TEXT, created_at)
@@ -611,14 +613,14 @@ push_tokens(device TEXT PK, platform, token, updated_at)   -- later
 
 - **Runs on two targets.** The same crate compiles natively (desktop) and to
   `wasm32-unknown-unknown` (browser). Platform differences live in `client/src/platform/`
-  behind three small traits: `Storage` (SQLite or IndexedDB), `KeyStore` (OS keychain or
+  behind three small traits: `Storage` (redb natively, the browser's storage on the web), `KeyStore` (OS keychain or
   IndexedDB) and `Connector` (native iroh, or iroh-wasm plus the WebRTC upgrade).
 - `HostLink` is one per roster host. Its states are
   `Disconnected → Connecting → Authenticating → CatchingUp → Live`, with jittered backoff.
   It persists the last applied `seq` per host, so cold starts resume from the cursor.
 - `FleetState` holds sessions keyed by `(HostId, SessionId)`, folded from events. It has
   no Dioxus types, which keeps it UI-agnostic and unit-testable.
-- The local cache (SQLite or IndexedDB) lets both clients show the last known state
+- The local cache (redb natively, the browser's storage on the web) lets both clients show the last known state
   instantly and offline.
 - The `app` crate wraps `FleetState` in Dioxus signals. That is the only place the UI
   framework touches the core.

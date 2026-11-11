@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 5
+version = 6
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -152,6 +152,32 @@ closure_methods = [
   "ask",                      # an actor handle's request helper (0026)
 ]
 
+# Proposal 0039: types and traits that read by changing their buffer, so a
+# tuple of reads means something only by evaluation order. Never imported or
+# named; bytes are split with `split_at_checked` (bootstrap review §A7).
+consuming_readers = ["bytes::Buf"]
+
+# Proposal 0038: operator traits whose operation can overflow or panic, with
+# their methods. Never imported, named in a path or called as a method; write
+# `checked_*` or `saturating_*`. The total bitwise traits and `Not` stay
+# allowed, so `BitXor::bitxor` is the form for an XOR.
+[fallible_operators]
+"std::ops::Add" = ["add"]
+"std::ops::AddAssign" = ["add_assign"]
+"std::ops::Sub" = ["sub"]
+"std::ops::SubAssign" = ["sub_assign"]
+"std::ops::Mul" = ["mul"]
+"std::ops::MulAssign" = ["mul_assign"]
+"std::ops::Div" = ["div"]
+"std::ops::DivAssign" = ["div_assign"]
+"std::ops::Rem" = ["rem"]
+"std::ops::RemAssign" = ["rem_assign"]
+"std::ops::Neg" = ["neg"]
+"std::ops::Shl" = ["shl"]
+"std::ops::ShlAssign" = ["shl_assign"]
+"std::ops::Shr" = ["shr"]
+"std::ops::ShrAssign" = ["shr_assign"]
+
 # Ids allowed only under some paths. Elsewhere, a use of one is reported with
 # the scope's rule as the reason.
 
@@ -208,9 +234,27 @@ allowed = ["attr.tokio::main"]
 external_protocols = ["crates/agents/src/claude/**", "crates/agents/src/codex/**"]
 # Types that hold data without a type: `type.untyped` wherever they appear.
 untyped = ["serde_json::Value", "HashMap<String, _>", "BTreeMap<String, _>", "dyn Any"]
-# `adapters` (iterator method names), `primitives` (type patterns) and
-# `transparent` (std containers that typing sees through, such as `Option`)
-# keep the tool's std defaults, listed in tools/subset/README.md.
+# Method names whose calls are `expr.method_call.adapter`: the std
+# `Iterator` adapters.
+adapters = [
+  "all", "any", "chain", "cloned", "collect", "copied", "count", "cycle",
+  "enumerate", "filter", "filter_map", "find", "find_map", "flat_map",
+  "flatten", "fold", "fuse", "inspect", "last", "map", "map_while", "max",
+  "max_by", "max_by_key", "min", "min_by", "min_by_key", "nth", "partition",
+  "peekable", "position", "product", "reduce", "rev", "rposition", "scan",
+  "skip", "skip_while", "step_by", "sum", "take", "take_while", "try_fold",
+  "unzip", "zip",
+]
+# Types that are `type.primitive` in our own fields and signatures.
+primitives = [
+  "String", "str", "char", "i8", "i16", "i32", "i64", "i128", "isize",
+  "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "Vec<u8>",
+]
+# Std containers that typing sees through, so `Option<String>` is a primitive.
+transparent = [
+  "Option", "Result", "Vec", "VecDeque", "Box", "Rc", "Arc", "Cow",
+  "HashMap", "HashSet", "BTreeMap", "BTreeSet",
+]
 
 [weights.tiers]
 encouraged = 0.5

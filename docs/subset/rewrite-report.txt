@@ -1,101 +1,67 @@
-# The rewrite to-do list: `subset report` on crates/ under subset.toml version 5.
+# The rewrite to-do list: `subset report` on crates/ under subset.toml version 6.
 # Regenerate with `cargo run -q -p subset -- report`, then restore this header.
 #
-# Total: 624 violations of 78 ids in 24 files.
-# Per crate (version 4 -> 5): agents 18 -> 22, app 16 -> 16, client 264 -> 268,
-# daemon 323 -> 317, proto 1 -> 1.
+# Total: 144 violations of 43 ids in 7 files.
+# Per crate (version 5 -> 6, both on main at 7ea697b): agents 0 -> 0, app 19 -> 19,
+# client 0 -> 0, daemon 125 -> 125, proto 0 -> 0. Version 6's new checks find
+# nothing in today's crates.
 # Top 15 ids:
-#     63  expr.return
-#     44  expr.if
-#     40  expr.assign
-#     28  pat.type
-#     25  expr.binary.eq
-#     23  expr.method_call
-#     23  item.fn.receiver.mut
-#     21  expr.index
-#     16  expr.call
-#     16  expr.closure
-#     15  expr.for
-#     14  expr.loop
-#     14  expr.unary.deref
-#     13  attr.cfg
-#     13  expr.range
+#     15  expr.return
+#     11  expr.method_call
+#     11  pat.type
+#      9  expr.if
+#      7  expr.binary.eq
+#      7  macro.println
+#      6  expr.loop
+#      6  type.bool
+#      5  expr.closure
+#      4  expr.assign
+#      4  item.use.rename
+#      4  stmt.let.else
+#      3  attr.cfg
+#      3  expr.async
+#      3  expr.binary.add_assign
 
-expr.return 63 in 13 files: crates/app/src/main.rs:103:21 crates/app/src/main.rs:152:9 crates/app/src/ticket.rs:58:9 crates/client/examples/headless.rs:137:25 crates/client/src/link.rs:264:34
-expr.if 44 in 8 files: crates/client/examples/headless.rs:78:17 crates/client/examples/headless.rs:84:21 crates/client/examples/headless.rs:109:17 crates/client/examples/headless.rs:115:25 crates/client/src/link.rs:269:13
-expr.assign 40 in 8 files: crates/client/examples/headless.rs:85:40 crates/client/examples/headless.rs:94:26 crates/client/examples/headless.rs:98:26 crates/client/examples/headless.rs:101:26 crates/client/examples/headless.rs:116:41
-pat.type 28 in 10 files: crates/app/src/main.rs:125:26 crates/client/examples/headless.rs:46:20 crates/client/examples/headless.rs:61:27 crates/client/src/platform/mod.rs:36:17 crates/client/src/platform/mod.rs:41:18
-expr.binary.eq 25 in 9 files: crates/client/examples/headless.rs:77:34 crates/client/examples/headless.rs:115:49 crates/client/src/link.rs:331:43 crates/client/src/link.rs:441:29 crates/client/src/link.rs:471:50
-expr.method_call 23 in 10 files: crates/agents/src/claude/session.rs:504:47 crates/agents/src/codex/server.rs:482:47 crates/app/src/ticket.rs:24:50 crates/app/src/ticket.rs:37:34 crates/app/src/ticket.rs:56:18
-item.fn.receiver.mut 23 in 5 files: crates/client/src/platform/rtc.rs:431:22 crates/client/src/platform/rtc.rs:458:19 crates/client/src/transcript.rs:35:19 crates/client/src/upgrade.rs:23:21 crates/client/src/upgrade.rs:25:29
-expr.index 21 in 2 files: crates/daemon/src/rtc.rs:311:23 crates/daemon/src/rtc.rs:723:38 crates/daemon/src/rtc.rs:755:12 crates/daemon/src/rtc.rs:756:12 crates/daemon/src/rtc.rs:757:12
-expr.call 16 in 5 files: crates/agents/src/bin/s1.rs:269:9 crates/agents/src/bin/s2.rs:340:9 crates/agents/src/claude/session.rs:293:17 crates/agents/src/claude/session.rs:414:21 crates/agents/src/claude/session.rs:467:17
-expr.closure 16 in 7 files: crates/app/src/main.rs:125:16 crates/client/examples/headless.rs:46:15 crates/client/src/link.rs:580:18 crates/client/src/platform/rtc.rs:114:9 crates/client/src/platform/rtc.rs:133:9
-expr.for 15 in 5 files: crates/client/src/platform/rtc.rs:236:5 crates/client/src/platform/rtc.rs:303:13 crates/client/src/platform/rtc.rs:462:9 crates/client/src/transcript.rs:106:9 crates/daemon/src/host.rs:226:9
-expr.loop 14 in 6 files: crates/client/src/link.rs:260:9 crates/client/src/link.rs:330:9 crates/client/src/platform/rtc.rs:264:5 crates/client/src/platform/rtc.rs:478:9 crates/daemon/src/host.rs:278:9
-expr.unary.deref 14 in 6 files: crates/client/src/link.rs:478:9 crates/client/src/link.rs:511:12 crates/client/src/platform/mod.rs:20:22 crates/client/src/platform/mod.rs:20:23 crates/client/src/platform/rtc.rs:434:27
-attr.cfg 13 in 2 files: crates/app/src/ticket.rs:7:1 crates/app/src/ticket.rs:75:1 crates/app/src/ticket.rs:77:1 crates/client/src/wire.rs:12:1 crates/client/src/wire.rs:36:5
-expr.range 13 in 3 files: crates/daemon/src/host.rs:299:19 crates/daemon/src/rtc.rs:311:24 crates/daemon/src/rtc.rs:673:28 crates/daemon/src/rtc.rs:734:68 crates/daemon/src/rtc.rs:756:14
-expr.continue 12 in 4 files: crates/client/examples/headless.rs:110:21 crates/client/src/link.rs:281:17 crates/client/src/link.rs:354:21 crates/client/src/link.rs:365:21 crates/client/src/link.rs:387:21
-expr.match.guard 12 in 6 files: crates/client/src/link.rs:356:39 crates/client/src/link.rs:359:39 crates/client/src/link.rs:551:17 crates/client/src/link.rs:552:17 crates/client/src/platform/rtc.rs:344:13
-expr.unary.not 12 in 6 files: crates/client/examples/headless.rs:78:28 crates/client/examples/headless.rs:109:20 crates/client/examples/headless.rs:115:68 crates/client/src/link.rs:285:16 crates/client/src/transcript.rs:38:20
-expr.binary.and 11 in 5 files: crates/client/examples/headless.rs:78:25 crates/client/examples/headless.rs:115:65 crates/client/src/link.rs:441:13 crates/client/src/link.rs:471:20 crates/client/src/platform/rtc.rs:305:21
-expr.lit.bool 11 in 4 files: crates/client/examples/headless.rs:64:27 crates/client/examples/headless.rs:66:24 crates/client/examples/headless.rs:116:43 crates/client/src/transcript.rs:44:27 crates/client/src/transcript.rs:50:21
-stmt.let.mut 11 in 5 files: crates/client/examples/headless.rs:61:5 crates/client/examples/headless.rs:62:5 crates/client/examples/headless.rs:64:5 crates/client/examples/headless.rs:66:5 crates/client/src/link.rs:324:9
-type.bool 11 in 8 files: crates/app/src/main.rs:245:19 crates/client/src/link.rs:488:50 crates/client/src/transcript.rs:16:15 crates/client/src/wire.rs:66:32 crates/daemon/src/host.rs:119:19
-stmt.let.else 10 in 5 files: crates/app/src/main.rs:150:5 crates/client/src/platform/rtc.rs:134:13 crates/daemon/src/host.rs:199:17 crates/daemon/src/rtc.rs:296:5 crates/daemon/src/rtc.rs:544:9
-expr.closure.adapter 9 in 1 file: crates/client/src/link.rs:270:22 crates/client/src/link.rs:314:18 crates/client/src/link.rs:364:30 crates/client/src/link.rs:375:38 crates/client/src/link.rs:384:38
-expr.binary.add 8 in 3 files: crates/client/src/link.rs:462:40 crates/client/src/link.rs:564:55 crates/client/src/link.rs:565:10 crates/daemon/src/host.rs:180:40 crates/daemon/src/rtc.rs:172:68
-expr.binary.add_assign 8 in 4 files: crates/client/examples/headless.rs:79:32 crates/client/examples/headless.rs:114:32 crates/daemon/src/host.rs:158:39 crates/daemon/src/rtc.rs:459:44 crates/daemon/src/rtc.rs:559:27
-macro.println 8 in 2 files: crates/client/examples/headless.rs:46:30 crates/daemon/src/main.rs:137:5 crates/daemon/src/main.rs:138:5 crates/daemon/src/main.rs:139:5 crates/daemon/src/main.rs:141:5
-attr.error 7 in 4 files: crates/client/src/link.rs:141:5 crates/client/src/link.rs:236:5 crates/client/src/wire.rs:27:5 crates/daemon/src/server.rs:52:5 crates/daemon/src/server.rs:54:5
-expr.binary.ne 6 in 4 files: crates/client/src/link.rs:462:24 crates/client/src/platform/rtc.rs:459:42 crates/daemon/src/rtc.rs:570:38 crates/daemon/src/rtc.rs:764:28 crates/daemon/src/rtc.rs:764:67
-item.use.rename 6 in 4 files: crates/client/examples/headless.rs:8:22 crates/daemon/src/lib.rs:11:21 crates/daemon/src/lib.rs:39:24 crates/daemon/src/lib.rs:40:43 crates/daemon/src/main.rs:5:21
-expr.while_let 5 in 5 files: crates/app/src/main.rs:112:13 crates/client/examples/headless.rs:68:5 crates/daemon/src/host.rs:128:9 crates/daemon/src/rtc.rs:627:9 crates/daemon/src/server.rs:175:9
-item.use.glob 5 in 5 files: crates/client/src/link.rs:576:16 crates/client/src/transcript.rs:82:16 crates/daemon/src/host.rs:255:16 crates/daemon/src/lib.rs:62:16 crates/daemon/src/rtc.rs:793:16
-expr.if_let 4 in 4 files: crates/client/src/link.rs:440:9 crates/client/src/platform/rtc.rs:304:17 crates/client/src/transcript.rs:37:13 crates/daemon/src/rtc.rs:440:13
-expr.let 4 in 4 files: crates/client/src/link.rs:440:12 crates/client/src/platform/rtc.rs:304:20 crates/client/src/transcript.rs:37:16 crates/daemon/src/rtc.rs:441:20
-expr.path 4 in 3 files: crates/agents/src/claude/protocol.rs:266:14 crates/agents/src/claude/session.rs:197:56 crates/agents/src/claude/session.rs:203:18 crates/agents/src/codex/server.rs:215:56
-macro.matches 4 in 4 files: crates/client/src/platform/rtc.rs:117:16 crates/client/src/upgrade.rs:78:16 crates/client/src/wire.rs:67:10 crates/daemon/tests/e2e.rs:76:20
-macro.std::pin::pin 4 in 2 files: crates/client/src/link.rs:325:24 crates/client/src/link.rs:326:25 crates/client/src/link.rs:489:25 crates/client/src/platform/rtc.rs:263:24
-macro.vec 4 in 3 files: crates/client/src/wire.rs:134:20 crates/daemon/src/rtc.rs:299:19 crates/daemon/src/rtc.rs:808:28 crates/daemon/src/wire.rs:81:20
-expr.array 3 in 2 files: crates/client/src/transcript.rs:87:22 crates/daemon/src/rtc.rs:764:31 crates/daemon/src/rtc.rs:775:22
+expr.return 15 in 5 files: crates/app/src/main.rs:108:21 crates/app/src/main.rs:154:9 crates/app/src/ticket.rs:58:9 crates/daemon/src/host.rs:192:21 crates/daemon/src/host.rs:200:21
+expr.method_call 11 in 4 files: crates/app/src/ticket.rs:24:50 crates/app/src/ticket.rs:37:34 crates/app/src/ticket.rs:56:18 crates/daemon/src/host.rs:131:48 crates/daemon/src/host.rs:141:63
+pat.type 11 in 5 files: crates/app/src/main.rs:127:26 crates/daemon/src/host.rs:224:15 crates/daemon/src/host.rs:317:17 crates/daemon/src/host.rs:328:17 crates/daemon/src/host.rs:394:17
+expr.if 9 in 3 files: crates/daemon/src/host.rs:147:21 crates/daemon/src/host.rs:191:17 crates/daemon/src/host.rs:248:5 crates/daemon/src/server.rs:110:9 crates/daemon/src/server.rs:191:9
+expr.binary.eq 7 in 4 files: crates/daemon/src/host.rs:147:29 crates/daemon/src/lib.rs:28:32 crates/daemon/src/server.rs:92:53 crates/daemon/tests/e2e.rs:145:16 crates/daemon/tests/e2e.rs:216:66
+macro.println 7 in 1 file: crates/daemon/src/main.rs:139:5 crates/daemon/src/main.rs:140:5 crates/daemon/src/main.rs:141:5 crates/daemon/src/main.rs:143:5 crates/daemon/src/main.rs:145:5
+expr.loop 6 in 3 files: crates/daemon/src/host.rs:278:9 crates/daemon/src/server.rs:67:9 crates/daemon/src/server.rs:211:13 crates/daemon/tests/e2e.rs:80:5 crates/daemon/tests/e2e.rs:221:5
+type.bool 6 in 4 files: crates/app/src/main.rs:247:19 crates/daemon/src/host.rs:119:19 crates/daemon/src/main.rs:45:20 crates/daemon/src/main.rs:48:29 crates/daemon/tests/e2e.rs:94:37
+expr.closure 5 in 3 files: crates/app/src/main.rs:127:16 crates/daemon/src/host.rs:337:23 crates/daemon/tests/e2e.rs:216:56 crates/daemon/tests/e2e.rs:260:55 crates/daemon/tests/e2e.rs:284:40
+expr.assign 4 in 3 files: crates/app/src/main.rs:120:28 crates/daemon/src/host.rs:205:31 crates/daemon/src/server.rs:208:22 crates/daemon/src/server.rs:230:22
+item.use.rename 4 in 2 files: crates/daemon/src/lib.rs:12:21 crates/daemon/src/lib.rs:40:24 crates/daemon/src/lib.rs:41:43 crates/daemon/src/main.rs:5:21
+stmt.let.else 4 in 3 files: crates/app/src/main.rs:152:5 crates/daemon/src/host.rs:199:17 crates/daemon/src/server.rs:61:9 crates/daemon/src/server.rs:161:9
+attr.cfg 3 in 1 file: crates/app/src/ticket.rs:7:1 crates/app/src/ticket.rs:75:1 crates/app/src/ticket.rs:77:1
 expr.async 3 in 3 files: crates/app/src/main.rs:98:9 crates/daemon/src/host.rs:224:39 crates/daemon/src/server.rs:203:47
-expr.binary.ge 3 in 2 files: crates/client/src/link.rs:469:35 crates/daemon/src/rtc.rs:440:31 crates/daemon/src/rtc.rs:769:23
-expr.binary.gt 3 in 2 files: crates/client/examples/headless.rs:102:75 crates/daemon/src/rtc.rs:393:70 crates/daemon/src/rtc.rs:709:28
-expr.binary.le 3 in 2 files: crates/client/src/link.rs:319:22 crates/client/src/link.rs:459:24 crates/daemon/src/server.rs:225:32
-expr.binary.sub 3 in 3 files: crates/client/src/platform/rtc.rs:190:43 crates/daemon/src/host.rs:393:50 crates/daemon/tests/e2e.rs:175:44
-expr.cast 3 in 3 files: crates/client/src/link.rs:564:48 crates/client/src/platform/rtc.rs:190:54 crates/daemon/src/rtc.rs:771:60
-expr.interior_mut.RefCell 3 in 1 file: crates/client/src/platform/rtc.rs:129:28 crates/client/src/platform/rtc.rs:172:26 crates/client/src/platform/rtc.rs:398:35
-generics.assoc_binding 3 in 2 files: crates/client/src/link.rs:535:18 crates/client/src/upgrade.rs:48:39 crates/client/src/upgrade.rs:63:36
-macro.assert 3 in 3 files: crates/app/src/ticket.rs:91:9 crates/daemon/src/lib.rs:72:9 crates/daemon/tests/e2e.rs:238:5
-type.array 3 in 3 files: crates/agents/src/codex/protocol.rs:270:24 crates/daemon/src/rtc.rs:39:22 crates/proto/src/lib.rs:58:33
-type.impl_trait.arg 3 in 2 files: crates/client/src/link.rs:106:24 crates/client/src/link.rs:508:37 crates/daemon/tests/e2e.rs:88:15
-type.infer 3 in 2 files: crates/client/src/platform/web.rs:8:21 crates/daemon/tests/e2e.rs:149:21 crates/daemon/tests/e2e.rs:175:19
-type.interior_mut.AtomicBool 3 in 1 file: crates/daemon/src/rtc.rs:57:19 crates/daemon/src/rtc.rs:93:15 crates/daemon/src/rtc.rs:348:34
-type.lifetime 3 in 2 files: crates/client/src/link.rs:241:17 crates/client/src/link.rs:549:31 crates/daemon/src/server.rs:33:24
-attr.derive.Default 2 in 2 files: crates/client/src/transcript.rs:6:1 crates/daemon/src/rtc.rs:48:1
-expr.binary.bit_xor 2 in 1 file: crates/daemon/src/rtc.rs:778:37 crates/daemon/src/rtc.rs:779:69
-expr.binary.or 2 in 2 files: crates/client/src/platform/rtc.rs:345:17 crates/daemon/src/rtc.rs:764:44
-expr.break 2 in 1 file: crates/daemon/tests/e2e.rs:225:21 crates/daemon/tests/e2e.rs:304:17
-expr.while 2 in 1 file: crates/daemon/src/rtc.rs:87:9 crates/daemon/src/rtc.rs:769:5
-item.struct.unit 2 in 2 files: crates/client/src/upgrade.rs:16:9 crates/daemon/src/host.rs:28:5
-macro.panic 2 in 1 file: crates/daemon/tests/e2e.rs:158:33 crates/daemon/tests/e2e.rs:217:37
-type.dyn 2 in 1 file: crates/client/src/upgrade.rs:48:28 crates/client/src/upgrade.rs:63:25
-type.interior_mut.AtomicU64 2 in 2 files: crates/client/src/link.rs:151:14 crates/daemon/src/rtc.rs:167:17
-type.interior_mut.RefCell 2 in 1 file: crates/client/src/platform/rtc.rs:257:16 crates/client/src/platform/rtc.rs:294:14
-attr.allow 1 in 1 file: crates/client/src/platform/rtc.rs:248:1
-attr.arg 1 in 1 file: crates/client/examples/headless.rs:19:5
+expr.binary.add_assign 3 in 2 files: crates/daemon/src/host.rs:158:39 crates/daemon/src/server.rs:207:22 crates/daemon/src/server.rs:229:22
+expr.for 3 in 2 files: crates/daemon/src/host.rs:226:9 crates/daemon/src/host.rs:299:9 crates/daemon/src/server.rs:205:13
+expr.lit.bool 3 in 1 file: crates/daemon/src/host.rs:79:27 crates/daemon/src/host.rs:148:45 crates/daemon/src/host.rs:194:37
+expr.while_let 3 in 3 files: crates/app/src/main.rs:112:13 crates/daemon/src/host.rs:128:9 crates/daemon/src/server.rs:175:9
+macro.assert 3 in 3 files: crates/app/src/ticket.rs:91:9 crates/daemon/src/lib.rs:73:9 crates/daemon/tests/e2e.rs:245:5
+type.infer 3 in 2 files: crates/daemon/src/main.rs:179:21 crates/daemon/tests/e2e.rs:155:21 crates/daemon/tests/e2e.rs:181:19
+attr.error 2 in 1 file: crates/daemon/src/server.rs:52:5 crates/daemon/src/server.rs:54:5
+expr.binary.sub 2 in 2 files: crates/daemon/src/host.rs:393:50 crates/daemon/tests/e2e.rs:181:44
+expr.break 2 in 1 file: crates/daemon/tests/e2e.rs:232:21 crates/daemon/tests/e2e.rs:316:17
+expr.match.guard 2 in 2 files: crates/daemon/src/lib.rs:28:18 crates/daemon/src/server.rs:92:38
+expr.range 2 in 2 files: crates/daemon/src/host.rs:299:19 crates/daemon/tests/e2e.rs:181:47
+expr.unary.deref 2 in 2 files: crates/app/src/main.rs:120:25 crates/daemon/src/host.rs:205:25
+item.use.glob 2 in 2 files: crates/daemon/src/host.rs:255:16 crates/daemon/src/lib.rs:63:16
+macro.panic 2 in 1 file: crates/daemon/tests/e2e.rs:164:33 crates/daemon/tests/e2e.rs:224:37
 attr.derive 1 in 1 file: crates/daemon/src/host.rs:26:1
-expr.binary.div 1 in 1 file: crates/client/src/link.rs:563:24
-expr.binary.rem 1 in 1 file: crates/client/src/link.rs:564:28
-expr.interior_mut.AtomicBool 1 in 1 file: crates/daemon/src/rtc.rs:493:37
-expr.interior_mut.AtomicU64 1 in 1 file: crates/daemon/src/rtc.rs:247:25
-generics.const_param 1 in 1 file: crates/daemon/src/lib.rs:54:15
-item.impl.trait 1 in 1 file: crates/client/src/link.rs:42:1
-item.type 1 in 1 file: crates/client/src/upgrade.rs:48:5
-macro.anyhow::ensure 1 in 1 file: crates/daemon/src/rtc.rs:275:5
-macro.bail 1 in 1 file: crates/client/examples/headless.rs:144:5
-macro.unreachable 1 in 1 file: crates/client/src/transcript.rs:53:50
-type.impl_trait.ret 1 in 1 file: crates/client/src/link.rs:535:6
-type.reference.mut 1 in 1 file: crates/client/src/link.rs:508:50
+expr.binary.add 1 in 1 file: crates/daemon/src/host.rs:180:40
+expr.binary.le 1 in 1 file: crates/daemon/src/server.rs:225:30
+expr.binary.ne 1 in 1 file: crates/daemon/src/server.rs:191:28
+expr.closure.adapter 1 in 1 file: crates/app/src/main.rs:119:65
+expr.continue 1 in 1 file: crates/daemon/src/server.rs:226:21
+expr.index 1 in 1 file: crates/daemon/tests/e2e.rs:181:30
+expr.unary.not 1 in 1 file: crates/daemon/src/main.rs:83:24
+generics.const_param 1 in 1 file: crates/daemon/src/lib.rs:55:15
+item.fn.receiver.mut 1 in 1 file: crates/daemon/src/host.rs:127:18
+item.struct.unit 1 in 1 file: crates/daemon/src/host.rs:28:5
+macro.matches 1 in 1 file: crates/daemon/tests/e2e.rs:82:20
+stmt.let.mut 1 in 1 file: crates/daemon/src/server.rs:204:13
+type.impl_trait.arg 1 in 1 file: crates/daemon/tests/e2e.rs:94:15
+type.lifetime 1 in 1 file: crates/daemon/src/server.rs:33:24
