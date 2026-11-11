@@ -106,6 +106,9 @@ pass of the pair loop therefore runs on the existing code:
    the agreed subset, until `tools/subset check` passes on all of
    `crates/`.
 
+The owner accepted 0002 to 0022 as version 2. The rewrite starts from
+`docs/subset/rewrite-report.txt`, the report under version 2.
+
 ## Growing the subset
 
 The pair loop (`.claude/skills/pair/SKILL.md`) is the only way in:
