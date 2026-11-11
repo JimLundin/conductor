@@ -339,13 +339,11 @@ impl Signaling {
 
     fn on_state(&self, state: RtcPeerConnectionState) {
         tracing::info!(?state, "webrtc connection state");
-        match state {
-            RtcPeerConnectionState::Failed
-            | RtcPeerConnectionState::Closed
-            | RtcPeerConnectionState::Disconnected => {
-                self.peer.send_replace(Peer::Lost);
-            }
-            _ => {}
+        if let RtcPeerConnectionState::Failed
+        | RtcPeerConnectionState::Closed
+        | RtcPeerConnectionState::Disconnected = state
+        {
+            self.peer.send_replace(Peer::Lost);
         }
     }
 
@@ -457,8 +455,24 @@ async fn selected_pair(pc: &RtcPeerConnection) -> Option<CandidatePair> {
         });
     let nominated = stats
         .iter()
-        .filter_map(chosen)
-        .next_back()
+        .rev()
+        .find(|stat| {
+            matches!(
+                (
+                    text(stat, "type").as_deref(),
+                    flag(stat, "selected"),
+                    flag(stat, "nominated"),
+                    text(stat, "state").as_deref(),
+                ),
+                (Some("candidate-pair"), Some(Flag::True), _, _)
+                    | (
+                        Some("candidate-pair"),
+                        _,
+                        Some(Flag::True),
+                        Some("succeeded")
+                    )
+            )
+        })
         .and_then(|stat| text(stat, "id"));
     let pair = report.get(&JsValue::from(selected.or(nominated)?));
     Some(CandidatePair {
@@ -470,21 +484,6 @@ async fn selected_pair(pc: &RtcPeerConnection) -> Option<CandidatePair> {
 /// A JS field whose value is `true`.
 enum Flag {
     True,
-}
-
-/// `stat` if it is a candidate pair the browser selected, or nominated once
-/// it succeeded.
-fn chosen(stat: &JsValue) -> Option<&JsValue> {
-    match (
-        text(stat, "type").as_deref(),
-        flag(stat, "selected"),
-        flag(stat, "nominated"),
-        text(stat, "state").as_deref(),
-    ) {
-        (Some("candidate-pair"), Some(Flag::True), _, _)
-        | (Some("candidate-pair"), _, Some(Flag::True), Some("succeeded")) => Some(stat),
-        _ => None,
-    }
 }
 
 fn candidate_type(report: &js_sys::Map, pair: &JsValue, id_field: &str) -> Option<CandidateType> {

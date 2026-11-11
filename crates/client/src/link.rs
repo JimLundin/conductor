@@ -644,10 +644,7 @@ impl Link {
     /// Keeps the cursor if the host's log is the one it points into;
     /// otherwise starts over from the beginning of the new epoch.
     async fn adopt(&mut self, welcome: &Welcome) -> Result<(), Stopped> {
-        match self
-            .cursor
-            .and_then(|cursor| cursor.epoch.eq(&welcome.epoch).then_some(cursor))
-        {
+        match self.cursor.filter(|cursor| cursor.epoch == welcome.epoch) {
             Some(_) => Ok(()),
             None => {
                 self.cursor = Some(Cursor {
@@ -679,10 +676,12 @@ impl Link {
     /// Goes live once the link has applied the host's head as of `Welcome`.
     async fn catch_up(&mut self, seq: HostSeq, live_at: HostSeq) -> Result<(), Stopped> {
         let state = self.outbox.state();
-        match (seq.cmp(&live_at), state) {
-            (Ordering::Greater | Ordering::Equal, LinkState::CatchingUp) => self.go_live().await,
-            _ => Ok(()),
+        if let (Ordering::Greater | Ordering::Equal, LinkState::CatchingUp) =
+            (seq.cmp(&live_at), state)
+        {
+            self.go_live().await?;
         }
+        Ok(())
     }
 
     async fn go_live(&mut self) -> Result<(), Stopped> {
@@ -725,14 +724,12 @@ impl Outbox {
 
     /// Shows `next` to every handle, and sends it as an update if it changed.
     async fn publish(&self, next: Status) -> Result<(), Stopped> {
-        let unchanged = self.status.borrow().eq(&next).then_some(());
-        match unchanged {
-            Some(()) => Ok(()),
-            None => {
-                self.status.send_replace(next.clone());
-                self.emit(Update::Status(next)).await
-            }
+        let changed = self.status.borrow().ne(&next).then_some(());
+        if let Some(()) = changed {
+            self.status.send_replace(next.clone());
+            self.emit(Update::Status(next)).await?;
         }
+        Ok(())
     }
 
     async fn emit(&self, update: Update) -> Result<(), Stopped> {

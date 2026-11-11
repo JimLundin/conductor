@@ -221,21 +221,16 @@ impl Session {
         match event.kind {
             EventKind::TranscriptDelta { .. } => {
                 self.deltas = self.deltas.saturating_add(1);
-                let due = self
-                    .reconnect_after
-                    .and_then(|after| after.eq(&self.deltas).then_some(after));
-                match (due, self.reconnected) {
-                    (Some(_), Reconnected::No) => {
-                        self.reconnected = Reconnected::Yes;
-                        self.log(format!(
-                            "dropping the connection mid-turn at seq {}",
-                            event.seq.0
-                        ))?;
-                        self.link.reconnect().await;
-                        Ok(Flow::Next)
-                    }
-                    (_, Reconnected::No | Reconnected::Yes) => Ok(Flow::Next),
+                let due = self.reconnect_after.filter(|after| after == &self.deltas);
+                if let (Some(_), Reconnected::No) = (due, self.reconnected) {
+                    self.reconnected = Reconnected::Yes;
+                    self.log(format!(
+                        "dropping the connection mid-turn at seq {}",
+                        event.seq.0
+                    ))?;
+                    self.link.reconnect().await;
                 }
+                Ok(Flow::Next)
             }
             EventKind::ApprovalRequested { id, .. } => {
                 let decision = self.decision;
