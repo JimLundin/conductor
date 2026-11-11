@@ -401,6 +401,24 @@ async fn unsupported_cli_version_is_refused() {
     );
 }
 
+const VERSIONLESS_CLI: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{}}}"#;
+
+#[tokio::test]
+async fn cli_that_reports_no_version_is_refused() {
+    let stdout = recording("versionless-cli", Vec::from([VERSIONLESS_CLI]));
+    let claude = fake_claude("versionless-cli", &stdout);
+    let refused = ClaudeSession::spawn(options(&claude))
+        .await
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        refused.as_deref(),
+        Some(
+            "claude did not report its version, so it can't be checked; set VersionPolicy::AllowUntested to run it anyway"
+        )
+    );
+}
+
 #[tokio::test]
 async fn allow_untested_version_runs_it_anyway() {
     let stdout = recording("future-cli-allowed", Vec::from([FUTURE_CLI]));

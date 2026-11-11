@@ -82,6 +82,10 @@ pub enum Error {
         "claude {found} is not supported (supported: {supported}); set VersionPolicy::AllowUntested to run it anyway"
     )]
     UnsupportedVersion { found: String, supported: String },
+    #[error(
+        "claude did not report its version, so it can't be checked; set VersionPolicy::AllowUntested to run it anyway"
+    )]
+    UnreportedVersion,
     #[error("no open permission request with id {}", .0.0)]
     UnknownPermissionRequest(PermissionRequestId),
 }
@@ -157,13 +161,27 @@ impl ClaudeSession {
         let initialize = session.control(ControlCall::Initialize).await?;
         match (check_version(initialize), opts.versions) {
             (Ok(()), _) => Ok((session, events_rx)),
-            (Err(UnsupportedVersion { found, supported }), VersionPolicy::AllowUntested) => {
+            (
+                Err(UnsupportedVersion::Outside { found, supported }),
+                VersionPolicy::AllowUntested,
+            ) => {
                 tracing::warn!("running untested claude {found} (supported: {supported})");
                 Ok((session, events_rx))
             }
-            (Err(UnsupportedVersion { found, supported }), VersionPolicy::SupportedOnly) => {
+            (Err(UnsupportedVersion::Unreported), VersionPolicy::AllowUntested) => {
+                tracing::warn!("running a claude that did not report its version");
+                Ok((session, events_rx))
+            }
+            (
+                Err(UnsupportedVersion::Outside { found, supported }),
+                VersionPolicy::SupportedOnly,
+            ) => {
                 session.shutdown().await?;
                 Err(Error::UnsupportedVersion { found, supported })
+            }
+            (Err(UnsupportedVersion::Unreported), VersionPolicy::SupportedOnly) => {
+                session.shutdown().await?;
+                Err(Error::UnreportedVersion)
             }
         }
     }
