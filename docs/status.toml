@@ -108,7 +108,8 @@ touches = ["proto", "client", "daemon", "app"]
 [[phase.unit]]
 id = "p1-4"
 name = "Unit 4: Claude sessions"
-status = "planned"
+status = "in_progress"
+branch = "p1-u4-claude"
 purpose = "Session actor and the Claude half of mapping; the first real session runs."
 done_when = "The Claude e2e tests pass."
 touches = ["daemon", "agents"]
@@ -122,7 +123,8 @@ touches = ["daemon", "agents"]
 [[phase.unit]]
 id = "p1-6"
 name = "Unit 6: app screens"
-status = "planned"
+status = "in_progress"
+branch = "p1-u6-screens"
 purpose = "Session list, new-session form, session pane, phone layout."
 done_when = "A Claude turn runs by hand in dx serve; screenshots at desktop and 390 px."
 touches = ["app"]
