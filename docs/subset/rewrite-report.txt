@@ -1,7 +1,7 @@
-# The rewrite to-do list: `subset report` on crates/ under subset.toml version 2.
+# The rewrite to-do list: `subset report` on crates/ under subset.toml version 3.
 # Regenerate with `cargo run -q -p subset -- report`, then restore this header.
 #
-# Total: 1150 violations of 89 ids in 28 files.
+# Total: 1139 violations of 87 ids in 28 files.
 # Top 15 ids:
 #     89  expr.return
 #     71  expr.if
@@ -34,9 +34,9 @@ expr.index 30 in 7 files: crates/agents/src/bin/s2.rs:193:26 crates/agents/src/b
 expr.for 25 in 13 files: crates/agents/src/bin/s1.rs:325:13 crates/agents/src/bin/s2.rs:236:5 crates/agents/src/claude/session.rs:435:9 crates/agents/src/codex/protocol.rs:806:9 crates/agents/src/codex/protocol.rs:807:13
 stmt.let.else 24 in 12 files: crates/agents/src/bin/s2.rs:302:9 crates/agents/src/claude/protocol.rs:133:5 crates/agents/src/claude/session.rs:121:9 crates/agents/src/claude/session.rs:273:13 crates/agents/src/claude/session.rs:274:17
 expr.unary.deref 23 in 13 files: crates/agents/src/bin/s1.rs:154:64 crates/agents/src/claude/session.rs:433:23 crates/agents/src/codex/server.rs:471:23 crates/agents/tests/codex_replay.rs:103:9 crates/agents/tests/codex_replay.rs:127:18
-type.bool 22 in 15 files: crates/agents/src/bin/s1.rs:49:31 crates/agents/src/bin/s1.rs:89:39 crates/agents/src/bin/s2.rs:86:39 crates/agents/src/claude/protocol.rs:55:40 crates/agents/src/claude/protocol.rs:76:19
 expr.lit.bool 21 in 8 files: crates/agents/src/bin/s1.rs:86:33 crates/agents/src/bin/s1.rs:108:91 crates/agents/src/bin/s1.rs:158:58 crates/agents/src/bin/s1.rs:219:75 crates/agents/src/bin/s1.rs:338:32
 macro.assert 20 in 8 files: crates/agents/src/claude/session.rs:494:9 crates/agents/src/claude/session.rs:495:9 crates/agents/tests/codex_replay.rs:233:5 crates/agents/tests/codex_replay.rs:274:5 crates/agents/tests/codex_replay.rs:358:5
+type.bool 20 in 14 files: crates/agents/src/bin/s1.rs:49:31 crates/agents/src/bin/s1.rs:89:39 crates/agents/src/bin/s2.rs:86:39 crates/agents/src/claude/protocol.rs:55:40 crates/agents/src/claude/protocol.rs:76:19
 expr.loop 18 in 10 files: crates/agents/src/claude/session.rs:272:9 crates/agents/src/codex/server.rs:295:9 crates/agents/tests/codex_replay.rs:146:9 crates/agents/tests/replay.rs:261:5 crates/client/src/link.rs:260:9
 expr.binary.add 17 in 7 files: crates/agents/tests/codex_replay.rs:102:26 crates/agents/tests/replay.rs:230:44 crates/client/src/link.rs:462:40 crates/client/src/link.rs:564:55 crates/client/src/link.rs:565:10
 expr.binary.add_assign 17 in 10 files: crates/agents/src/bin/s1.rs:92:22 crates/agents/src/bin/s1.rs:345:76 crates/agents/src/bin/s2.rs:89:22 crates/agents/src/bin/s2.rs:403:62 crates/agents/src/claude/session.rs:371:35
@@ -61,7 +61,6 @@ expr.cast 8 in 5 files: crates/agents/tests/codex_replay.rs:102:45 crates/agents
 expr.while_let 8 in 8 files: crates/agents/src/claude/session.rs:128:13 crates/agents/src/codex/server.rs:112:13 crates/app/src/main.rs:112:13 crates/client/examples/headless.rs:67:5 crates/daemon/src/host.rs:128:9
 item.use.rename 8 in 6 files: crates/agents/src/claude/session.rs:6:20 crates/agents/src/codex/server.rs:8:20 crates/client/examples/headless.rs:8:22 crates/daemon/src/lib.rs:11:21 crates/daemon/src/lib.rs:39:24
 attr.error 7 in 4 files: crates/client/src/link.rs:141:5 crates/client/src/link.rs:236:5 crates/client/src/wire.rs:27:5 crates/daemon/src/server.rs:52:5 crates/daemon/src/server.rs:54:5
-attr.from 7 in 4 files: crates/client/src/link.rs:142:10 crates/client/src/link.rs:237:10 crates/client/src/wire.rs:28:11 crates/daemon/src/server.rs:53:10 crates/daemon/src/server.rs:55:13
 expr.binary.gt 7 in 6 files: crates/agents/src/bin/s1.rs:265:17 crates/agents/src/bin/s2.rs:247:17 crates/client/examples/headless.rs:101:73 crates/daemon/src/host.rs:138:43 crates/daemon/src/rtc.rs:389:70
 generics.type_param 7 in 3 files: crates/agents/src/claude/session.rs:82:17 crates/agents/src/claude/session.rs:82:20 crates/agents/src/claude/session.rs:206:22 crates/agents/src/codex/server.rs:60:17 crates/agents/src/codex/server.rs:60:20
 type.impl_trait.arg 7 in 6 files: crates/agents/src/claude/session.rs:206:39 crates/agents/src/codex/server.rs:197:39 crates/agents/tests/replay.rs:100:17 crates/client/src/link.rs:106:24 crates/client/src/link.rs:508:37
@@ -92,7 +91,6 @@ pat.reference 2 in 2 files: crates/agents/src/claude/session.rs:227:63 crates/pr
 type.dyn 2 in 1 file: crates/client/src/upgrade.rs:48:28 crates/client/src/upgrade.rs:63:25
 type.interior_mut.AtomicU64 2 in 2 files: crates/client/src/link.rs:151:14 crates/daemon/src/rtc.rs:163:17
 type.interior_mut.RefCell 2 in 1 file: crates/client/src/platform/rtc.rs:257:16 crates/client/src/platform/rtc.rs:294:14
-type.unit 2 in 1 file: crates/app/src/main.rs:90:54 crates/app/src/main.rs:165:68
 vis.pub 2 in 1 file: crates/agents/src/claude/protocol.rs:219:5 crates/agents/src/claude/protocol.rs:220:5
 attr.allow 1 in 1 file: crates/client/src/platform/rtc.rs:248:1
 attr.arg 1 in 1 file: crates/client/examples/headless.rs:18:5
