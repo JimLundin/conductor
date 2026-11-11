@@ -74,7 +74,7 @@ The ids are those used in `subset.toml`.
 | Unit | `type.unit`, `expr.unit` | Proposal 0005, with its boundary part replaced by 0023. `()` only at a library boundary (0023), which covers `Result<(), E>` and `Ok(())`, and as `fn main`'s return type. |
 | Async | `item.fn.async`, `expr.await`, `expr.async`, `attr.tokio::main` | Proposal 0006. `async fn` for I/O, and an `async` block only as a spawn argument or the whole body of a stream closure. |
 | Actor loop | `expr.loop`, `expr.break`, `macro.allowed` for `tokio::select` | Proposal 0007. `loop` only as the whole body of an actor's `run` fn or a drive fn, taking one input per turn and handling it with one call or `match`. |
-| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008, widened in version 4. Mutation only of an actor's loop state, of a value that loop state owns (its methods may take `&mut self`, called on `self.field`), and of external values whose API takes `&mut`. A value is owned when its type is named in a field type of the loop state, or in a variant payload of an enum of ours that the loop state owns (version 5), so a value in `HashMap<_, Turn>` and one in `Phase::Connected(Connected)` count alike. Never a `&mut` parameter of our own types, and never compound assignment. |
+| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008, widened in version 4. Mutation only of an actor's loop state, of a value that loop state owns (its methods may take `&mut self`, called on `self.field`), and of external values whose API takes `&mut`. A value is owned when its type is named in a field type of the loop state, or in a variant payload of an enum of ours that the loop state owns (version 5), so a value in `HashMap<_, Turn>` and one in `Phase::Connected(Connected)` count alike. Never a `&mut` parameter of our own types, never a `mut` parameter or `let mut` binding that holds a value of our own type outside loop state and `endpoints` (destructure the value and bind its library field `mut`), and never compound assignment. |
 | Stream endpoints | `item.fn.receiver.mut` | Proposal 0035. A type of ours on the `endpoints` list in `subset.toml` (`SendHalf`, `RecvHalf`, `ChannelRecv`, `FrameBuffer`) may have `&mut self` methods, called anywhere on a `let mut` binding, a `mut` pattern or a field. A type joins the list by review: it wraps a library stream or channel whose own API takes `&mut`, or it is the reassembly buffer of one. The rest of 0008 holds: no `&mut` parameter of our types, no compound assignment, and data types keep value-returning methods. |
 | Library traits | `item.impl.trait`, `generics.lifetime`, `type.lifetime` | Proposal 0009. Trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler`, with lifetimes only where the trait's signature demands them. |
 | Error enums | `attr.derive` of `thiserror::Error`, `attr.error` | Proposal 0010. `thiserror::Error` on an error type, with one `#[error("…")]` message per variant. |
@@ -110,7 +110,16 @@ Everything else, for example `if`, `if let` with an `else` or a let-chain,
 `while`, `for`, `return`, `continue`, `break` outside a drive loop,
 operators (`+`, `as`, indexing, ranges, and the boolean operators outside a
 predicate closure), compound assignment (`+=`), `let … else`, trait
-definitions, generic types, and unlisted macros. Some of these may join
+definitions, generic types, and unlisted macros. The operators also stay
+out under their trait names. A trait in `fallible_operators` in
+`subset.toml` (`std::ops::Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`, `Shl`,
+`Shr` and their `*Assign` forms) is never imported, named in a path or
+called as a method, as in `a.add(b)` or `Add::add(a, b)` (proposal 0038).
+Write `checked_*` or `saturating_*`. The total bitwise traits and `Not`
+stay allowed, so `BitXor::bitxor` is the form for an XOR. A consuming
+reader in `consuming_readers` (`bytes::Buf`) is never imported or named
+either (proposal 0039). Bytes are split with `split_at_checked` and
+matched, the form of the bootstrap review's §A7. Some of these may join
 through proposals. Others, such as `unsafe` and interior mutability,
 conflict with the qualities and won't.
 
@@ -202,8 +211,11 @@ method call as a struct update's base) and 0037 (`rfind` and `wait_for` as
 predicate adapters, with the list in `subset.toml`). It also checks which
 method a closure is passed to, flags `drop` passed as a function, counts
 enum payloads as owned by loop state, and scores a primitive inside a std
-container as a primitive. The rewrite works from
-`docs/subset/rewrite-report.txt`, the report under version 5.
+container as a primitive. Version 6 accepts 0038 (no fallible operator
+trait by name) and 0039 (no consuming reader) as checker changes that add
+no construct, and checks 0008's rule that a `mut` binding holds a value of
+our own type only as loop state or a listed endpoint. The rewrite works
+from `docs/subset/rewrite-report.txt`, the report under version 6.
 
 ## Growing the subset
 

@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 5
+version = 6
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -234,9 +234,27 @@ allowed = ["attr.tokio::main"]
 external_protocols = ["crates/agents/src/claude/**", "crates/agents/src/codex/**"]
 # Types that hold data without a type: `type.untyped` wherever they appear.
 untyped = ["serde_json::Value", "HashMap<String, _>", "BTreeMap<String, _>", "dyn Any"]
-# `adapters` (iterator method names), `primitives` (type patterns) and
-# `transparent` (std containers that typing sees through, such as `Option`)
-# keep the tool's std defaults, listed in tools/subset/README.md.
+# Method names whose calls are `expr.method_call.adapter`: the std
+# `Iterator` adapters.
+adapters = [
+  "all", "any", "chain", "cloned", "collect", "copied", "count", "cycle",
+  "enumerate", "filter", "filter_map", "find", "find_map", "flat_map",
+  "flatten", "fold", "fuse", "inspect", "last", "map", "map_while", "max",
+  "max_by", "max_by_key", "min", "min_by", "min_by_key", "nth", "partition",
+  "peekable", "position", "product", "reduce", "rev", "rposition", "scan",
+  "skip", "skip_while", "step_by", "sum", "take", "take_while", "try_fold",
+  "unzip", "zip",
+]
+# Types that are `type.primitive` in our own fields and signatures.
+primitives = [
+  "String", "str", "char", "i8", "i16", "i32", "i64", "i128", "isize",
+  "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "Vec<u8>",
+]
+# Std containers that typing sees through, so `Option<String>` is a primitive.
+transparent = [
+  "Option", "Result", "Vec", "VecDeque", "Box", "Rc", "Arc", "Cow",
+  "HashMap", "HashSet", "BTreeMap", "BTreeSet",
+]
 
 [weights.tiers]
 encouraged = 0.5
