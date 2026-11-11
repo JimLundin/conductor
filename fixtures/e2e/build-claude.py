@@ -4,7 +4,8 @@ Run from anywhere: `python3 -I fixtures/e2e/build-claude.py`. Markers go in
 by rule, so every gate matches what a session writes:
 
 - the `initialize` response waits for a `control_request`;
-- each turn's `system/init` waits for a user message;
+- each turn's `system/init` waits for a user message, and in the recordings
+  listed in `RELEASED` also for the test's `release` file;
 - a `can_use_tool` request is followed by a wait for our `control_response`;
 - any later `control_response` (an interrupt's ack) waits for a `control_request`.
 
@@ -25,20 +26,26 @@ SOURCE = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
 RECORDINGS = {
     "claude-approve.jsonl": [0],
     "claude-deny-interrupt.jsonl": [1, 4, 5],
+    "claude-held-interrupt.jsonl": [2],
 }
+
+# The turn starts only once the test has sent its interrupt, so the session
+# must hold it until `init` (docs/p1/design.md §11).
+RELEASED = {"claude-held-interrupt.jsonl"}
 
 
 def wait(match):
     return json.dumps({"fake": "await", "match": match})
 
 
-def gated(line):
+def gated(line, released):
     msg = json.loads(line)
     kind = (msg.get("type"), msg.get("subtype"))
     if kind == ("control_response", None):
         return [wait({"type": "control_request"}), line]
     if kind == ("system", "init"):
-        return [wait({"type": "user"}), line]
+        release = [json.dumps({"fake": "release", "file": "release"})] if released else []
+        return [wait({"type": "user"})] + release + [line]
     if kind == ("control_request", None) and msg["request"]["subtype"] == "can_use_tool":
         return [line, wait({"type": "control_response"})]
     return [line]
@@ -60,5 +67,5 @@ def renumbered(lines):
 initialize, played = turns(SOURCE.read_text().splitlines())
 for name, picked in RECORDINGS.items():
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
-    out = [m for line in lines for m in gated(line)]
+    out = [m for line in lines for m in gated(line, name in RELEASED)]
     (HERE / name).write_text("\n".join(out) + "\n")

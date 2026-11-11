@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,13 +16,15 @@ use daemon::Stopped;
 use daemon::log::Log;
 use daemon::registry::{Availability, Providers, Registry};
 use daemon::serve::Conductor;
+use daemon::session::{ClaudeLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use n0_future::StreamExt;
 use proto::{
-    AuthToken, ClientName, CommandBody, CommandResult, Epoch, Event, EventKind, HostPath, HostSeq,
-    Provider, Rejection, SessionId,
+    AuthToken, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch, Event,
+    EventKind, HostPath, HostSeq, Provider, Rejection, RequestId, Resolution, SessionId,
+    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -44,13 +47,20 @@ struct Fixture {
     log: Log,
 }
 
-async fn host() -> Fixture {
+/// The gated stand-in that plays `stdout.jsonl` from the session's directory.
+fn fake_claude() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fake-claude.sh")
+}
+
+/// A host whose Claude is `claude_path` and whose Codex is unavailable.
+async fn host_with(claude_path: PathBuf) -> Fixture {
     let log = Log::spawn(String::from("test-host"), Epoch(11));
-    let unavailable = Availability::Unavailable(String::from(UNAVAILABLE));
-    let registry = Registry::spawn(Providers {
-        claude: unavailable.clone(),
-        codex: unavailable,
-    });
+    let claude = Availability::Ready(Launch::Claude(ClaudeLaunch {
+        claude_path,
+        model: None,
+    }));
+    let codex = Availability::Unavailable(String::from(UNAVAILABLE));
+    let registry = Registry::spawn(log.clone(), Providers { claude, codex });
     let endpoint = endpoint().await;
     let target = Target {
         addr: endpoint.addr(),
@@ -184,9 +194,13 @@ struct Case {
     result: CommandResult,
 }
 
-fn start(directory: &std::path::Path) -> CommandBody {
+async fn host() -> Fixture {
+    host_with(fake_claude()).await
+}
+
+fn start(provider: Provider, directory: &Path) -> CommandBody {
     CommandBody::StartSession {
-        provider: Provider::Claude,
+        provider,
         directory: HostPath(directory.display().to_string()),
     }
 }
@@ -208,15 +222,18 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
 
     let cases = Vec::from([
         Case {
-            body: start(&std::env::temp_dir().join("conductor-e2e-missing")),
+            body: start(
+                Provider::Claude,
+                &std::env::temp_dir().join("conductor-e2e-missing"),
+            ),
             result: CommandResult::Rejected(Rejection::NoSuchDirectory),
         },
         Case {
-            body: start(&std::env::current_exe().unwrap()),
+            body: start(Provider::Claude, &std::env::current_exe().unwrap()),
             result: CommandResult::Rejected(Rejection::NoSuchDirectory),
         },
         Case {
-            body: start(&std::env::temp_dir()),
+            body: start(Provider::Codex, &std::env::temp_dir()),
             result: CommandResult::Rejected(Rejection::ProviderUnavailable {
                 reason: String::from(UNAVAILABLE),
             }),
@@ -316,6 +333,349 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
         })
         .collect::<Vec<Event>>();
     assert_eq!(fold(replayed), streaming("Hi"));
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// A session directory holding `fixtures/e2e/<recording>` as the fake's
+/// `stdout.jsonl`.
+fn scratch(name: &str, recording: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("conductor-e2e-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e");
+    std::fs::copy(fixture.join(recording), dir.join("stdout.jsonl")).unwrap();
+    dir
+}
+
+/// The event a test reads until.
+enum Until {
+    Request,
+    Delta,
+    TurnEnd,
+    Closed,
+}
+
+enum Reached {
+    Yes,
+    No,
+}
+
+fn reached(until: &Until, kind: &EventKind) -> Reached {
+    match (until, kind) {
+        (Until::Request, EventKind::RequestOpened { .. })
+        | (Until::Delta, EventKind::AssistantDelta { .. })
+        | (Until::TurnEnd, EventKind::TurnCompleted { .. })
+        | (Until::Closed, EventKind::SessionClosed { .. }) => Reached::Yes,
+        _ => Reached::No,
+    }
+}
+
+/// The kinds of the events the link receives, through the first that
+/// reaches `until`. Every event is session 1's, since each test starts one.
+async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<EventKind> {
+    let mut kinds = Vec::new();
+    loop {
+        match next(updates).await {
+            Update::Event(Event {
+                session: SessionId(1),
+                kind,
+                ..
+            }) => {
+                let done = reached(&until, &kind);
+                kinds.push(kind);
+                match done {
+                    Reached::Yes => break kinds,
+                    Reached::No => {}
+                }
+            }
+            Update::Event(event) => panic!("an event of another session: {event:?}"),
+            Update::Status(_) | Update::Reset(_) => {}
+        }
+    }
+}
+
+async fn send(link: &HostLink, body: CommandBody) -> CommandResult {
+    link.send(body).await.unwrap()
+}
+
+fn message(text: &str) -> CommandBody {
+    CommandBody::SendMessage {
+        session: SessionId(1),
+        text: String::from(text),
+    }
+}
+
+fn interrupt() -> CommandBody {
+    CommandBody::Interrupt {
+        session: SessionId(1),
+    }
+}
+
+fn resolve(request: u64, decision: Decision) -> CommandBody {
+    CommandBody::Resolve {
+        session: SessionId(1),
+        request: RequestId(request),
+        decision,
+    }
+}
+
+fn test_client() -> ClientName {
+    ClientName(String::from("test-client"))
+}
+
+fn opening(directory: &Path) -> Vec<EventKind> {
+    Vec::from([
+        EventKind::SessionCreated {
+            provider: Provider::Claude,
+            directory: HostPath(directory.display().to_string()),
+            by: test_client(),
+        },
+        EventKind::SessionReady,
+    ])
+}
+
+fn user(text: &str) -> EventKind {
+    EventKind::UserMessage {
+        text: String::from(text),
+        by: test_client(),
+    }
+}
+
+fn reply(text: &str) -> EventKind {
+    EventKind::AssistantMessage {
+        text: String::from(text),
+    }
+}
+
+fn turn_end(outcome: TurnOutcome) -> EventKind {
+    EventKind::TurnCompleted { outcome }
+}
+
+/// The `Write` call and its permission request, as the recording has them.
+fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
+    Vec::from([
+        EventKind::ToolCall {
+            call: ToolCallId(String::from(call)),
+            phase: ToolPhase::Started {
+                tool: ToolKind::FileChange {
+                    paths: Vec::from([String::from(path)]),
+                },
+            },
+        },
+        EventKind::RequestOpened {
+            request: RequestId(1),
+            tool: String::from("Write"),
+            detail: String::from(path),
+        },
+    ])
+}
+
+fn decided(decision: Decision, call: &str, outcome: ToolOutcome) -> Vec<EventKind> {
+    Vec::from([
+        EventKind::RequestResolved {
+            request: RequestId(1),
+            resolution: Resolution::Decided {
+                decision,
+                by: test_client(),
+            },
+        },
+        EventKind::ToolCall {
+            call: ToolCallId(String::from(call)),
+            phase: ToolPhase::Finished { outcome },
+        },
+    ])
+}
+
+const APPROVED_CALL: &str = "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD";
+const DENIED_CALL: &str = "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx";
+
+#[tokio::test]
+async fn a_claude_turn_streams_asks_and_finishes() {
+    let fx = host().await;
+    let dir = scratch("approve", "claude-approve.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    assert_eq!(
+        send(&link, start(Provider::Claude, &dir)).await,
+        CommandResult::Started {
+            session: SessionId(1)
+        }
+    );
+    assert_eq!(
+        send(&link, message("create a.txt")).await,
+        CommandResult::Accepted
+    );
+    assert_eq!(
+        send(&link, message("and b.txt")).await,
+        CommandResult::Rejected(Rejection::TurnInProgress)
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Request).await,
+        [
+            opening(&dir),
+            Vec::from([user("create a.txt")]),
+            write_asked(APPROVED_CALL, "/tmp/s1-scratch/a.txt"),
+        ]
+        .concat()
+    );
+    assert_eq!(
+        [
+            send(&link, resolve(1, Decision::Approve)).await,
+            send(&link, resolve(1, Decision::Deny)).await,
+            send(&link, resolve(2, Decision::Approve)).await,
+        ],
+        [
+            CommandResult::Accepted,
+            CommandResult::Rejected(Rejection::AlreadyResolved { by: test_client() }),
+            CommandResult::Rejected(Rejection::UnknownRequest),
+        ]
+    );
+    let text = "I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.";
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            decided(Decision::Approve, APPROVED_CALL, ToolOutcome::Succeeded),
+            [
+                "I",
+                " created `a.txt` in",
+                " `/tmp/s1",
+                "-scratch` with the content",
+                " `hello from s1`.",
+            ]
+            .map(delta)
+            .to_vec(),
+            Vec::from([reply(text), turn_end(TurnOutcome::Completed)]),
+        ]
+        .concat()
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
+    let fx = host().await;
+    let dir = scratch("deny", "claude-deny-interrupt.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    assert_eq!(
+        send(&link, interrupt()).await,
+        CommandResult::Rejected(Rejection::NoTurnRunning)
+    );
+    let _ = send(&link, message("create b.txt")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Request).await,
+        [
+            opening(&dir),
+            Vec::from([user("create b.txt")]),
+            write_asked(DENIED_CALL, "/tmp/s1-scratch/b.txt"),
+        ]
+        .concat()
+    );
+    assert_eq!(
+        send(&link, resolve(1, Decision::Deny)).await,
+        CommandResult::Accepted
+    );
+    let text = "The write to `b.txt` was denied (\"The user does not want b.txt.\"), so I did not retry and no file was created.";
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            decided(Decision::Deny, DENIED_CALL, ToolOutcome::Failed),
+            [
+                "The write to",
+                " `",
+                "b.txt` was denied",
+                " ",
+                "(\"The user does not want b.",
+                "txt.\"",
+                "), so I did not retry and",
+                " no file was created.",
+            ]
+            .map(delta)
+            .to_vec(),
+            Vec::from([reply(text), turn_end(TurnOutcome::Completed)]),
+        ]
+        .concat()
+    );
+
+    let _ = send(&link, message("count to 100")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Delta).await,
+        [user("count to 100"), delta("1")]
+    );
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [reply("1"), turn_end(TurnOutcome::Interrupted)]
+    );
+
+    let _ = send(&link, message("ping")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            user("ping"),
+            delta("pong"),
+            reply("pong"),
+            turn_end(TurnOutcome::Completed)
+        ]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// The recording starts the turn only once `release` exists, and the fake
+/// answers only an interrupt sent after that, so this passes only if the
+/// session holds the interrupt until the turn starts.
+#[tokio::test]
+async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
+    let fx = host().await;
+    let dir = scratch("held", "claude-held-interrupt.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = send(&link, message("count to 100")).await;
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    std::fs::write(dir.join("release"), "").unwrap();
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            opening(&dir),
+            Vec::from([user("count to 100"), turn_end(TurnOutcome::Interrupted)]),
+        ]
+        .concat()
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_missing_claude_binary_closes_the_session() {
+    let fx = host_with(PathBuf::from("/nonexistent/claude")).await;
+    let dir = std::env::temp_dir();
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Closed).await,
+        [
+            EventKind::SessionCreated {
+                provider: Provider::Claude,
+                directory: HostPath(dir.display().to_string()),
+                by: test_client(),
+            },
+            EventKind::SessionClosed {
+                reason: CloseReason::FailedToStart {
+                    message: String::from("claude i/o: No such file or directory (os error 2)"),
+                },
+            },
+        ]
+    );
+    assert_eq!(
+        send(&link, message("hi")).await,
+        CommandResult::Rejected(Rejection::SessionClosed)
+    );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }

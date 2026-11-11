@@ -8,7 +8,7 @@ use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, HostSeq, Open, Rejection,
-    RtcOffer, Subscribe,
+    RtcOffer, SessionId, Subscribe,
 };
 use tokio::sync::{broadcast, mpsc};
 
@@ -16,6 +16,7 @@ use crate::Stopped;
 use crate::log::Log;
 use crate::registry::Registry;
 use crate::rtc::{self, RtcOptions};
+use crate::session::Order;
 use crate::wire::{RecvHalf, SendHalf, WireError};
 
 #[derive(Debug, Clone)]
@@ -182,7 +183,8 @@ impl Conductor {
                     ?command,
                     "command"
                 );
-                send.write(&self.command(command.body).await?).await?;
+                send.write(&self.command(command.body, client).await?)
+                    .await?;
                 send.finish()?;
             }
             Some(Open::Subscribe(subscribe)) => self.feed(&transport, send, subscribe).await?,
@@ -198,15 +200,42 @@ impl Conductor {
         Ok(())
     }
 
-    async fn command(&self, body: CommandBody) -> Result<CommandResult, Stopped> {
+    async fn command(
+        &self,
+        body: CommandBody,
+        client: ClientName,
+    ) -> Result<CommandResult, Stopped> {
         match body {
             CommandBody::StartSession {
                 provider,
                 directory,
-            } => self.registry.start(provider, directory).await,
-            CommandBody::SendMessage { .. }
-            | CommandBody::Interrupt { .. }
-            | CommandBody::Resolve { .. } => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
+            } => self.registry.start(provider, directory, client).await,
+            CommandBody::SendMessage { session, text } => {
+                self.order(session, Order::Send { text, by: client }).await
+            }
+            CommandBody::Interrupt { session } => self.order(session, Order::Interrupt).await,
+            CommandBody::Resolve {
+                session,
+                request,
+                decision,
+            } => {
+                let order = Order::Resolve {
+                    request,
+                    decision,
+                    by: client,
+                };
+                self.order(session, order).await
+            }
+        }
+    }
+
+    async fn order(&self, session: SessionId, order: Order) -> Result<CommandResult, Stopped> {
+        match self.registry.find(session).await? {
+            None => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
+            Some(handle) => Ok(handle
+                .order(order)
+                .await
+                .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
         }
     }
 

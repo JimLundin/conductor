@@ -19,6 +19,7 @@ iroh = { workspace = true, features = ["tls-ring", "portmapper"] }
 iroh-mdns-address-lookup = "0.6.1"
 n0-future.workspace = true
 netdev = "0.46.3"
+agents = { path = "../agents" }
 proto = { path = "../proto" }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 serde.workspace = true

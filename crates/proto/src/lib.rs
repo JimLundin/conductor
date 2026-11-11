@@ -51,6 +51,12 @@ pub struct CommandId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RequestId(pub u64);
 
+impl RequestId {
+    pub fn next(self) -> RequestId {
+        RequestId(self.0.saturating_add(1))
+    }
+}
+
 /// The first frame on every client-opened bi-stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Open {
@@ -174,6 +180,12 @@ pub struct Subscribe {
 /// epoch, which is all an in-memory log needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SessionId(pub u64);
+
+impl SessionId {
+    pub fn next(self) -> SessionId {
+        SessionId(self.0.saturating_add(1))
+    }
+}
 
 /// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

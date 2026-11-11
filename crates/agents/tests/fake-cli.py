@@ -8,11 +8,15 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
 - `{"fake": "await", "match": {...}}` waits for the next stdin line whose JSON
   has those keys and values.
 - `{"fake": "pace", "ms": 30}` sleeps that long before each later line.
+- `{"fake": "release", "file": "go"}` waits until that file exists in the
+  working directory. Later awaits match only lines read after it, so a test
+  can hold the recording at a point and prove nothing was sent before.
 
 Markers are never printed. Once stdin closes, nothing waits.
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -60,6 +64,12 @@ for line in open("stdout.jsonl"):
         wait_until(lambda: find(msg["match"], matched) is not None)
         hit = find(msg["match"], matched)
         matched = len(received) if hit is None else hit + 1
+        continue
+    if msg.get("fake") == "release":
+        while not (closed or os.path.exists(msg["file"])):
+            time.sleep(0.01)
+        with changed:
+            matched = len(received)
         continue
     if msg.get("fake") == "pace":
         pace = msg["ms"] / 1000

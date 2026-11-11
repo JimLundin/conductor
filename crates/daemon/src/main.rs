@@ -8,6 +8,7 @@ use daemon::log::Log;
 use daemon::registry::{Availability, Providers, Registry};
 use daemon::rtc::{Blackhole, RtcOptions};
 use daemon::serve::Conductor;
+use daemon::session::{ClaudeLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
@@ -54,6 +55,13 @@ struct HostArgs {
     /// many frames.
     #[arg(long, hide = true)]
     test_rtc_drop_after: Option<u64>,
+    /// The Claude Code CLI. A host where it doesn't run offers no Claude
+    /// sessions.
+    #[arg(long, default_value = "claude")]
+    claude_path: PathBuf,
+    /// The model for Claude sessions, such as `haiku`. Defaults to the CLI's.
+    #[arg(long)]
+    claude_model: Option<String>,
 }
 
 /// Where the host is reachable, as the ticket tells clients.
@@ -82,6 +90,8 @@ async fn main() -> anyhow::Result<()> {
             webrtc,
             test_rtc_blackhole,
             test_rtc_drop_after,
+            claude_path,
+            claude_model,
         }) => {
             let data_dir = match data_dir {
                 Some(dir) => dir,
@@ -95,7 +105,12 @@ async fn main() -> anyhow::Result<()> {
                 test_rtc_blackhole.then_some(Blackhole {}),
                 test_rtc_drop_after,
             )));
-            let serving = host(data_dir, web_url, name, rtc).await?;
+            let claude = claude(ClaudeLaunch {
+                claude_path,
+                model: claude_model,
+            })
+            .await;
+            let serving = host(data_dir, web_url, name, rtc, claude).await?;
             announce(&serving)?;
             tokio::signal::ctrl_c().await?;
             serving.router.shutdown().await?;
@@ -109,6 +124,7 @@ async fn host(
     web_url: String,
     name: String,
     rtc: Option<Arc<RtcOptions>>,
+    claude: Availability,
 ) -> anyhow::Result<Serving> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
@@ -124,14 +140,12 @@ async fn host(
         .cloned()
         .context("online, but no home relay")?;
     let token = daemon::random_token();
-    let unavailable =
-        Availability::Unavailable(String::from("this host does not run agent sessions yet"));
+    let log = Log::spawn(name, daemon::random_epoch());
+    let codex =
+        Availability::Unavailable(String::from("this host does not run Codex sessions yet"));
     let conductor = Conductor {
-        log: Log::spawn(name, daemon::random_epoch()),
-        registry: Registry::spawn(Providers {
-            claude: unavailable.clone(),
-            codex: unavailable,
-        }),
+        log: log.clone(),
+        registry: Registry::spawn(log, Providers { claude, codex }),
         token,
         rtc,
     };
@@ -147,6 +161,26 @@ async fn host(
             .accept(proto::ALPN, conductor)
             .spawn(),
     })
+}
+
+/// Claude is available when `claude --version` runs and succeeds.
+async fn claude(launch: ClaudeLaunch) -> Availability {
+    let ran = tokio::process::Command::new(&launch.claude_path)
+        .arg("--version")
+        .output()
+        .await;
+    let path = launch.claude_path.display().to_string();
+    match ran {
+        Ok(output) => match output.status.code() {
+            Some(0) => {
+                let version = String::from_utf8_lossy(&output.stdout);
+                tracing::info!(%path, version = %version.trim(), "claude is available");
+                Availability::Ready(Launch::Claude(launch))
+            }
+            status => Availability::Unavailable(format!("{path} --version exited with {status:?}")),
+        },
+        Err(err) => Availability::Unavailable(format!("{path} does not run: {err}")),
+    }
 }
 
 /// Prints the ticket, the join link and its QR code, and writes the code as
