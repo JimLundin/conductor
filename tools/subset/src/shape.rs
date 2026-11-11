@@ -62,7 +62,7 @@ enum Slot {
     ConstType,
     Param,
     RefTarget(Box<Slot>),
-    GenericArg { segment: String, index: usize },
+    GenericArg { segment: String, ours: bool },
     MainReturn,
     ClapField,
 }
@@ -126,18 +126,6 @@ const LIBRARY_TRAITS: &[&str] = &[
     "ProtocolHandler",
 ];
 const CODEC_BOUNDS: &[&str] = &["Serialize", "DeserializeOwned"];
-const SIGNALS: &[&str] = &[
-    "Sender",
-    "Receiver",
-    "UnboundedSender",
-    "UnboundedReceiver",
-    "JoinHandle",
-    "BoxFuture",
-    "Future",
-    "channel",
-    "ready",
-    "pending",
-];
 const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook"];
 const SERDE_KEYS: &[&str] = &["transparent", "tag", "content", "rename_all", "rename"];
 const CFG_PAIRS: &[(&str, &str)] = &[
@@ -577,27 +565,19 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_path_segment(&mut self, segment: &'ast syn::PathSegment) {
         if let PathArguments::AngleBracketed(args) = &segment.arguments {
-            let types = args.args.iter().filter_map(|arg| match arg {
-                GenericArgument::Type(ty) => Some(ty),
-                _ => None,
-            });
-            for (index, ty) in types.enumerate() {
+            let name = segment.ident.to_string();
+            let ours = self.facts.types.contains(&name) || self.facts.fns.contains(&name);
+            for arg in &args.args {
+                let ty = match arg {
+                    GenericArgument::Type(ty) => ty,
+                    GenericArgument::AssocType(binding) => &binding.ty,
+                    _ => continue,
+                };
                 let slot = Slot::GenericArg {
-                    segment: segment.ident.to_string(),
-                    index,
+                    segment: name.clone(),
+                    ours,
                 };
                 self.set_type(ty, slot);
-            }
-            for arg in &args.args {
-                if let GenericArgument::AssocType(binding) = arg
-                    && binding.ident == "Output"
-                {
-                    let slot = Slot::GenericArg {
-                        segment: segment.ident.to_string(),
-                        index: 0,
-                    };
-                    self.set_type(&binding.ty, slot);
-                }
             }
         }
         visit::visit_path_segment(self, segment);
@@ -607,14 +587,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         let slot = self.type_slot(ty);
         match ty {
             Type::Tuple(t) if t.elems.is_empty() => {
-                let signal = match &slot {
-                    Slot::GenericArg { segment, index } => {
-                        (segment == "Result" && *index == 0) || SIGNALS.contains(&segment.as_str())
-                    }
-                    Slot::MainReturn => true,
-                    _ => false,
-                };
-                if !signal {
+                if !(library_type_arg(&slot) || slot == Slot::MainReturn) {
                     self.flag(t.span(), &rules::UNIT_TYPE);
                 }
             }
@@ -650,9 +623,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 }
             }
             Type::Path(t)
-                if t.qself.is_none() && t.path.is_ident("bool") && slot != Slot::ClapField =>
+                if t.qself.is_none()
+                    && t.path.is_ident("bool")
+                    && !(library_type_arg(&slot) || slot == Slot::ClapField) =>
             {
-                self.flag(t.span(), &rules::CLAP_BOOL);
+                self.flag(t.span(), &rules::BOOL_TYPE);
             }
             _ => {}
         }
@@ -731,26 +706,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                     self.flag(e.async_token.span, &rules::ASYNC_BLOCK);
                 }
             }
-            Expr::Lit(e) if matches!(e.lit, Lit::Bool(_)) => {
-                let external = matches!(
-                    &slot,
-                    Slot::CallArg(Callee { ours: false, .. })
-                        | Slot::MethodArg { on_self: false, .. }
-                        | Slot::FieldValue { ours: false }
-                );
-                if !external {
-                    self.flag(e.span(), &rules::BOOL_LIT);
-                }
+            Expr::Lit(e) if matches!(e.lit, Lit::Bool(_)) && !library_value(&slot) => {
+                self.flag(e.span(), &rules::BOOL_LIT);
             }
-            Expr::Tuple(e) if e.elems.is_empty() => {
-                let signal = match &slot {
-                    Slot::CallArg(callee) => ["Ok", "channel", "ready"].contains(&callee.last()),
-                    Slot::MethodArg { method, .. } => method == "send",
-                    _ => false,
-                };
-                if !signal {
-                    self.flag(e.span(), &rules::UNIT_VALUE);
-                }
+            Expr::Tuple(e) if e.elems.is_empty() && !library_value(&slot) => {
+                self.flag(e.span(), &rules::UNIT_VALUE);
             }
             Expr::Array(e) => {
                 if !matches!(
@@ -834,6 +794,22 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         }
         visit::visit_pat_ident(self, p);
     }
+}
+
+/// A type argument of a type or fn we don't define (proposal 0023).
+fn library_type_arg(slot: &Slot) -> bool {
+    matches!(slot, Slot::GenericArg { ours: false, .. })
+}
+
+/// An argument or field value of a fn, method or struct we don't define
+/// (proposal 0023). A method on any receiver but `self` counts as not ours.
+fn library_value(slot: &Slot) -> bool {
+    matches!(
+        slot,
+        Slot::CallArg(Callee { ours: false, .. })
+            | Slot::MethodArg { on_self: false, .. }
+            | Slot::FieldValue { ours: false }
+    )
 }
 
 fn path_string(path: &syn::Path) -> String {

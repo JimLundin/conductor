@@ -493,8 +493,7 @@ fn clap_is_allowed_only_in_a_binary_main_and_in_examples() {
             ]
         ),
         "crates/daemon/src/config.rs:1:1: attr.derive.Parser: clap only in a binary's main.rs and in examples/ (proposal 0019)\n\
-         crates/daemon/src/config.rs:3:5: attr.arg: clap only in a binary's main.rs and in examples/ (proposal 0019)\n\
-         crates/daemon/src/config.rs:4:14: type.bool: clap only in a binary's main.rs and in examples/ (proposal 0019)\n"
+         crates/daemon/src/config.rs:3:5: attr.arg: clap only in a binary's main.rs and in examples/ (proposal 0019)\n"
     );
 }
 
@@ -600,28 +599,43 @@ fn struct_update_takes_a_path_or_a_constructor_call() {
 }
 
 #[test]
-fn unit_type_only_in_results_signals_and_main() {
+fn unit_type_only_in_library_type_arguments_and_main() {
     assert_eq!(
         rule_case(
             "unit-type",
-            "crates/daemon/src/a.rs",
-            "fn ready(done: oneshot::Sender<()>) -> Result<(), Lost> {\n    done.send(()).map_err(Lost::from_unit)\n}\n",
-            "fn nothing() -> Option<()> {\n    None\n}\n",
+            "crates/app/src/a.rs",
+            "fn ready(done: oneshot::Sender<()>) -> Result<(), Lost> {\n    done.send(()).map_err(Lost::from_unit)\n}\n\nfn close_button(on_close: EventHandler<()>) -> Element {\n    Element::button(on_close)\n}\n",
+            "fn wait(done: ()) -> Signal {\n    Signal::new(done)\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:1:24: type.unit: `()` as a type only in `Result<(), E>`, a signalling channel or future, or `fn main`'s return type (proposal 0005)\n"
+        "crates/app/src/a_fail.rs:1:15: type.unit: `()` as a type only in a type argument of a type we don't define, as in `Result<(), E>`, or as `fn main`'s return type (proposals 0005, 0023)\n"
     );
 }
 
 #[test]
-fn unit_value_only_in_ok_and_signals() {
+fn a_future_output_of_unit_breaks_no_unit_rule() {
+    assert_eq!(
+        check_repo_config(
+            "unit-future",
+            &[(
+                "crates/client/src/upgrade.rs",
+                "enum Upgrade {\n    Waiting(Pin<Box<dyn Future<Output = ()>>>),\n}\n"
+            )]
+        ),
+        "crates/client/src/upgrade.rs:2:21: type.dyn: `dyn` only in crates/client/src/platform/ (proposal 0017)\n\
+         crates/client/src/upgrade.rs:2:32: generics.assoc_binding: associated item binding `Trait<Item = T>`\n"
+    );
+}
+
+#[test]
+fn unit_value_only_for_library_calls() {
     assert_eq!(
         rule_case(
             "unit-value",
             "crates/daemon/src/a.rs",
-            "fn ok() -> Result<(), Lost> {\n    Ok(())\n}\n",
-            "fn nothing() {\n    drop(())\n}\n",
+            "fn ready(tx: oneshot::Sender<()>) -> Result<(), Lost> {\n    tx.send(()).map_err(Lost::from_unit)?;\n    Ok(())\n}\n",
+            "enum Done {\n    Now(Signal),\n}\n\nfn finish() -> Done {\n    Done::Now(())\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:10: expr.unit: `()` as a value only in `Ok(())`, or creating or sending on a signalling channel (proposal 0005)\n"
+        "crates/daemon/src/a_fail.rs:6:15: expr.unit: `()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023)\n"
     );
 }
 
@@ -804,7 +818,7 @@ fn no_mut_reference_to_our_own_types() {
             "struct Log {\n    head: HostSeq,\n}\n\nasync fn fill(reader: Reader, buf: &mut Vec<u8>) -> Result<usize, Lost> {\n    reader.read(buf).await.map_err(Lost::Read)\n}\n",
             "fn bump(log: &mut Log) {\n    drop(log)\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:1:15: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposal 0008)\n"
+        "crates/daemon/src/a_fail.rs:1:15: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)\n"
     );
 }
 
@@ -1059,7 +1073,7 @@ fn allow_only_for_useless_format_at_the_app_root() {
 }
 
 #[test]
-fn bool_only_as_a_clap_flag_field() {
+fn bool_only_in_library_type_arguments_and_clap_flags() {
     assert_eq!(
         check_repo_config(
             "clap-bool",
@@ -1069,12 +1083,22 @@ fn bool_only_as_a_clap_flag_field() {
                     "#[derive(Parser)]\nstruct Args {\n    #[arg(long)]\n    verbose: bool,\n}\n"
                 ),
                 (
+                    "crates/daemon/src/live.rs",
+                    "fn watch_live(live: watch::Receiver<bool>) -> Watcher {\n    Watcher::new(live)\n}\n"
+                ),
+                (
+                    "crates/daemon/src/session.rs",
+                    "struct Session {\n    live: bool,\n}\n\nfn is_live(session: &Session) -> bool {\n    session.live\n}\n"
+                ),
+                (
                     "crates/client/examples/headless.rs",
                     "fn verbosity(verbose: bool) -> Verbosity {\n    Verbosity::from_flag(verbose)\n}\n"
                 ),
             ]
         ),
-        "crates/client/examples/headless.rs:1:23: type.bool: `bool` only as a flag field of a clap `Parser` struct (proposal 0019)\n"
+        "crates/client/examples/headless.rs:1:23: type.bool: `bool` only in a type argument of a type we don't define, or as a flag field of a clap `Parser` struct (proposals 0019, 0023)\n\
+         crates/daemon/src/session.rs:2:11: type.bool: `bool` only in a type argument of a type we don't define, or as a flag field of a clap `Parser` struct (proposals 0019, 0023)\n\
+         crates/daemon/src/session.rs:5:34: type.bool: `bool` only in a type argument of a type we don't define, or as a flag field of a clap `Parser` struct (proposals 0019, 0023)\n"
     );
 }
 
@@ -1112,16 +1136,16 @@ fn tokio_test_takes_no_arguments_and_marks_an_async_fn() {
 }
 
 #[test]
-fn bool_literals_only_for_external_apis() {
+fn bool_literals_only_for_library_apis() {
     assert_eq!(
         rule_case(
             "bool-lit",
             "crates/daemon/src/a.rs",
-            "fn open(path: &Path) -> Result<File, Lost> {\n    OpenOptions::new().create(true).open(path).map_err(Lost::Open)\n}\n\nfn init() -> Capabilities {\n    Capabilities { experimental_api: Some(true) }\n}\n",
+            "fn open(path: &Path) -> Result<File, Lost> {\n    OpenOptions::new().create(true).open(path).map_err(Lost::Open)\n}\n\nfn init() -> Capabilities {\n    Capabilities { experimental_api: Some(true) }\n}\n\nfn idle() -> Watch {\n    Watch::new(watch::channel(false))\n}\n",
             "enum Live {\n    On,\n    Off,\n}\n\nstruct Flags {\n    live: Live,\n}\n\nimpl Flags {\n    fn on(&self) -> Live {\n        self.live(true)\n    }\n}\n\nfn off() -> Live {\n    Live::from_flag(false)\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:12:19: expr.lit.bool: `true` / `false` only as an argument or field value of an external API (proposal 0021)\n\
-         crates/daemon/src/a_fail.rs:17:21: expr.lit.bool: `true` / `false` only as an argument or field value of an external API (proposal 0021)\n"
+        "crates/daemon/src/a_fail.rs:12:19: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n\
+         crates/daemon/src/a_fail.rs:17:21: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n"
     );
 }
 

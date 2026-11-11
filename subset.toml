@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 2
+version = 3
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -43,17 +43,17 @@ allowed = [
   "expr.closure.adapter",     # a closure passed straight to an iterator, Option or Result method
   "expr.tuple",               # proposal 0001
   "expr.struct.update",       # proposal 0004
-  "expr.unit",                # proposal 0005
+  "expr.unit",                # proposals 0005, 0023
   "expr.async",               # proposal 0006
   "expr.await",               # proposal 0006
   "expr.loop",                # proposal 0007
   "expr.break",               # proposal 0007; `break value` in a drive loop
   "expr.assign",              # proposal 0008
-  "expr.reference.mut",       # proposal 0008
+  "expr.reference.mut",       # proposals 0008, 0023
   "expr.array",               # proposal 0015
   "expr.repeat",              # proposal 0015
   "expr.closure",             # proposals 0006, 0017, 0018; only as the listed calls' argument
-  "expr.lit.bool",            # proposal 0021
+  "expr.lit.bool",            # proposals 0021, 0023
 
   # Statements
   "stmt.let",                 # immutable, with a pattern; no `else`
@@ -72,10 +72,11 @@ allowed = [
 
   # Types
   "type.path",                # except `bool`
+  "type.bool",                # proposals 0019, 0023
   "type.reference",
   "type.tuple",               # proposal 0001
-  "type.unit",                # proposal 0005
-  "type.reference.mut",       # proposal 0008
+  "type.unit",                # proposals 0005, 0023
+  "type.reference.mut",       # proposals 0008, 0023
   "type.lifetime",            # proposal 0009
   "type.slice",               # proposal 0014
   "type.array",               # proposal 0015
@@ -149,7 +150,6 @@ allowed = [
   "attr.derive.ValueEnum",
   "attr.command",
   "attr.arg",
-  "type.bool",                # an on/off flag field
 ]
 
 [[scope]]

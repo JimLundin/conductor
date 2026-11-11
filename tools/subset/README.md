@@ -81,8 +81,8 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `vis.restricted` | only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003) |
 | `vis.pub` | a field of a `pub(crate)` struct is `pub(crate)`, never `pub` (proposal 0003) |
 | `expr.struct.update` | the base of `..base` is a path or a constructor call (proposal 0004) |
-| `type.unit` | `()` as a type only in `Result<(), E>`, a signalling channel or future, or `fn main`'s return type (proposal 0005) |
-| `expr.unit` | `()` as a value only in `Ok(())`, or creating or sending on a signalling channel (proposal 0005) |
+| `type.unit` | `()` as a type only in a type argument of a type we don't define, as in `Result<(), E>`, or as `fn main`'s return type (proposals 0005, 0023) |
+| `expr.unit` | `()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023) |
 | `expr.async` | an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006) |
 | `attr.tokio::main` | `#[tokio::main]` only on `fn main` (proposal 0006) |
 | `expr.loop` | loop must be the whole body of an actor run fn, after at most one `let mut` state (proposal 0007) |
@@ -93,7 +93,7 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
-| `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposal 0008) |
+| `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
 | `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |
@@ -113,10 +113,10 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `expr.closure` | a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018) |
 | `item.use.glob` | a glob import only for `dioxus::prelude::*` (proposal 0018) |
 | `attr.allow` | only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018) |
-| `type.bool` | `bool` only as a flag field of a clap `Parser` struct (proposal 0019) |
+| `type.bool` | `bool` only in a type argument of a type we don't define, or as a flag field of a clap `Parser` struct (proposals 0019, 0023) |
 | `attr.arg` | a choice between named values is a `ValueEnum`, not `value_parser = [...]` (proposal 0019) |
 | `attr.tokio::test` | `#[tokio::test]` takes no arguments and marks an `async fn` (proposal 0020) |
-| `expr.lit.bool` | `true` / `false` only as an argument or field value of an external API (proposal 0021) |
+| `expr.lit.bool` | `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023) |
 | `macro.env` | `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR` (proposal 0022) |
 
 ## How constructs are classified

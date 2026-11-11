@@ -26,11 +26,11 @@ pub const STRUCT_UPDATE: Rule = rule(
 );
 pub const UNIT_TYPE: Rule = rule(
     "type.unit",
-    "`()` as a type only in `Result<(), E>`, a signalling channel or future, or `fn main`'s return type (proposal 0005)",
+    "`()` as a type only in a type argument of a type we don't define, as in `Result<(), E>`, or as `fn main`'s return type (proposals 0005, 0023)",
 );
 pub const UNIT_VALUE: Rule = rule(
     "expr.unit",
-    "`()` as a value only in `Ok(())`, or creating or sending on a signalling channel (proposal 0005)",
+    "`()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023)",
 );
 pub const ASYNC_BLOCK: Rule = rule(
     "expr.async",
@@ -74,7 +74,7 @@ pub const ASSIGN: Rule = rule(
 );
 pub const REF_MUT_OURS: Rule = rule(
     "type.reference.mut",
-    "no `&mut` of our own types other than `&mut self` (proposal 0008)",
+    "no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)",
 );
 pub const IMPL_TRAIT: Rule = rule(
     "item.impl.trait",
@@ -152,9 +152,9 @@ pub const ALLOW: Rule = rule(
     "attr.allow",
     "only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018)",
 );
-pub const CLAP_BOOL: Rule = rule(
+pub const BOOL_TYPE: Rule = rule(
     "type.bool",
-    "`bool` only as a flag field of a clap `Parser` struct (proposal 0019)",
+    "`bool` only in a type argument of a type we don't define, or as a flag field of a clap `Parser` struct (proposals 0019, 0023)",
 );
 pub const VALUE_PARSER: Rule = rule(
     "attr.arg",
@@ -166,7 +166,7 @@ pub const TOKIO_TEST: Rule = rule(
 );
 pub const BOOL_LIT: Rule = rule(
     "expr.lit.bool",
-    "`true` / `false` only as an argument or field value of an external API (proposal 0021)",
+    "`true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)",
 );
 pub const ENV: Rule = rule(
     "macro.env",
@@ -209,7 +209,7 @@ pub const RULES: &[&Rule] = &[
     &CLOSURE,
     &GLOB,
     &ALLOW,
-    &CLAP_BOOL,
+    &BOOL_TYPE,
     &VALUE_PARSER,
     &TOKIO_TEST,
     &BOOL_LIT,
