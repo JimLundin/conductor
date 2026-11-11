@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 3) look like in practice.
+What the constructs in `subset.toml` (version 4) look like in practice.
 Every example passes `subset check`, and a test in `tools/subset` keeps it
 that way. A first-line comment naming a path, such as
 `// crates/proto/src/frame.rs`, places an example where a location rule
@@ -26,7 +26,7 @@ pub fn toggle(visibility: Visibility) -> Visibility {
 ## 2. IDs and counters are newtypes, and arithmetic is a checked method
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HostSeq(u64);
 
 impl HostSeq {
@@ -39,9 +39,11 @@ impl HostSeq {
 ```
 
 There are no `+ - * /` operators. Overflow is a `None` the caller has to
-handle.
+handle. `HostSeq` derives `PartialOrd` and `Ord` because its order means
+something (proposal 0024). An ID such as `RequestId`, whose order means
+nothing, doesn't.
 
-## 3. Comparison is an `Ordering`, matched
+## 3. Comparison is an `Ordering`, matched on the whole newtype
 
 ```rust
 use std::cmp::Ordering;
@@ -54,7 +56,7 @@ pub enum Freshness {
 
 impl HostSeq {
     pub fn freshness(self, head: HostSeq) -> Freshness {
-        match self.0.cmp(&head.0) {
+        match self.cmp(&head) {
             Ordering::Less => Freshness::Behind,
             Ordering::Equal => Freshness::Current,
             Ordering::Greater => Freshness::Ahead,
@@ -63,7 +65,8 @@ impl HostSeq {
 }
 ```
 
-This replaces `if seen < head { … } else if …`.
+This replaces `if seen < head { … } else if …`. Compare the ordered newtype
+itself with `a.cmp(&b)`, never its field with `a.0.cmp(&b.0)` (proposal 0024).
 
 ## 4. Choosing by value is a literal pattern
 
@@ -164,8 +167,10 @@ pub fn pending(requests: &[Request]) -> Vec<RequestId> {
 }
 ```
 
-Use `filter_map` with a `match` rather than `filter` with a condition. A
-function that only reads a sequence takes `&[T]` (proposal 0014).
+To select and transform in one step, use `filter_map` with a `match`. To
+select items without transforming them, or to count them, use `filter` with
+a predicate (§22). A function that only reads a sequence takes `&[T]`
+(proposal 0014).
 
 ## 9. Totals are folds with checked arithmetic
 
@@ -277,7 +282,9 @@ impl Log {
                 self.head = event.seq;
                 self.events.push(event);
             }
-            Msg::Head { reply } => drop(reply.send(self.head)),
+            Msg::Head { reply } => {
+                let _ = reply.send(self.head);
+            }
         }
     }
 }
@@ -286,7 +293,9 @@ impl Log {
 `run` is `async` because it waits on a channel (proposal 0006). The `loop` is
 its whole body: it takes one message and hands it to one method (0007). Only
 the actor's own state changes, through `mut self` and `&mut self` (0008).
-Every other function still builds new values.
+Every other function still builds new values. The reply's send fails only
+when the asker has gone, and there is nothing to do about it, so the result
+is discarded with `let _ =` (proposal 0025).
 
 ## 16. Errors convert with `?` through `#[from]`
 
@@ -352,12 +361,107 @@ pub fn platform() -> Platform {
 A `cfg` sits on a whole item, and the other platform's item sits next to it
 in the same file (proposal 0016).
 
+## 19. Discarding a value is `let _ =`
+
+```rust
+use tokio::sync::oneshot;
+
+pub fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq) {
+    let _ = reply.send(head);
+}
+```
+
+`let _ = value;` is the one way to say "this result doesn't matter". Don't
+write `drop(reply.send(head))` or `reply.send(head).ok();`. `drop` is only
+for releasing a named value that owns a resource earlier than the end of
+its scope (proposal 0025, revised).
+
+## 20. An actor handle asks through one `ask` helper
+
+```rust
+use tokio::sync::{mpsc, oneshot};
+
+pub enum LogMsg {
+    Head { reply: oneshot::Sender<HostSeq> },
+    Len { reply: oneshot::Sender<usize> },
+}
+
+/// The actor stopped before it answered.
+#[derive(Debug)]
+pub struct LogStopped {}
+
+pub struct LogHandle {
+    commands: mpsc::Sender<LogMsg>,
+}
+
+impl LogHandle {
+    pub async fn head(&self) -> Result<HostSeq, LogStopped> {
+        self.ask(|reply| LogMsg::Head { reply }).await
+    }
+
+    pub async fn len(&self) -> Result<usize, LogStopped> {
+        self.ask(|reply| LogMsg::Len { reply }).await
+    }
+
+    async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> LogMsg) -> Result<T, LogStopped> {
+        let (reply, answer) = oneshot::channel();
+        self.commands.send(build(reply)).await.map_err(|_| LogStopped {})?;
+        answer.await.map_err(|_| LogStopped {})
+    }
+}
+```
+
+Every request and reply round trip goes through `ask`, a private helper of
+exactly this shape (proposal 0026). The closure only builds the message
+variant. `ask` is the one place outside a codec where a fn takes a type
+parameter, and the one `impl Trait` argument in the subset.
+
+## 21. Acting on one case is an `if let` with no `else`
+
+```rust
+pub fn announce(host_name: Option<&str>) {
+    if let Some(name) = host_name {
+        tracing::info!(host = %name, "host named");
+    }
+}
+```
+
+When only one case needs doing and the rest need nothing, write `if let`
+with no `else`, no `else if` and no `&&` let-chain (proposal 0027). It
+replaces a `match` whose other arm is `None => {}`, which clippy's
+`single_match` rejects. As soon as another case needs something, it is a
+`match` with every arm written out (§6).
+
+## 22. Counting and searching take a predicate closure
+
+```rust
+pub fn open_count(requests: &[Request]) -> usize {
+    requests
+        .iter()
+        .filter(|request| matches!(request.state, RequestState::Open))
+        .count()
+}
+
+pub fn first_after(events: &[Event], seen: HostSeq) -> Option<&Event> {
+    events.iter().find(|event| event.seq > seen)
+}
+```
+
+A closure passed straight to `filter`, `find`, `any`, `all`, `position`,
+`take_while`, `skip_while` or `retain` may have a boolean expression as its
+body: `matches!`, a comparison, `&&`, `||` or `!` (proposal 0028). Nowhere
+else. `filter(..).count()` is the one way to count, in place of
+`filter_map(..).count()` or a `fold` that adds one. A `bool` still never
+becomes a binding, a field, a parameter or a return type of our own.
+
 ## Still outside the subset
 
 - Generic structs, enums and traits, and any bound other than the codec
   bounds of proposal 0013.
 - `Display`, `FromStr` and `From` impls. Write `label`, `parse` and `to_…`
   methods instead (proposal 0009).
-- Derives beyond the listed ones, such as `PartialOrd`, `Ord` and `Default`.
-- `if`, `while`, `for`, `return` and the operators. They stay rewrites into
+- Derives beyond the listed ones, such as `Default`, and `PartialOrd` or
+  `Ord` on anything but an ordered newtype.
+- `if`, `if let` with an `else` or a let-chain, `while`, `for`, `return`
+  and the operators. They stay rewrites into
   the core (`docs/subset/bootstrap-review.md`).

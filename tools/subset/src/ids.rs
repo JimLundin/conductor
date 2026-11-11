@@ -110,7 +110,11 @@ pub const IDS: &[(&str, &str)] = &[
     ("expr.for", "`for` loop"),
     ("expr.group", "invisible group expression"),
     ("expr.if", "`if` expression"),
-    ("expr.if_let", "`if let` expression"),
+    (
+        "expr.if_let",
+        "`if let` with an `else`, or an `if` with a let-chain",
+    ),
+    ("expr.if_let.single", "`if let` with no `else`"),
     ("expr.index", "indexing"),
     ("expr.infer", "`_` in expression position"),
     ("expr.let", "`let` inside a condition chain"),

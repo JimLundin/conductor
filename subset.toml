@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 3
+version = 4
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -52,8 +52,17 @@ allowed = [
   "expr.reference.mut",       # proposals 0008, 0023
   "expr.array",               # proposal 0015
   "expr.repeat",              # proposal 0015
-  "expr.closure",             # proposals 0006, 0017, 0018; only as the listed calls' argument
+  "expr.closure",             # proposals 0006, 0017, 0018, 0026; only as the listed calls' argument
   "expr.lit.bool",            # proposals 0021, 0023
+  "expr.if_let.single",       # proposal 0027; `if let` with no `else`, `else if` or let-chain
+  # Proposal 0028: a boolean expression only as the body of a closure passed
+  # straight to `filter`, `find`, `any`, `all`, `position`, `take_while`,
+  # `skip_while` or `retain`.
+  "expr.binary.eq", "expr.binary.ne",
+  "expr.binary.lt", "expr.binary.le", "expr.binary.gt", "expr.binary.ge",
+  "expr.binary.and", "expr.binary.or",
+  "expr.unary.not",
+  "macro.matches",
 
   # Statements
   "stmt.let",                 # immutable, with a pattern; no `else`
@@ -80,10 +89,11 @@ allowed = [
   "type.lifetime",            # proposal 0009
   "type.slice",               # proposal 0014
   "type.array",               # proposal 0015
+  "type.impl_trait.arg",      # proposal 0026; only `ask`'s `build` parameter
 
   # Generics
   "generics.lifetime",        # proposal 0009
-  "generics.type_param",      # proposal 0013
+  "generics.type_param",      # proposals 0013, 0026
 
   # Attributes
   "attr.doc",
@@ -101,6 +111,7 @@ allowed = [
 derives = [
   "Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash",
   "thiserror::Error",         # proposal 0010
+  "PartialOrd", "Ord",        # proposal 0024; only on a newtype whose order means something
 ]
 
 macros = [

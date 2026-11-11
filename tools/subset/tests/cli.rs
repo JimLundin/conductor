@@ -199,7 +199,7 @@ fn control_flow_other_than_match() {
             "control.rs:3:9: expr.return: `return`",
             "control.rs:4:12: expr.if: `if` expression",
             "control.rs:5:9: expr.return: `return`",
-            "control.rs:7:5: expr.if_let: `if let` expression",
+            "control.rs:7:5: expr.if_let.single: `if let` with no `else`",
             "control.rs:8:9: expr.return: `return`",
             "control.rs:10:5: expr.while: `while` loop",
             "control.rs:11:9: expr.break: `break`",
@@ -209,6 +209,24 @@ fn control_flow_other_than_match() {
             "control.rs:17:5: expr.loop: `loop`",
             "control.rs:19:17: expr.match.guard: `if` guard on a match arm",
         ]
+    );
+}
+
+#[test]
+fn if_let_only_with_a_single_branch() {
+    assert_eq!(
+        rule_case(
+            "if-let",
+            "crates/daemon/src/a.rs",
+            "fn cancel(open: Option<Approval>) {\n    if let Some(approval) = open {\n        approval.cancel();\n    }\n}\n",
+            "fn label(name: Option<&str>, kind: Option<Kind>) -> String {\n    if let Some(name) = name {\n        name.to_string()\n    } else {\n        String::new()\n    }\n}\n\nfn note(name: Option<&str>, kind: Option<Kind>) {\n    if let Some(name) = name {\n        log(name);\n    } else if let Some(kind) = kind {\n        log(kind.label());\n    }\n    if let Some(name) = name && let Some(kind) = kind {\n        log(name);\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:10:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:15:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:15:8: expr.let: `let` inside a condition chain\n\
+         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:15:33: expr.let: `let` inside a condition chain\n"
     );
 }
 
@@ -622,8 +640,8 @@ fn unit_in_our_result_alias_is_still_a_result() {
             )]
         ),
         "crates/agents/src/claude/session.rs:1:5: item.type: type alias\n\
-         crates/agents/src/claude/session.rs:1:17: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n\
-         crates/agents/src/claude/session.rs:1:20: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n"
+         crates/agents/src/claude/session.rs:1:17: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/agents/src/claude/session.rs:1:20: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n"
     );
 }
 
@@ -661,7 +679,7 @@ fn async_blocks_only_spawned_or_as_stream_bodies() {
         rule_case(
             "async-block",
             "crates/daemon/src/a.rs",
-            "fn start(rx: Inbox) {\n    drop(tokio::spawn(async move { work(rx).await }));\n}\n\nfn events(rx: Inbox) -> Events {\n    stream::unfold(rx, |rx| async move { next(rx).await })\n}\n",
+            "fn start(rx: Inbox) {\n    let _ = tokio::spawn(async move { work(rx).await });\n}\n\nfn events(rx: Inbox) -> Events {\n    stream::unfold(rx, |rx| async move { next(rx).await })\n}\n",
             "async fn attempt() -> Result<u8, Lost> {\n    let result = async { step().await }.await;\n    result\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:2:18: expr.async: an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006)\n"
@@ -780,7 +798,60 @@ fn ref_mut_self_only_on_loop_state_methods() {
             ACTOR,
             "impl Host {\n    fn rename(&mut self, name: String) {\n        self.name = name;\n    }\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state (proposal 0008)\n"
+        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)\n"
+    );
+}
+
+const OWNED: &str = "struct Reader {
+    frames: FrameBuffer,
+    turns: HashMap<ThreadId, Turn>,
+}
+
+struct FrameBuffer {
+    pending: Vec<u8>,
+}
+
+struct Turn {
+    outcome: Option<Outcome>,
+}
+
+impl Reader {
+    async fn run(mut self, mut inbox: Inbox) -> Result<Infallible, Stopped> {
+        loop {
+            let msg = inbox.recv().await.ok_or(Stopped {})?;
+            self.on(msg);
+        }
+    }
+
+    fn on(&mut self, msg: Msg) {
+        self.frames.push(msg.bytes);
+    }
+}
+
+impl FrameBuffer {
+    fn push(&mut self, bytes: Vec<u8>) {
+        self.pending.extend(bytes);
+    }
+}
+
+impl Turn {
+    fn finish(&mut self, outcome: Outcome) {
+        self.outcome = Some(outcome);
+    }
+}
+";
+
+#[test]
+fn ref_mut_self_reaches_a_value_that_loop_state_owns() {
+    assert_eq!(
+        rule_case(
+            "ref-mut-owned",
+            "crates/daemon/src/a.rs",
+            OWNED,
+            "struct Session {\n    turn: Turn,\n}\n\nimpl Session {\n    fn finish(&mut self, outcome: Outcome) {\n        self.turn.finish(outcome);\n    }\n}\n\nfn apply(turn: &mut Turn, outcome: Outcome) {\n    turn.finish(outcome);\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:6:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:11:17: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)\n"
     );
 }
 
@@ -804,7 +875,7 @@ fn a_mut_binding_is_never_reassigned() {
         rule_case(
             "pat-mut",
             "crates/daemon/src/a.rs",
-            "fn drain(mut rx: Inbox) {\n    drop(rx.try_recv());\n}\n",
+            "fn drain(mut rx: Inbox) {\n    let _ = rx.try_recv();\n}\n",
             "fn reset(mut n: u64) -> u64 {\n    n = 0;\n    n\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:1:10: pat.ident.mut: a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008)\n\
@@ -839,12 +910,48 @@ fn no_mut_reference_to_our_own_types() {
 }
 
 #[test]
+fn discard_with_let_underscore() {
+    assert_eq!(
+        rule_case(
+            "discard",
+            "crates/daemon/src/a.rs",
+            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, guard: Lease) {\n    let _ = reply.send(head);\n    drop(guard);\n}\n",
+            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, lost: oneshot::Sender<HostSeq>) {\n    drop(reply.send(head));\n    lost.send(head).ok();\n    std::mem::drop(tokio::spawn(work()));\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n\
+         crates/daemon/src/a_fail.rs:3:21: expr.method_call: `.ok()` is not a discard; write `let _ = value;` (proposal 0025)\n\
+         crates/daemon/src/a_fail.rs:4:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n"
+    );
+}
+
+#[test]
+fn boolean_expressions_only_in_predicate_closures() {
+    assert_eq!(
+        rule_case(
+            "predicate",
+            "crates/daemon/src/a.rs",
+            "fn finished(events: &[Event]) -> usize {\n    events.iter().filter(|e| matches!(e.kind, Kind::TurnFinished)).count()\n}\n\nfn seen(events: &[Event], seq: HostSeq) -> Option<&Event> {\n    events.iter().find(|e| e.seq == seq)\n}\n\nfn first_live(events: &[Event], seq: HostSeq) -> Option<usize> {\n    events.iter().position(|e| e.seq >= seq && !matches!(e.kind, Kind::Replayed))\n}\n",
+            "fn same(a: HostSeq, b: HostSeq) -> Same {\n    let same = a == b;\n    Same::from(same)\n}\n\nfn done(next: Option<Event>) {\n    if let Some(event) = next && matches!(event.kind, Kind::TurnFinished) {\n        finish(event);\n    }\n}\n\nfn label(next: Option<Event>) -> Label {\n    match next {\n        Some(e) if matches!(e.kind, Kind::TurnFinished) => Label::Done,\n        _ => Label::Busy,\n    }\n}\n\nfn all(events: &[Event]) -> usize {\n    events.iter().filter(|_| true).count()\n}\n\nfn counted(events: &[Event]) -> usize {\n    events.iter().filter_map(|e| match e.kind {\n        Kind::TurnFinished => Some(()),\n        _ => None,\n    }).count()\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:18: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:7:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:7:8: expr.let: `let` inside a condition chain\n\
+         crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:14:17: expr.match.guard: `if` guard on a match arm\n\
+         crates/daemon/src/a_fail.rs:14:20: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)\n\
+         crates/daemon/src/a_fail.rs:20:30: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n\
+         crates/daemon/src/a_fail.rs:27:8: expr.method_call: count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)\n"
+    );
+}
+
+#[test]
 fn trait_impls_only_for_library_traits() {
     assert_eq!(
         rule_case(
             "impl-trait",
             "crates/daemon/src/a.rs",
-            "impl Drop for Guard {\n    fn drop(&mut self) {\n        self.child.start_kill().ok();\n    }\n}\n",
+            "impl Drop for Guard {\n    fn drop(&mut self) {\n        let _ = self.child.start_kill();\n    }\n}\n",
             "impl Display for Guard {\n    fn fmt(&self, f: &mut Formatter) -> fmt::Result {\n        f.write_str(\"guard\")\n    }\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:1:1: item.impl.trait: trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)\n"
@@ -876,6 +983,21 @@ fn thiserror_only_on_error_types() {
             "#[derive(Debug, thiserror::Error)]\nenum Outcome {\n    #[error(\"done\")]\n    Done,\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:1:1: attr.derive: `thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010)\n"
+    );
+}
+
+#[test]
+fn ord_only_on_a_newtype_compared_as_a_whole() {
+    assert_eq!(
+        rule_case(
+            "ord",
+            "crates/daemon/src/a.rs",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct Seq(u64);\n\nfn fresh(seen: Seq, head: Seq) -> Freshness {\n    match seen.cmp(&head) {\n        Ordering::Less => Freshness::Behind,\n        Ordering::Equal | Ordering::Greater => Freshness::Current,\n    }\n}\n",
+            "#[derive(PartialEq, Eq, PartialOrd, Ord)]\nenum Phase {\n    Early,\n    Late,\n}\n\n#[derive(PartialEq, Eq, PartialOrd, Ord)]\npub struct Mark(u64);\n\nimpl Mark {\n    fn after(self, other: Mark) -> Ordering {\n        self.0.cmp(&other.0)\n    }\n}\n\nfn order(a: Mark, b: &Mark, c: Count) -> Ordering {\n    a.0.cmp(&b.0).then(c.0.cmp(&a.0))\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: attr.derive: `PartialOrd` and `Ord` only on a newtype struct whose order means something (proposal 0024)\n\
+         crates/daemon/src/a_fail.rs:12:16: expr.method_call: compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024)\n\
+         crates/daemon/src/a_fail.rs:17:9: expr.method_call: compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024)\n"
     );
 }
 
@@ -929,8 +1051,50 @@ fn type_params_only_on_codec_fns() {
             "pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {\n    serde_json::to_vec(value)\n}\n",
             "pub struct Tagged<T> {\n    value: T,\n}\n\nfn copy<T: Clone>(value: &T) -> T {\n    value.clone()\n}\n",
         ),
-        "crates/proto/src/a_fail.rs:1:19: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n\
-         crates/proto/src/a_fail.rs:5:9: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n"
+        "crates/proto/src/a_fail.rs:1:19: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/proto/src/a_fail.rs:5:9: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n"
+    );
+}
+
+const ASK: &str = "impl Handle {
+    pub async fn head(&self) -> Result<HostSeq, Stopped> {
+        self.ask(|reply| Msg::Head { reply }).await
+    }
+
+    async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> Msg) -> Result<T, Stopped> {
+        let (reply, answer) = oneshot::channel();
+        self.commands.send(build(reply)).await.map_err(|_| Stopped {})?;
+        answer.await.map_err(|_| Stopped {})
+    }
+}
+
+async fn stop(commands: &mpsc::Sender<Msg>) -> Result<Summary, Stopped> {
+    ask(commands, |reply| Msg::Stop { reply }).await
+}
+
+async fn ask<T>(
+    commands: &mpsc::Sender<Msg>,
+    build: impl FnOnce(oneshot::Sender<T>) -> Msg,
+) -> Result<T, Stopped> {
+    let (reply, answer) = oneshot::channel();
+    commands.send(build(reply)).await.map_err(|_| Stopped {})?;
+    answer.await.map_err(|_| Stopped {})
+}
+";
+
+#[test]
+fn impl_trait_arguments_only_for_the_ask_helper() {
+    assert_eq!(
+        rule_case(
+            "ask",
+            "crates/daemon/src/a.rs",
+            ASK,
+            "impl Handle {\n    pub async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> Msg) -> Result<T, Stopped> {\n        self.send(build).await\n    }\n}\n\nasync fn request<T: Clone>(build: impl FnOnce(Sender<T>) -> Msg) -> T {\n    send(build).await\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:22: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/daemon/src/a_fail.rs:2:39: type.impl_trait.arg: `impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026)\n\
+         crates/daemon/src/a_fail.rs:7:18: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)\n\
+         crates/daemon/src/a_fail.rs:7:35: type.impl_trait.arg: `impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026)\n"
     );
 }
 
@@ -943,20 +1107,21 @@ fn slices_only_as_parameters_and_consts() {
             "const ALPN: &[u8] = b\"conductor/1\";\n\nfn total(sizes: &[u64]) -> Option<u64> {\n    sizes.iter().copied().try_fold(0, |sum, size| sum.checked_add(size))\n}\n",
             "struct Packet {\n    bytes: Box<[u8]>,\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:16: type.slice: `&[T]` only as a parameter type or a `const` type (proposal 0014)\n"
+        "crates/daemon/src/a_fail.rs:2:16: type.slice: `&[T]` only as a parameter type or a `const` type; a `const` list is `const NAME: &[T] = &[..]` (proposal 0014)\n"
     );
 }
 
 #[test]
-fn array_types_only_for_bytes_and_const_tables() {
+fn array_types_only_for_bytes() {
     assert_eq!(
         rule_case(
             "array-type",
             "crates/daemon/src/a.rs",
-            "struct Key([u8; 32]);\n\nconst BACKOFF: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(5)];\n",
-            "struct Pair([u64; 2]);\n",
+            "struct Key([u8; 32]);\n\nconst MAGIC: [u8; 4] = [0x63, 0x6f, 0x6e, 0x64];\n",
+            "struct Pair([u64; 2]);\n\nconst BACKOFF: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(5)];\n",
         ),
-        "crates/daemon/src/a_fail.rs:1:13: type.array: an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015)\n"
+        "crates/daemon/src/a_fail.rs:1:13: type.array: an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015)\n\
+         crates/daemon/src/a_fail.rs:3:16: type.array: an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015)\n"
     );
 }
 
@@ -969,7 +1134,20 @@ fn array_literals_only_as_call_arguments_and_consts() {
             "fn git(cmd: Command) -> Command {\n    cmd.args([\"init\", \"-q\"])\n}\n\nfn hosts(a: Host, b: Host) -> Vec<Host> {\n    Vec::from([a, b])\n}\n",
             "fn pair(a: Host, b: Host) -> Vec<Host> {\n    let hosts = [a, b];\n    Vec::from(hosts)\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:17: expr.array: an array literal only passed straight to a call, or as a `const` table (proposal 0015)\n"
+        "crates/daemon/src/a_fail.rs:2:17: expr.array: an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015)\n"
+    );
+}
+
+#[test]
+fn an_array_literal_behind_a_reference_keeps_its_place() {
+    assert_eq!(
+        rule_case(
+            "array-ref",
+            "crates/daemon/src/a.rs",
+            "const STUN_SERVERS: &[&str] = &[\"stun:a:3478\", \"stun:b:3478\"];\n\nfn replay(name: &str) -> Recording {\n    recording(name, &[Frame::Hello, Frame::Bye])\n}\n",
+            "fn pair(a: Host, b: Host) -> Pair {\n    let hosts = &[a, b];\n    Pair::new(hosts)\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:18: expr.array: an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015)\n"
     );
 }
 
@@ -1054,10 +1232,10 @@ fn closures_outside_method_calls_only_for_callbacks_streams_and_hooks() {
         rule_case(
             "closure",
             "crates/client/src/platform/a.rs",
-            "fn on_open(tx: Sender) -> Callback {\n    Closure::new(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
-            "fn on_open(tx: Sender) -> Callback {\n    Callback::wrap(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
+            "fn on_open(tx: Sender) -> Callback {\n    Closure::new(move |event| {\n        let _ = tx.send(Msg::Open(event));\n    })\n}\n",
+            "fn on_open(tx: Sender) -> Callback {\n    Callback::wrap(move |event| {\n        let _ = tx.send(Msg::Open(event));\n    })\n}\n",
         ),
-        "crates/client/src/platform/a_fail.rs:2:20: expr.closure: a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018)\n"
+        "crates/client/src/platform/a_fail.rs:2:20: expr.closure: a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026)\n"
     );
 }
 
@@ -1216,7 +1394,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 18);
+    assert_eq!(files.len(), 22);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))

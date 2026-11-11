@@ -2,7 +2,7 @@
 //! takes. Each finding names the rule it breaks. `main` reports a finding only
 //! where the rule's id is allowed, since elsewhere the id itself is reported.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use proc_macro2::{Span, TokenTree};
 use syn::punctuated::Punctuated;
@@ -42,7 +42,11 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
         fns: Vec::new(),
         loops: Vec::new(),
         sig_generics: None,
+        ask_generics: None,
+        in_return: false,
         in_let: false,
+        predicates: HashSet::new(),
+        predicate_macros: HashSet::new(),
         out: Vec::new(),
     };
     checker.visit_file(file);
@@ -55,16 +59,26 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Vec<Finding> {
 enum Slot {
     Other,
     CallArg(Callee),
-    MethodArg { method: String, on_self: bool },
-    FieldValue { ours: bool },
+    MethodArg {
+        method: String,
+        on_self: bool,
+    },
+    FieldValue {
+        ours: bool,
+    },
     ClosureBody(Box<Slot>),
     ConstInit,
     ConstType,
     Param,
     RefTarget(Box<Slot>),
-    GenericArg { segment: String, ours: bool },
+    GenericArg {
+        segment: String,
+        ours: bool,
+    },
     MainReturn,
     ClapField,
+    /// The `build` parameter of an `ask` helper (proposal 0026).
+    AskBuild,
 }
 
 #[derive(Clone, PartialEq)]
@@ -116,6 +130,8 @@ struct FnCtx {
     state_names: Vec<String>,
     /// Plain names assigned with `=` anywhere in the body.
     assigned: BTreeSet<String>,
+    /// Each parameter bound to a plain name, with its type's last segment.
+    params: HashMap<String, String>,
 }
 
 const LIBRARY_TRAITS: &[&str] = &[
@@ -126,7 +142,17 @@ const LIBRARY_TRAITS: &[&str] = &[
     "ProtocolHandler",
 ];
 const CODEC_BOUNDS: &[&str] = &["Serialize", "DeserializeOwned"];
-const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook"];
+const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook", "ask"];
+const PREDICATE_ADAPTERS: &[&str] = &[
+    "filter",
+    "find",
+    "any",
+    "all",
+    "position",
+    "take_while",
+    "skip_while",
+    "retain",
+];
 const SERDE_KEYS: &[&str] = &["transparent", "tag", "content", "rename_all", "rename"];
 const CFG_PAIRS: &[(&str, &str)] = &[
     ("target_family=\"wasm\"", "not(target_family=\"wasm\")"),
@@ -148,7 +174,14 @@ struct Checker<'a> {
     /// For each enclosing loop, whether it is an actor loop.
     loops: Vec<bool>,
     sig_generics: Option<*const syn::Generics>,
+    /// The generics of an `ask` helper in the shape of proposal 0026.
+    ask_generics: Option<*const syn::Generics>,
+    in_return: bool,
     in_let: bool,
+    /// The boolean expressions and `matches!` calls that make up a
+    /// predicate closure's body (proposal 0028).
+    predicates: HashSet<*const Expr>,
+    predicate_macros: HashSet<*const syn::Macro>,
     out: Vec<Finding>,
 }
 
@@ -190,6 +223,13 @@ impl Checker<'_> {
             .is_some_and(|i| i.kind == ImplKind::Library)
     }
 
+    fn mark_ask(&mut self, vis: &Visibility, sig: &syn::Signature) {
+        if let Some(build) = ask_build(vis, sig) {
+            self.ask_generics = Some(std::ptr::from_ref(&sig.generics));
+            self.set_type(build, Slot::AskBuild);
+        }
+    }
+
     fn enter_fn(&mut self, sig: &syn::Signature, block: &syn::Block) {
         let receiver = match sig.inputs.first() {
             Some(FnArg::Receiver(r)) => match (r.reference.is_some(), r.mutability.is_some()) {
@@ -210,6 +250,7 @@ impl Checker<'_> {
                 .map(|s| actor::mut_bindings(&s.pat))
                 .unwrap_or_default(),
             assigned: assigned_names(block),
+            params: param_types(sig),
         });
         if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
             self.check_receiver(r);
@@ -229,9 +270,10 @@ impl Checker<'_> {
             Some((Receiver::RefMut, _)) => {
                 let state = self.impls.last().is_some_and(|i| {
                     i.kind == ImplKind::Library
-                        || i.self_ty
-                            .as_ref()
-                            .is_some_and(|t| self.facts.loop_states.contains(t))
+                        || i.self_ty.as_ref().is_some_and(|t| {
+                            self.facts.loop_states.contains(t)
+                                || self.facts.owned_by_state.contains(t)
+                        })
                 });
                 if !state {
                     self.flag(token.span, &rules::REF_MUT_SELF);
@@ -307,6 +349,71 @@ impl Checker<'_> {
                     self.check_message(&v.attrs, v.ident.span());
                 }
             }
+        }
+    }
+
+    fn check_ord(&mut self, attrs: &[Attribute], newtype: bool) {
+        let ord = attrs
+            .iter()
+            .find(|a| facts::derives(a, "Ord") || facts::derives(a, "PartialOrd"));
+        if let (Some(derive), false) = (ord, newtype) {
+            self.flag(derive.pound_token.span, &rules::ORD_HOST);
+        }
+    }
+
+    /// Whether `x.0` reads the field of an ordered newtype: `x` is `self` in
+    /// an impl of one, or a parameter declared as one.
+    fn ordered_newtype_field(&self, expr: &Expr) -> bool {
+        let Expr::Field(field) = expr else {
+            return false;
+        };
+        let (syn::Member::Unnamed(index), Expr::Path(base)) = (&field.member, &*field.base) else {
+            return false;
+        };
+        let Some(name) = base.path.get_ident().map(ToString::to_string) else {
+            return false;
+        };
+        let ty = match name.as_str() {
+            "self" => self.impls.last().and_then(|i| i.self_ty.clone()),
+            _ => self.fns.last().and_then(|f| f.params.get(&name).cloned()),
+        };
+        index.index == 0 && ty.is_some_and(|t| self.facts.ord_newtypes.contains(&t))
+    }
+
+    /// Marks the boolean tree of a predicate closure's body: `&&`, `||` and
+    /// `!` over comparisons, `matches!` and other leaves.
+    fn mark_predicate(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Paren(e) => self.mark_predicate(&e.expr),
+            Expr::Block(e) if e.label.is_none() => {
+                if let [syn::Stmt::Expr(tail, None)] = e.block.stmts.as_slice() {
+                    self.mark_predicate(tail);
+                }
+            }
+            Expr::Binary(e) => match e.op {
+                syn::BinOp::And(_) | syn::BinOp::Or(_) => {
+                    self.predicates.insert(std::ptr::from_ref(expr));
+                    self.mark_predicate(&e.left);
+                    self.mark_predicate(&e.right);
+                }
+                syn::BinOp::Eq(_)
+                | syn::BinOp::Ne(_)
+                | syn::BinOp::Lt(_)
+                | syn::BinOp::Le(_)
+                | syn::BinOp::Gt(_)
+                | syn::BinOp::Ge(_) => {
+                    self.predicates.insert(std::ptr::from_ref(expr));
+                }
+                _ => {}
+            },
+            Expr::Unary(e) if matches!(e.op, syn::UnOp::Not(_)) => {
+                self.predicates.insert(std::ptr::from_ref(expr));
+                self.mark_predicate(&e.expr);
+            }
+            Expr::Macro(e) if e.mac.path.is_ident("matches") => {
+                self.predicate_macros.insert(std::ptr::from_ref(&e.mac));
+            }
+            _ => {}
         }
     }
 
@@ -410,6 +517,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {
         self.check_fn_attrs(&i.attrs, &i.sig);
+        self.mark_ask(&i.vis, &i.sig);
         if let (true, ReturnType::Type(_, ty)) = (i.sig.ident == "main", &i.sig.output) {
             self.set_type(ty, Slot::MainReturn);
         }
@@ -420,6 +528,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_impl_item_fn(&mut self, i: &'ast syn::ImplItemFn) {
         self.check_fn_attrs(&i.attrs, &i.sig);
+        self.mark_ask(&i.vis, &i.sig);
         self.enter_fn(&i.sig, &i.block);
         visit::visit_impl_item_fn(self, i);
         self.fns.pop();
@@ -453,6 +562,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_struct(&mut self, i: &'ast syn::ItemStruct) {
         self.check_derived(&i.attrs, &i.ident, Derived::Struct(&i.fields));
+        self.check_ord(&i.attrs, facts::is_newtype(&i.fields));
         let clap = i
             .attrs
             .iter()
@@ -471,6 +581,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_enum(&mut self, i: &'ast syn::ItemEnum) {
         self.check_derived(&i.attrs, &i.ident, Derived::Enum(&i.variants));
+        self.check_ord(&i.attrs, false);
         self.check_from(&i.variants);
         visit::visit_item_enum(self, i);
     }
@@ -495,15 +606,25 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_signature(&mut self, sig: &'ast syn::Signature) {
         self.sig_generics = Some(std::ptr::from_ref(&sig.generics));
         for arg in &sig.inputs {
-            if let FnArg::Typed(t) = arg {
+            if let (FnArg::Typed(t), false) = (
+                arg,
+                self.ask_generics == Some(std::ptr::from_ref(&sig.generics)),
+            ) {
                 self.set_type(&t.ty, Slot::Param);
             }
         }
-        visit::visit_signature(self, sig);
+        self.visit_generics(&sig.generics);
+        for arg in &sig.inputs {
+            self.visit_fn_arg(arg);
+        }
+        let outer = std::mem::replace(&mut self.in_return, true);
+        self.visit_return_type(&sig.output);
+        self.in_return = outer;
     }
 
     fn visit_generics(&mut self, generics: &'ast syn::Generics) {
         let on_fn = self.sig_generics == Some(std::ptr::from_ref(generics));
+        let ask = self.ask_generics == Some(std::ptr::from_ref(generics));
         let library = self.in_library_impl();
         for param in &generics.params {
             match param {
@@ -514,7 +635,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                             t.bounds.iter().collect::<Vec<_>>().as_slice(),
                             [TypeParamBound::Trait(b)] if b.path.segments.last().is_some_and(|s| CODEC_BOUNDS.contains(&s.ident.to_string().as_str()))
                         );
-                    if !(library || codec) {
+                    if !(library || codec || ask) {
                         self.flag(param.span(), &rules::TYPE_PARAM);
                     }
                 }
@@ -610,9 +731,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             }
             Type::Array(t) => {
                 let bytes = matches!(&*t.elem, Type::Path(p) if p.path.is_ident("u8"));
-                if !(bytes || slot == Slot::ConstType) {
+                if !bytes {
                     self.flag(t.span(), &rules::ARRAY_TYPE);
                 }
+            }
+            Type::ImplTrait(t) if !self.in_return && slot != Slot::AskBuild => {
+                self.flag(t.impl_token.span, &rules::IMPL_TRAIT_ARG);
             }
             Type::TraitObject(t) => {
                 let fn_mut = matches!(
@@ -656,11 +780,26 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                         ours: false,
                     },
                 };
+                let drop = callee.path == ["drop"] || callee.ends_with(&["mem", "drop"]);
+                let named =
+                    matches!(e.args.first(), Some(Expr::Path(p)) if p.path.get_ident().is_some());
+                if drop && !named {
+                    self.flag(e.func.span(), &rules::DROP_DISCARD);
+                }
                 for arg in &e.args {
                     self.set_expr(arg, Slot::CallArg(callee.clone()));
                 }
             }
             Expr::MethodCall(e) => {
+                if e.method == "cmp" && self.ordered_newtype_field(&e.receiver) {
+                    self.flag(e.method.span(), &rules::ORD_INNER);
+                }
+                if e.method == "count"
+                    && e.args.is_empty()
+                    && matches!(&*e.receiver, Expr::MethodCall(m) if m.method == "filter_map")
+                {
+                    self.flag(e.method.span(), &rules::COUNT);
+                }
                 let on_self = matches!(&*e.receiver, Expr::Path(p) if p.path.is_ident("self"));
                 for arg in &e.args {
                     let slot = Slot::MethodArg {
@@ -682,6 +821,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 }
             }
             Expr::Closure(e) => {
+                if let Slot::MethodArg { method, .. } = &slot
+                    && PREDICATE_ADAPTERS.contains(&method.as_str())
+                {
+                    self.mark_predicate(&e.body);
+                }
                 let known = match &slot {
                     Slot::MethodArg { .. } => true,
                     Slot::CallArg(callee) => {
@@ -715,6 +859,17 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             Expr::Tuple(e) if e.elems.is_empty() && !library_value(&slot) => {
                 self.flag(e.span(), &rules::UNIT_VALUE);
             }
+            // `&[a, b]` stands where its array would: `f(&[a, b])` passes the
+            // list straight to a call, and `const L: &[T] = &[..]` is a const.
+            Expr::Reference(e)
+                if e.mutability.is_none()
+                    && matches!(
+                        slot,
+                        Slot::CallArg(_) | Slot::MethodArg { .. } | Slot::ConstInit
+                    ) =>
+            {
+                self.set_expr(&e.expr, slot.clone());
+            }
             Expr::Array(e) => {
                 if !matches!(
                     slot,
@@ -722,6 +877,17 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 ) {
                     self.flag(e.span(), &rules::ARRAY_VALUE);
                 }
+            }
+            Expr::Binary(e) if !self.predicates.contains(&std::ptr::from_ref(expr)) => {
+                if let Some(rule) = predicate_rule(&e.op) {
+                    self.flag(e.op.span(), rule);
+                }
+            }
+            Expr::Unary(e)
+                if matches!(e.op, syn::UnOp::Not(_))
+                    && !self.predicates.contains(&std::ptr::from_ref(expr)) =>
+            {
+                self.flag(e.op.span(), &rules::PREDICATE_NOT);
             }
             Expr::Repeat(e) => {
                 if !matches!(*e.expr, Expr::Lit(_)) {
@@ -770,6 +936,24 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         visit::visit_expr(self, expr);
     }
 
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if mac.path.is_ident("matches") && !self.predicate_macros.contains(&std::ptr::from_ref(mac))
+        {
+            self.flag(mac.path.span(), &rules::PREDICATE_MATCHES);
+        }
+        visit::visit_macro(self, mac);
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        if let syn::Stmt::Expr(Expr::MethodCall(e), Some(_)) = stmt
+            && e.method == "ok"
+            && e.args.is_empty()
+        {
+            self.flag(e.method.span(), &rules::OK_DISCARD);
+        }
+        visit::visit_stmt(self, stmt);
+    }
+
     fn visit_local(&mut self, local: &'ast syn::Local) {
         let names = actor::mut_bindings(&local.pat);
         let state = self
@@ -796,6 +980,20 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             self.flag(p.span(), &rules::PAT_MUT);
         }
         visit::visit_pat_ident(self, p);
+    }
+}
+
+fn predicate_rule(op: &syn::BinOp) -> Option<&'static Rule> {
+    match op {
+        syn::BinOp::Eq(_) => Some(&rules::PREDICATE_EQ),
+        syn::BinOp::Ne(_) => Some(&rules::PREDICATE_NE),
+        syn::BinOp::Lt(_) => Some(&rules::PREDICATE_LT),
+        syn::BinOp::Le(_) => Some(&rules::PREDICATE_LE),
+        syn::BinOp::Gt(_) => Some(&rules::PREDICATE_GT),
+        syn::BinOp::Ge(_) => Some(&rules::PREDICATE_GE),
+        syn::BinOp::And(_) => Some(&rules::PREDICATE_AND),
+        syn::BinOp::Or(_) => Some(&rules::PREDICATE_OR),
+        _ => None,
     }
 }
 
@@ -983,6 +1181,70 @@ impl CfgItems {
         gather.visit_file(file);
         CfgItems(gather.0)
     }
+}
+
+/// The `build` parameter of a private fn `ask<T>` with no bound on `T`, no
+/// `where` and two parameters, the last `impl FnOnce(oneshot::Sender<T>) ->
+/// Msg` (proposal 0026).
+fn ask_build<'s>(vis: &Visibility, sig: &'s syn::Signature) -> Option<&'s Type> {
+    let [GenericParam::Type(t)] = sig.generics.params.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let plain_t = t.bounds.is_empty() && t.default.is_none() && sig.generics.where_clause.is_none();
+    let private = matches!(vis, Visibility::Inherited);
+    let (true, true, true, 2) = (sig.ident == "ask", private, plain_t, sig.inputs.len()) else {
+        return None;
+    };
+    let Some(FnArg::Typed(build)) = sig.inputs.last() else {
+        return None;
+    };
+    let Type::ImplTrait(bound) = &*build.ty else {
+        return None;
+    };
+    let [TypeParamBound::Trait(fn_once)] = bound.bounds.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let segment = fn_once.path.segments.last()?;
+    let PathArguments::Parenthesized(args) = &segment.arguments else {
+        return None;
+    };
+    let [Type::Path(sender)] = args.inputs.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let names: Vec<String> = sender
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    let reply = match &sender.path.segments.last()?.arguments {
+        PathArguments::AngleBracketed(a) => match a.args.iter().collect::<Vec<_>>()[..] {
+            [GenericArgument::Type(Type::Path(p))] => p.path.is_ident(&t.ident),
+            _ => false,
+        },
+        _ => false,
+    };
+    let builds_msg =
+        matches!(&args.output, ReturnType::Type(_, ty) if matches!(**ty, Type::Path(_)));
+    let shaped = fn_once.path.segments.len() == 1
+        && segment.ident == "FnOnce"
+        && names.ends_with(&["oneshot".to_string(), "Sender".to_string()])
+        && reply
+        && builds_msg;
+    shaped.then_some(&*build.ty)
+}
+
+fn param_types(sig: &syn::Signature) -> HashMap<String, String> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(t) => match (&*t.pat, facts::type_name(&t.ty)) {
+                (syn::Pat::Ident(p), Some(ty)) => Some((p.ident.to_string(), ty)),
+                _ => None,
+            },
+            FnArg::Receiver(_) => None,
+        })
+        .collect()
 }
 
 /// Plain names assigned with `=` in a fn body, outside nested items.

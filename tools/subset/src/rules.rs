@@ -58,7 +58,7 @@ pub const MUT_SELF: Rule = rule(
 );
 pub const REF_MUT_SELF: Rule = rule(
     "item.fn.receiver.mut",
-    "`&mut self` only on methods of an actor's loop state (proposal 0008)",
+    "`&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)",
 );
 pub const LET_MUT: Rule = rule(
     "stmt.let.mut",
@@ -76,6 +76,29 @@ pub const REF_MUT_OURS: Rule = rule(
     "type.reference.mut",
     "no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)",
 );
+pub const DROP_DISCARD: Rule = rule(
+    "expr.call",
+    "`drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)",
+);
+pub const OK_DISCARD: Rule = rule(
+    "expr.method_call",
+    "`.ok()` is not a discard; write `let _ = value;` (proposal 0025)",
+);
+const PREDICATE: &str = "a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028)";
+pub const PREDICATE_MATCHES: Rule = rule("macro.matches", PREDICATE);
+pub const PREDICATE_EQ: Rule = rule("expr.binary.eq", PREDICATE);
+pub const PREDICATE_NE: Rule = rule("expr.binary.ne", PREDICATE);
+pub const PREDICATE_LT: Rule = rule("expr.binary.lt", PREDICATE);
+pub const PREDICATE_LE: Rule = rule("expr.binary.le", PREDICATE);
+pub const PREDICATE_GT: Rule = rule("expr.binary.gt", PREDICATE);
+pub const PREDICATE_GE: Rule = rule("expr.binary.ge", PREDICATE);
+pub const PREDICATE_AND: Rule = rule("expr.binary.and", PREDICATE);
+pub const PREDICATE_OR: Rule = rule("expr.binary.or", PREDICATE);
+pub const PREDICATE_NOT: Rule = rule("expr.unary.not", PREDICATE);
+pub const COUNT: Rule = rule(
+    "expr.method_call",
+    "count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)",
+);
 pub const IMPL_TRAIT: Rule = rule(
     "item.impl.trait",
     "trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)",
@@ -92,6 +115,14 @@ pub const THISERROR_HOST: Rule = rule(
     "attr.derive",
     "`thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010)",
 );
+pub const ORD_HOST: Rule = rule(
+    "attr.derive",
+    "`PartialOrd` and `Ord` only on a newtype struct whose order means something (proposal 0024)",
+);
+pub const ORD_INNER: Rule = rule(
+    "expr.method_call",
+    "compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024)",
+);
 pub const ERROR_MESSAGE: Rule = rule(
     "attr.error",
     "each error variant carries one `#[error(\"…\")]` message, never `transparent` (proposal 0010)",
@@ -106,19 +137,23 @@ pub const SERDE_KEYS: Rule = rule(
 );
 pub const TYPE_PARAM: Rule = rule(
     "generics.type_param",
-    "a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)",
+    "a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026)",
+);
+pub const IMPL_TRAIT_ARG: Rule = rule(
+    "type.impl_trait.arg",
+    "`impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026)",
 );
 pub const SLICE: Rule = rule(
     "type.slice",
-    "`&[T]` only as a parameter type or a `const` type (proposal 0014)",
+    "`&[T]` only as a parameter type or a `const` type; a `const` list is `const NAME: &[T] = &[..]` (proposal 0014)",
 );
 pub const ARRAY_TYPE: Rule = rule(
     "type.array",
-    "an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015)",
+    "an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015)",
 );
 pub const ARRAY_VALUE: Rule = rule(
     "expr.array",
-    "an array literal only passed straight to a call, or as a `const` table (proposal 0015)",
+    "an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015)",
 );
 pub const REPEAT: Rule = rule(
     "expr.repeat",
@@ -142,7 +177,7 @@ pub const DYN: Rule = rule(
 );
 pub const CLOSURE: Rule = rule(
     "expr.closure",
-    "a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018)",
+    "a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026)",
 );
 pub const GLOB: Rule = rule(
     "item.use.glob",
@@ -190,14 +225,30 @@ pub const RULES: &[&Rule] = &[
     &PAT_MUT,
     &ASSIGN,
     &REF_MUT_OURS,
+    &DROP_DISCARD,
+    &OK_DISCARD,
+    &PREDICATE_MATCHES,
+    &PREDICATE_EQ,
+    &PREDICATE_NE,
+    &PREDICATE_LT,
+    &PREDICATE_LE,
+    &PREDICATE_GT,
+    &PREDICATE_GE,
+    &PREDICATE_AND,
+    &PREDICATE_OR,
+    &PREDICATE_NOT,
+    &COUNT,
     &IMPL_TRAIT,
     &LIFETIME_PARAM,
     &LIFETIME,
     &THISERROR_HOST,
+    &ORD_HOST,
+    &ORD_INNER,
     &ERROR_MESSAGE,
     &FROM_ONCE,
     &SERDE_KEYS,
     &TYPE_PARAM,
+    &IMPL_TRAIT_ARG,
     &SLICE,
     &ARRAY_TYPE,
     &ARRAY_VALUE,

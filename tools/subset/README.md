@@ -72,9 +72,11 @@ A rule is checked only where its id is allowed, by `allowed` or by a scope.
 Where the id isn't allowed, the id itself is the violation. Some rules need
 facts from other files, so `check` first gathers, from every file under
 `include`, the names of our crates, modules, types and free functions, the
-types used as a `Result`'s error, and the actor loop-state types (the `Self`
+types used as a `Result`'s error, the actor loop-state types (the `Self`
 of a `run(mut self)` whose body is an actor loop, and the type a loop's
-`let mut` state is built from). The facts are names, not resolved paths.
+`let mut` state is built from), the types of ours named in a loop-state
+type's fields, and the newtypes that derive `Ord`. The facts
+are names, not resolved paths.
 
 | Id | Rule |
 |---|---|
@@ -89,28 +91,44 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `expr.loop` | a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007) |
 | `expr.break` | `break` only with a value, out of an actor loop (proposal 0007) |
 | `item.fn.receiver.mut` | `mut self` only on a fn whose body is an actor loop (proposal 0008) |
-| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state (proposal 0008) |
+| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
 | `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
+| `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |
+| `expr.method_call` | `.ok()` is not a discard; write `let _ = value;` (proposal 0025) |
+| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `expr.method_call` | count matching items with `filter(\|x\| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
 | `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |
 | `attr.derive` | `thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010) |
+| `attr.derive` | `PartialOrd` and `Ord` only on a newtype struct whose order means something (proposal 0024) |
+| `expr.method_call` | compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024) |
 | `attr.error` | each error variant carries one `#[error("…")]` message, never `transparent` (proposal 0010) |
 | `attr.from` | `#[from]` only on the one variant of an enum holding a given error type (proposal 0011) |
 | `attr.serde` | `#[serde]` only with `transparent`, `tag`, `content`, `rename_all` and `rename` (proposal 0012) |
-| `generics.type_param` | a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013) |
-| `type.slice` | `&[T]` only as a parameter type or a `const` type (proposal 0014) |
-| `type.array` | an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015) |
-| `expr.array` | an array literal only passed straight to a call, or as a `const` table (proposal 0015) |
+| `generics.type_param` | a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013), or as the unbounded `T` of an `ask` helper (proposal 0026) |
+| `type.impl_trait.arg` | `impl Trait` as an argument only as `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, the last parameter of a private `ask<T>` helper (proposal 0026) |
+| `type.slice` | `&[T]` only as a parameter type or a `const` type; a `const` list is `const NAME: &[T] = &[..]` (proposal 0014) |
+| `type.array` | an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015) |
+| `expr.array` | an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015) |
 | `expr.repeat` | an array repeat only of a literal, as in `[0u8; N]` (proposal 0015) |
 | `attr.cfg` | `cfg` only with `target_family = "wasm"`, `unix` or their `not` (proposal 0016) |
 | `attr.cfg` | `cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016) |
 | `attr.cfg` | a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016) |
 | `type.dyn` | `dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017) |
-| `expr.closure` | a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018) |
+| `expr.closure` | a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026) |
 | `item.use.glob` | a glob import only for `dioxus::prelude::*` (proposal 0018) |
 | `attr.allow` | only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018) |
 | `type.bool` | `bool` only in a type argument of a type we don't define, or as a flag field of a clap `Parser` struct (proposals 0019, 0023) |
@@ -137,6 +155,10 @@ Some rules need context.
 - `stmt.let.mut` is a `let` with any `mut` binding in its pattern. Those
   bindings aren't reported again as `pat.ident.mut`, which covers `mut`
   bindings everywhere else, such as fn parameters and match arms.
+- `expr.if_let.single` is an `if let` with no `else`. An `if let` with an
+  `else` or `else if`, and an `if` whose condition is a let-chain, are
+  `expr.if_let`. The `let`s of a chain are also `expr.let` and its `&&` is
+  `expr.binary.and`.
 - `type.impl_trait.ret` is `impl Trait` anywhere in a fn's return type, and
   `type.impl_trait.arg` is `impl Trait` anywhere else.
 - `attr.derive` is reported when every derived name is in `derives`.
@@ -195,11 +217,22 @@ Some rules need context.
   is there: 0002 `pub` only for another crate, 0006 `async fn` only for I/O,
   0012 serde only on wire types (checked by location), 0013 generics only at
   the wire boundary (checked by bound), 0014 a slice only for a read-only
-  sequence, 0015 a byte array only where its size is part of a format, and
+  sequence, 0015 a byte array only where its size is part of a format,
   0009 generics only where the trait demands them (any are allowed inside a
-  listed trait impl). Neither can it see what a body does: 0017's callback
+  listed trait impl), 0024 an order that means something, 0025 `drop` only
+  of a value that owns a resource (checked as "the argument is a plain
+  name"), 0026 every round trip going through `ask` (the helper's shape is
+  checked), and 0028 a `fold` that only counts (`filter_map(..).count()` is
+  checked). Neither can it see what a body does: 0017's callback
   only forwards to a channel, and 0019's `main` turns its `bool` into an
   enum. `docs/subset/compromises.md` lists these.
+- **Ownership and receivers are approximated by name.** 0008's "a value
+  that loop state owns" is a type of ours named anywhere in a field type of
+  a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down. A
+  type that a loop state merely mentions, say in `PhantomData<T>`, counts
+  too, and a value two fields down doesn't. 0024's `.0.cmp(` is flagged
+  only where the receiver is `self` in an impl of an ordered newtype or a
+  parameter declared as one; `event.seq.0.cmp(..)` passes.
 - **`cfg` pairs are matched by name.** A `cfg` fn or impl is paired when an
   item of the same kind and name has the other platform's predicate. Any
   `use` pairs with any `use`, and a `cfg` module needs no pair, since 0016
@@ -307,7 +340,8 @@ part comes from the source.
 | `expr.for` | `for` loop |
 | `expr.group` | invisible group expression |
 | `expr.if` | `if` expression |
-| `expr.if_let` | `if let` expression |
+| `expr.if_let` | `if let` with an `else`, or an `if` with a let-chain |
+| `expr.if_let.single` | `if let` with no `else` |
 | `expr.index` | indexing |
 | `expr.infer` | `_` in expression position |
 | `expr.let` | `let` inside a condition chain |
