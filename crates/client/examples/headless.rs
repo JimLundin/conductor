@@ -53,16 +53,11 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run(args: Args) -> anyhow::Result<()> {
     let start = Instant::now();
-    let endpoint = client::platform::bind_endpoint().await?;
-    log(
-        start,
-        format!("client endpoint {}", endpoint.id().fmt_short()),
-    )?;
     let (link, updates) = HostLink::spawn(
-        endpoint.clone(),
         Target::of_ticket(&args.ticket),
         LinkOptions::new(String::from("headless")),
-    );
+    )
+    .await?;
     let decision = match args.decision {
         Choice::Approve => Decision::Approve,
         Choice::Deny => Decision::Deny,
@@ -82,8 +77,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         was: Liveness::NotLive,
     };
     let link = session.run().await?;
-    drop(link);
-    endpoint.close().await;
+    link.stop().await?;
     Ok(())
 }
 

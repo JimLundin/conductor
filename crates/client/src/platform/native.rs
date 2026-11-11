@@ -7,7 +7,7 @@ use crate::wire::WireError;
 
 /// n0's relays and DNS lookup, plus mDNS so hosts on the same LAN connect
 /// with no relay (§5.3).
-pub async fn bind_endpoint() -> Result<Endpoint, BindError> {
+pub(crate) async fn public_endpoint() -> Result<Endpoint, BindError> {
     Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(super::n0_relays()))
         .address_lookup(MdnsAddressLookup::builder())
