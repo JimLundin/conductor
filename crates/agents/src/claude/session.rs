@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::protocol::{
     ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
     PermissionRequestId, SessionId, UnsupportedVersion, check_version, encode, parse_line,
+    tool_detail,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -381,8 +382,24 @@ impl Actor {
         };
         match inbound {
             Inbound::Event(event) => {
-                self.track(&event);
+                if let ClaudeEvent::PermissionCancelled { id } = &event {
+                    self.open_permissions.remove(id);
+                }
                 self.emit(event).await;
+            }
+            Inbound::Permission {
+                id,
+                tool_name,
+                input,
+            } => {
+                let detail = tool_detail(&tool_name, &input);
+                self.open_permissions.insert(id.clone(), input);
+                self.emit(ClaudeEvent::PermissionRequested {
+                    id,
+                    tool_name,
+                    detail,
+                })
+                .await;
             }
             Inbound::ControlResponse {
                 request_id,
@@ -412,19 +429,6 @@ impl Actor {
                     tracing::error!("replying to {subtype}: {e}");
                 }
             }
-        }
-    }
-
-    /// Records what an event changes in the open permissions.
-    fn track(&mut self, event: &ClaudeEvent) {
-        match event {
-            ClaudeEvent::PermissionRequested { id, input, .. } => {
-                self.open_permissions.insert(id.clone(), input.clone());
-            }
-            ClaudeEvent::PermissionCancelled { id } => {
-                self.open_permissions.remove(id);
-            }
-            _ => {}
         }
     }
 

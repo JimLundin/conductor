@@ -75,6 +75,44 @@ pub enum Role {
     User,
 }
 
+/// What a tool call is about, read from the CLI's `input` by `tool_field`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolDetail {
+    Command(String),
+    Path(String),
+    /// A listed text field, or the compact JSON input of a tool not listed.
+    Text(String),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    Command,
+    Path,
+    Text,
+}
+
+/// The `input` field worth showing for each tool that has one, and its shape.
+fn tool_field(tool: &str) -> Option<(&str, Shape)> {
+    match tool {
+        "Bash" => Some(("command", Shape::Command)),
+        "Edit" | "Write" | "MultiEdit" | "Read" => Some(("file_path", Shape::Path)),
+        "Grep" | "Glob" => Some(("pattern", Shape::Text)),
+        "WebFetch" => Some(("url", Shape::Text)),
+        _ => None,
+    }
+}
+
+pub(crate) fn tool_detail(tool: &str, input: &Value) -> ToolDetail {
+    let shown = tool_field(tool)
+        .and_then(|(field, shape)| Some((shape, input.get(field)?.as_str()?.to_owned())));
+    match shown {
+        Some((Shape::Command, text)) => ToolDetail::Command(text),
+        Some((Shape::Path, text)) => ToolDetail::Path(text),
+        Some((Shape::Text, text)) => ToolDetail::Text(text),
+        None => ToolDetail::Text(input.to_string()),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Text(String),
@@ -82,7 +120,7 @@ pub enum Block {
     ToolUse {
         id: String,
         name: String,
-        input: Value,
+        detail: ToolDetail,
     },
     ToolResult {
         tool_use_id: String,
@@ -106,7 +144,7 @@ pub enum ClaudeEvent {
     PermissionRequested {
         id: PermissionRequestId,
         tool_name: String,
-        input: Value,
+        detail: ToolDetail,
     },
     /// The CLI withdrew a permission request; answering it is now an error.
     PermissionCancelled {
@@ -130,6 +168,13 @@ pub enum ClaudeEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Inbound {
     Event(ClaudeEvent),
+    /// A `can_use_tool` request. The actor keeps `input`, which `allow`
+    /// echoes, and emits `PermissionRequested`.
+    Permission {
+        id: PermissionRequestId,
+        tool_name: String,
+        input: Value,
+    },
     /// Answer to a control request we sent.
     ControlResponse {
         request_id: String,
@@ -175,13 +220,11 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
             session_id: SessionId(msg.session_id),
         }),
         ClaudeOutput::ControlRequest(req) => match req.request {
-            ControlRequestPayload::CanUseTool(perm) => {
-                Inbound::Event(ClaudeEvent::PermissionRequested {
-                    id: PermissionRequestId(req.request_id),
-                    tool_name: perm.tool_name,
-                    input: perm.input,
-                })
-            }
+            ControlRequestPayload::CanUseTool(perm) => Inbound::Permission {
+                id: PermissionRequestId(req.request_id),
+                tool_name: perm.tool_name,
+                input: perm.input,
+            },
             other => Inbound::UnsupportedControlRequest {
                 request_id: req.request_id,
                 subtype: other.subtype().to_owned(),
@@ -228,9 +271,9 @@ fn block(b: ContentBlock) -> serde_json::Result<Block> {
         ContentBlock::Text(t) => Block::Text(t.text),
         ContentBlock::Thinking(t) => Block::Thinking(t.thinking),
         ContentBlock::ToolUse(t) => Block::ToolUse {
+            detail: tool_detail(&t.name, &t.input),
             id: t.id,
             name: t.name,
-            input: t.input,
         },
         ContentBlock::ToolResult(t) => Block::ToolResult {
             tool_use_id: t.tool_use_id,
@@ -371,8 +414,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        AfterDeny, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
-        PermissionRequestId, encode, parse_line,
+        AfterDeny, Block, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision,
+        PermissionMode, PermissionRequestId, Role, ToolDetail, encode, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -481,6 +524,45 @@ mod tests {
                 r#"{"type": "control_response", "response": {"subtype": "error", "request_id": "cli_9",
                 "error": "unsupported control request subtype: hook_callback"}}"#
             )
+        );
+    }
+
+    fn tool(id: &str, name: &str, detail: ToolDetail) -> Block {
+        Block::ToolUse {
+            id: String::from(id),
+            name: String::from(name),
+            detail,
+        }
+    }
+
+    #[test]
+    fn tool_use_input_becomes_a_tool_detail() {
+        let line = r#"{"type":"assistant","session_id":"s","uuid":"u","parent_tool_use_id":null,"message":{
+            "id":"m1","model":"haiku","type":"message","role":"assistant","stop_reason":null,"stop_sequence":null,
+            "usage":{"input_tokens":1,"output_tokens":1},"content":[
+            {"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls -a","description":"list"}},
+            {"type":"tool_use","id":"t2","name":"Grep","input":{"pattern":"fn main"}},
+            {"type":"tool_use","id":"t3","name":"Write","input":{"content":"no path"}},
+            {"type":"tool_use","id":"t4","name":"TodoWrite","input":{"todos":[]}}]}}"#;
+        assert_eq!(
+            parse_line(line).unwrap(),
+            Inbound::Event(ClaudeEvent::Message {
+                role: Role::Assistant,
+                content: Vec::from([
+                    tool("t1", "Bash", ToolDetail::Command(String::from("ls -a"))),
+                    tool("t2", "Grep", ToolDetail::Text(String::from("fn main"))),
+                    tool(
+                        "t3",
+                        "Write",
+                        ToolDetail::Text(String::from(r#"{"content":"no path"}"#))
+                    ),
+                    tool(
+                        "t4",
+                        "TodoWrite",
+                        ToolDetail::Text(String::from(r#"{"todos":[]}"#))
+                    ),
+                ]),
+            })
         );
     }
 

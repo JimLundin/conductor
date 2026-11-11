@@ -72,7 +72,7 @@ fn block_summary(block: &Block) -> String {
     match block {
         Block::Text(t) => format!("text {t:?}"),
         Block::Thinking(_) => String::from("thinking"),
-        Block::ToolUse { name, .. } => format!("tool_use {name}"),
+        Block::ToolUse { name, detail, .. } => format!("tool_use {name} {detail:?}"),
         Block::ToolResult { outcome, .. } => format!("tool_result error={}", is_error(outcome)),
         Block::Other(_) => String::from("other"),
     }
@@ -90,11 +90,8 @@ fn summary(event: &ClaudeEvent) -> String {
             format!("{role}: {}", blocks.join(", "))
         }
         ClaudeEvent::PermissionRequested {
-            tool_name, input, ..
-        } => format!(
-            "permission {tool_name} {}",
-            input.get("file_path").unwrap_or(&Value::Null)
-        ),
+            tool_name, detail, ..
+        } => format!("permission {tool_name} {detail:?}"),
         ClaudeEvent::PermissionCancelled { .. } => String::from("permission_cancelled"),
         ClaudeEvent::TurnFinished {
             subtype,
@@ -257,15 +254,15 @@ async fn approve_deny_interrupt_recording() {
         [
             // 1: approve a Write.
             "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
-            "assistant: tool_use Write",
-            "permission Write \"/tmp/s1-scratch/a.txt\"",
+            "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
+            "permission Write Path(\"/tmp/s1-scratch/a.txt\")",
             "user: tool_result error=false",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
             "finished success is_error=false Some(\"completed\")",
             // 2: deny a Write.
             "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
-            "assistant: tool_use Write",
-            "permission Write \"/tmp/s1-scratch/b.txt\"",
+            "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
+            "permission Write Path(\"/tmp/s1-scratch/b.txt\")",
             "user: tool_result error=true",
             "assistant: text \"The Write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I didn't retry and no file was created.\"",
             "finished success is_error=false Some(\"completed\")",
@@ -280,8 +277,8 @@ async fn approve_deny_interrupt_recording() {
             "finished success is_error=false Some(\"completed\")",
             // 3b: interrupt with a permission request open; the CLI withdraws it.
             "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
-            "assistant: tool_use Write",
-            "permission Write \"/tmp/s1-scratch/d.txt\"",
+            "assistant: tool_use Write Path(\"/tmp/s1-scratch/d.txt\")",
+            "permission Write Path(\"/tmp/s1-scratch/d.txt\")",
             "permission_cancelled",
             "user: tool_result error=true",
             "user: text \"[Request interrupted by user for tool use]\"",
@@ -312,7 +309,7 @@ async fn resume_and_accept_edits_recording() {
             "finished success is_error=false Some(\"completed\")",
             "unknown system/status",
             "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
-            "assistant: tool_use Write",
+            "assistant: tool_use Write Path(\"/tmp/s1-scratch/c.txt\")",
             "user: tool_result error=false",
             "assistant: text \"I created `c.txt` in `/tmp/s1-scratch` with the content `accepted`.\"",
             "finished success is_error=false Some(\"completed\")",
@@ -478,8 +475,8 @@ async fn gated_recording_waits_for_the_message_and_the_answer() {
         ],
         [
             "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
-            "assistant: tool_use Write",
-            "permission Write \"/tmp/s1-scratch/a.txt\"",
+            "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
+            "permission Write Path(\"/tmp/s1-scratch/a.txt\")",
         ]
     );
     assert_eq!(early(&mut events).await, None);
