@@ -159,14 +159,8 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
             },
             _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
         },
-        ClaudeOutput::Assistant(msg) => Inbound::Event(ClaudeEvent::Message {
-            role: Role::Assistant,
-            content: msg.message.content.into_iter().map(block).collect(),
-        }),
-        ClaudeOutput::User(msg) => Inbound::Event(ClaudeEvent::Message {
-            role: Role::User,
-            content: msg.message.content.into_iter().map(block).collect(),
-        }),
+        ClaudeOutput::Assistant(msg) => message(Role::Assistant, msg.message.content, raw),
+        ClaudeOutput::User(msg) => message(Role::User, msg.message.content, raw),
         ClaudeOutput::Result(msg) => Inbound::Event(ClaudeEvent::TurnFinished {
             subtype: msg.subtype.as_str().to_owned(),
             outcome: match msg.is_error.then_some(Outcome::Failed) {
@@ -211,8 +205,22 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
     }
 }
 
-fn block(b: ContentBlock) -> Block {
-    match b {
+/// A message whose blocks don't all re-encode is passed on as `Unknown`.
+fn message(role: Role, content: Vec<ContentBlock>, raw: Value) -> Inbound {
+    Inbound::Event(
+        match content
+            .into_iter()
+            .map(block)
+            .collect::<serde_json::Result<Vec<Block>>>()
+        {
+            Ok(content) => ClaudeEvent::Message { role, content },
+            Err(_) => ClaudeEvent::Unknown(raw),
+        },
+    )
+}
+
+fn block(b: ContentBlock) -> serde_json::Result<Block> {
+    Ok(match b {
         ContentBlock::Text(t) => Block::Text(t.text),
         ContentBlock::Thinking(t) => Block::Thinking(t.thinking),
         ContentBlock::ToolUse(t) => Block::ToolUse {
@@ -232,8 +240,8 @@ fn block(b: ContentBlock) -> Block {
                 None => Outcome::Succeeded,
             },
         },
-        other => Block::Other(serde_json::to_value(other).unwrap_or(Value::Null)),
-    }
+        other => Block::Other(serde_json::to_value(other)?),
+    })
 }
 
 /// A CLI version outside the range `claude-codes` supports.

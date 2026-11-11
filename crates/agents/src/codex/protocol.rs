@@ -280,14 +280,15 @@ struct Asked {
     options: Vec<Value>,
 }
 
-fn asked(request: ServerRequest) -> Option<Asked> {
-    match request {
+/// `None` for a request we don't serve, an error for one whose parts don't re-encode.
+fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
+    Ok(match request {
         ServerRequest::CmdExecApproval(p) => Some(Asked {
             options: match p.available_decisions {
                 Some(decisions) => decisions
                     .iter()
-                    .map(|d| serde_json::to_value(d).unwrap_or(Value::Null))
-                    .collect(),
+                    .map(serde_json::to_value)
+                    .collect::<serde_json::Result<Vec<Value>>>()?,
                 None => plain_decisions(),
             },
             thread: p.thread_id,
@@ -310,7 +311,7 @@ fn asked(request: ServerRequest) -> Option<Asked> {
             options: plain_decisions(),
         }),
         ServerRequest::PermissionsRequestApproval(p) => {
-            let requested = serde_json::to_value(&p.permissions).unwrap_or(Value::Null);
+            let requested = serde_json::to_value(&p.permissions)?;
             Some(Asked {
                 thread: p.thread_id,
                 turn: p.turn_id,
@@ -327,18 +328,18 @@ fn asked(request: ServerRequest) -> Option<Asked> {
             turn: p.turn_id,
             shape: AnswerShape::UserInput,
             kind: ApprovalKind::UserInput {
-                questions: serde_json::to_value(&p.questions).unwrap_or(Value::Null),
+                questions: serde_json::to_value(&p.questions)?,
             },
             options: Vec::new(),
         }),
         _ => None,
-    }
+    })
 }
 
 fn approval(rpc_id: RequestId, request: ServerRequest, raw: Value) -> Inbound {
     let method = String::from(request.method());
     match asked(request) {
-        Some(asked) => Inbound::Approval {
+        Ok(Some(asked)) => Inbound::Approval {
             thread: ThreadId(asked.thread),
             shape: asked.shape,
             event: ThreadEvent::ApprovalRequested {
@@ -349,7 +350,7 @@ fn approval(rpc_id: RequestId, request: ServerRequest, raw: Value) -> Inbound {
             },
             rpc_id,
         },
-        None => unsupported(rpc_id, method, raw),
+        Ok(None) | Err(_) => unsupported(rpc_id, method, raw),
     }
 }
 
