@@ -11,9 +11,10 @@ export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
 port=${PORT:-8080}
 drop_after=8
 
+target=$(tools/target-dir)
 (cd crates/app && dx build --platform web --release >/dev/null)
 site=$(mktemp -d)
-ln -s "$PWD/target/dx/app/release/web/public" "$site/conductor"
+ln -s "$target/dx/app/release/web/public" "$site/conductor"
 (cd crates/app/tests-e2e && [ -d node_modules ] || npm install --silent)
 cargo build -q -p daemon --bin conductord
 
@@ -28,7 +29,7 @@ start_host() {
   local name=$1
   shift
   mkdir "$scratch/$name"
-  ./target/debug/conductord s3-host --data-dir "$scratch/$name" \
+  "$target"/debug/conductord s3-host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" "$@" >"$scratch/$name.log" 2>&1 &
   pids+=($!)
   until grep -q '^join:' "$scratch/$name.log"; do sleep 0.5; done
@@ -60,7 +61,7 @@ set +e
   set -e
   echo "# Web build in headless Chromium and WebKit (390x844) against conductord s3-host, $(date -u +%FT%TZ)"
   echo
-  wasm=$(ls -t target/dx/app/release/web/public/assets/*.wasm | head -1)
+  wasm=$(ls -t "$target"/dx/app/release/web/public/assets/*.wasm | head -1)
   echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
 
   start_host upgrade
