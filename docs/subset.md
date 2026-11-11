@@ -39,9 +39,12 @@ is rejected, however much code it saves.
 7. **Repetition is data.** When two or more places share a shape and
    differ only in values, the values become data and the shape is written
    once. The forms are:
-   - a `const` table of named structs with one adapter chain over it, as
-     in `const PROVIDERS: &[Provider] = &[..]` and
-     `PROVIDERS.iter().find(|p| p.name == name)`;
+   - a `const` table of named structs whose fields are owned values
+     (numbers, our enums and newtypes), with one adapter chain over it,
+     as in `const STUN_SCHEDULE: &[Probe] = &[..]`. A lookup keyed by a
+     string is written as a `match` instead: string fields in a `const`
+     would need `&'static str`, which the subset excludes, and the `match`
+     measured about half the size (`docs/subset/reviews/p1-u2.md`);
    - one `match` that maps a variant to its data, used by every call site,
      as in `fn label(kind: Kind) -> &'static str { match kind { .. } }`;
    - enum variants that carry their data, as in `Exit::Code(i32)` rather

@@ -657,7 +657,7 @@ pub(crate) enum Step {
     /// The actor sets `Turn::Idle` and logs `TurnCompleted`.
     TurnEnded(TurnOutcome),
     /// Codex's own turn id, which `send_turn` also returns.
-    TurnStarted(TurnId),
+    TurnStarted(NativeTurn), // NativeTurn::Claude | NativeTurn::Codex(TurnId)
 }
 
 pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> { todo!() }
@@ -673,7 +673,7 @@ form). The two tables below are those matches.
 
 | Claude event | Steps |
 |---|---|
-| `TurnStarted { .. }` | none. Since the drift-check change it fires on every `system/init`, once per turn, and carries the session id; `SessionReady` is still logged after `spawn` returns, and the Codex `turn/started` is what maps to a step |
+| `TurnStarted { .. }` | `TurnStarted(NativeTurn::Claude)`. It fires on every `system/init`, once per turn (drift-check change). `SessionReady` is still logged after `spawn` returns |
 | `Message { Assistant, [Text(t)] }`, per block | `Emit(AssistantMessage { t })` |
 | `Message { Assistant, [ToolUse { id, name, detail }] }`, per block | `Emit(ToolCall { id, Started { tool_kind(name, detail) } })` |
 | `Message { User, [ToolResult { tool_use_id, outcome }] }`, per block | `Emit(ToolCall { tool_use_id, Finished { outcome } })` |
@@ -692,7 +692,7 @@ form). The two tables below are those matches.
 | Codex thread event | Steps |
 |---|---|
 | `Started` | none |
-| `TurnStarted { turn }` | `TurnStarted(turn)` |
+| `TurnStarted { turn }` | `TurnStarted(NativeTurn::Codex(turn))` |
 | `AgentDelta { text, .. }` (added in unit 2) | `Emit(AssistantDelta { text })` |
 | `AgentMessage { text, .. }` | `Emit(AssistantMessage { text })` |
 | `Item { Started, Command { id, command, .. } }` | `Emit(ToolCall { id, Started { Command { command } } })` |
@@ -1184,3 +1184,25 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   text. The browser's offline cache, a later item, uses the browser's own
   storage with the same postcard bytes. Durability is a later slice, not
   slice 1.
+
+## 11. Changes from the unit 2 review (2026-11-11)
+
+- **Interrupts are held until the turn starts** (§2.5). Sent before the
+  CLI's turn-started event, Claude acknowledges and then runs the whole turn
+  (10 of 10 logs) and Codex refuses with "no active turn" (10 of 10). Sent
+  on the turn-started event, both work every time. The session's turn is a
+  state machine:
+  `Turn = Idle | Starting(Held) | Running(NativeTurn)`, `Held = Nothing | Interrupt`.
+  `Send` moves to `Starting(Nothing)`. `Interrupt` while `Starting` is
+  `Accepted` and stored as `Starting(Interrupt)`, with nothing sent yet.
+  `Step::TurnStarted(native)` moves to `Running(native)` and sends a held
+  interrupt then. Turn end returns to `Idle` and drops a held interrupt.
+  Units 4 and 5 each add a gated test that interrupts before the turn starts.
+- **`Step::TurnStarted` carries `NativeTurn`** (§2.7): `Claude`, or
+  `Codex(TurnId)` because Codex interrupts by turn id.
+- **The §2.7 lookup tables are `match`es**, not `const` lists:
+  `tool_detail` (done in unit 2) and `CODEX_OUTCOMES` (unit 5). A string-keyed
+  table measured about +100% against the `match`.
+- **`s2` step 1 runs under `ApprovalPolicy::Untrusted` with a writable
+  workspace**, so Codex itself asks before every command and the step no
+  longer depends on the model.
