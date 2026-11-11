@@ -92,8 +92,7 @@ touches = ["daemon/src/wire.rs", "daemon/src/rtc.rs", "daemon/src/stun.rs"]
 [[phase.unit]]
 id = "p1-2"
 name = "Unit 2: agents boundary"
-status = "in_progress"
-branch = "p1-u2-agents"
+status = "done"
 purpose = "Claude and Codex stream deltas, typed ToolDetail, and the drift-check change."
 done_when = "Replay tests assert deltas and details; s1 and s2 pass live 5 runs in a row."
 touches = ["agents", "claude-codes"]
