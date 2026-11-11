@@ -1,6 +1,6 @@
 ---
 construct: macro.env
-status: proposed
+status: accepted
 task: bootstrap round (docs/subset/bootstrap-report.txt)
 ---
 
@@ -45,3 +45,4 @@ Friction points removed: 3 `macro.env` sites in 3 files.
 6. One way: kept.
 
 ## Owner decision
+Accepted on 2026-11-11, with the rest of the bootstrap round.

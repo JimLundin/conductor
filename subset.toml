@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 1
+version = 2
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -20,6 +20,13 @@ allowed = [
   "item.const",
   "item.use",
   "item.mod",
+  "item.fn.async",            # proposal 0006
+  "item.fn.receiver.mut",     # proposal 0008
+  "item.impl.trait",          # proposal 0009
+
+  # Visibility
+  "vis.pub",                  # proposal 0002
+  "vis.restricted",           # proposal 0003; pub(crate) only
 
   # Expressions
   "expr.match",
@@ -35,9 +42,22 @@ allowed = [
   "expr.try",                 # ?
   "expr.closure.adapter",     # a closure passed straight to an iterator, Option or Result method
   "expr.tuple",               # proposal 0001
+  "expr.struct.update",       # proposal 0004
+  "expr.unit",                # proposal 0005
+  "expr.async",               # proposal 0006
+  "expr.await",               # proposal 0006
+  "expr.loop",                # proposal 0007
+  "expr.break",               # proposal 0007; `break value` in a drive loop
+  "expr.assign",              # proposal 0008
+  "expr.reference.mut",       # proposal 0008
+  "expr.array",               # proposal 0015
+  "expr.repeat",              # proposal 0015
+  "expr.closure",             # proposals 0006, 0017, 0018; only as the listed calls' argument
+  "expr.lit.bool",            # proposal 0021
 
   # Statements
   "stmt.let",                 # immutable, with a pattern; no `else`
+  "stmt.let.mut",             # proposal 0008
 
   # Patterns
   "pat.ident",
@@ -48,26 +68,45 @@ allowed = [
   "pat.or",                   # A | B in one arm
   "pat.wild",                 # `_`, only in positions clippy's wildcard rules allow
   "pat.tuple",                # proposal 0001
+  "pat.ident.mut",            # proposal 0008
 
   # Types
   "type.path",                # except `bool`
   "type.reference",
   "type.tuple",               # proposal 0001
+  "type.unit",                # proposal 0005
+  "type.reference.mut",       # proposal 0008
+  "type.lifetime",            # proposal 0009
+  "type.slice",               # proposal 0014
+  "type.array",               # proposal 0015
+
+  # Generics
+  "generics.lifetime",        # proposal 0009
+  "generics.type_param",      # proposal 0013
 
   # Attributes
   "attr.doc",
   "attr.derive",              # only the derives in `derives`
   "attr.cfg_test",            # #[cfg(test)] and #[test]
+  "attr.error",               # proposal 0010
+  "attr.from",                # proposal 0011
+  "attr.cfg",                 # proposal 0016
+  "attr.tokio::test",         # proposal 0020
 
   # Macros
   "macro.allowed",            # only the macros in `macros`
 ]
 
-derives = ["Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash"]
+derives = [
+  "Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash",
+  "thiserror::Error",         # proposal 0010
+]
 
 macros = [
   "format", "write", "writeln",
   "tracing::trace", "tracing::debug", "tracing::info", "tracing::warn", "tracing::error",
+  "tokio::select",            # proposal 0007
+  "env",                      # proposal 0022
 ]
 
 # Extra macros allowed only inside #[cfg(test)] code and tests/.

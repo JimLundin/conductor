@@ -47,6 +47,27 @@ The ids are those used in `subset.toml`.
 | Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method. |
 | Bindings | `stmt.let` | Immutable, with a pattern. |
 | Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
+| Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
+| Crate-internal sharing | `vis.restricted` | Proposal 0003. Only `pub(crate)`, never `pub(super)` or `pub(in …)`, and a `pub(crate)` struct has no `pub` fields. |
+| Changed copies | `expr.struct.update` | Proposal 0004. `..base` only where the base is an existing value of the same type or an external crate's `Default::default()` or named constructor. |
+| Unit | `type.unit`, `expr.unit` | Proposal 0005. `()` only in `Result<(), E>`, as a signalling channel's item type, in `fn main`'s return type and as `Ok(())`. |
+| Async | `item.fn.async`, `expr.await`, `expr.async`, `attr.tokio::main` | Proposal 0006. `async fn` for I/O, and an `async` block only as a spawn argument or the whole body of a stream closure. |
+| Actor loop | `expr.loop`, `expr.break`, `macro.allowed` for `tokio::select` | Proposal 0007. `loop` only as the whole body of an actor's `run` fn or a drive fn, taking one input per turn and handling it with one call or `match`. |
+| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008. Mutation only of an actor's loop state and of external values whose API takes `&mut`, and never compound assignment. |
+| Library traits | `item.impl.trait`, `generics.lifetime`, `type.lifetime` | Proposal 0009. Trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler`, with lifetimes only where the trait's signature demands them. |
+| Error enums | `attr.derive` of `thiserror::Error`, `attr.error` | Proposal 0010. `thiserror::Error` on an error type, with one `#[error("…")]` message per variant. |
+| Error conversion | `attr.from` | Proposal 0011. `#[from]` only on the one variant of an enum that holds a given foreign error type. |
+| Wire types | `attr.derive.Serialize`, `attr.derive.Deserialize`, `attr.serde` | Proposal 0012. serde derives only in `crates/proto` and the agents' provider protocol modules, with `transparent`, `tag`, `content`, `rename_all` and `rename` only. |
+| Codec generics | `generics.type_param` | Proposal 0013. A type parameter only on a codec fn, with one `Serialize` or `DeserializeOwned` bound and no `where`. |
+| Slices | `type.slice` | Proposal 0014. `&[T]` for a read-only sequence parameter and for a `const` list. |
+| Arrays | `type.array`, `expr.array`, `expr.repeat` | Proposal 0015. Arrays only for fixed-size bytes, `const` tables and a literal list passed straight to a call. |
+| Platform code | `attr.cfg` | Proposal 0016. `cfg` only on `target_family = "wasm"` and `unix` (or their `not`), on items, each with its counterpart. |
+| Browser callbacks | `type.dyn`, `expr.closure` | Proposal 0017. `Closure<dyn FnMut(..)>` only in `crates/client/src/platform/`, and its closure only forwards the event to a channel. |
+| UI | `macro.rsx`, `macro.asset`, `attr.component`, `item.use.glob`, `attr.allow` | Proposal 0018. Dioxus only in `crates/app`, which renders what `client` decides. |
+| Command line | `attr.derive.Parser`, `attr.derive.Subcommand`, `attr.derive.ValueEnum`, `attr.command`, `attr.arg`, `type.bool` | Proposal 0019. clap only in a binary's `main.rs` and in `examples/`, and a flag `bool` becomes an enum before it leaves `main`. |
+| Async tests | `attr.tokio::test` | Proposal 0020. `#[tokio::test]` with no arguments on an `async fn` test. |
+| External flags | `expr.lit.bool` | Proposal 0021. `true` / `false` only as an argument or field value of an external API whose type is `bool`. |
+| Build-time constants | `macro.allowed` for `env` | Proposal 0022. `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR`. |
 | Modules | `item.use`, `item.mod` | |
 | Attributes | `attr.doc`, `attr.derive` (the listed derives), `attr.cfg_test` | |
 | Macros | `macro.allowed` (the listed macros) | Tests may also use `assert_eq!` and `assert_ne!`. |
@@ -58,11 +79,15 @@ Don't work around it.
 
 ## Not in the core
 
-Everything else, for example `()`, `if`, `while`, `for`, `loop`, `return`,
-`break`, operators (`&&`, `==`, `+`, `as`, indexing, ranges), `let mut`,
-`let … else`, traits, generics, `async`, `dyn`, and unlisted macros. Some of
-these will join through proposals. Others, such as `unsafe` and
-interior mutability, conflict with the qualities and won't.
+Everything else, for example `if`, `while`, `for`, `return`, `continue`,
+`break` outside a drive loop, operators (`&&`, `==`, `+`, `as`, indexing,
+ranges), compound assignment (`+=`), `let … else`, trait definitions,
+generic types, and unlisted macros. Some of these may join through
+proposals. Others, such as `unsafe` and interior mutability, conflict with
+the qualities and won't.
+
+Where version 2 gives ground on the qualities is listed in
+[`docs/subset/compromises.md`](subset/compromises.md).
 
 ## Bootstrap round
 

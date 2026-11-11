@@ -1,6 +1,6 @@
 ---
 construct: macro.rsx, attr.component, macro.asset, item.use.glob, attr.allow, expr.closure, stmt.let.mut
-status: proposed
+status: accepted
 task: bootstrap round (docs/subset/bootstrap-report.txt)
 ---
 
@@ -51,3 +51,4 @@ Because macro bodies aren't checked, the reviewer suggests the owner pair this w
 6. One way: kept. One UI framework idiom, in one crate.
 
 ## Owner decision
+Accepted on 2026-11-11, with the rest of the bootstrap round.

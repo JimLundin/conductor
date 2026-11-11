@@ -1,6 +1,6 @@
 ---
 construct: generics.type_param
-status: proposed
+status: accepted
 task: bootstrap round (docs/subset/bootstrap-report.txt)
 ---
 
@@ -122,3 +122,4 @@ Friction points removed: 16 `generics.type_param` sites. 7 are codec functions a
 6. One way: kept. One codec, called the same way for every message type.
 
 ## Owner decision
+Accepted on 2026-11-11, with the rest of the bootstrap round.
