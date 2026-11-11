@@ -1,139 +1,142 @@
-# conductord s3-host and the headless client, 2026-11-11T15:43:04Z
+# conductord s3-host and the headless client, 2026-11-10T21:39:47Z
 
 ## Client run 1: prompt, deltas, approve, finish
-[  0.011s] client endpoint f5efa4b1b5
-[  0.012s] status Connecting path=Unknown
-[  0.432s] status Authenticating path=Unknown
-[  0.634s] reset to epoch 10793426904511396731
-[  0.634s] status CatchingUp path=Unknown
-[  0.634s] status Live path=Unknown
-[  0.634s] live #1 after 0.634s
-[  0.646s] prompt "what is the answer?" -> Accepted
-[  0.646s] status Live path=Direct
-[  0.747s] event #1 TranscriptDelta { text: "Looking " }
-[  0.848s] event #2 TranscriptDelta { text: "into " }
-[  0.949s] event #3 TranscriptDelta { text: "\"what " }
-[  1.050s] event #4 TranscriptDelta { text: "is " }
-[  1.152s] event #5 TranscriptDelta { text: "the " }
-[  1.253s] event #6 TranscriptDelta { text: "answer?\". " }
-[  1.354s] event #7 TranscriptDelta { text: "I " }
-[  1.455s] event #8 TranscriptDelta { text: "need " }
-[  1.556s] event #9 TranscriptDelta { text: "to " }
-[  1.658s] event #10 TranscriptDelta { text: "run " }
-[  1.759s] event #11 TranscriptDelta { text: "one " }
-[  1.861s] event #12 TranscriptDelta { text: "command " }
-[  1.962s] event #13 TranscriptDelta { text: "to " }
-[  2.064s] event #14 TranscriptDelta { text: "answer." }
-[  2.064s] event #15 ApprovalRequested { id: RequestId(1), tool: "Bash", detail: "echo \"what is the answer?\"" }
-[  2.068s] resolve RequestId(1) Approve -> Accepted
-[  2.068s] event #16 ApprovalResolved { id: RequestId(1), decision: Approve, by: "headless" }
-[  2.068s] event #17 AssistantMessage { text: "Ran it. The answer to \"what is the answer?\" is 42." }
-[  2.068s] event #18 TurnFinished
-[  2.068s] turn finished; path=Direct
+[  0.310s] client endpoint 5a586d215c
+[  0.315s] status Connecting path=Unknown
+[  0.630s] status Authenticating path=Unknown
+[  0.748s] reset to epoch 1554171991626782719
+[  0.748s] status CatchingUp path=Unknown
+[  0.748s] status Live path=Unknown
+[  0.748s] live #1 after 0.748s
+[  0.757s] prompt "what is the answer?" -> Accepted
+[  0.757s] status Live path=Direct
+[  0.857s] event #1 TranscriptDelta { text: "Looking " }
+2026-11-10T21:39:48.705239Z  WARN iroh::socket::transports::relay::actor: Relay server reports problem: Another endpoint connected with the same endpoint id. No more messages will be received.
+[  0.958s] event #2 TranscriptDelta { text: "into " }
+[  1.059s] event #3 TranscriptDelta { text: "\"what " }
+[  1.160s] event #4 TranscriptDelta { text: "is " }
+[  1.263s] event #5 TranscriptDelta { text: "the " }
+[  1.363s] event #6 TranscriptDelta { text: "answer?\". " }
+[  1.465s] event #7 TranscriptDelta { text: "I " }
+[  1.566s] event #8 TranscriptDelta { text: "need " }
+[  1.667s] event #9 TranscriptDelta { text: "to " }
+[  1.768s] event #10 TranscriptDelta { text: "run " }
+[  1.868s] event #11 TranscriptDelta { text: "one " }
+[  1.971s] event #12 TranscriptDelta { text: "command " }
+[  2.076s] event #13 TranscriptDelta { text: "to " }
+[  2.180s] event #14 TranscriptDelta { text: "answer." }
+[  2.181s] event #15 ApprovalRequested { id: RequestId(1), tool: "Bash", detail: "echo \"what is the answer?\"" }
+[  2.185s] resolve RequestId(1) Approve -> Accepted
+[  2.186s] event #16 ApprovalResolved { id: RequestId(1), decision: Approve, by: "headless" }
+[  2.186s] event #17 AssistantMessage { text: "Ran it. The answer to \"what is the answer?\" is 42." }
+[  2.186s] event #18 TurnFinished
+[  2.186s] turn finished; path=Direct
 
 ## Client run 2: the connection drops after 4 deltas, then resumes
-[  0.011s] client endpoint b7e897fc34
-[  0.012s] status Connecting path=Unknown
-[  0.490s] status Authenticating path=Unknown
-[  0.683s] reset to epoch 10793426904511396731
-[  0.683s] status CatchingUp path=Unknown
-[  0.683s] status CatchingUp path=Direct
-[  0.685s] event #1 (history) TranscriptDelta { text: "Looking " }
-[  0.685s] event #2 (history) TranscriptDelta { text: "into " }
-[  0.686s] event #3 (history) TranscriptDelta { text: "\"what " }
-[  0.686s] event #4 (history) TranscriptDelta { text: "is " }
-[  0.686s] event #5 (history) TranscriptDelta { text: "the " }
-[  0.686s] event #6 (history) TranscriptDelta { text: "answer?\". " }
-[  0.686s] event #7 (history) TranscriptDelta { text: "I " }
-[  0.686s] event #8 (history) TranscriptDelta { text: "need " }
-[  0.686s] event #9 (history) TranscriptDelta { text: "to " }
-[  0.686s] event #10 (history) TranscriptDelta { text: "run " }
-[  0.686s] event #11 (history) TranscriptDelta { text: "one " }
-[  0.686s] event #12 (history) TranscriptDelta { text: "command " }
-[  0.686s] event #13 (history) TranscriptDelta { text: "to " }
-[  0.686s] event #14 (history) TranscriptDelta { text: "answer." }
-[  0.686s] event #15 (history) ApprovalRequested { id: RequestId(1), tool: "Bash", detail: "echo \"what is the answer?\"" }
-[  0.687s] event #16 (history) ApprovalResolved { id: RequestId(1), decision: Approve, by: "headless" }
-[  0.687s] event #17 (history) AssistantMessage { text: "Ran it. The answer to \"what is the answer?\" is 42." }
-[  0.687s] event #18 (history) TurnFinished
-[  0.687s] status Live path=Direct
-[  0.687s] live #1 after 0.687s
-[  0.695s] prompt "and again?" -> Accepted
-[  0.792s] event #19 TranscriptDelta { text: "Looking " }
-[  0.904s] event #20 TranscriptDelta { text: "into " }
-[  0.997s] event #21 TranscriptDelta { text: "\"and " }
-[  1.096s] event #22 TranscriptDelta { text: "again?\". " }
-[  1.096s] dropping the connection mid-turn at seq 22
-[  1.096s] status Disconnected path=Unknown
-[  1.096s] status Connecting path=Unknown
-[  1.118s] status Authenticating path=Unknown
-[  1.127s] status CatchingUp path=Unknown
-[  1.127s] status Live path=Unknown
-[  1.127s] live #2 after 1.127s
-[  1.127s] status Live path=Direct
-[  1.197s] event #23 TranscriptDelta { text: "I " }
-[  1.299s] event #24 TranscriptDelta { text: "need " }
-[  1.401s] event #25 TranscriptDelta { text: "to " }
-[  1.502s] event #26 TranscriptDelta { text: "run " }
-[  1.616s] event #27 TranscriptDelta { text: "one " }
-[  1.704s] event #28 TranscriptDelta { text: "command " }
-[  1.805s] event #29 TranscriptDelta { text: "to " }
-[  1.908s] event #30 TranscriptDelta { text: "answer." }
-[  1.908s] event #31 ApprovalRequested { id: RequestId(2), tool: "Bash", detail: "echo \"and again?\"" }
-[  1.912s] resolve RequestId(2) Approve -> Accepted
-[  1.912s] event #32 ApprovalResolved { id: RequestId(2), decision: Approve, by: "headless" }
-[  1.912s] event #33 AssistantMessage { text: "Ran it. The answer to \"and again?\" is 42." }
-[  1.912s] event #34 TurnFinished
-[  1.912s] turn finished; path=Direct
+[  0.020s] client endpoint 57d10c8eea
+[  0.022s] status Connecting path=Unknown
+[  0.311s] status Authenticating path=Unknown
+[  0.418s] reset to epoch 1554171991626782719
+[  0.418s] status CatchingUp path=Unknown
+[  0.418s] status CatchingUp path=Relayed
+[  0.427s] status CatchingUp path=Direct
+[  0.461s] event #1 (history) TranscriptDelta { text: "Looking " }
+[  0.461s] event #2 (history) TranscriptDelta { text: "into " }
+[  0.461s] event #3 (history) TranscriptDelta { text: "\"what " }
+[  0.470s] event #4 (history) TranscriptDelta { text: "is " }
+[  0.470s] event #5 (history) TranscriptDelta { text: "the " }
+[  0.470s] event #6 (history) TranscriptDelta { text: "answer?\". " }
+[  0.470s] event #7 (history) TranscriptDelta { text: "I " }
+[  0.470s] event #8 (history) TranscriptDelta { text: "need " }
+[  0.470s] event #9 (history) TranscriptDelta { text: "to " }
+[  0.471s] event #10 (history) TranscriptDelta { text: "run " }
+[  0.471s] event #11 (history) TranscriptDelta { text: "one " }
+[  0.471s] event #12 (history) TranscriptDelta { text: "command " }
+[  0.471s] event #13 (history) TranscriptDelta { text: "to " }
+[  0.471s] event #14 (history) TranscriptDelta { text: "answer." }
+[  0.471s] event #15 (history) ApprovalRequested { id: RequestId(1), tool: "Bash", detail: "echo \"what is the answer?\"" }
+[  0.471s] event #16 (history) ApprovalResolved { id: RequestId(1), decision: Approve, by: "headless" }
+[  0.471s] event #17 (history) AssistantMessage { text: "Ran it. The answer to \"what is the answer?\" is 42." }
+[  0.471s] event #18 (history) TurnFinished
+[  0.471s] status Live path=Direct
+[  0.471s] live #1 after 0.471s
+[  0.506s] prompt "and again?" -> Accepted
+[  0.592s] event #19 TranscriptDelta { text: "Looking " }
+2026-11-10T21:39:50.992007Z  WARN iroh::socket::transports::relay::actor: Relay server reports problem: Another endpoint connected with the same endpoint id. No more messages will be received.
+[  0.693s] event #20 TranscriptDelta { text: "into " }
+[  0.794s] event #21 TranscriptDelta { text: "\"and " }
+[  0.895s] event #22 TranscriptDelta { text: "again?\". " }
+[  0.895s] dropping the connection mid-turn at seq 22
+[  0.895s] status Disconnected path=Unknown
+[  0.896s] status Connecting path=Unknown
+[  0.916s] status Authenticating path=Unknown
+[  0.921s] status CatchingUp path=Unknown
+[  0.921s] status Live path=Unknown
+[  0.921s] live #2 after 0.921s
+[  0.921s] status Live path=Direct
+[  0.996s] event #23 TranscriptDelta { text: "I " }
+[  1.099s] event #24 TranscriptDelta { text: "need " }
+[  1.200s] event #25 TranscriptDelta { text: "to " }
+[  1.300s] event #26 TranscriptDelta { text: "run " }
+[  1.401s] event #27 TranscriptDelta { text: "one " }
+[  1.508s] event #28 TranscriptDelta { text: "command " }
+[  1.605s] event #29 TranscriptDelta { text: "to " }
+[  1.706s] event #30 TranscriptDelta { text: "answer." }
+[  1.706s] event #31 ApprovalRequested { id: RequestId(2), tool: "Bash", detail: "echo \"and again?\"" }
+[  1.709s] resolve RequestId(2) Approve -> Accepted
+[  1.710s] event #32 ApprovalResolved { id: RequestId(2), decision: Approve, by: "headless" }
+[  1.710s] event #33 AssistantMessage { text: "Ran it. The answer to \"and again?\" is 42." }
+[  1.710s] event #34 TurnFinished
+[  1.710s] turn finished; path=Direct
 
 ## Host log
-host id:  ec0482ea5a2ea3cf247f032ab191af13bcc4acaa987633ec45ba2e5cdf061cea
-relay:    https://euc1-1.relay.n0.iroh.link/
-ticket:   AOwEgupaLqPPJH8DKrGRrxO8xKyqmHYz7EW6LlzfBhzq2qOxCG1D0_Yjt5ztF-ChN2h0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay8
-join:     http://localhost:8080/conductor/#join=AOwEgupaLqPPJH8DKrGRrxO8xKyqmHYz7EW6LlzfBhzq2qOxCG1D0_Yjt5ztF-ChN2h0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay8
+host id:  0f2001fd2548d69b4f9e52886662ab6f44b32946d104bcd083bbf8cd24d2f56c
+relay:    https://euc1-1.relay.n0.iroh.link./
+ticket:   AA8gAf0lSNabT55SiGZiq29EsylG0QS80IO7-M0k0vVsZUwfTeGo9xAXPEvfM0i6W2h0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay4v
+join:     http://localhost:8080/conductor/#join=AA8gAf0lSNabT55SiGZiq29EsylG0QS80IO7-M0k0vVsZUwfTeGo9xAXPEvfM0i6W2h0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay4v
 █████████████████████████████████████████████████████████
 █████████████████████████████████████████████████████████
-████ ▄▄▄▄▄ ██▄   ▀█  ▀ ▀█ ▀ ▀ ▀▄▄▄▀▀█▀▀▀  ▀▀ █ ▄▄▄▄▄ ████
-████ █   █ █ ▀█▄  ▄▄▀▄▄████▀▄ ▀ ▀▀▄ █▀█▀ ▀█ ▄█ █   █ ████
-████ █▄▄▄█ █  ▀▀▄ ██ ▀▄▄ ▀ ▄▄▄ ▄▄█ ▄▄▄▀▀ ▄▀███ █▄▄▄█ ████
-████▄▄▄▄▄▄▄█ ▀ █▄█ █▄█ ▀ ▀ █▄█ █ ▀ █ ▀▄█ ▀▄▀▄█▄▄▄▄▄▄▄████
-████ █ ▄▄▄▄█████ ▄▄▀█  ▄▀█▄▄▄ ▄ ▄▄▀▀█▀ █▀▀▀▄▀▀▄▄▄▄▄▀▀████
-████▄▀▄▄▄▄▄▄ ▀▀▀▄  █▀▀█▀▄▄▄▄  █▀█▀▀▄█ █ ▄▀█▄█ ▄▄█▄  █████
-████▄▀ ▀▄█▄▄▀▄▀▄▀▄ ▀ ▀ ██▄█▀▄▄ ▀▀▄█▀ ▀▄ ▄▀▀▀█▄▀█ ▄█▀▄████
-████▄▀▀▄▀ ▄ ▀   ██ ▄▀  ███▄█  █▀▀▀▀▀▀ █▀▄ ▄█▄▀▀ █▀▀▄ ████
-████▄ ███▄▄ ▄▀   ▀ █ █   ▀██▀▀▀▄▀▀█ ▀█▄▄ ▀ ▀█▀▀▄█▄▄██████
-████▄█▄▀██▄▀ ▄▄▄ ▄ ▀▄▀▄▀█▄  ▄▀▄▄▀▄ ▄█▀▀  █▄▄▄ ▀▄▀▄█ ▄████
-██████   █▄  ▀ ▄█ ▀  █  ▄█▄▄█ ▄ █▀█ ▀▄▄▀▄ █▄▄▄██▀█▄▄ ████
-██████ █ ▄▄▄  ▄▄▄▀███ █ ██ ▄▄▄ ▀█ ▀ ▀▄██▄▀▄█ ▄▄▄  █▄▀████
-████▀▄██ █▄█ ▀ █▄█  ▀█▄  ▀ █▄█ ▄ ▄█▄█▄██▀▄▄█ █▄█ ██▄▄████
-█████▄▀▄▄▄▄▄▄▄█ ▄▄ ▀▀▄ ▀▄▀▄   ▄▀▀▀ ▄█▄█ ▄ █ ▄▄▄▄ ▀ ▄█████
-████▄ ▄██▄▄▀▄▀▄▄█▄ ██ ▄█▀▄▄ ▀▄▀▀  ▀▀▀█▀ ▄▄ █   █ ▄▄▄▄████
-████  ▀▀██▄▀▄▀█▀  ▀▄ ▀ ▄▄ █▀ ▀▀▀▀▀ ███▄▄█▀█▄█▀▄▀▄▀▀  ████
-████▄ █▄ ▀▄▄▄  ▀██▀█▄▀▄█ ▀▄█▄ ▀ ▀▀█ ▀▄▀█▄█▀▄▄ ██▄▄██ ████
-████ ▀▀▀ ▀▄▄█▄  ▀█ ▄▄█▄ ▄ ▀▀▀▀███▀ █▀ ▀ ▄▀  █▄▄▀█▄█▀█████
-████▄██▀▄█▄█▄▄█ ▀▀█▄▀▀█ █▀█ ▄▀▀▀ █▀█ ▄█▄ ▀█▄  ▄ ▄█▄█▄████
-█████ ▀▀█▄▄██ ██▀  ███▄▀█▀▀▀▀█▀ █ ▀▄▀▄█▄ ▀▄▄▀   ▄▄▀ ▄████
-████▄▄▄███▄█ ██ ▀▄██▀█▀█ ▄ ▄▄▄ ▄ ▀▄▀▀ ▀▀ ▄█  ▄▄▄ █▄▀ ████
-████ ▄▄▄▄▄ █▀█▄▀▄▀ ▄ ██▀▄▀ █▄█ ▄▀ ▀▄██▄▄▄▀█▄ █▄█ ▄▄██████
-████ █   █ █ ▄█ ▄ ▄▀▀ ▀▄▀█ ▄  ▄▀ ▀ ▀ ▀▀▄ ██▀▄    ▄▄  ████
-████ █▄▄▄█ █▄█▀▄███ ▀ ▀ ▄▀█ ▄█▄██▀▀▀████▀ ▄▄▀▄▀█████ ████
-████▄▄▄▄▄▄▄█▄▄█▄▄█▄███▄█▄▄█▄▄█▄▄▄▄█▄▄▄▄▄██▄▄█▄▄██▄▄▄▄████
+████ ▄▄▄▄▄ █▄▄▄ ▀███▀▄▄▀█▄ ▀█▀  ███ ▄█  ▄▀▀▀ █ ▄▄▄▄▄ ████
+████ █   █ █▄ ▀▀██ █▄▄▀█▄▀▄  ▀  █  ▀▄█▄▀▀ █ ▄█ █   █ ████
+████ █▄▄▄█ █▀▄▀█▀▄██▀▀█▄▄▄ ▄▄▄ ██▄▄ ▄   ██▀███ █▄▄▄█ ████
+████▄▄▄▄▄▄▄█▄█▄█ █ ▀▄▀▄█▄▀ █▄█ ▀▄▀▄▀▄█▄▀▄▀▄█▄█▄▄▄▄▄▄▄████
+████ █▄█▀█▄▄▀▄ ▀▄▀▀██▄▀█ ▀▄▄  ▄ ▀██▄▀▀█▀ █▄  ▀▀▄█▀▄▀▄████
+███████▄ ▀▄█▄▀▀▀ ▄▄▄ ▀  █ ██▄▀▄█▄▀▄█▄█▄  ▀█ ▄▀ █   ▀▀████
+████▀  ▄█▀▄█ ▀   ▄█ ▄█▄ █ ▄   ▀█ ▀█ ▀█▀▀ ▀█▀▄██▀ ▀▄  ████
+██████▀█▄ ▄█▀▀▄▄█ ▀ ▀█▄▀█▀█ ▄ ▄█  █  █▄  ▀█▀▄ █▀ █ █▄████
+████▀▀█  ▄▄ ▄▀▄▄ ▀█▀▄█▄▀▀█▄ ▄▀▄   ▀▀ ▀██▄ ▀  ▄▄█  █▄▀████
+████ ▄ ▄  ▄▄▀ ▀▄▄▀▀▀▄▀▀ ▄ ▀▀ ▀█ ▄█▄█▄█ ▀ ▄█ █▀▄█  ▄▀ ████
+████ █  █ ▄ ▀█▀█████▄██▀▀███▀▀█▄▀ ▀ ▄ ██▄▀▄ █▀▄▄ ▀█▀▄████
+████▀▄██ ▄▄▄ █▄ ▄▀  █▄  ▄▀ ▄▄▄ ▀ ███  ▄█▄ █▀ ▄▄▄ ▄▄█▀████
+████▀██  █▄█ █▀▄▄▄▀  ▀█▀▀█ █▄█   ██ ██▄▀▄  ▀ █▄█ █▄▄ ████
+████▄▄ █  ▄▄   ▀▄██  ██ █▄▄ ▄ ▄█  ██▄▀█▀  █▄▄▄ ▄ ███▀████
+████ ▄ ▀██▄  ▄▄ ▄▀▄▀ ▄█ ▄ █▀██ █▀ █  █▀▀  █▀▀▀▄▄▀ ▄█ ████
+████▀ ██▀▀▄█  ▀▀█ ▄▀▀█ ██▄▄ ▄  █  █▄▄ ▄█▀ █ ▄   ██ ▀▄████
+████ ▀▄██▄▄▀▀▄▄▄▄▀▄ ▄ ▀▄▀██▄ █▄▄  ▀▀   ▄ ▄ █▀▀▀▄▄ ▄▄▄████
+████▀ █▄▀▀▄█▄▀▀ ▀█ ▄▄ ▀▀█▄  █▀ █▄ ▄▄▄▄ ▀▄ ▀▄▄█ ██ ▄ ▀████
+████ ▀▀▄ ▀▄█▀▄█▀▀█▄ ▀█▀█ █▄▄▄    ▄█ █ ▄█  ▄ ██ ▄ ▀█  ████
+█████ ▀▀█▄▄▀ ▄█▀ ▄▄  ▀▄ ▄█ ██▄  ▄██▀ ▀▄█  █  █ ██▄▄▀ ████
+████▄▄▄███▄█ ▀ ████▀▄█▀▄▀  ▄▄▄ █▄█▀█▄▄▀▄ ▄█▄ ▄▄▄ ▀▄ ▄████
+████ ▄▄▄▄▄ █▄█▀▀ ▀ ▀▀██ ██ █▄█ ▀ ▀▄█▄▀▄█ ▀▄  █▄█ ▄▀▄▀████
+████ █   █ ██▀█▀▀▄▀▀█▄██ ▄▄▄▄ ▄█▀   ▀▄▄█▄▀▄█▄ ▄  ▀█▀▄████
+████ █▄▄▄█ █▄█▀▄   ▀▀  ▀██▄▀ ▄█▀▄▀▄ ▄▀▄▄█ ▄  ██▄▄▀▄▄▄████
+████▄▄▄▄▄▄▄█▄▄███▄▄▄█▄█▄█▄▄█▄▄█▄█████▄███▄█▄▄██▄▄▄██▄████
 █████████████████████████████████████████████████████████
 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-qr image: /home/jim/.cache/hedge-tmp/tmp.ibE0gVIpSR/join-qr.svg
-INFO daemon::server: client connected peer=f5efa4b1b5104f5a4a1dbb4d04513b3c5e6be5e9d5bf326fa9a82ed9ac8af64e client="headless"
-INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(952957165512403856), body: Prompt { text: "what is the answer?" } }
+qr image: /tmp/tmp.vwbQgPEc7w/join-qr.svg
+INFO daemon::server: client connected peer=5a586d215c7dd0e8de31800f11f0531ec979931ab75754543f47f9f8bc28fc7b client="headless"
+INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(11147146782289815364), body: Prompt { text: "what is the answer?" } }
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=0
-INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(952957165512403857), body: Resolve { approval: RequestId(1), decision: Approve } }
-INFO daemon::server: client disconnected peer=f5efa4b1b5104f5a4a1dbb4d04513b3c5e6be5e9d5bf326fa9a82ed9ac8af64e client="headless" err=closed by peer: 0
+INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(11147146782289815365), body: Resolve { approval: RequestId(1), decision: Approve } }
 INFO daemon::server: subscription ended transport="iroh" events_sent=18 ended="closed"
-INFO daemon::server: client connected peer=b7e897fc34dd55e1f01cec2904a0d532652197c7ddc377545e6be3093cdadc97 client="headless"
+INFO daemon::server: client disconnected peer=5a586d215c7dd0e8de31800f11f0531ec979931ab75754543f47f9f8bc28fc7b client="headless" err=closed by peer: bye (code 0)
+INFO daemon::server: client connected peer=57d10c8eea143d38fa5aac94a54d22843d2a5cb9c946906bc9beeb51063b184a client="headless"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=18
-INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(4199098497623810561), body: Prompt { text: "and again?" } }
-INFO daemon::server: client connected peer=b7e897fc34dd55e1f01cec2904a0d532652197c7ddc377545e6be3093cdadc97 client="headless"
+INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(14080907712971022226), body: Prompt { text: "and again?" } }
+INFO daemon::server: client connected peer=57d10c8eea143d38fa5aac94a54d22843d2a5cb9c946906bc9beeb51063b184a client="headless"
 INFO daemon::server: subscribed transport="iroh" after_seq=22 replayed=0
-INFO daemon::server: subscription ended transport="iroh" events_sent=23 ended="closed"
-INFO daemon::server: client disconnected peer=b7e897fc34dd55e1f01cec2904a0d532652197c7ddc377545e6be3093cdadc97 client="headless" err=closed by peer: bye (code 0)
-INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(4199098497623810562), body: Resolve { approval: RequestId(2), decision: Approve } }
+INFO daemon::server: client disconnected peer=57d10c8eea143d38fa5aac94a54d22843d2a5cb9c946906bc9beeb51063b184a client="headless" err=closed by peer: bye (code 0)
+INFO daemon::server: subscription ended transport="iroh" events_sent=22 ended="closed"
+INFO daemon::server: command client="headless" transport="iroh" command=Command { id: CommandId(14080907712971022227), body: Resolve { approval: RequestId(2), decision: Approve } }
 INFO daemon::server: subscription ended transport="iroh" events_sent=12 ended="closed"
-INFO daemon::server: client disconnected peer=b7e897fc34dd55e1f01cec2904a0d532652197c7ddc377545e6be3093cdadc97 client="headless" err=closed by peer: bye (code 0)
+INFO daemon::server: client disconnected peer=57d10c8eea143d38fa5aac94a54d22843d2a5cb9c946906bc9beeb51063b184a client="headless" err=closed by peer: bye (code 0)
