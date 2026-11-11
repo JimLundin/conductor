@@ -4,10 +4,9 @@
 //! which carry MESSAGE-INTEGRITY. Public STUN servers never send that, so the
 //! plain RFC 8489 binding exchange is encoded here.
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::ops::{BitXor, ControlFlow};
+use std::ops::BitXor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -236,10 +235,11 @@ struct Binding {
 }
 
 fn binding_response(message: &[u8]) -> Option<Binding> {
-    match (u16_at(message, 0)?, u32_at(message, COOKIE_AT)?) {
+    let (header, attributes) = message.split_at_checked(HEADER_LEN)?;
+    match (u16_at(header, 0)?, u32_at(header, COOKIE_AT)?) {
         (BINDING_SUCCESS, MAGIC_COOKIE) => Some(Binding {
-            trans: transaction_at(message)?,
-            mapped: mapped_address(message)?,
+            trans: transaction_at(header)?,
+            mapped: mapped_address(attributes, None)?,
         }),
         _ => None,
     }
@@ -248,78 +248,31 @@ fn binding_response(message: &[u8]) -> Option<Binding> {
 /// Reads the attributes in order, IPv4 only. The first XOR-MAPPED-ADDRESS
 /// wins, else the last MAPPED-ADDRESS. A value cut short before either
 /// rejects the whole response.
-fn mapped_address(message: &[u8]) -> Option<SocketAddr> {
-    let (_, attributes) = message.split_at_checked(HEADER_LEN)?;
-    let found = std::iter::successors(attribute(attributes), Attribute::next)
-        .try_fold(None, |plain, attribute| attribute.read(plain));
-    match found {
-        ControlFlow::Break(found) | ControlFlow::Continue(found) => found,
-    }
-}
-
-struct Attribute {
-    kind: u16,
-    value: Value,
-    /// The bytes after this attribute and its padding.
-    rest: Vec<u8>,
-}
-
-enum Value {
-    Ipv4(SocketAddrV4),
-    Other,
-    /// The value runs past the end of the message.
-    Truncated,
-}
-
-/// The attribute at the start of `bytes`, or `None` when fewer than a
-/// header's bytes are left.
-fn attribute(bytes: &[u8]) -> Option<Attribute> {
-    let kind = u16_at(bytes, 0)?;
-    let len = usize::from(u16_at(bytes, 2)?);
-    let end = ATTRIBUTE_HEADER_LEN.checked_add(len)?;
-    let padded = ATTRIBUTE_HEADER_LEN.checked_add(len.next_multiple_of(4))?;
-    Some(Attribute {
-        kind,
-        value: match bytes.len().cmp(&end) {
-            Ordering::Less => Value::Truncated,
-            Ordering::Equal | Ordering::Greater => {
-                ipv4_at(bytes, ATTRIBUTE_HEADER_LEN, len).map_or(Value::Other, Value::Ipv4)
+fn mapped_address(attributes: &[u8], plain: Option<SocketAddr>) -> Option<SocketAddr> {
+    match attributes.split_at_checked(ATTRIBUTE_HEADER_LEN) {
+        Some((header, body)) => {
+            let len = usize::from(u16_at(header, 2)?);
+            let (value, _) = body.split_at_checked(len)?;
+            let (_, rest) = body
+                .split_at_checked(len.next_multiple_of(4))
+                .unwrap_or_default();
+            match (u16_at(header, 0)?, ipv4(value)) {
+                (XOR_MAPPED_ADDRESS, Some(xored)) => Some(unxor(xored)),
+                (MAPPED_ADDRESS, Some(addr)) => mapped_address(rest, Some(SocketAddr::V4(addr))),
+                _ => mapped_address(rest, plain),
             }
-        },
-        rest: bytes
-            .split_at_checked(padded)
-            .map(|(_, rest)| rest.to_vec())
-            .unwrap_or_default(),
-    })
-}
-
-impl Attribute {
-    fn next(&self) -> Option<Attribute> {
-        attribute(&self.rest)
-    }
-
-    fn read(
-        self,
-        plain: Option<SocketAddr>,
-    ) -> ControlFlow<Option<SocketAddr>, Option<SocketAddr>> {
-        match (self.kind, self.value) {
-            (_, Value::Truncated) => ControlFlow::Break(None),
-            (XOR_MAPPED_ADDRESS, Value::Ipv4(xored)) => ControlFlow::Break(Some(unxor(xored))),
-            (MAPPED_ADDRESS, Value::Ipv4(addr)) => {
-                ControlFlow::Continue(Some(SocketAddr::V4(addr)))
-            }
-            (_, Value::Ipv4(_) | Value::Other) => ControlFlow::Continue(plain),
         }
+        None => plain,
     }
 }
 
-/// An address value of `len` bytes at `start`, if it is IPv4.
-fn ipv4_at(bytes: &[u8], start: usize, len: usize) -> Option<SocketAddrV4> {
-    let family = bytes.get(start.checked_add(1)?).copied()?;
-    let port = u16_at(bytes, start.checked_add(2)?)?;
-    let ip = u32_at(bytes, start.checked_add(4)?)?;
-    match (len, family) {
-        (IPV4_ADDRESS_LEN, FAMILY_IPV4) => Some(SocketAddrV4::new(Ipv4Addr::from_bits(ip), port)),
+/// An address value, if it is IPv4.
+fn ipv4(value: &[u8]) -> Option<SocketAddrV4> {
+    match (value.len(), value.get(1).copied()?) {
+        (IPV4_ADDRESS_LEN, FAMILY_IPV4) => Some(SocketAddrV4::new(
+            Ipv4Addr::from_bits(u32_at(value, 4)?),
+            u16_at(value, 2)?,
+        )),
         _ => None,
     }
 }
