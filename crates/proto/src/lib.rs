@@ -9,8 +9,13 @@
 //! carries the same streams as data channels (§5.4); it then carries
 //! [`Signal`]s both ways for as long as that connection lives.
 //!
-//! Frame bodies are postcard, which is not self-describing: any breaking
-//! change to these types bumps [`ALPN`].
+//! Frame bodies are postcard, which is not self-describing. A variant is
+//! its index and a field is its position, so a reordered enum or struct
+//! decodes as the wrong value with no error, and a variant added at the end
+//! fails an old peer mid-stream. So any change to a type reachable from
+//! [`Open`], [`HelloReply`], [`CommandResult`], [`Event`] or [`Signal`] bumps
+//! [`ALPN`], including a variant added at the end. Renaming a variant or a
+//! field doesn't change the bytes and needs no bump.
 
 mod frame;
 mod relay;
@@ -24,8 +29,9 @@ pub use frame::{
 pub use relay::without_root_dot;
 pub use ticket::{AuthToken, Ticket, TicketError};
 
-/// The ALPN of the protocol. The event and command types change
-/// incompatibly between versions, so an old client fails at the handshake.
+/// The ALPN of the protocol. It changes with every change to the wire types
+/// (see the crate docs), so an old client fails at the handshake instead of
+/// mid-stream.
 pub const ALPN: &[u8] = b"conductor/1";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
