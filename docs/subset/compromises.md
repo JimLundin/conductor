@@ -1,8 +1,8 @@
 # Where the subset gives ground
 
 The thesis is that **every state is a named enum variant and every decision is
-a `match`**, protected by six qualities (`docs/subset.md`). Version 4 accepts
-27 proposals. Most keep all six qualities. The ones below don't, or they bend
+a `match`**, protected by seven qualities (`docs/subset.md`). Version 4 accepts
+27 proposals. Most keep all the qualities. The ones below don't, or they bend
 the thesis at its edges. Each is confined by its rule, and this page is the
 list to revisit first when one of them starts to spread.
 

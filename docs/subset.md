@@ -9,9 +9,9 @@ measurements, that it shrinks real code without costing any of the
 qualities below, and the owner accepts it.
 
 `subset.toml` is the source of truth. `tools/subset check` enforces it on
-the paths under `include`. `tools/subset measure` counts the code volume
-used in proposals. `tools/subset report` summarises violations by
-construct. A `[[scope]]` in `subset.toml` allows some ids only under the
+the paths under `include`. `tools/subset score` and `tools/subset measure`
+give the weighted score and the token count that proposals report (see
+Weights). `tools/subset report` summarises violations by construct. A `[[scope]]` in `subset.toml` allows some ids only under the
 paths it lists, such as Dioxus only in `crates/app`.
 
 ## Qualities
@@ -34,6 +34,17 @@ is rejected, however much code it saves.
    the types it names.
 6. **One way.** Each kind of task has one idiom in the subset, so equal
    problems read alike.
+7. **Repetition is data.** When two or more places share a shape and
+   differ only in values, the values become data and the shape is written
+   once. The forms are:
+   - a `const` table of named structs with one adapter chain over it, as
+     in `const PROVIDERS: &[Provider] = &[..]` and
+     `PROVIDERS.iter().find(|p| p.name == name)`;
+   - one `match` that maps a variant to its data, used by every call site,
+     as in `fn label(kind: Kind) -> &'static str { match kind { .. } }`;
+   - enum variants that carry their data, as in `Exit::Code(i32)` rather
+     than one variant per code;
+   - test cases as a table with one assertion over them.
 
 ## Core
 
@@ -98,6 +109,60 @@ conflict with the qualities and won't.
 Where the subset gives ground on the qualities is listed in
 [`docs/subset/compromises.md`](subset/compromises.md).
 
+## Weights
+
+`tools/subset score` measures code with a **weighted score**: each token
+costs the weight of the innermost construct that contains it, and comments
+cost nothing. A construct's weight comes from its **tier**, so code that
+leans on what the subset encourages scores lower than code of the same
+length that leans on its compromises. The tiers and the id-to-tier map
+live in `[weights]` in `subset.toml`, where the owner tunes them.
+
+| Tier | Weight | For |
+|---|---|---|
+| encouraged | 0.5 | Type definitions (structs, newtypes, enums, the types in their fields), `match` with its arms and patterns, iterator adapter calls, `?`. |
+| neutral | 1.0 | The rest of the core: calls, paths, literals, `let`, field access, `pub`, references, slices. An allowed id missing from the map is neutral. |
+| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields. |
+| costly | 3.0 | Mutation and its kin: `mut`, `&mut self`, assignment (0008), the actor `loop` (0007), `dyn` (0017), `rsx!` (0018), untyped data. |
+| outside | 5.0 | Any violation of the current subset, whatever its id, so code not yet rewritten scores badly. |
+| boundary | 1.0 | Any construct whose shape a library fixes (below). |
+
+The score of the affected code is what the ratchet compares (Growing the
+subset), and proposals show it beside the token count.
+
+**The boundary context.** One standard applies everywhere: a construct
+whose shape an item we don't define fixes costs the boundary weight instead
+of its tier. "We don't define" uses the same name facts as the 0023 checks,
+with a method call ours only when its receiver is `self`. In practice that
+covers, for example, a `bool` or `()` passed to a library function, a
+`let mut` that exists to lend a value to a library method as `&mut`, an
+impl of a library trait with the signature parts it fixes, library derives
+and their helper attributes, `Closure<dyn FnMut(..)>`, and Dioxus markup
+and signals. These are examples, not a closed list. Our own `&mut self`, an
+actor's loop state and assignment keep their tier. `subset score` shows the
+boundary share at every level, so library glue isn't read as style debt.
+
+### Typing
+
+The score also rewards naming data with types.
+
+- **Defining a type is cheap.** A struct with its fields, a newtype and an
+  enum with its variants are encouraged, with the types in their fields.
+- **Primitives in our own signatures and fields are tolerated.** `String`,
+  `&str`, the integer and float types and `Vec<u8>`, as a field type of our
+  own struct or variant or as a parameter or return type of our own fn.
+  Inside fn bodies they are neutral. A newtype's one field is exempt, since
+  it is where the primitive belongs.
+- **Untyped data is costly**, wherever it appears: `serde_json::Value`,
+  `HashMap<String, _>` or `BTreeMap<String, _>`, and `dyn Any`.
+- **Wire types of an external protocol are boundary.** A field of a type
+  with a library derive in a module listed in `external_protocols` mirrors
+  someone else's format, such as the provider CLI messages in
+  `crates/agents`. `crates/proto` is our own format, so the normal rules
+  apply there.
+
+`tools/subset/README.md` gives the full model and the configuration.
+
 ## Bootstrap round
 
 The code from before the subset uses constructs the core lacks, and some
@@ -128,14 +193,21 @@ The pair loop (`.claude/skills/pair/SKILL.md`) is the only way in:
    the code longer or more roundabout.
 2. A **reviewer** checks compliance and the qualities. For each candidate
    construct, it rewrites the affected code with that construct, measures
-   both versions with `tools/subset measure`, and judges the qualities.
-3. A candidate that saves volume and keeps every quality becomes a
-   **proposal** in `docs/subset/proposals/NNNN-<id>.md`: the construct,
-   the before and after code, the measurements, the quality assessment,
-   and the rule for when to use it.
+   both versions with `tools/subset score` and `tools/subset measure`, and
+   judges the qualities.
+3. A candidate that lowers the weighted score and keeps every quality
+   becomes a **proposal** in `docs/subset/proposals/NNNN-<id>.md`: the
+   construct, the before and after code, the measurements, the quality
+   assessment, the rule for when to use it, and its **weight**: the tier
+   the construct takes and whether its boundary use applies.
 4. The **owner** accepts or rejects it. An accepted id is added to
-   `subset.toml` with a line in the table above, its rule becomes part of
-   the subset, and `version` goes up by one.
+   `subset.toml` with a line in the table above and its tier in
+   `[weights.ids]`, its rule becomes part of the subset, and `version` goes
+   up by one.
+
+A review may also propose **changing an existing weight**, as a proposal
+of its own with evidence from the reviewed code. The owner decides it the
+same way.
 
 Rejected proposals stay in `docs/subset/proposals/`, so a construct is
 not proposed twice for the same reason.

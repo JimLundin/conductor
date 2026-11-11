@@ -38,20 +38,31 @@ Give the reviewer the diff, the friction log, `docs/subset.md`,
 `subset.toml`, and `docs/subset/proposals/` (including the rejected ones).
 
 1. **Compliance.** Confirm that `tools/subset check` passes and that the
-   code honours each of the six qualities in `docs/subset.md`. A breach is
-   a required fix, not a proposal.
+   code honours each of the seven qualities in `docs/subset.md`. A breach
+   is a required fix, not a proposal. Once `subset repeats` exists, run it
+   on the change: repeated shapes the subset can already express as data
+   are required fixes, and those that need a new construct become
+   proposals.
 2. **Ratchet.** Pick the candidate constructs from the friction log and
    from patterns repeated in the diff. For each candidate:
    - Rewrite the affected code with the construct, in a scratch copy.
-   - Run `tools/subset measure` on the before and after versions of the
-     same files.
+   - Run `tools/subset score` and `tools/subset measure` on the before and
+     after versions of the same files.
    - Judge each quality as kept or weakened, with a one-line reason.
+   - Choose the tier the construct would take in `[weights]`, and whether
+     its boundary use applies (`docs/subset.md`, Weights).
 
-   A candidate becomes a proposal when it **keeps all six qualities**, and
-   it either cuts tokens in the affected code by at least 15% or removes
-   at least three friction points of the same kind. Skip any candidate
+   A candidate becomes a proposal when it **keeps all seven qualities**,
+   and either the **weighted score** of the affected code drops by at
+   least 15% or it removes at least three friction points of one kind.
+   Score the after version with the proposed tier. Skip any candidate
    already rejected for the same reason.
-3. **Write each proposal** to `docs/subset/proposals/NNNN-<construct-id>.md`
+3. **Weights.** Where the reviewed code shows that an existing weight is
+   wrong, for example a tolerated construct that the code needs everywhere
+   or a neutral one that hides a cost, propose changing it as a proposal
+   of its own, with the evidence from the code and the score before and
+   after. The owner decides it as for a construct.
+4. **Write each proposal** to `docs/subset/proposals/NNNN-<construct-id>.md`
    using the template below.
 
 **Done when** every friction point has been considered for the ratchet:
@@ -60,13 +71,15 @@ isn't (volume too small, a quality weakened, or already rejected).
 
 ## 3. Decide
 
-Bring the proposals to the owner with the measurements in one line each.
-The owner accepts or rejects each one.
+Bring the proposals to the owner with the score, the tokens and the tier
+in one line each. The owner accepts or rejects each one.
 
 - **Accepted:** add the id (and any `derives` / `macros` entry) to
-  `subset.toml`, increase `version`, add its row and rule to
-  `docs/subset.md`, and teach `tools/subset check` the construct if it
-  doesn't know it yet. Then apply the reviewer's rewrite to the code.
+  `subset.toml` and its tier to `[weights.ids]`, increase `version`, add
+  its row and rule to `docs/subset.md`, and teach `tools/subset check` the
+  construct if it doesn't know it yet. Then apply the reviewer's rewrite
+  to the code. For an accepted weight change, edit the tier in
+  `[weights.ids]` and the Weights table in `docs/subset.md`.
 - **Rejected:** set `status: rejected` in the proposal, with the owner's
   reason.
 
@@ -92,12 +105,19 @@ When code may use it, in one or two sentences. Narrow beats broad.
 ## After
 <the same code using the construct>
 
+## Weight
+<tier: encouraged | neutral | tolerated | costly>. <one-line reason>
+Boundary use: applies | doesn't apply. <one line: where a library fixes
+the construct's shape, if anywhere>
+
 ## Measurements
-| | tokens | lines |
-|---|---|---|
-| before | | |
-| after | | |
-| change | | |
+| | score | tokens | lines |
+|---|---|---|---|
+| before | | | |
+| after | | | |
+| change | | | |
+
+The after score uses the proposed tier.
 
 Friction points removed: <n> (<log references>)
 
@@ -108,6 +128,7 @@ Friction points removed: <n> (<log references>)
 4. Errors are values: …
 5. Local reasoning: …
 6. One way: …
+7. Repetition is data: …
 
 ## Owner decision
 <reason, filled in when decided>
