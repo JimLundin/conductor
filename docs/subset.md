@@ -197,7 +197,13 @@ pass of the pair loop therefore runs on the existing code:
 The owner accepted 0002 to 0022 as version 2, then 0023 and the 0011
 amendment as version 3. Version 4 accepts 0024, 0026, 0027 and 0028,
 accepts 0025 in a revised form, widens 0008 and amends 0014 and 0015.
-The rewrite works from `docs/subset/rewrite-report.txt`, the report under version 4.
+Version 5 accepts 0035 (`&mut self` on the `endpoints` list), 0036 (a
+method call as a struct update's base) and 0037 (`rfind` and `wait_for` as
+predicate adapters, with the list in `subset.toml`). It also checks which
+method a closure is passed to, flags `drop` passed as a function, counts
+enum payloads as owned by loop state, and scores a primitive inside a std
+container as a primitive. The rewrite works from
+`docs/subset/rewrite-report.txt`, the report under version 5.
 
 ## Growing the subset
 
