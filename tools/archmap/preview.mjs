@@ -47,7 +47,13 @@ for (const [name, width, mobile] of [["desktop", 1280, false], ["mobile", 390, t
     await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile });
     await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: dark ? "dark" : "light" }] });
     await send("Page.navigate", { url: `file://${page}` });
-    await sleep(800);
+    let last = 0;
+    for (let i = 0; i < 20; i++) {
+      await sleep(300);
+      const now = await evaluate("document.readyState === 'complete' ? document.documentElement.scrollHeight : 0");
+      if (now && now === last) break;
+      last = now;
+    }
     const scrollWidth = await evaluate("document.documentElement.scrollWidth");
     if (scrollWidth > width) { failed = true; console.error(`${name}: page is ${scrollWidth}px wide, viewport ${width}px`); }
     const height = await evaluate("Math.ceil(document.documentElement.scrollHeight)");
