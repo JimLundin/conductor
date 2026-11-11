@@ -72,9 +72,12 @@ body { margin: 0; }
 }
 .items { padding: 1rem 0; }
 
-.reply, .message { margin: 0 0 0.75rem; white-space: pre-wrap; }
+.session-title { margin: 1rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); }
+.user, .reply, .tool { margin: 0 0 0.75rem; white-space: pre-wrap; }
+.user { padding-left: 0.75rem; border-left: 2px solid var(--accent); }
 .reply.streaming::after { content: "▍"; color: var(--accent); }
-.message { padding-left: 0.75rem; border-left: 2px solid var(--accent); }
+.tool { color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.items > .error { color: var(--bad); }
 .turn-end {
   margin: 0 0 1rem;
   color: var(--muted);
@@ -82,16 +85,16 @@ body { margin: 0; }
   text-align: center;
 }
 
-.approval {
+.request {
   margin: 0 0 0.75rem;
   padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 0.6rem;
   background: var(--panel);
 }
-.approval[data-open="true"] { border-color: var(--warn); }
-.approval-title { margin: 0 0 0.4rem; font-weight: 600; }
-.approval pre {
+.request[data-open="true"] { border-color: var(--warn); }
+.request-title { margin: 0 0 0.4rem; font-weight: 600; }
+.request pre {
   margin: 0 0 0.6rem;
   padding: 0.5rem;
   overflow-x: auto;

@@ -21,13 +21,20 @@ pub use frame::{
 pub use relay::without_root_dot;
 pub use ticket::{AuthToken, Ticket, TicketError};
 
-/// The ALPN for the S3 protocol. P1 moves to `conductor/1` (§5.1).
-pub const ALPN: &[u8] = b"conductor/0";
+/// The ALPN of the protocol. The event and command types change
+/// incompatibly between versions, so an old client fails at the handshake.
+pub const ALPN: &[u8] = b"conductor/1";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct HostSeq(pub u64);
+
+impl HostSeq {
+    pub fn next(self) -> HostSeq {
+        HostSeq(self.0.saturating_add(1))
+    }
+}
 
 /// Identifies one incarnation of a host's event log. A cursor from another
 /// epoch is meaningless, so the client starts over from seq 0 (§8).
@@ -40,7 +47,7 @@ pub struct Epoch(pub u64);
 #[serde(transparent)]
 pub struct CommandId(pub u64);
 
-/// An approval request, assigned by the host.
+/// An approval request, assigned by the host per session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RequestId(pub u64);
@@ -142,8 +149,7 @@ impl CandidateType {
 /// that §4 puts here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
-    /// Shown as `by` when this client resolves an approval.
-    pub client: String,
+    pub client: ClientName,
     pub token: AuthToken,
 }
 
@@ -169,32 +175,62 @@ pub struct Subscribe {
     pub after_seq: HostSeq,
 }
 
+/// Assigned by the host, from 1, in order of creation. Unique within an
+/// epoch, which is all an in-memory log needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(pub u64);
+
+/// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ToolCallId(pub String);
+
+/// A path on the host, as the host's OS spells it. The client never
+/// interprets it: a browser on a phone can't know a Windows path's rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Event {
-    pub seq: HostSeq,
-    pub kind: EventKind,
+#[serde(transparent)]
+pub struct HostPath(pub String);
+
+/// The name a client gave in `Hello`. Shown as "by" on a resolution and a
+/// user message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ClientName(pub String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    Claude,
+    Codex,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Command {
+    pub id: CommandId,
+    pub body: CommandBody,
+}
+
+/// Every command after `StartSession` names the session it acts on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum EventKind {
-    TranscriptDelta {
+pub enum CommandBody {
+    StartSession {
+        provider: Provider,
+        directory: HostPath,
+    },
+    SendMessage {
+        session: SessionId,
         text: String,
     },
-    AssistantMessage {
-        text: String,
+    Interrupt {
+        session: SessionId,
     },
-    ApprovalRequested {
-        id: RequestId,
-        tool: String,
-        detail: String,
-    },
-    ApprovalResolved {
-        id: RequestId,
+    Resolve {
+        session: SessionId,
+        request: RequestId,
         decision: Decision,
-        by: String,
     },
-    TurnFinished,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,45 +241,152 @@ pub enum Decision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Command {
-    pub id: CommandId,
-    pub body: CommandBody,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum CommandBody {
-    Prompt {
-        text: String,
-    },
-    Resolve {
-        approval: RequestId,
-        decision: Decision,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum CommandResult {
     Accepted,
+    /// The answer to `StartSession`. `SessionCreated` follows in the log.
+    Started {
+        session: SessionId,
+    },
     Rejected(Rejection),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Rejection {
+    NoSuchDirectory,
+    /// `message` says why: the tag already takes the name `reason`.
+    ProviderUnavailable {
+        message: String,
+    },
+    UnknownSession,
+    SessionClosed,
     TurnInProgress,
-    UnknownApproval,
-    AlreadyResolved { by: String },
+    NoTurnRunning,
+    UnknownRequest,
+    AlreadyResolved {
+        by: ClientName,
+    },
 }
 
 impl Rejection {
     /// Why the host refused the command, for a person to read.
     pub fn label(&self) -> String {
         match self {
+            Rejection::NoSuchDirectory => String::from("no directory at that path on the host"),
+            Rejection::ProviderUnavailable { message } => {
+                format!("that provider is unavailable: {message}")
+            }
+            Rejection::UnknownSession => String::from("no session with that id"),
+            Rejection::SessionClosed => String::from("the session has closed"),
             Rejection::TurnInProgress => String::from("a turn is already running"),
-            Rejection::UnknownApproval => String::from("no approval with that id"),
-            Rejection::AlreadyResolved { by } => format!("already resolved by {by}"),
+            Rejection::NoTurnRunning => String::from("no turn is running"),
+            Rejection::UnknownRequest => String::from("no request with that id"),
+            Rejection::AlreadyResolved { by } => format!("already resolved by {}", by.0),
         }
     }
+}
+
+/// Every event names its session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Event {
+    pub seq: HostSeq,
+    pub session: SessionId,
+    pub kind: EventKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EventKind {
+    SessionCreated {
+        provider: Provider,
+        directory: HostPath,
+        by: ClientName,
+    },
+    /// The agent process is up and takes messages.
+    SessionReady,
+    SessionClosed {
+        reason: CloseReason,
+    },
+    UserMessage {
+        text: String,
+        by: ClientName,
+    },
+    AssistantDelta {
+        text: String,
+    },
+    /// The finished text of one assistant message. It replaces the deltas
+    /// since the previous message.
+    AssistantMessage {
+        text: String,
+    },
+    ToolCall {
+        call: ToolCallId,
+        phase: ToolPhase,
+    },
+    RequestOpened {
+        request: RequestId,
+        tool: String,
+        detail: String,
+    },
+    RequestResolved {
+        request: RequestId,
+        resolution: Resolution,
+    },
+    TurnCompleted {
+        outcome: TurnOutcome,
+    },
+    /// Something went wrong that did not end the session.
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum ToolPhase {
+    Started { tool: ToolKind },
+    Finished { outcome: ToolOutcome },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolKind {
+    Command { command: String },
+    FileChange { paths: Vec<String> },
+    Other { name: String, detail: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolOutcome {
+    Succeeded,
+    Failed,
+    Declined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "resolution", rename_all = "snake_case")]
+pub enum Resolution {
+    Decided {
+        decision: Decision,
+        by: ClientName,
+    },
+    /// The agent withdrew the request before anyone answered.
+    Withdrawn,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum TurnOutcome {
+    Completed,
+    Interrupted,
+    Failed { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum CloseReason {
+    FailedToStart { message: String },
+    Exited { status: String },
 }

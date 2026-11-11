@@ -1,9 +1,10 @@
 //! `conductord`: the host daemon. It serves the event log and the sessions
 //! over iroh, and over WebRTC to browsers that upgrade (`conductord host`).
 
-pub mod host;
+pub mod log;
+pub mod registry;
 pub mod rtc;
-pub mod server;
+pub mod serve;
 mod stun;
 mod wire;
 

@@ -1,7 +1,7 @@
-//! Connects to a host with a ticket, sends one prompt, answers its approval and
-//! prints every update until the turn finishes.
+//! Connects to a host with a ticket, starts a session, sends one message,
+//! answers its requests and prints every update until the turn completes.
 //!
-//! `cargo run -p client --example headless -- <ticket> [--reconnect-after N]`
+//! `cargo run -p client --example headless -- <ticket> --directory DIR [--reconnect-after N]`
 
 use std::cmp::Ordering;
 use std::io::Write;
@@ -10,13 +10,21 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
-use proto::{CommandBody, Decision, Event, EventKind, HostSeq, Ticket};
+use proto::{
+    ClientName, CommandBody, CommandResult, Decision, Event, EventKind, HostPath, HostSeq,
+    Provider, SessionId, Ticket,
+};
 use tokio::sync::mpsc;
 
 #[derive(Parser)]
 struct Args {
     #[arg(value_parser = Ticket::parse)]
     ticket: Ticket,
+    #[arg(long, value_enum, default_value_t = ProviderChoice::Claude)]
+    provider: ProviderChoice,
+    /// The session's directory on the host.
+    #[arg(long)]
+    directory: String,
     #[arg(long, default_value = "what is the answer?")]
     prompt: String,
     #[arg(long, value_enum, default_value_t = Choice::Approve)]
@@ -27,6 +35,12 @@ struct Args {
     reconnect_after: Option<usize>,
     #[arg(long, default_value_t = 60)]
     timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ProviderChoice {
+    Claude,
+    Codex,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -55,21 +69,27 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let start = Instant::now();
     let (link, updates) = HostLink::spawn(
         Target::of_ticket(&args.ticket),
-        LinkOptions::new(String::from("headless")),
+        LinkOptions::new(ClientName(String::from("headless"))),
     )
     .await?;
     let decision = match args.decision {
         Choice::Approve => Decision::Approve,
         Choice::Deny => Decision::Deny,
     };
+    let provider = match args.provider {
+        ProviderChoice::Claude => Provider::Claude,
+        ProviderChoice::Codex => Provider::Codex,
+    };
     let session = Session {
         start,
+        provider,
+        directory: HostPath(args.directory),
         prompt: args.prompt,
         decision,
         reconnect_after: args.reconnect_after,
         link,
         updates,
-        prompted_after: None,
+        ours: None,
         last_seq: HostSeq(0),
         deltas: 0,
         reconnected: Reconnected::No,
@@ -112,16 +132,24 @@ enum Flow {
     Finished,
 }
 
+/// Our session, and the seq it started after: earlier events are history.
+#[derive(Debug, Clone, Copy)]
+struct Ours {
+    session: SessionId,
+    after: HostSeq,
+}
+
 /// The client's side of one turn, driven by the link's updates.
 struct Session {
     start: Instant,
+    provider: Provider,
+    directory: HostPath,
     prompt: String,
     decision: Decision,
     reconnect_after: Option<usize>,
     link: HostLink,
     updates: mpsc::Receiver<Update>,
-    /// Events up to this seq predate our prompt.
-    prompted_after: Option<HostSeq>,
+    ours: Option<Ours>,
     last_seq: HostSeq,
     deltas: usize,
     reconnected: Reconnected,
@@ -182,21 +210,47 @@ impl Session {
             self.times_live,
             self.start.elapsed().as_secs_f64()
         ))?;
-        match self.prompted_after {
+        match self.ours {
             Some(_) => Ok(Flow::Next),
             None => {
-                self.prompted_after = Some(self.last_seq);
+                let after = self.last_seq;
+                let session = self.start_session().await?;
+                self.ours = Some(Ours { session, after });
                 let text = self.prompt.clone();
-                let result = self.link.send(CommandBody::Prompt { text }).await?;
-                self.log(format!("prompt {:?} -> {result:?}", self.prompt))?;
+                let result = self
+                    .link
+                    .send(CommandBody::SendMessage { session, text })
+                    .await?;
+                self.log(format!("message {:?} -> {result:?}", self.prompt))?;
                 Ok(Flow::Next)
             }
         }
     }
 
+    async fn start_session(&self) -> anyhow::Result<SessionId> {
+        let result = self
+            .link
+            .send(CommandBody::StartSession {
+                provider: self.provider,
+                directory: self.directory.clone(),
+            })
+            .await?;
+        self.log(format!("start {:?} -> {result:?}", self.directory.0))?;
+        match result {
+            CommandResult::Started { session } => Ok(session),
+            CommandResult::Accepted | CommandResult::Rejected(_) => Err(anyhow::Error::msg(
+                format!("the host did not start a session: {result:?}"),
+            )),
+        }
+    }
+
     async fn on_event(&mut self, event: Event) -> anyhow::Result<Flow> {
         self.last_seq = event.seq;
-        let origin = match self.prompted_after.map(|after| event.seq.cmp(&after)) {
+        let origin = match self
+            .ours
+            .filter(|ours| ours.session == event.session)
+            .map(|ours| event.seq.cmp(&ours.after))
+        {
             Some(Ordering::Greater) => Origin::Ours,
             Some(Ordering::Less | Ordering::Equal) | None => Origin::History,
         };
@@ -213,7 +267,7 @@ impl Session {
 
     async fn on_our_event(&mut self, event: Event) -> anyhow::Result<Flow> {
         match event.kind {
-            EventKind::TranscriptDelta { .. } => {
+            EventKind::AssistantDelta { .. } => {
                 self.deltas = self.deltas.saturating_add(1);
                 let due = self.reconnect_after.filter(|after| after == &self.deltas);
                 if let (Some(_), Reconnected::No) = (due, self.reconnected) {
@@ -226,25 +280,36 @@ impl Session {
                 }
                 Ok(Flow::Next)
             }
-            EventKind::ApprovalRequested { id, .. } => {
+            EventKind::RequestOpened { request, .. } => {
                 let decision = self.decision;
                 let result = self
                     .link
                     .send(CommandBody::Resolve {
-                        approval: id,
+                        session: event.session,
+                        request,
                         decision,
                     })
                     .await?;
-                self.log(format!("resolve {id:?} {decision:?} -> {result:?}"))?;
+                self.log(format!("resolve {request:?} {decision:?} -> {result:?}"))?;
                 Ok(Flow::Next)
             }
-            EventKind::TurnFinished => {
-                self.log(format!("turn finished; path={:?}", self.link.status().path))?;
+            EventKind::TurnCompleted { .. } => {
+                self.log(format!(
+                    "turn completed; path={:?}",
+                    self.link.status().path
+                ))?;
                 Ok(Flow::Finished)
             }
-            EventKind::AssistantMessage { .. } | EventKind::ApprovalResolved { .. } => {
-                Ok(Flow::Next)
-            }
+            EventKind::SessionClosed { reason } => Err(anyhow::Error::msg(format!(
+                "the session closed: {reason:?}"
+            ))),
+            EventKind::SessionCreated { .. }
+            | EventKind::SessionReady
+            | EventKind::UserMessage { .. }
+            | EventKind::AssistantMessage { .. }
+            | EventKind::ToolCall { .. }
+            | EventKind::RequestResolved { .. }
+            | EventKind::Error { .. } => Ok(Flow::Next),
         }
     }
 

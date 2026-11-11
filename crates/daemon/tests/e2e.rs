@@ -1,26 +1,34 @@
 //! Host and client in one process over real iroh connections on loopback, with
 //! relays off so the test needs no network.
 
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Target, Update};
-use daemon::host::{Host, HostOptions};
-use daemon::server::Conductor;
+use client::host_view::{HostView, Item, ReplyState, SessionStatus, SessionView};
+use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Status, Target, Update};
+use daemon::Stopped;
+use daemon::log::Log;
+use daemon::registry::{Availability, Providers, Registry};
+use daemon::serve::Conductor;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
+use n0_future::StreamExt;
 use proto::{
-    AuthToken, CommandBody, CommandResult, Decision, Epoch, Event, EventKind, HostSeq, RequestId,
+    AuthToken, ClientName, CommandBody, CommandResult, Epoch, Event, EventKind, HostPath, HostSeq,
+    Provider, Rejection, SessionId,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 const TOKEN: [u8; 16] = [7; 16];
 const STEP: Duration = Duration::from_secs(10);
+const UNAVAILABLE: &str = "no agents in this test";
 
 async fn endpoint() -> Endpoint {
     Endpoint::builder(presets::Minimal)
@@ -33,37 +41,42 @@ async fn endpoint() -> Endpoint {
 struct Fixture {
     router: Router,
     target: Target,
+    log: Log,
 }
 
 async fn host() -> Fixture {
-    let host = Host::spawn(HostOptions {
-        name: "test-host".into(),
-        epoch: Epoch(11),
-        delta_interval: Duration::from_millis(20),
+    let log = Log::spawn(String::from("test-host"), Epoch(11));
+    let unavailable = Availability::Unavailable(String::from(UNAVAILABLE));
+    let registry = Registry::spawn(Providers {
+        claude: unavailable.clone(),
+        codex: unavailable,
     });
     let endpoint = endpoint().await;
     let target = Target {
         addr: endpoint.addr(),
         token: AuthToken::from_bytes(TOKEN),
     };
+    let conductor = Conductor {
+        log: log.clone(),
+        registry,
+        token: AuthToken::from_bytes(TOKEN),
+        rtc: None,
+    };
     let router = Router::builder(endpoint)
-        .accept(
-            proto::ALPN,
-            Conductor {
-                host,
-                token: AuthToken::from_bytes(TOKEN),
-                rtc: None,
-            },
-        )
+        .accept(proto::ALPN, conductor)
         .spawn();
-    Fixture { router, target }
+    Fixture {
+        router,
+        target,
+        log,
+    }
 }
 
 async fn link(target: Target, resume: Option<Cursor>) -> (HostLink, mpsc::Receiver<Update>) {
     let options = LinkOptions {
         resume,
         network: Network::Local,
-        ..LinkOptions::new(String::from("test-client"))
+        ..LinkOptions::new(ClientName(String::from("test-client")))
     };
     HostLink::spawn(target, options).await.unwrap()
 }
@@ -75,178 +88,176 @@ async fn next(updates: &mut mpsc::Receiver<Update>) -> Update {
         .expect("the link is running")
 }
 
+/// The updates before the link went live.
 async fn until_live(updates: &mut mpsc::Receiver<Update>) -> Vec<Update> {
     let mut seen = Vec::new();
     loop {
-        let update = next(updates).await;
-        let live = matches!(&update, Update::Status(s) if s.state == LinkState::Live);
-        seen.push(update);
-        if live {
-            return seen;
+        match next(updates).await {
+            Update::Status(Status {
+                state: LinkState::Live,
+                ..
+            }) => break seen,
+            update => seen.push(update),
         }
     }
 }
 
-/// Reads events until `stop` says so, answering approvals with `decision`.
-async fn events_until(
-    link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
-    mut stop: impl FnMut(&Event) -> bool,
-) -> Vec<Event> {
-    let mut events = Vec::new();
-    loop {
-        if let Update::Event(event) = next(updates).await {
-            if let EventKind::ApprovalRequested { id, .. } = event.kind {
-                approve(link, id).await;
-            }
-            let done = stop(&event);
-            events.push(event);
-            if done {
-                return events;
-            }
-        }
-    }
-}
-
-async fn approve(link: &HostLink, id: RequestId) {
-    let result = link
-        .send(CommandBody::Resolve {
-            approval: id,
-            decision: Decision::Approve,
-        })
-        .await
-        .unwrap();
-    assert_eq!(result, CommandResult::Accepted);
-}
-
-async fn prompt(link: &HostLink) {
-    let result = link
-        .send(CommandBody::Prompt { text: "hi".into() })
-        .await
-        .unwrap();
-    assert_eq!(result, CommandResult::Accepted);
-}
-
-fn seqs(events: &[Event]) -> Vec<u64> {
-    events.iter().map(|e| e.seq.0).collect()
-}
-
-fn transcript(events: &[Event]) -> String {
-    events
-        .iter()
-        .filter_map(|e| match &e.kind {
-            EventKind::TranscriptDelta { text } => Some(text.as_str()),
-            _ => None,
+fn states(updates: Vec<Update>) -> Vec<LinkState> {
+    updates
+        .into_iter()
+        .filter_map(|update| match update {
+            Update::Status(status) => Some(status.state),
+            Update::Reset(_) | Update::Event(_) => None,
         })
         .collect()
 }
 
-fn finished(event: &Event) -> bool {
-    event.kind == EventKind::TurnFinished
+/// The events up to and including `last`.
+async fn events_through(updates: &mut mpsc::Receiver<Update>, last: HostSeq) -> Vec<Event> {
+    let mut events = Vec::new();
+    loop {
+        match next(updates).await {
+            Update::Event(event) => match event.seq.cmp(&last) {
+                Ordering::Less => events.push(event),
+                Ordering::Equal | Ordering::Greater => {
+                    events.push(event);
+                    break events;
+                }
+            },
+            Update::Status(_) | Update::Reset(_) => {}
+        }
+    }
 }
 
-const REPLY: &str = "Looking into \"hi\". I need to run one command to answer.";
+/// Appends one Claude session's creation, or its deltas, to the log.
+async fn append(log: &Log, kinds: Vec<EventKind>) {
+    let appended = n0_future::stream::iter(kinds)
+        .then(|kind| log.append(SessionId(1), kind))
+        .collect::<Vec<Result<(), Stopped>>>()
+        .await;
+    assert_eq!(appended.into_iter().filter(Result::is_err).count(), 0);
+}
+
+fn created() -> EventKind {
+    EventKind::SessionCreated {
+        provider: Provider::Claude,
+        directory: HostPath(String::from("/work")),
+        by: ClientName(String::from("desk")),
+    }
+}
+
+fn delta(text: &str) -> EventKind {
+    EventKind::AssistantDelta {
+        text: String::from(text),
+    }
+}
+
+fn seqs(events: &[Event]) -> Vec<HostSeq> {
+    events.iter().map(|event| event.seq).collect()
+}
+
+fn fold(events: Vec<Event>) -> HostView {
+    events.into_iter().fold(HostView::empty(), HostView::apply)
+}
+
+/// The view of session 1 after `created()` and deltas that join into `text`.
+fn streaming(text: &str) -> HostView {
+    HostView {
+        sessions: BTreeMap::from([(
+            SessionId(1),
+            SessionView {
+                provider: Provider::Claude,
+                directory: HostPath(String::from("/work")),
+                status: SessionStatus::Starting,
+                items: Vec::from([Item::Reply {
+                    text: String::from(text),
+                    state: ReplyState::Streaming,
+                }]),
+            },
+        )]),
+    }
+}
+
+/// One command and the host's literal answer.
+struct Case {
+    body: CommandBody,
+    result: CommandResult,
+}
+
+fn start(directory: &std::path::Path) -> CommandBody {
+    CommandBody::StartSession {
+        provider: Provider::Claude,
+        directory: HostPath(directory.display().to_string()),
+    }
+}
 
 #[tokio::test]
-async fn a_turn_streams_asks_for_approval_and_finishes() {
+async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
-
-    let states: Vec<_> = until_live(&mut updates)
-        .await
-        .into_iter()
-        .filter_map(|u| match u {
-            Update::Status(s) => Some(s.state),
-            Update::Reset(epoch) => {
-                assert_eq!(epoch, Epoch(11));
-                None
-            }
-            Update::Event(e) => panic!("no history expected, got {e:?}"),
-        })
-        .collect();
     assert_eq!(
-        states,
+        states(until_live(&mut updates).await),
         [
             LinkState::Connecting,
             LinkState::Authenticating,
-            LinkState::CatchingUp,
-            LinkState::Live
+            LinkState::CatchingUp
         ]
     );
-    assert_eq!(link.status().host.as_deref(), Some("test-host"));
-
-    prompt(&link).await;
-    let events = events_until(&link, &mut updates, finished).await;
-    assert_eq!(transcript(&events), REPLY);
-    let tail: Vec<_> = events[events.len() - 4..]
-        .iter()
-        .map(|e| e.kind.clone())
-        .collect();
-    assert_eq!(
-        tail,
-        [
-            EventKind::ApprovalRequested {
-                id: RequestId(1),
-                tool: "Bash".into(),
-                detail: "echo \"hi\"".into()
-            },
-            EventKind::ApprovalResolved {
-                id: RequestId(1),
-                decision: Decision::Approve,
-                by: "test-client".into()
-            },
-            EventKind::AssistantMessage {
-                text: "Ran it. The answer to \"hi\" is 42.".into()
-            },
-            EventKind::TurnFinished,
-        ]
-    );
-    assert_eq!(seqs(&events), (1..=events.len() as u64).collect::<Vec<_>>());
+    assert_eq!(link.status().host, Some(String::from("test-host")));
     assert_eq!(link.status().path, PathKind::Direct);
+
+    let cases = Vec::from([
+        Case {
+            body: start(&std::env::temp_dir().join("conductor-e2e-missing")),
+            result: CommandResult::Rejected(Rejection::NoSuchDirectory),
+        },
+        Case {
+            body: start(&std::env::current_exe().unwrap()),
+            result: CommandResult::Rejected(Rejection::NoSuchDirectory),
+        },
+        Case {
+            body: start(&std::env::temp_dir()),
+            result: CommandResult::Rejected(Rejection::ProviderUnavailable {
+                message: String::from(UNAVAILABLE),
+            }),
+        },
+        Case {
+            body: CommandBody::SendMessage {
+                session: SessionId(1),
+                text: String::from("hi"),
+            },
+            result: CommandResult::Rejected(Rejection::UnknownSession),
+        },
+    ]);
+    let (bodies, expected) = cases
+        .into_iter()
+        .map(|case| (case.body, case.result))
+        .unzip::<CommandBody, CommandResult, Vec<CommandBody>, Vec<CommandResult>>();
+    let results = n0_future::stream::iter(bodies)
+        .then(|body| link.send(body))
+        .map(Result::unwrap)
+        .collect::<Vec<CommandResult>>()
+        .await;
+    assert_eq!(results, expected);
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
 
 #[tokio::test]
-async fn reconnect_mid_turn_resumes_after_the_cursor_without_gaps_or_duplicates() {
+async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates() {
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    prompt(&link).await;
-    let mut before = events_until(&link, &mut updates, |e| e.seq == HostSeq(3)).await;
+    append(&fx.log, Vec::from([created(), delta("Hel"), delta("lo")])).await;
+    let before = events_through(&mut updates, HostSeq(3)).await;
 
+    append(&fx.log, Vec::from([delta(" wor"), delta("ld")])).await;
     link.reconnect().await;
-    let mut states = Vec::new();
-    let mut after = Vec::new();
-    loop {
-        match next(&mut updates).await {
-            Update::Status(s) => states.push(s.state),
-            Update::Reset(epoch) => panic!("same epoch, no reset expected: {epoch:?}"),
-            Update::Event(event) => {
-                if let EventKind::ApprovalRequested { id, .. } = event.kind {
-                    approve(&link, id).await;
-                }
-                let done = finished(&event);
-                after.push(event);
-                if done {
-                    break;
-                }
-            }
-        }
-    }
-    assert_eq!(
-        states[..3],
-        [
-            LinkState::Disconnected,
-            LinkState::Connecting,
-            LinkState::Authenticating
-        ]
-    );
-    assert!(states.contains(&LinkState::Live), "{states:?}");
-    assert_eq!(after[0].seq, HostSeq(4));
-    before.append(&mut after);
-    assert_eq!(seqs(&before), (1..=before.len() as u64).collect::<Vec<_>>());
-    assert_eq!(transcript(&before), REPLY);
+    append(&fx.log, Vec::from([delta("!")])).await;
+    let after = events_through(&mut updates, HostSeq(6)).await;
+    let seen = before.into_iter().chain(after).collect::<Vec<Event>>();
+    assert_eq!(seqs(&seen), [1, 2, 3, 4, 5, 6].map(HostSeq));
+    assert_eq!(fold(seen), streaming("Hello world!"));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -256,21 +267,23 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     let fx = host().await;
     let (first, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    prompt(&first).await;
-    let mut seen = events_until(&first, &mut updates, |e| e.seq == HostSeq(5)).await;
+    append(&fx.log, Vec::from([created(), delta("Hel")])).await;
+    let seen = events_through(&mut updates, HostSeq(2)).await;
     first.stop().await.unwrap();
     drop(updates);
 
+    append(&fx.log, Vec::from([delta("lo")])).await;
     let cursor = Cursor {
         epoch: Epoch(11),
-        seq: HostSeq(5),
+        seq: HostSeq(2),
     };
     let (second, mut updates) = link(fx.target.clone(), Some(cursor)).await;
-    let mut rest = events_until(&second, &mut updates, finished).await;
-    assert_eq!(rest[0].seq, HostSeq(6));
-    seen.append(&mut rest);
-    assert_eq!(seqs(&seen), (1..=seen.len() as u64).collect::<Vec<_>>());
-    assert_eq!(transcript(&seen), REPLY);
+    let rest = events_through(&mut updates, HostSeq(3)).await;
+    assert_eq!(seqs(&rest), [HostSeq(3)]);
+    assert_eq!(
+        fold(seen.into_iter().chain(rest).collect()),
+        streaming("Hello")
+    );
     second.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -278,27 +291,47 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
 #[tokio::test]
 async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
     let fx = host().await;
-    let (first, mut updates) = link(fx.target.clone(), None).await;
-    until_live(&mut updates).await;
-    prompt(&first).await;
-    events_until(&first, &mut updates, |e| e.seq == HostSeq(2)).await;
-
+    append(&fx.log, Vec::from([created(), delta("Hi")])).await;
     let stale = Cursor {
         epoch: Epoch(10),
         seq: HostSeq(40),
     };
-    let (second, mut updates) = link(fx.target.clone(), Some(stale)).await;
-    let reset = until_live(&mut updates)
-        .await
+    let (link, mut updates) = link(fx.target.clone(), Some(stale)).await;
+    let before_live = until_live(&mut updates).await;
+    assert_eq!(
+        before_live
+            .iter()
+            .filter_map(|update| match update {
+                Update::Reset(epoch) => Some(epoch),
+                Update::Status(_) | Update::Event(_) => None,
+            })
+            .collect::<Vec<&Epoch>>(),
+        [&Epoch(11)]
+    );
+    let replayed = before_live
         .into_iter()
-        .find_map(|u| match u {
-            Update::Reset(epoch) => Some(epoch),
-            _ => None,
-        });
-    assert_eq!(reset, Some(Epoch(11)));
-    first.stop().await.unwrap();
-    second.stop().await.unwrap();
+        .filter_map(|update| match update {
+            Update::Event(event) => Some(event),
+            Update::Status(_) | Update::Reset(_) => None,
+        })
+        .collect::<Vec<Event>>();
+    assert_eq!(fold(replayed), streaming("Hi"));
+    link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
+}
+
+/// The states before the link reported an error, and the error.
+async fn until_error(updates: &mut mpsc::Receiver<Update>) -> (Vec<LinkState>, String) {
+    let mut seen = Vec::new();
+    loop {
+        match next(updates).await {
+            Update::Status(Status {
+                error: Some(error), ..
+            }) => break (seen, error),
+            Update::Status(status) => seen.push(status.state),
+            Update::Reset(_) | Update::Event(_) => {}
+        }
+    }
 }
 
 #[tokio::test]
@@ -309,15 +342,13 @@ async fn a_wrong_token_is_refused_and_never_goes_live() {
         ..fx.target.clone()
     };
     let (link, mut updates) = link(target, None).await;
-    let error = loop {
-        if let Update::Status(s) = next(&mut updates).await {
-            assert_ne!(s.state, LinkState::Live);
-            if let Some(error) = s.error {
-                break error;
-            }
-        }
-    };
-    assert_eq!(error, "the host refused us: wrong token");
+    assert_eq!(
+        until_error(&mut updates).await,
+        (
+            Vec::from([LinkState::Connecting, LinkState::Authenticating]),
+            String::from("the host refused us: wrong token")
+        )
+    );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -443,22 +474,15 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
     };
     let (link, mut updates) = link(target, None).await;
 
-    let states = tokio::time::timeout(HEDGED_LIVE, until_live(&mut updates))
+    let before_live = tokio::time::timeout(HEDGED_LIVE, until_live(&mut updates))
         .await
-        .expect("live within the hedge delay plus a connect")
-        .into_iter()
-        .filter_map(|u| match u {
-            Update::Status(s) => Some(s.state),
-            _ => None,
-        })
-        .collect::<Vec<LinkState>>();
+        .expect("live within the hedge delay plus a connect");
     assert_eq!(
-        states,
+        states(before_live),
         [
             LinkState::Connecting,
             LinkState::Authenticating,
-            LinkState::CatchingUp,
-            LinkState::Live
+            LinkState::CatchingUp
         ]
     );
     link.stop().await.unwrap();

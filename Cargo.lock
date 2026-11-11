@@ -229,6 +229,7 @@ dependencies = [
  "dioxus",
  "n0-future",
  "proto",
+ "tokio",
  "tracing",
  "web-sys",
 ]

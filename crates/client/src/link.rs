@@ -23,8 +23,8 @@ use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::sleep;
 use n0_future::{StreamExt, join_all, task};
 use proto::{
-    AuthToken, CandidateType, Command, CommandBody, CommandId, CommandResult, Epoch, Event, Hello,
-    HelloReply, HostSeq, Open, Subscribe, Ticket, Welcome,
+    AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch,
+    Event, Hello, HelloReply, HostSeq, Open, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -102,8 +102,8 @@ pub struct Status {
 
 #[derive(Debug, Clone)]
 pub struct LinkOptions {
-    /// Shown as `by` when this client resolves an approval.
-    pub client: String,
+    /// Shown as `by` on what this client does.
+    pub client: ClientName,
     /// Continues an earlier link's cursor, so the first subscription replays
     /// only what that link had not seen.
     pub resume: Option<Cursor>,
@@ -113,7 +113,7 @@ pub struct LinkOptions {
 }
 
 impl LinkOptions {
-    pub fn new(client: String) -> LinkOptions {
+    pub fn new(client: ClientName) -> LinkOptions {
         LinkOptions {
             client,
             resume: None,
@@ -285,7 +285,7 @@ struct Link {
     retiring: Vec<Endpoint>,
     network: Network,
     target: Target,
-    client: String,
+    client: ClientName,
     stun_servers: Vec<String>,
     cursor: Option<Cursor>,
     failures: u32,

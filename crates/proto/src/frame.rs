@@ -121,9 +121,9 @@ impl FrameBuffer {
 mod tests {
     use super::{FrameBuffer, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode};
     use crate::{
-        AuthToken, CandidateType, Command, CommandBody, CommandId, CommandResult, Decision, Epoch,
-        Event, EventKind, Hello, HelloReply, HostSeq, Open, Rejection, RequestId, RtcOffer, Signal,
-        Subscribe, Welcome,
+        AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult,
+        Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Rejection, RequestId,
+        Resolution, RtcOffer, SessionId, Signal, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &str) -> Vec<u8> {
@@ -155,20 +155,21 @@ mod tests {
     }
 
     #[test]
-    fn prompt_command_frame_is_length_then_json() {
+    fn command_frame_is_length_then_json() {
         let open = Open::Command(Command {
             id: CommandId(7),
-            body: CommandBody::Prompt {
+            body: CommandBody::SendMessage {
+                session: SessionId(2),
                 text: String::from("hi"),
             },
         });
         let bytes = encode(&open).unwrap();
         assert_eq!(
             bytes,
-            b"\x00\x00\x00\x3e{\"open\":\"command\",\"id\":7,\"body\":{\"type\":\"prompt\",\"text\":\"hi\"}}"
+            b"\x00\x00\x00\x50{\"open\":\"command\",\"id\":7,\"body\":{\"type\":\"send_message\",\"session\":2,\"text\":\"hi\"}}"
         );
         let (header, body) = bytes.split_first_chunk::<HEADER_LEN>().unwrap();
-        assert_eq!(body_len(header.to_owned()).unwrap(), 62);
+        assert_eq!(body_len(header.to_owned()).unwrap(), 80);
         assert_eq!(decode::<Open>(body).unwrap(), open);
     }
 
@@ -177,7 +178,7 @@ mod tests {
         let token = AuthToken::from_bytes([0xab; 16]);
         assert_eq!(
             encode(&Open::Hello(Hello {
-                client: String::from("phone"),
+                client: ClientName(String::from("phone")),
                 token
             }))
             .unwrap(),
@@ -209,31 +210,48 @@ mod tests {
         assert_eq!(
             encode(&Event {
                 seq: HostSeq(3),
-                kind: EventKind::ApprovalResolved {
-                    id: RequestId(2),
-                    decision: Decision::Approve,
-                    by: String::from("phone"),
+                session: SessionId(1),
+                kind: EventKind::RequestResolved {
+                    request: RequestId(2),
+                    resolution: Resolution::Decided {
+                        decision: Decision::Approve,
+                        by: ClientName(String::from("phone")),
+                    },
                 },
             })
             .unwrap(),
             frame(
-                r#"{"seq":3,"kind":{"type":"approval_resolved","id":2,"decision":"approve","by":"phone"}}"#
+                r#"{"seq":3,"session":1,"kind":{"type":"request_resolved","request":2,"resolution":{"resolution":"decided","decision":"approve","by":"phone"}}}"#
             )
         );
         assert_eq!(
             encode(&Event {
                 seq: HostSeq(4),
-                kind: EventKind::TurnFinished,
+                session: SessionId(1),
+                kind: EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Failed {
+                        message: String::from("boom"),
+                    },
+                },
             })
             .unwrap(),
-            frame(r#"{"seq":4,"kind":{"type":"turn_finished"}}"#)
+            frame(
+                r#"{"seq":4,"session":1,"kind":{"type":"turn_completed","outcome":{"outcome":"failed","message":"boom"}}}"#
+            )
         );
         assert_eq!(
-            encode(&CommandResult::Rejected(Rejection::AlreadyResolved {
-                by: String::from("desk"),
+            encode(&CommandResult::Rejected(Rejection::ProviderUnavailable {
+                message: String::from("no codex"),
             }))
             .unwrap(),
-            frame(r#"{"result":"rejected","reason":"already_resolved","by":"desk"}"#)
+            frame(r#"{"result":"rejected","reason":"provider_unavailable","message":"no codex"}"#)
+        );
+        assert_eq!(
+            encode(&CommandResult::Started {
+                session: SessionId(3),
+            })
+            .unwrap(),
+            frame(r#"{"result":"started","session":3}"#)
         );
         assert_eq!(
             encode(&CommandResult::Accepted).unwrap(),
@@ -256,7 +274,8 @@ mod tests {
     fn frame_buffer_reassembles_frames_split_and_joined_across_messages() {
         let first = encode(&Event {
             seq: HostSeq(1),
-            kind: EventKind::TurnFinished,
+            session: SessionId(1),
+            kind: EventKind::SessionReady,
         })
         .unwrap();
         let second = encode(&CommandResult::Accepted).unwrap();
@@ -271,7 +290,7 @@ mod tests {
         assert_eq!(
             drained.bodies,
             [
-                r#"{"seq":1,"kind":{"type":"turn_finished"}}"#,
+                r#"{"seq":1,"session":1,"kind":{"type":"session_ready"}}"#,
                 r#"{"result":"accepted"}"#
             ]
         );
