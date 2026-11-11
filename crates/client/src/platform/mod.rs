@@ -10,15 +10,40 @@ mod rtc;
 #[cfg(target_family = "wasm")]
 mod web;
 
+use iroh::endpoint::{BindError, presets};
+use iroh::{Endpoint, RelayMode};
+
 #[cfg(not(target_family = "wasm"))]
-pub use native::bind_endpoint;
+use native::public_endpoint;
 #[cfg(target_family = "wasm")]
-pub use web::bind_endpoint;
+use web::public_endpoint;
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) use native::{ChannelRecv, ChannelSend, Session, negotiate};
 #[cfg(target_family = "wasm")]
 pub(crate) use rtc::{ChannelRecv, ChannelSend, Session, negotiate};
+
+/// Which kind of endpoint the link binds, for its first dial and for every
+/// hedge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Network {
+    /// n0's relays and DNS lookup, plus mDNS on native.
+    Public,
+    /// Direct addresses only, with no relays and no lookup, as on loopback.
+    Local,
+}
+
+pub(crate) async fn bind_endpoint(network: Network) -> Result<Endpoint, BindError> {
+    match network {
+        Network::Public => public_endpoint().await,
+        Network::Local => {
+            Endpoint::builder(presets::Minimal)
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await
+        }
+    }
+}
 
 /// n0's public relays, named without the root dot (`proto::without_root_dot`).
 /// Every endpoint, host included, uses this map: a host advertises its home

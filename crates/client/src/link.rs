@@ -17,24 +17,29 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use iroh::endpoint::{Connection, PathEvent, PathList};
+use iroh::endpoint::{BindError, ConnectError, Connection, PathEvent, PathList};
 use iroh::{Endpoint, EndpointAddr, TransportAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::sleep;
-use n0_future::{StreamExt, task};
+use n0_future::{StreamExt, join_all, task};
 use proto::{
     AuthToken, CandidateType, Command, CommandBody, CommandId, CommandResult, Epoch, Event, Hello,
     HelloReply, HostSeq, Open, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::platform::Session;
+use crate::platform::{self, Network, Session};
 use crate::upgrade::Upgrade;
 use crate::wire::{RecvHalf, SendHalf, Transport, WireError};
 
 const UPDATE_BUFFER: usize = 1024;
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
 const BACKOFF_CEILING: Duration = Duration::from_secs(10);
+/// How long a dial may run before a second one starts on a fresh endpoint.
+/// A relay connection can stall at the network level for seconds while a
+/// fresh one is up in well under a second (docs/forensics/reconnect on the
+/// `reconnect-forensics` branch).
+const HEDGE_AFTER: Duration = Duration::from_millis(1500);
 
 /// Where a host is and the secret it expects in `Hello`.
 #[derive(Debug, Clone)]
@@ -104,6 +109,7 @@ pub struct LinkOptions {
     pub resume: Option<Cursor>,
     /// `stun:` URLs for the browser's WebRTC upgrade.
     pub stun_servers: Vec<String>,
+    pub network: Network,
 }
 
 impl LinkOptions {
@@ -116,6 +122,7 @@ impl LinkOptions {
                 .copied()
                 .map(String::from)
                 .collect(),
+            network: Network::Public,
         }
     }
 }
@@ -162,14 +169,20 @@ enum Request {
         reply: oneshot::Sender<Result<CommandResult, SendError>>,
     },
     Reconnect,
+    Stop {
+        reply: oneshot::Sender<()>,
+    },
 }
 
 impl HostLink {
-    pub fn spawn(
-        endpoint: Endpoint,
+    /// Binds an endpoint on `options.network` and starts the link on it. A
+    /// dial that stalls is retried on a fresh endpoint of the same network,
+    /// and the link then runs on whichever connected and closes the other.
+    pub async fn spawn(
         target: Target,
         options: LinkOptions,
-    ) -> (HostLink, mpsc::Receiver<Update>) {
+    ) -> Result<(HostLink, mpsc::Receiver<Update>), BindError> {
+        let endpoint = platform::bind_endpoint(options.network).await?;
         let (requests_tx, requests_rx) = mpsc::channel(16);
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
         let initial = Status {
@@ -182,6 +195,8 @@ impl HostLink {
         let (status_tx, status_rx) = watch::channel(initial);
         let link = Link {
             endpoint,
+            retiring: Vec::new(),
+            network: options.network,
             target,
             client: options.client,
             stun_servers: options.stun_servers,
@@ -200,7 +215,7 @@ impl HostLink {
             requests: requests_tx,
             status: status_rx,
         };
-        (handle, updates_rx)
+        Ok((handle, updates_rx))
     }
 
     pub fn status(&self) -> Status {
@@ -217,6 +232,12 @@ impl HostLink {
     /// network change.
     pub async fn reconnect(&self) {
         let _ = self.requests.send(Request::Reconnect).await;
+    }
+
+    /// Closes the connection and every endpoint the link bound, and returns
+    /// once they are closed.
+    pub async fn stop(self) -> Result<(), SendError> {
+        self.ask(|reply| Request::Stop { reply }).await
     }
 
     async fn ask<T>(
@@ -260,6 +281,9 @@ enum Lost {
 
 struct Link {
     endpoint: Endpoint,
+    /// Endpoints a hedge left behind, still closing.
+    retiring: Vec<Endpoint>,
+    network: Network,
     target: Target,
     client: String,
     stun_servers: Vec<String>,
@@ -385,9 +409,17 @@ impl Link {
 
     async fn on(&mut self, input: Input) -> Result<(), Stopped> {
         let phase = std::mem::replace(&mut self.phase, Phase::Dialing);
-        let phase = self.step(phase, input).await?;
-        self.phase = self.armed(phase);
-        Ok(())
+        match self.step(phase, input).await {
+            Ok(phase) => {
+                self.phase = self.armed(phase);
+                Ok(())
+            }
+            Err(stopped) => {
+                // Also when every handle was dropped without a stop.
+                self.close().await;
+                Err(stopped)
+            }
+        }
     }
 
     async fn step(&mut self, phase: Phase, input: Input) -> Result<Phase, Stopped> {
@@ -401,6 +433,7 @@ impl Link {
                 let _ = reply.send(Err(SendError::NotConnected));
                 Ok(idle)
             }
+            (_, Input::Request(Some(Request::Stop { reply }))) => Err(self.stop(reply).await),
             (_, Input::Request(None)) => Err(Stopped {}),
             (idle, Input::Frame(_) | Input::PathsChanged | Input::Dropped | Input::Upgraded(_)) => {
                 Ok(idle)
@@ -459,10 +492,16 @@ impl Link {
 
     async fn connect(&mut self) -> Result<Connected, Lost> {
         self.outbox.set_state(LinkState::Connecting).await?;
-        let conn = self
-            .endpoint
-            .connect(self.target.addr.clone(), proto::ALPN)
-            .await?;
+        let dialed = dial_hedged(
+            self.network,
+            self.endpoint.clone(),
+            self.target.addr.clone(),
+        )
+        .await;
+        self.endpoint = dialed.endpoint;
+        self.retiring.retain(|endpoint| !endpoint.is_closed());
+        self.retiring.extend(dialed.retired);
+        let conn = dialed.conn?;
         match self.start(&conn).await {
             Ok(connected) => Ok(connected),
             Err(lost) => {
@@ -512,6 +551,7 @@ impl Link {
         match input {
             Input::Request(None) => Err(Lost::Stopped(Stopped {})),
             Input::Request(Some(Request::Reconnect)) => Err(Lost::Reconnect),
+            Input::Request(Some(Request::Stop { reply })) => Err(self.stop(reply).await.into()),
             Input::Request(Some(Request::Send { body, reply })) => {
                 let command = Command {
                     id: self.next_id,
@@ -644,6 +684,18 @@ impl Link {
         Ok(next)
     }
 
+    async fn stop(&mut self, reply: oneshot::Sender<()>) -> Stopped {
+        self.close().await;
+        let _ = reply.send(());
+        Stopped {}
+    }
+
+    /// Closes the endpoint the link runs on and waits out the retired ones.
+    async fn close(&mut self) {
+        self.endpoint.close().await;
+        let _ = join_all(self.retiring.iter().map(Endpoint::closed)).await;
+    }
+
     fn cursor_seq(&self) -> HostSeq {
         self.cursor.map_or(HostSeq(0), |cursor| cursor.seq)
     }
@@ -742,6 +794,119 @@ impl Outbox {
     async fn emit(&self, update: Update) -> Result<(), Stopped> {
         self.updates.send(update).await.map_err(|_| Stopped {})
     }
+}
+
+/// A dial in flight and the endpoint it runs on.
+struct Attempt {
+    endpoint: Endpoint,
+    connecting: BoxFuture<Result<Connection, ConnectError>>,
+}
+
+impl Attempt {
+    fn start(endpoint: Endpoint, addr: EndpointAddr) -> Attempt {
+        Attempt {
+            connecting: Box::pin(dial(endpoint.clone(), addr)),
+            endpoint,
+        }
+    }
+}
+
+/// How a dial ended, the endpoint the link runs on from now on, and the one
+/// a hedge retired.
+struct Dialed {
+    endpoint: Endpoint,
+    conn: Result<Connection, ConnectError>,
+    retired: Option<Endpoint>,
+}
+
+async fn dial(endpoint: Endpoint, addr: EndpointAddr) -> Result<Connection, ConnectError> {
+    endpoint.connect(addr, proto::ALPN).await
+}
+
+/// Dials from `endpoint`, and from a fresh endpoint too if the first dial
+/// hasn't returned after [`HEDGE_AFTER`].
+async fn dial_hedged(network: Network, endpoint: Endpoint, addr: EndpointAddr) -> Dialed {
+    let Attempt {
+        endpoint,
+        mut connecting,
+    } = Attempt::start(endpoint, addr.clone());
+    tokio::select! {
+        conn = &mut connecting => Dialed { endpoint, conn, retired: None },
+        () = sleep(HEDGE_AFTER) => hedge(network, Attempt { endpoint, connecting }, addr).await,
+    }
+}
+
+async fn hedge(network: Network, first: Attempt, addr: EndpointAddr) -> Dialed {
+    tracing::info!("dial stalled; dialing again on a fresh endpoint");
+    match platform::bind_endpoint(network).await {
+        Ok(fresh) => race(first, Attempt::start(fresh, addr)).await,
+        Err(err) => {
+            tracing::warn!(%err, "no fresh endpoint to hedge with");
+            finish(first, None).await
+        }
+    }
+}
+
+/// Keeps whichever attempt connects first.
+async fn race(first: Attempt, second: Attempt) -> Dialed {
+    let Attempt {
+        endpoint: first_endpoint,
+        connecting: mut first_connecting,
+    } = first;
+    let Attempt {
+        endpoint: second_endpoint,
+        connecting: mut second_connecting,
+    } = second;
+    tokio::select! {
+        conn = &mut first_connecting => {
+            let second = Attempt { endpoint: second_endpoint, connecting: second_connecting };
+            settle(first_endpoint, conn, second).await
+        }
+        conn = &mut second_connecting => {
+            let first = Attempt { endpoint: first_endpoint, connecting: first_connecting };
+            settle(second_endpoint, conn, first).await
+        }
+    }
+}
+
+/// One attempt returned. If it connected, the other is dropped and its
+/// endpoint closed; if it failed, its endpoint is closed and the other
+/// decides.
+async fn settle(
+    endpoint: Endpoint,
+    conn: Result<Connection, ConnectError>,
+    other: Attempt,
+) -> Dialed {
+    match conn {
+        Ok(conn) => {
+            tracing::info!(endpoint = %endpoint.id().fmt_short(), "hedged dial connected");
+            Dialed {
+                endpoint,
+                conn: Ok(conn),
+                retired: Some(retire(other.endpoint)),
+            }
+        }
+        Err(err) => {
+            tracing::debug!(%err, "one hedged dial failed");
+            finish(other, Some(retire(endpoint))).await
+        }
+    }
+}
+
+async fn finish(attempt: Attempt, retired: Option<Endpoint>) -> Dialed {
+    Dialed {
+        conn: attempt.connecting.await,
+        endpoint: attempt.endpoint,
+        retired,
+    }
+}
+
+/// Starts closing an endpoint the link no longer uses, without waiting for
+/// it, and hands it back so a stop can wait for the close.
+fn retire(endpoint: Endpoint) -> Endpoint {
+    let closing = endpoint.clone();
+    task::spawn(async move { closing.close().await });
+    endpoint
 }
 
 /// Opens a subscription on `carrier` after `after_seq`.
