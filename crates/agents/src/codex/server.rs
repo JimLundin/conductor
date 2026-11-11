@@ -276,7 +276,7 @@ impl Running {
         match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
             Ok(Ok(status)) => Exit::Status(status),
             Ok(Err(_)) | Err(_) => {
-                drop(child.start_kill());
+                let _ = child.start_kill();
                 match child.wait().await {
                     Ok(status) => Exit::Status(status),
                     Err(e) => Exit::Unknown(e.to_string()),
@@ -458,7 +458,9 @@ impl Actor {
                     Ok(()) => {
                         self.pending.insert(id, Pending { method, reply });
                     }
-                    Err(e) => drop(reply.send(Err(e))),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             CommandMsg::Respond {
@@ -466,10 +468,10 @@ impl Actor {
                 decision,
                 reply,
             } => {
-                drop(reply.send(self.respond(id, decision).await));
+                let _ = reply.send(self.respond(id, decision).await);
             }
             CommandMsg::Shutdown { reply } => {
-                reply.send(self.stop().await).ok();
+                let _ = reply.send(self.stop().await);
             }
         }
     }
@@ -527,9 +529,9 @@ impl Actor {
             Process::Running(running) => {
                 let status = running.stop().await;
                 self.process = Process::Exited(status.clone());
-                self.pending
-                    .drain()
-                    .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
+                self.pending.drain().for_each(|(_, Pending { reply, .. })| {
+                    let _ = reply.send(Err(Error::Exited));
+                });
                 self.open.clear();
                 self.emit(CodexEvent::Exited {
                     status: status.clone(),
@@ -546,7 +548,7 @@ impl Actor {
 
     async fn emit(&self, event: CodexEvent) {
         // A dropped receiver only means nobody is listening any more.
-        drop(self.events.send(event).await);
+        let _ = self.events.send(event).await;
     }
 }
 

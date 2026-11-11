@@ -337,7 +337,7 @@ fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
 fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
     fixtures.map(|dir| {
         let path = dir.join(format!("{name}.jsonl"));
-        drop(std::fs::remove_file(&path));
+        let _ = std::fs::remove_file(&path);
         path
     })
 }

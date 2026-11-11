@@ -267,10 +267,10 @@ fn inbound(msg: JsonRpcMessage, raw: Value) -> Inbound {
 }
 
 /// The plain decisions the schema allows, offered when Codex lists none.
-const PLAIN_DECISIONS: [&str; 4] = ["accept", "acceptForSession", "decline", "cancel"];
+const PLAIN_DECISIONS: &[&str] = &["accept", "acceptForSession", "decline", "cancel"];
 
 fn plain_decisions() -> Vec<Value> {
-    PLAIN_DECISIONS.into_iter().map(Value::from).collect()
+    PLAIN_DECISIONS.iter().copied().map(Value::from).collect()
 }
 
 /// A server request we serve, before it is tagged with its id.

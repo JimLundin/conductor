@@ -290,7 +290,7 @@ impl Running {
         match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
             Ok(Ok(status)) => Exit::Status(status),
             Ok(Err(_)) | Err(_) => {
-                drop(child.start_kill());
+                let _ = child.start_kill();
                 match child.wait().await {
                     Ok(status) => Exit::Status(status),
                     Err(e) => Exit::Unknown(e.to_string()),
@@ -410,10 +410,10 @@ impl Actor {
                 outcome,
             } => match self.pending.remove(&request_id) {
                 Some(Pending { call, reply }) => {
-                    drop(reply.send(outcome.map_err(|message| Error::Control {
+                    let _ = reply.send(outcome.map_err(|message| Error::Control {
                         subtype: String::from(call.subtype()),
                         message,
-                    })))
+                    }));
                 }
                 None => tracing::warn!("control_response for unknown request {request_id}"),
             },
@@ -462,7 +462,7 @@ impl Actor {
     async fn on_command(&mut self, cmd: CommandMsg) {
         match cmd {
             CommandMsg::SendUser { text, reply } => {
-                drop(reply.send(self.write(Outbound::User(text)).await));
+                let _ = reply.send(self.write(Outbound::User(text)).await);
             }
             CommandMsg::Control { call, reply } => {
                 self.next_request = self.next_request.saturating_add(1);
@@ -477,7 +477,9 @@ impl Actor {
                     Ok(()) => {
                         self.pending.insert(request_id, Pending { call, reply });
                     }
-                    Err(e) => drop(reply.send(Err(e))),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             CommandMsg::Respond {
@@ -496,10 +498,10 @@ impl Actor {
                         .await
                     }
                 };
-                drop(reply.send(result));
+                let _ = reply.send(result);
             }
             CommandMsg::Shutdown { reply } => {
-                reply.send(self.stop().await).ok();
+                let _ = reply.send(self.stop().await);
             }
         }
     }
@@ -524,9 +526,9 @@ impl Actor {
             Process::Running(running) => {
                 let status = running.stop().await;
                 self.process = Process::Exited(status.clone());
-                self.pending
-                    .drain()
-                    .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
+                self.pending.drain().for_each(|(_, Pending { reply, .. })| {
+                    let _ = reply.send(Err(Error::Exited));
+                });
                 self.open_permissions.clear();
                 self.emit(ClaudeEvent::Exited {
                     status: status.clone(),
@@ -543,7 +545,7 @@ impl Actor {
 
     async fn emit(&self, event: ClaudeEvent) {
         // A dropped receiver only means nobody is listening any more.
-        drop(self.events.send(event).await);
+        let _ = self.events.send(event).await;
     }
 }
 
