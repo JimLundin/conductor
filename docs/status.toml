@@ -192,8 +192,7 @@ touches = ["subset"]
 [[phase.unit]]
 id = "archmap"
 name = "Architecture page"
-status = "in_progress"
-branch = "archmap"
+status = "done"
 purpose = "This page, generated from docs/status.toml and the code."
 done_when = "Published at /conductor/architecture/."
 touches = []

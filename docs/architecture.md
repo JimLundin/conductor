@@ -1,9 +1,11 @@
 # Conductor: architecture sketch (draft for review)
 
-Status: draft, revised 2026-11-10 after these decisions: iPhone with no Apple Developer
-account; hosts on Windows, WSL and macOS; no relay of our own; a static web client on a
-dedicated domain; Dioxus for the UI. Nothing here is built yet. Items marked **[verify]**
-are assumptions that a spike must confirm before we depend on them.
+Status: the original design sketch from 2026-11-10, kept as the reference
+for the overall system. **What is built and what is in progress is on the
+generated architecture page** (`https://jimlundin.github.io/conductor/architecture/`,
+from `docs/status.toml`); the current plan for the host is `docs/p1/design.md`.
+Where this document and those disagree, they win: the crate list in §6 and the
+build order in §12 are the original sketch, not the current state.
 
 ## 1. What we are building
 

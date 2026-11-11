@@ -1053,11 +1053,11 @@ green `tools/check.sh` commit, and leaves the system working
 | # | Unit | Depends on | Parallel with | Done when |
 |---|---|---|---|---|
 | 1 | **Gated fake CLI.** `fake-cli.py`, the two `.sh` wrappers, `fixtures/e2e/claude-approve.jsonl` (provisional). A small agents test drives `ClaudeSession` through `claude-approve.jsonl`: no event before `send_user`, nothing after the permission before `respond` | none | 2, 3, T | the new test and the existing replay tests pass |
-| 2 | **Agents boundary.** Codex `item/agentMessage/delta` as `ThreadEvent::AgentDelta`; Claude `ToolDetail` (§2.7); Claude `--include-partial-messages` and `StreamDelta`, with a new `s1` recording, from which it rebuilds `claude-approve.jsonl` and builds `claude-deny-interrupt.jsonl`; originally: a new `s1` recording if open question 2 says yes | none | 1, 3, T | replay tests assert the deltas and details as literal lists; `s1` and `s2` pass live, including the new mid-stream interrupt step (interrupt on the first delta) and the immediate interrupt step (before `system/init`), 5 runs in a row; it also carries the drift-check fixes (`docs/subset/reviews/drift-checks.md`) |
+| 2 | **Agents boundary.** Codex `item/agentMessage/delta` as `ThreadEvent::AgentDelta`; Claude `ToolDetail` (§2.7); Claude `--include-partial-messages` and `StreamDelta`, with a new `s1` recording, from which it rebuilds `claude-approve.jsonl` and builds `claude-deny-interrupt.jsonl` | none | 1, 3, T | replay tests assert the deltas and details as literal lists; `s1` and `s2` pass live, including the new mid-stream interrupt step (interrupt on the first delta) and the immediate interrupt step (before `system/init`), 5 runs in a row; it also carries the drift-check fixes (`docs/subset/reviews/drift-checks.md`) |
 | 3 | **Protocol swap.** New `proto` types and `ALPN`; client `host_view.rs` with its fold tests; daemon `log.rs`, `registry.rs` (both providers `Unavailable`, the permanent path for a missing CLI), `serve.rs`, `main.rs` as `host`; `host.rs` and the spike types deleted; the app compiles against `HostView` and shows each session's transcript in order (the screens are unit 6) | T | 1, 2 | e2e: the wrong-token and epoch tests pass, and `StartSession` answers `ProviderUnavailable`; `log.rs` unit tests cover replay after the cursor; the app builds for web and desktop |
 | 4 | **Claude sessions.** `session.rs`, `mapping.rs` (Claude half), Claude in the registry | 1, 2, 3 | 6, T | the Claude e2e tests in §4.2 pass |
 | 5 | **Codex sessions.** `codex_hub.rs`, `mapping.rs` (Codex half), Codex in the registry; builds `codex-two-threads.jsonl` and `codex-interrupt.jsonl` | 4 | 6, T | the Codex e2e tests pass, including two sessions on one server |
-| 6 | **App screens.** `SessionList`, `NewSession`, `SessionPane`, the new items, phone layout | 3 | 4, 5, T | `dx serve` against a unit-4 host runs a Claude turn by hand; screenshots at desktop and 390x844 |
+| 6 | **App screens.** `SessionList`, `NewSession`, `SessionPane`, the new items, phone layout, and `ticket.rs` into the subset | 3 | 4, 5, T | `dx serve` against a unit-4 host runs a Claude turn by hand; screenshots at desktop and 390x844 |
 | T | **Transport port.** `wire.rs`, `rtc.rs`, `stun.rs` into the subset, same behaviour, against today's simulated host (open question 1) | none | 1, 2, and 3's development; lands before 3 | `subset check` is clean on those files; `tools/s3-browser.sh` passes all three scenarios |
 | 7 | **Browser e2e.** `tools/e2e-browser.sh`, `browser.mjs` on the real daemon and the fakes | 4, 6, T | 5 | all three scenarios pass in Chromium and WebKit |
 | 8 | **Smoke and docs.** Run `docs/p1/smoke.md`; update architecture §12 and the subset report | 5, 7 | none | the owner has run the checklist; `SUBSET=1 tools/check.sh` reports nothing under `crates/daemon` |
@@ -1116,7 +1116,7 @@ against today).
 unit T is about +1,400 tokens of pure subset inflation, which is the price of
 open question 1. The rest is new behaviour: real agents, several sessions,
 tool calls, and the screens for them. Every daemon violation is gone at the
-end, so `crates/` is left with only `app/src/ticket.rs`'s 8.
+end. `app/src/ticket.rs`'s 8 violations are assigned to unit 6, which rewrites the app's screens: after unit 6, `crates/` is fully in the subset.
 
 ## 7. Open questions
 
