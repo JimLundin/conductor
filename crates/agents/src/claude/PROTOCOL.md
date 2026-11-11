@@ -15,6 +15,8 @@ this file and re-check it when the CLI version changes.
 - `system/init` is not a process-start message. The CLI prints it once per turn,
   right after it reads each user message, with the same `session_id` every time.
   (Steps 1 to 3b: five turns, five `init` frames.)
+  The adapter reports each one as `TurnStarted`, the CLI's equivalent of
+  Codex's `turn/started`.
 - With `--setting-sources=project,local`, `init` still lists built-in skills and
   plugins. (Every session.)
 
@@ -38,6 +40,14 @@ this file and re-check it when the CLI version changes.
 
 - The CLI acknowledges `interrupt` with
   `control_response/success` and `{"still_queued": []}`. (Steps 3, 3b.)
+- Interrupt as soon as `init` arrives, before the model has printed
+  anything: the CLI acknowledges it, prints no assistant message, then the
+  user message `[Request interrupted by user]` and `result` with
+  `subtype: "error_during_execution"` and `terminal_reason:
+  "aborted_streaming"`. The model's reply never reaches stdout, so `s1` step 3
+  does not depend on what the model would have said. (Step 3, 2026-11-11,
+  five runs.) Earlier runs interrupted after the first assistant message,
+  which depended on the model printing one.
 - Interrupt during streaming: the CLI prints the user message
   `[Request interrupted by user]`, then `result` with
   `subtype: "error_during_execution"`, `is_error: true`, `stop_reason: null` and

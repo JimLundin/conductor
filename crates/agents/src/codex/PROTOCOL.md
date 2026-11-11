@@ -75,6 +75,17 @@ not committed. Where this file disagrees with the JSON Schema or architecture
 - `turn/interrupt` needs `threadId` and `turnId`. Codex answers `{}` and then
   sends `turn/completed` with `status: "interrupted"` and `error: null`.
   (Step 3.)
+- `turn/interrupt` sent as soon as `turn/started` arrives, before any model
+  output, is accepted the same way. The turn completes with
+  `status: "interrupted"`, `items: []` and no reasoning or agent message
+  item, so `s2` step 3 does not depend on what the model would have said.
+  (Step 3, 2026-11-11, five runs.) Earlier runs interrupted after the first
+  agent message or item. One of three failed with no output before
+  `turn/completed`, so there was nothing to interrupt.
+- Before it answers `turn/interrupt`, Codex runs the user's hooks for the
+  interrupt (`hook/started` with a run id such as
+  `interrupt:4:/home/jim/.codex/hooks.json`, then `hook/completed`). (Step 3,
+  2026-11-11.)
 - The thread takes a new turn right after an interrupt. (Step 3, `pong`.)
 
 ## Several threads on one process
