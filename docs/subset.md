@@ -130,7 +130,7 @@ live in `[weights]` in `subset.toml`, where the owner tunes them.
 |---|---|---|
 | encouraged | 0.5 | Type definitions (structs, newtypes, enums, the types in their fields), `match` with its arms and patterns, iterator adapter calls, `?`. |
 | neutral | 1.0 | The rest of the core: calls, paths, literals, `let`, field access, `pub`, references, slices. An allowed id missing from the map is neutral. |
-| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields. |
+| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields, also inside std containers. |
 | costly | 3.0 | Mutation and its kin: `mut`, `&mut self`, assignment (0008), the actor `loop` (0007), `dyn` (0017), `rsx!` (0018), untyped data. |
 | outside | 5.0 | Any violation of the current subset, whatever its id, so code not yet rewritten scores badly. |
 | boundary | 1.0 | Any construct whose shape a library fixes (below). |
@@ -161,6 +161,13 @@ The score also rewards naming data with types.
   own struct or variant or as a parameter or return type of our own fn.
   Inside fn bodies they are neutral. A newtype's one field is exempt, since
   it is where the primitive belongs.
+- **Std containers are transparent.** `Option`, `Result`, `Vec`, `Box` and
+  the other std containers (`transparent` in `[weights]`) don't change what
+  they hold: `Option<String>` as our field is a primitive in an `Option`,
+  tolerated, not a library type argument at the boundary weight. A primitive
+  in a library's generic type, such as `mpsc::Sender<String>`, stays
+  boundary. The typing chart counts the contents of a container, not the
+  container.
 - **Untyped data is costly**, wherever it appears: `serde_json::Value`,
   `HashMap<String, _>` or `BTreeMap<String, _>`, and `dyn Any`.
 - **Wire types of an external protocol are boundary.** A field of a type

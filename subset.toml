@@ -208,8 +208,9 @@ allowed = ["attr.tokio::main"]
 external_protocols = ["crates/agents/src/claude/**", "crates/agents/src/codex/**"]
 # Types that hold data without a type: `type.untyped` wherever they appear.
 untyped = ["serde_json::Value", "HashMap<String, _>", "BTreeMap<String, _>", "dyn Any"]
-# `adapters` (iterator method names) and `primitives` (type patterns) keep
-# the tool's std defaults, listed in tools/subset/README.md.
+# `adapters` (iterator method names), `primitives` (type patterns) and
+# `transparent` (std containers that typing sees through, such as `Option`)
+# keep the tool's std defaults, listed in tools/subset/README.md.
 
 [weights.tiers]
 encouraged = 0.5

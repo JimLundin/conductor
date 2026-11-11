@@ -493,7 +493,9 @@ fn judge(
                 (true, _) => weights::Tier::Outside,
                 (false, _) if wire(&o.extent) => weights::Tier::Boundary,
                 (false, Some(shape::Fixed::Always)) => weights::Tier::Boundary,
-                (false, Some(shape::Fixed::IfRestricted)) if tier.restricted() => {
+                (false, Some(shape::Fixed::IfRestricted))
+                    if tier.restricted() && !context.kept.contains(&o.extent) =>
+                {
                     weights::Tier::Boundary
                 }
                 _ => tier,

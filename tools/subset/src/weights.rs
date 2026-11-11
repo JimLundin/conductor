@@ -95,6 +95,10 @@ pub struct Weights {
     /// Type patterns that are `type.primitive` in a field or signature.
     #[serde(default = "default_primitives")]
     pub primitives: Vec<String>,
+    /// Names of std containers that are transparent for typing: a primitive
+    /// inside one, in our own field or signature, is `type.primitive`.
+    #[serde(default = "default_transparent")]
+    pub transparent: Vec<String>,
     /// Type patterns that are `type.untyped` anywhere.
     #[serde(default = "default_untyped")]
     pub untyped: Vec<String>,
@@ -120,6 +124,7 @@ impl Weights {
             adapters: self.adapters.clone(),
             primitives: parse(&self.primitives)?,
             untyped: parse(&self.untyped)?,
+            transparent: self.transparent.clone(),
         })
     }
 }
@@ -139,6 +144,17 @@ fn default_primitives() -> Vec<String> {
 fn default_untyped() -> Vec<String> {
     strings(UNTYPED)
 }
+
+fn default_transparent() -> Vec<String> {
+    strings(TRANSPARENT)
+}
+
+/// The standard library's containers and smart pointers, which hold a value
+/// without giving it a type of their own.
+pub const TRANSPARENT: &[&str] = &[
+    "Option", "Result", "Vec", "VecDeque", "Box", "Rc", "Arc", "Cow", "HashMap", "HashSet",
+    "BTreeMap", "BTreeSet",
+];
 
 /// The standard library's primitive data: text, numbers and bytes.
 pub const PRIMITIVES: &[&str] = &[

@@ -1601,7 +1601,7 @@ fn the_same_construct_costs_the_boundary_weight_where_a_library_fixes_its_shape(
 }
 
 #[test]
-fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
+fn typing_charges_primitives_in_signatures_and_fields_and_std_containers_and_untyped_data() {
     let derive = "#[derive(Serialize)]\nstruct Msg {\n    body: Vec<u8>,\n}\n";
     let config = score_config(
         &[
@@ -1632,10 +1632,18 @@ fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
                 "struct SessionId(String);\n\nfn resume(session: SessionId) {}\n",
             ),
             ("untyped.rs", "struct Event {\n    body: Value,\n}\n"),
+            (
+                "contained.rs",
+                "struct Peer {\n    name: Option<String>,\n    tx: Sender<String>,\n}\n",
+            ),
             ("wire/lib.rs", derive),
             ("proto/lib.rs", derive),
         ],
     );
+    // contained.rs: `struct Peer {`, both fields' `name : ,` and the
+    // containers' `Option < >` and `Sender < >` cost 0.5 each (7.5). The
+    // `String` in std's `Option` is a primitive (2.0); the one in a library's
+    // `Sender` is a type argument the library fixes (boundary, 1.0).
     // primitive.rs: `fn resume ( : {` 5.0, `session` 0.5, `String` 2.0.
     // typed.rs: the newtype's `struct SessionId ( ;` and its `String` cost
     // 0.5 each (2.5), and the fn 6.5 with `SessionId` at 1.0.
@@ -1647,12 +1655,13 @@ fn typing_charges_primitives_in_signatures_and_fields_and_untyped_data() {
     assert_eq!(
         score_output(&config, "file"),
         "     score   tokens per token  boundary  share file\n\
+         \x20     10.5       17     0.618       1.0   9.5% contained.rs\n\
          \x20      7.5        7     1.071       0.0   0.0% primitive.rs\n\
          \x20     16.0       15     1.067       5.0  31.2% proto/lib.rs\n\
          \x20      9.0       12     0.750       0.0   0.0% typed.rs\n\
          \x20      6.0        7     0.857       0.0   0.0% untyped.rs\n\
          \x20     13.0       15     0.867      11.0  84.6% wire/lib.rs\n\
-         \x20     51.5       56     0.920      16.0  31.1% total\n"
+         \x20     62.0       73     0.849      17.0  27.4% total\n"
     );
 }
 

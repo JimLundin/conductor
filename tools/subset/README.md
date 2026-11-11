@@ -274,7 +274,7 @@ comparing two versions of the same code.
 [weights]
 external_protocols = ["src/vendor_api/**"]   # optional, default none
 untyped = ["serde_json::Value", "dyn Any"]  # optional, default below
-# adapters = [...], primitives = [...]      # optional, default below
+# adapters, primitives, transparent         # optional, default below
 
 [weights.tiers]
 encouraged = 0.5
@@ -304,8 +304,8 @@ boundary = 1.0
   `position`, `product`, `reduce`, `rev`, `rposition`, `scan`, `skip`,
   `skip_while`, `step_by`, `sum`, `take`, `take_while`, `try_fold`, `unzip`
   and `zip`. The name is all the tool sees, so `Option::map` counts too.
-- `primitives`, `untyped` and `external_protocols` are described under
-  Typing.
+- `primitives`, `untyped`, `transparent` and `external_protocols` are
+  described under Typing.
 
 A list that is given replaces its default. To extend a default, copy it.
 
@@ -397,9 +397,19 @@ pattern's leading segments must agree where the code spells them too. A
 bare name in the code, such as `Value`, matches `serde_json::Value` unless
 it is a name we define.
 
+- **Std containers are transparent.** A type whose last segment is in
+  `transparent`, and isn't a name we define, holds its arguments without
+  typing them. A primitive held only by such containers in our own field or
+  signature, as `String` in `Option<String>` or `Vec<Option<String>>`, is
+  `type.primitive` at its own tier, not boundary. The container's own
+  tokens are left out of the typing shares, so `Option<SessionId>` counts
+  as our own type. The default `transparent` is `Option`, `Result`, `Vec`,
+  `VecDeque`, `Box`, `Rc`, `Arc`, `Cow`, `HashMap`, `HashSet`, `BTreeMap`
+  and `BTreeSet`.
+
 Positions 1 to 3 of the boundary context apply to these ids too: a
-primitive passed as a type argument of a library type, as in
-`Result<String, E>` or `Option<String>`, costs the boundary weight.
+primitive passed as a type argument of a library type that isn't
+transparent, as in `mpsc::Sender<String>`, costs the boundary weight.
 
 ## The HTML report
 
