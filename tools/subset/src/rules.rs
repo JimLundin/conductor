@@ -98,7 +98,7 @@ pub const ERROR_MESSAGE: Rule = rule(
 );
 pub const FROM_ONCE: Rule = rule(
     "attr.from",
-    "`#[from]` only on the one variant holding a given foreign error type (proposal 0011)",
+    "`#[from]` only on the one variant of an enum holding a given error type (proposal 0011)",
 );
 pub const SERDE_KEYS: Rule = rule(
     "attr.serde",

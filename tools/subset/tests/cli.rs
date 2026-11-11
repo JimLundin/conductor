@@ -864,15 +864,16 @@ fn each_error_variant_has_one_message() {
 }
 
 #[test]
-fn from_only_on_the_one_variant_holding_a_foreign_type() {
+fn from_only_on_the_one_variant_holding_a_source_type() {
     assert_eq!(
         rule_case(
             "from-once",
             "crates/daemon/src/a.rs",
-            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading: {0}\")]\n    Read(#[from] std::io::Error),\n    #[error(\"parsing: {0}\")]\n    Parse(#[from] toml::de::Error),\n}\n",
-            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading: {0}\")]\n    Read(#[from] std::io::Error),\n    #[error(\"writing: {0}\")]\n    Write(std::io::Error),\n}\n",
+            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading: {0}\")]\n    Read(#[from] std::io::Error),\n    #[error(\"parsing: {0}\")]\n    Parse(#[from] toml::de::Error),\n    #[error(\"decoding: {0}\")]\n    Decode(#[from] DecodeError),\n}\n\n#[derive(Debug, thiserror::Error)]\nenum DecodeError {\n    #[error(\"empty line\")]\n    Empty,\n}\n",
+            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading: {0}\")]\n    Read(#[from] std::io::Error),\n    #[error(\"writing: {0}\")]\n    Write(#[from] std::io::Error),\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:4:10: attr.from: `#[from]` only on the one variant holding a given foreign error type (proposal 0011)\n"
+        "crates/daemon/src/a_fail.rs:4:10: attr.from: `#[from]` only on the one variant of an enum holding a given error type (proposal 0011)\n\
+         crates/daemon/src/a_fail.rs:6:11: attr.from: `#[from]` only on the one variant of an enum holding a given error type (proposal 0011)\n"
     );
 }
 

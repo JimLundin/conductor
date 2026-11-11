@@ -344,8 +344,7 @@ impl Checker<'_> {
                 continue;
             };
             let holders = held.iter().filter(|ty| ***ty == field.ty).count();
-            let ours = matches!(&field.ty, Type::Path(p) if self.facts.is_ours(&p.path));
-            if holders > 1 || ours {
+            if holders > 1 {
                 self.flag(from.pound_token.span, &rules::FROM_ONCE);
             }
         }

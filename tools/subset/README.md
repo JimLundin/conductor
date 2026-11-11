@@ -99,7 +99,7 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |
 | `attr.derive` | `thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010) |
 | `attr.error` | each error variant carries one `#[error("…")]` message, never `transparent` (proposal 0010) |
-| `attr.from` | `#[from]` only on the one variant holding a given foreign error type (proposal 0011) |
+| `attr.from` | `#[from]` only on the one variant of an enum holding a given error type (proposal 0011) |
 | `attr.serde` | `#[serde]` only with `transparent`, `tag`, `content`, `rename_all` and `rename` (proposal 0012) |
 | `generics.type_param` | a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013) |
 | `type.slice` | `&[T]` only as a parameter type or a `const` type (proposal 0014) |
