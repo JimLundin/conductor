@@ -8,6 +8,6 @@ mod session;
 
 pub use protocol::{
     AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionMode,
-    PermissionRequestId, Role, SessionId,
+    PermissionRequestId, Role, SessionId, ToolDetail,
 };
 pub use session::{ClaudeOptions, ClaudeSession, Error, SettingSource, VersionPolicy};

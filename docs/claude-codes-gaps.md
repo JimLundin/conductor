@@ -68,6 +68,14 @@ CLI down and returns `Error::UnsupportedVersion { found, supported }`.
 `ClaudeOptions::allow_untested_version` runs it anyway with a warning. Widen the range
 only after `s1` passes against the new CLI.
 
+## 8. The builder could not ask for partial messages
+
+Found in P1 unit 2, which streams Claude replies.
+
+**Change.** `ClaudeCliBuilder::include_partial_messages` adds
+`--include-partial-messages`. `ClaudeOutput::StreamEvent` already parsed the
+`stream_event` frames it produces.
+
 ## Differences that need no fix
 
 - `initialize` omits `"hooks": null`. The CLI accepts it (every session).

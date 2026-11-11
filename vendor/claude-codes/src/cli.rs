@@ -78,6 +78,7 @@ pub struct ClaudeCliBuilder {
     add_dir: Vec<PathBuf>,
     ide: bool,
     strict_mcp_config: bool,
+    include_partial_messages: bool,
     session_id: Option<Uuid>,
     oauth_token: Option<String>,
     api_key: Option<String>,
@@ -119,6 +120,7 @@ impl ClaudeCliBuilder {
             add_dir: Vec::new(),
             ide: false,
             strict_mcp_config: false,
+            include_partial_messages: false,
             session_id: None,
             oauth_token: None,
             api_key: None,
@@ -316,6 +318,12 @@ impl ClaudeCliBuilder {
         self
     }
 
+    /// Stream each response as `stream_event` frames before its assistant message
+    pub fn include_partial_messages(mut self, include: bool) -> Self {
+        self.include_partial_messages = include;
+        self
+    }
+
     /// Set a specific session ID (must be a UUID)
     pub fn session_id(mut self, id: Uuid) -> Self {
         self.session_id = Some(id);
@@ -467,6 +475,10 @@ impl ClaudeCliBuilder {
 
         if self.strict_mcp_config {
             args.push("--strict-mcp-config".to_string());
+        }
+
+        if self.include_partial_messages {
+            args.push("--include-partial-messages".to_string());
         }
 
         if let Some(ref tool) = self.permission_prompt_tool {
