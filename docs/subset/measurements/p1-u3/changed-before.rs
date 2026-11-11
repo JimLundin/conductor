@@ -10,7 +10,7 @@ impl Item {
                 },
                 Change::Resolve(id, resolution),
             ) => Item::Request {
-                state: match Some(resolution).filter(|_| &request == id) {
+                state: match request.eq(id).then_some(resolution) {
                     Some(resolution) => RequestState::Resolved(resolution.clone()),
                     None => state,
                 },
@@ -19,7 +19,7 @@ impl Item {
                 detail,
             },
             (Item::Tool { call, tool, state }, Change::Finish(id, outcome)) => Item::Tool {
-                state: match Some(outcome).filter(|_| &call == id).copied() {
+                state: match call.eq(id).then_some(outcome).copied() {
                     Some(outcome) => ToolState::Finished(outcome),
                     None => state,
                 },
