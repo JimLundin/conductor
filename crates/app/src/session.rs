@@ -23,12 +23,7 @@ pub(crate) fn SessionPane(
 ) -> Element {
     let controls = session.controls();
     let provider = label(session.provider);
-    let (status, status_text) = match &session.status {
-        SessionStatus::Starting => ("starting", String::from("Starting")),
-        SessionStatus::Idle => ("idle", String::from("Idle")),
-        SessionStatus::Running => ("running", String::from("Running")),
-        SessionStatus::Closed(_) => ("closed", String::from("Closed")),
-    };
+    let status = session.status.word();
     let empty = match (&session.status, session.items.first()) {
         (_, Some(_)) => None,
         (SessionStatus::Starting, None) => Some(format!("Starting {provider}…")),
@@ -40,9 +35,9 @@ pub(crate) fn SessionPane(
         }
     };
     rsx! {
-        section { class: "pane session-pane", "data-status": status,
+        section { class: "pane session-pane", "data-status": "{status}",
             PaneHeader { title: "{short(&session.directory)}", subtitle: "{session.directory.0}", on_back,
-                span { class: "pill", "data-status": status, "{provider}, {status_text.to_lowercase()}" }
+                span { class: "pill", "data-status": "{status}", "{provider}, {status}" }
                 match controls.interrupt {
                     Interrupt::Offered => rsx! {
                         button {

@@ -84,6 +84,18 @@ enum Change {
     Finish(ToolCallId, ToolOutcome),
 }
 
+impl SessionStatus {
+    /// The status in one word, for the UI's text and its `data-status`.
+    pub fn word(&self) -> String {
+        String::from(match self {
+            SessionStatus::Starting => "starting",
+            SessionStatus::Idle => "idle",
+            SessionStatus::Running => "running",
+            SessionStatus::Closed(_) => "closed",
+        })
+    }
+}
+
 /// What the UI offers for a session, decided here so markup only shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Controls {

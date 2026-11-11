@@ -60,29 +60,32 @@ fn SessionRow(
     screen: Screen,
     on_select: EventHandler<Screen>,
 ) -> Element {
-    let (status, text) = match (&session.status, session.attention()) {
-        (SessionStatus::Closed(_), _) => ("closed", String::from("Closed")),
-        (_, Attention::Requests(1)) => ("approval", String::from("Needs approval")),
-        (_, Attention::Requests(open)) => ("approval", format!("{open} need approval")),
-        (SessionStatus::Starting, Attention::Quiet) => ("starting", String::from("Starting")),
-        (SessionStatus::Idle, Attention::Quiet) => ("idle", String::from("Idle")),
-        (SessionStatus::Running, Attention::Quiet) => ("running", String::from("Running")),
-    };
-    let badge = match session.attention() {
-        Attention::Requests(open) => format!("{open}"),
-        Attention::Quiet => String::new(),
+    let (status, text, badge) = match (&session.status, session.attention()) {
+        (SessionStatus::Closed(_), _) | (_, Attention::Quiet) => {
+            (session.status.word(), session.status.word(), String::new())
+        }
+        (_, Attention::Requests(1)) => (
+            String::from("approval"),
+            String::from("needs approval"),
+            String::from("1"),
+        ),
+        (_, Attention::Requests(open)) => (
+            String::from("approval"),
+            format!("{open} need approval"),
+            format!("{open}"),
+        ),
     };
     rsx! {
         li {
             button {
                 class: "session-row",
-                "data-status": status,
+                "data-status": "{status}",
                 "aria-current": screen == Screen::Session(id),
                 onclick: move |_| on_select(Screen::Session(id)),
                 span { class: "dot", "aria-hidden": "true" }
                 span { class: "row-text",
                     span { class: "row-title", "{short(&session.directory)}" }
-                    span { class: "row-sub", "{label(session.provider)}, {text.to_lowercase()}" }
+                    span { class: "row-sub", "{label(session.provider)}, {text}" }
                 }
                 span { class: "badge", "{badge}" }
             }
