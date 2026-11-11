@@ -280,7 +280,9 @@ impl Log {
                 self.head = event.seq;
                 self.events.push(event);
             }
-            Msg::Head { reply } => drop(reply.send(self.head)),
+            Msg::Head { reply } => {
+                let _ = reply.send(self.head);
+            }
         }
     }
 }
@@ -289,7 +291,9 @@ impl Log {
 `run` is `async` because it waits on a channel (proposal 0006). The `loop` is
 its whole body: it takes one message and hands it to one method (0007). Only
 the actor's own state changes, through `mut self` and `&mut self` (0008).
-Every other function still builds new values.
+Every other function still builds new values. The reply's send fails only
+when the asker has gone, and there is nothing to do about it, so the result
+is discarded with `let _ =` (proposal 0025).
 
 ## 16. Errors convert with `?` through `#[from]`
 
@@ -355,7 +359,22 @@ pub fn platform() -> Platform {
 A `cfg` sits on a whole item, and the other platform's item sits next to it
 in the same file (proposal 0016).
 
-## 19. An actor handle asks through one `ask` helper
+## 19. Discarding a value is `let _ =`
+
+```rust
+use tokio::sync::oneshot;
+
+pub fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq) {
+    let _ = reply.send(head);
+}
+```
+
+`let _ = value;` is the one way to say "this result doesn't matter". Don't
+write `drop(reply.send(head))` or `reply.send(head).ok();`. `drop` is only
+for releasing a named value that owns a resource earlier than the end of
+its scope (proposal 0025, revised).
+
+## 20. An actor handle asks through one `ask` helper
 
 ```rust
 use tokio::sync::{mpsc, oneshot};

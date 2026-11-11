@@ -76,6 +76,14 @@ pub const REF_MUT_OURS: Rule = rule(
     "type.reference.mut",
     "no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)",
 );
+pub const DROP_DISCARD: Rule = rule(
+    "expr.call",
+    "`drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)",
+);
+pub const OK_DISCARD: Rule = rule(
+    "expr.method_call",
+    "`.ok()` is not a discard; write `let _ = value;` (proposal 0025)",
+);
 pub const IMPL_TRAIT: Rule = rule(
     "item.impl.trait",
     "trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)",
@@ -202,6 +210,8 @@ pub const RULES: &[&Rule] = &[
     &PAT_MUT,
     &ASSIGN,
     &REF_MUT_OURS,
+    &DROP_DISCARD,
+    &OK_DISCARD,
     &IMPL_TRAIT,
     &LIFETIME_PARAM,
     &LIFETIME,

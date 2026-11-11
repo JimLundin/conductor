@@ -94,6 +94,8 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
 | `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
+| `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |
+| `expr.method_call` | `.ok()` is not a discard; write `let _ = value;` (proposal 0025) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
 | `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |

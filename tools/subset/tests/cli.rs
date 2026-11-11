@@ -661,7 +661,7 @@ fn async_blocks_only_spawned_or_as_stream_bodies() {
         rule_case(
             "async-block",
             "crates/daemon/src/a.rs",
-            "fn start(rx: Inbox) {\n    drop(tokio::spawn(async move { work(rx).await }));\n}\n\nfn events(rx: Inbox) -> Events {\n    stream::unfold(rx, |rx| async move { next(rx).await })\n}\n",
+            "fn start(rx: Inbox) {\n    let _ = tokio::spawn(async move { work(rx).await });\n}\n\nfn events(rx: Inbox) -> Events {\n    stream::unfold(rx, |rx| async move { next(rx).await })\n}\n",
             "async fn attempt() -> Result<u8, Lost> {\n    let result = async { step().await }.await;\n    result\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:2:18: expr.async: an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006)\n"
@@ -857,7 +857,7 @@ fn a_mut_binding_is_never_reassigned() {
         rule_case(
             "pat-mut",
             "crates/daemon/src/a.rs",
-            "fn drain(mut rx: Inbox) {\n    drop(rx.try_recv());\n}\n",
+            "fn drain(mut rx: Inbox) {\n    let _ = rx.try_recv();\n}\n",
             "fn reset(mut n: u64) -> u64 {\n    n = 0;\n    n\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:1:10: pat.ident.mut: a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008)\n\
@@ -892,12 +892,27 @@ fn no_mut_reference_to_our_own_types() {
 }
 
 #[test]
+fn discard_with_let_underscore() {
+    assert_eq!(
+        rule_case(
+            "discard",
+            "crates/daemon/src/a.rs",
+            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, guard: Lease) {\n    let _ = reply.send(head);\n    drop(guard);\n}\n",
+            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, lost: oneshot::Sender<HostSeq>) {\n    drop(reply.send(head));\n    lost.send(head).ok();\n    std::mem::drop(tokio::spawn(work()));\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n\
+         crates/daemon/src/a_fail.rs:3:21: expr.method_call: `.ok()` is not a discard; write `let _ = value;` (proposal 0025)\n\
+         crates/daemon/src/a_fail.rs:4:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n"
+    );
+}
+
+#[test]
 fn trait_impls_only_for_library_traits() {
     assert_eq!(
         rule_case(
             "impl-trait",
             "crates/daemon/src/a.rs",
-            "impl Drop for Guard {\n    fn drop(&mut self) {\n        self.child.start_kill().ok();\n    }\n}\n",
+            "impl Drop for Guard {\n    fn drop(&mut self) {\n        let _ = self.child.start_kill();\n    }\n}\n",
             "impl Display for Guard {\n    fn fmt(&self, f: &mut Formatter) -> fmt::Result {\n        f.write_str(\"guard\")\n    }\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:1:1: item.impl.trait: trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)\n"
@@ -1178,8 +1193,8 @@ fn closures_outside_method_calls_only_for_callbacks_streams_and_hooks() {
         rule_case(
             "closure",
             "crates/client/src/platform/a.rs",
-            "fn on_open(tx: Sender) -> Callback {\n    Closure::new(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
-            "fn on_open(tx: Sender) -> Callback {\n    Callback::wrap(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
+            "fn on_open(tx: Sender) -> Callback {\n    Closure::new(move |event| {\n        let _ = tx.send(Msg::Open(event));\n    })\n}\n",
+            "fn on_open(tx: Sender) -> Callback {\n    Callback::wrap(move |event| {\n        let _ = tx.send(Msg::Open(event));\n    })\n}\n",
         ),
         "crates/client/src/platform/a_fail.rs:2:20: expr.closure: a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026)\n"
     );
@@ -1340,7 +1355,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 19);
+    assert_eq!(files.len(), 20);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))

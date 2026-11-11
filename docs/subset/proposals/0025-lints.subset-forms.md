@@ -1,6 +1,6 @@
 ---
 construct: toolchain lint config (clippy::single_match, clippy::unnecessary_filter_map, rustc dropping_copy_types)
-status: proposed
+status: accepted (revised)
 task: rewrite of crates/agents (rw-agents, friction rows C16, Y6, Y3, S2, Z5)
 ---
 
@@ -133,3 +133,8 @@ Friction points removed: 5 of one kind, "clippy against the subset" (Y3, C16, Y6
 The risk `dropping_copy_types` guards against is `drop(&guard)` meant to release a lock. The subset has no locks (interior mutability stays out), so that mistake has nothing to hit in subset code.
 
 ## Owner decision
+Accepted on 2026-11-11 in a revised form, in subset version 4. **No lint is switched off.** The `[workspace.lints]` config above is not added. Each of the three lints is met by a subset form instead:
+
+- **Discarding.** `let _ = value;` is the one idiom. `drop(..)` and `.ok()` used only to discard are no longer allowed, so `dropping_copy_types` has nothing to fire on. `drop` stays only for a value that owns a resource released early. The checker flags `.ok();` as a statement, and `drop(..)` of anything but a plain name, since a name is the only argument that can be a resource held until then. Whether a named value owns a resource is a review check.
+- **`single_match`.** Resolved by proposal 0027: `if let` with no `else`, no `else if` and no let-chain is the one form for "act only on this case". The padding arms in the Before section become an `if let`.
+- **Counting** (`unnecessary_filter_map`). Pending. The owner is choosing between `filter_map(|v| match v { … => Some(()), … => None }).count()` and a `bool` predicate closure written as a `match` with `true`/`false` arms. Neither is encoded in version 4.

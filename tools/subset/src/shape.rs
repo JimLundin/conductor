@@ -727,6 +727,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                         ours: false,
                     },
                 };
+                let drop = callee.path == ["drop"] || callee.ends_with(&["mem", "drop"]);
+                let named =
+                    matches!(e.args.first(), Some(Expr::Path(p)) if p.path.get_ident().is_some());
+                if drop && !named {
+                    self.flag(e.func.span(), &rules::DROP_DISCARD);
+                }
                 for arg in &e.args {
                     self.set_expr(arg, Slot::CallArg(callee.clone()));
                 }
@@ -853,6 +859,16 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             _ => {}
         }
         visit::visit_expr(self, expr);
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        if let syn::Stmt::Expr(Expr::MethodCall(e), Some(_)) = stmt
+            && e.method == "ok"
+            && e.args.is_empty()
+        {
+            self.flag(e.method.span(), &rules::OK_DISCARD);
+        }
+        visit::visit_stmt(self, stmt);
     }
 
     fn visit_local(&mut self, local: &'ast syn::Local) {
