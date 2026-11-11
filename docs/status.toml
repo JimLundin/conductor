@@ -184,8 +184,7 @@ touches = ["subset"]
 [[phase.unit]]
 id = "subset-v6"
 name = "Subset checker v6"
-status = "in_progress"
-branch = "subset-v6"
+status = "done"
 purpose = "The next subset version: checker gaps and owner decisions from the reviews."
 done_when = "subset.toml says version 6 and the queued checker gaps fail their fixtures."
 touches = ["subset"]
