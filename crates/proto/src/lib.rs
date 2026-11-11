@@ -241,18 +241,13 @@ pub enum CommandResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rejection {
     NoSuchDirectory,
-    /// `message` says why: the tag already takes the name `reason`.
-    ProviderUnavailable {
-        message: String,
-    },
+    ProviderUnavailable { reason: String },
     UnknownSession,
     SessionClosed,
     TurnInProgress,
     NoTurnRunning,
     UnknownRequest,
-    AlreadyResolved {
-        by: ClientName,
-    },
+    AlreadyResolved { by: ClientName },
 }
 
 impl Rejection {
@@ -260,8 +255,8 @@ impl Rejection {
     pub fn label(&self) -> String {
         match self {
             Rejection::NoSuchDirectory => String::from("no directory at that path on the host"),
-            Rejection::ProviderUnavailable { message } => {
-                format!("that provider is unavailable: {message}")
+            Rejection::ProviderUnavailable { reason } => {
+                format!("that provider is unavailable: {reason}")
             }
             Rejection::UnknownSession => String::from("no session with that id"),
             Rejection::SessionClosed => String::from("the session has closed"),

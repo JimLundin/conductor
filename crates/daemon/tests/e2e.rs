@@ -218,7 +218,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
         Case {
             body: start(&std::env::temp_dir()),
             result: CommandResult::Rejected(Rejection::ProviderUnavailable {
-                message: String::from(UNAVAILABLE),
+                reason: String::from(UNAVAILABLE),
             }),
         },
         Case {

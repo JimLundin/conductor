@@ -231,7 +231,7 @@ mod tests {
         );
         assert_eq!(
             encode(&CommandResult::Rejected(Rejection::ProviderUnavailable {
-                message: String::from("no codex"),
+                reason: String::from("no codex"),
             }))
             .unwrap(),
             frame(b"\x02\x01\x08no codex")

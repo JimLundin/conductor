@@ -100,9 +100,9 @@ impl RegistryActor {
         // `read_dir` fails for a missing path and for a file alike.
         match (std::fs::read_dir(&directory.0), availability) {
             (Err(_), _) => CommandResult::Rejected(Rejection::NoSuchDirectory),
-            (Ok(_), Availability::Unavailable(message)) => {
+            (Ok(_), Availability::Unavailable(reason)) => {
                 CommandResult::Rejected(Rejection::ProviderUnavailable {
-                    message: message.clone(),
+                    reason: reason.clone(),
                 })
             }
         }
