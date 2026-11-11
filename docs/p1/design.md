@@ -1165,3 +1165,17 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   records the behaviour in `claude/PROTOCOL.md`.
 - `codex-interrupt.jsonl` stays mid-stream because it is built from
   `fixtures/codex/server1.jsonl` (unit 5).
+
+## 10. Owner decisions on storage and wire format (2026-11-11)
+
+- **Wire format: `postcard`, not JSON.** Frames keep their length prefix; the
+  body is postcard-encoded `proto` types. postcard is not self-describing, so a
+  breaking `proto` change bumps the ALPN (`conductor/1` → `/2`). The event log
+  stores the same encoding, and `conductord dump` prints it as text. The CLI
+  adapters stay JSON: that is the CLIs' own protocol (boundary).
+- **Storage (proposed, awaiting the owner's confirmation): Turso**, the
+  pure-Rust, in-process, SQLite-compatible engine (0.8.x, pre-1.0, in
+  production at several organisations; it also runs in the browser as WASM,
+  which suits the phone's offline cache). It sits behind a small `store`
+  module so a move to `redb` stays cheap. Durability is a later slice, not
+  slice 1.
