@@ -98,7 +98,10 @@ impl Turn {
 
     fn record(&mut self, event: ThreadEvent) {
         match event {
-            ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {}
+            ThreadEvent::Started
+            | ThreadEvent::Unknown(_)
+            | ThreadEvent::TurnStarted { .. }
+            | ThreadEvent::AgentDelta { .. } => {}
             ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
             ThreadEvent::AgentMessage { text, .. } => {
                 self.text = match self.text.as_str() {
@@ -125,6 +128,7 @@ fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
     match event {
         ThreadEvent::TurnStarted { turn }
         | ThreadEvent::TurnCompleted { turn, .. }
+        | ThreadEvent::AgentDelta { turn, .. }
         | ThreadEvent::AgentMessage { turn, .. }
         | ThreadEvent::Item { turn, .. }
         | ThreadEvent::ApprovalRequested { turn, .. } => Some(turn),
@@ -245,6 +249,7 @@ impl Run {
         match event {
             ThreadEvent::Started
             | ThreadEvent::Unknown(_)
+            | ThreadEvent::AgentDelta { .. }
             | ThreadEvent::AgentMessage { .. }
             | ThreadEvent::Item { .. }
             | ThreadEvent::ApprovalCancelled { .. } => {}

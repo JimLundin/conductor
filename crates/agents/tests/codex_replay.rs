@@ -89,6 +89,8 @@ struct Recorder {
     open: HashMap<ThreadId, TurnId>,
     names: HashMap<ThreadId, char>,
     seen: Vec<String>,
+    /// Each thread's deltas since its last other event, recorded as one line.
+    deltas: HashMap<ThreadId, Vec<String>>,
     unknown: BTreeMap<String, usize>,
     /// Every approval id answered so far.
     answered: Vec<ApprovalId>,
@@ -190,7 +192,19 @@ impl Recorder {
                 ..
             }
             | CodexEvent::Unknown(raw) => self.tally(method(raw)),
+            CodexEvent::Thread {
+                thread,
+                event: ThreadEvent::AgentDelta { text, .. },
+            } => self
+                .deltas
+                .entry(thread.clone())
+                .or_default()
+                .push(text.clone()),
             CodexEvent::Thread { thread, event } => {
+                if let Some(deltas) = self.deltas.remove(thread) {
+                    let line = format!("{} streams {deltas:?}", self.name(thread));
+                    self.seen.push(line);
+                }
                 let line = format!("{} {}", self.name(thread), summary(event));
                 self.seen.push(line);
             }
@@ -229,6 +243,7 @@ fn summary(event: &ThreadEvent) -> String {
         ThreadEvent::Started => String::from("started"),
         ThreadEvent::TurnStarted { .. } => String::from("turn started"),
         ThreadEvent::TurnCompleted { outcome, .. } => format!("turn {}", outcome_name(outcome)),
+        ThreadEvent::AgentDelta { text, .. } => format!("delta {text:?}"),
         ThreadEvent::AgentMessage { text, .. } => format!("says {text:?}"),
         ThreadEvent::Item { phase, item, .. } => match item {
             Item::Command { status, .. } => format!("{phase:?} command {status}"),
@@ -278,6 +293,7 @@ async fn spawn(name: &str) -> Recorder {
         open: HashMap::new(),
         names: HashMap::new(),
         seen: Vec::new(),
+        deltas: HashMap::new(),
         unknown: BTreeMap::new(),
         answered: Vec::new(),
     }
@@ -366,27 +382,33 @@ async fn approve_decline_interrupt_and_two_threads() {
             // 1: approve. The first write fails in the read-only sandbox
             // without asking; the retry asks.
             "A turn started",
+            "A streams [\"I\", \"’ll\", \" create\", \" the\", \" requested\", \" file\", \" with\", \" exactly\", \" that\", \" content\", \".\"]",
             "A says \"I’ll create the requested file with exactly that content.\"",
             "A Started command inProgress",
             "A Completed command failed",
             "A Started command inProgress",
             "A approval 0 command (3 options)",
             "A Completed command completed",
+            "A streams [\"Created\", \" `\", \"a\", \".txt\", \"`\", \" containing\", \" exactly\", \" `\", \"hello\", \" from\", \" s\", \"2\", \"`.\"]",
             "A says \"Created `a.txt` containing exactly `hello from s2`.\"",
             "A turn completed",
             // 2: decline.
             "A turn started",
+            "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
             "A says \"I’ll request permission to write `b.txt`; if it’s declined, I’ll stop.\"",
             "A Started command inProgress",
             "A approval 1 command (3 options)",
             "A Completed command declined",
+            "A streams [\"The\", \" request\", \" to\", \" create\", \" `\", \"b\", \".txt\", \"`\", \" was\", \" declined\", \".\"]",
             "A says \"The request to create `b.txt` was declined.\"",
             "A turn completed",
             // 3: interrupt after the first output, then a normal turn.
             "A turn started",
+            "A streams [\"starting\"]",
             "A says \"starting\"",
             "A turn interrupted",
             "A turn started",
+            "A streams [\"pong\"]",
             "A says \"pong\"",
             "A turn completed",
             // 4: two threads with turns in flight on one process.
@@ -394,8 +416,10 @@ async fn approve_decline_interrupt_and_two_threads() {
             "C started",
             "C turn started",
             "B turn started",
+            "C streams [\"br\", \"avo\"]",
             "C says \"bravo\"",
             "C turn completed",
+            "B streams [\"alpha\"]",
             "B says \"alpha\"",
             "B turn completed",
             "exited exit status: 0",
@@ -413,7 +437,6 @@ async fn approve_decline_interrupt_and_two_threads() {
             ("account/rateLimits/updated".to_owned(), 9),
             ("hook/completed".to_owned(), 3),
             ("hook/started".to_owned(), 3),
-            ("item/agentMessage/delta".to_owned(), 58),
             ("item/commandExecution/outputDelta".to_owned(), 1),
             ("item/completed".to_owned(), 8),
             ("item/started".to_owned(), 16),
@@ -456,6 +479,7 @@ async fn resume_in_a_new_process() {
         [
             // `thread/resume` sends no `thread/started`.
             "A turn started",
+            "A streams [\"a\", \".txt\"]",
             "A says \"a.txt\"",
             "A turn completed",
             "exited exit status: 0",

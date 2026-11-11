@@ -38,6 +38,8 @@ not committed. Where this file disagrees with the JSON Schema or architecture
 - Agent messages arrive as `item/started` (empty text), many
   `item/agentMessage/delta`, then `item/completed` with the full text. The
   item has `phase: "commentary"` or `phase: "final_answer"`. (Every turn.)
+  The adapter reports each delta as `AgentDelta` and the finished text as
+  `AgentMessage`; the deltas join to exactly that text. (`server1.jsonl`.)
 
 ## Approvals
 

@@ -140,6 +140,11 @@ pub enum ThreadEvent {
         turn: TurnId,
         outcome: TurnOutcome,
     },
+    /// A piece of an agent message as it streams; `AgentMessage` follows with the whole text.
+    AgentDelta {
+        turn: TurnId,
+        text: String,
+    },
     /// A finished agent message, not a delta.
     AgentMessage {
         turn: TurnId,
@@ -388,6 +393,13 @@ fn notification_event(notification: Notification, raw: Value) -> Inbound {
                 },
             )
         }
+        Notification::AgentMessageDelta(n) => on_thread(
+            n.thread_id,
+            ThreadEvent::AgentDelta {
+                turn: TurnId(n.turn_id),
+                text: n.delta,
+            },
+        ),
         Notification::ServerRequestResolved(n) => Inbound::Resolved {
             thread: ThreadId(n.thread_id),
             rpc_id: n.request_id,
