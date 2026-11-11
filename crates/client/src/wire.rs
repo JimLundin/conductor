@@ -1,6 +1,10 @@
 //! Frame I/O over either transport, using `proto`'s codec. Protocol code
 //! opens streams on a [`Transport`] and reads and writes frames through
 //! [`SendHalf`] and [`RecvHalf`], without knowing which transport it is on.
+//!
+//! Each read and write takes its half and hands it back. A read in progress
+//! owns its half, so a caller that must not lose bytes to a `select!` keeps
+//! the read inside a stream.
 
 use iroh::endpoint::{
     ClosedStream, Connection, ReadExactError, RecvStream, SendStream, WriteError,
@@ -8,9 +12,7 @@ use iroh::endpoint::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::PathKind;
-#[cfg(target_family = "wasm")]
-use crate::platform::rtc;
+use crate::platform::{ChannelRecv, ChannelSend, Session};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {
@@ -24,17 +26,16 @@ pub enum WireError {
     Open(#[from] iroh::endpoint::ConnectionError),
     #[error("data channel: {0}")]
     Channel(String),
-    #[error(transparent)]
+    #[error("{0}")]
     Frame(#[from] proto::FrameError),
 }
 
 /// What carries the protocol's streams: the iroh connection, or a WebRTC
-/// connection negotiated over it.
+/// connection negotiated over it. Only the browser builds the second.
 #[derive(Debug, Clone)]
 pub enum Transport {
     Iroh(Connection),
-    #[cfg(target_family = "wasm")]
-    WebRtc(rtc::Session),
+    WebRtc(Session),
 }
 
 impl Transport {
@@ -45,93 +46,93 @@ impl Transport {
                 let (send, recv) = conn.open_bi().await?;
                 Ok((SendHalf::Iroh(send), RecvHalf::Iroh(recv)))
             }
-            #[cfg(target_family = "wasm")]
             Self::WebRtc(session) => {
                 let (send, recv) = session.open_channel().await.map_err(WireError::Channel)?;
                 Ok((SendHalf::WebRtc(send), RecvHalf::WebRtc(recv)))
             }
         }
     }
-
-    /// Resolves when a WebRTC connection fails or closes. An iroh connection
-    /// reports its end through its streams instead, so this never resolves.
-    pub async fn dropped(&self) {
-        match self {
-            Self::Iroh(_) => std::future::pending().await,
-            #[cfg(target_family = "wasm")]
-            Self::WebRtc(session) => session.closed().await,
-        }
-    }
-
-    pub fn is_webrtc(&self) -> bool {
-        !matches!(self, Self::Iroh(_))
-    }
-
-    /// The path to show, given the iroh connection's selected path.
-    pub fn path(&self, iroh: PathKind) -> PathKind {
-        match self {
-            Self::Iroh(_) => iroh,
-            #[cfg(target_family = "wasm")]
-            Self::WebRtc(session) => PathKind::WebRtc(session.pair()),
-        }
-    }
 }
 
 pub enum SendHalf {
     Iroh(SendStream),
-    #[cfg(target_family = "wasm")]
-    WebRtc(rtc::ChannelSend),
+    WebRtc(ChannelSend),
 }
 
 pub enum RecvHalf {
     Iroh(RecvStream),
-    #[cfg(target_family = "wasm")]
-    WebRtc(rtc::ChannelRecv),
+    WebRtc(ChannelRecv),
 }
 
 impl SendHalf {
-    pub async fn write<T: Serialize>(&mut self, msg: &T) -> Result<(), WireError> {
+    pub async fn write<T: Serialize>(self, msg: &T) -> Result<SendHalf, WireError> {
         let frame = proto::encode(msg)?;
         match self {
-            Self::Iroh(send) => send.write_all(&frame).await?,
-            #[cfg(target_family = "wasm")]
-            Self::WebRtc(send) => send.write(&frame).map_err(WireError::Channel)?,
+            Self::Iroh(mut send) => {
+                send.write_all(&frame).await?;
+                Ok(Self::Iroh(send))
+            }
+            Self::WebRtc(send) => {
+                send.write(&frame).map_err(WireError::Channel)?;
+                Ok(Self::WebRtc(send))
+            }
         }
-        Ok(())
     }
 
     /// Ends this direction. A data channel can't half-close, so the host
     /// closes it once it has replied.
-    pub fn finish(&mut self) -> Result<(), WireError> {
+    pub fn finish(self) -> Result<SendHalf, WireError> {
         match self {
-            Self::Iroh(send) => send.finish()?,
-            #[cfg(target_family = "wasm")]
-            Self::WebRtc(_) => {}
+            Self::Iroh(mut send) => {
+                send.finish()?;
+                Ok(Self::Iroh(send))
+            }
+            Self::WebRtc(send) => Ok(Self::WebRtc(send)),
         }
-        Ok(())
     }
 }
 
 impl RecvHalf {
     /// `Ok(None)` when the peer finished the stream between frames.
-    pub async fn read<T: DeserializeOwned>(&mut self) -> Result<Option<T>, WireError> {
-        let body = match self {
-            Self::Iroh(recv) => read_iroh(recv).await?,
-            #[cfg(target_family = "wasm")]
-            Self::WebRtc(recv) => recv.read_body().await?,
+    pub async fn read<T: DeserializeOwned>(self) -> (RecvHalf, Result<Option<T>, WireError>) {
+        let (recv, body) = match self {
+            Self::Iroh(recv) => {
+                let (recv, body) = read_iroh(recv).await;
+                (Self::Iroh(recv), body)
+            }
+            Self::WebRtc(recv) => {
+                let (recv, body) = recv.read_body().await;
+                (Self::WebRtc(recv), body)
+            }
         };
-        Ok(body.map(|body| proto::decode(&body)).transpose()?)
+        (recv, body.and_then(decode))
     }
 }
 
-async fn read_iroh(recv: &mut RecvStream) -> Result<Option<Vec<u8>>, WireError> {
+fn decode<T: DeserializeOwned>(body: Option<Vec<u8>>) -> Result<Option<T>, WireError> {
+    Ok(body.map(|body| proto::decode(&body)).transpose()?)
+}
+
+async fn read_iroh(mut recv: RecvStream) -> (RecvStream, Result<Option<Vec<u8>>, WireError>) {
     let mut header = [0u8; proto::HEADER_LEN];
-    match recv.read_exact(&mut header).await {
-        Ok(()) => {}
-        Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
-        Err(err) => return Err(err.into()),
+    let read = recv.read_exact(&mut header).await;
+    match read {
+        Ok(()) => read_iroh_body(recv, header).await,
+        Err(ReadExactError::FinishedEarly(0)) => (recv, Ok(None)),
+        Err(err) => (recv, Err(err.into())),
     }
-    let mut body = vec![0u8; proto::body_len(header)?];
-    recv.read_exact(&mut body).await?;
-    Ok(Some(body))
+}
+
+async fn read_iroh_body(
+    mut recv: RecvStream,
+    header: [u8; proto::HEADER_LEN],
+) -> (RecvStream, Result<Option<Vec<u8>>, WireError>) {
+    match proto::body_len(header) {
+        Ok(len) => {
+            let mut body = std::iter::repeat_n(0u8, len).collect::<Vec<u8>>();
+            let read = recv.read_exact(&mut body).await;
+            (recv, read.map(|()| Some(body)).map_err(WireError::from))
+        }
+        Err(err) => (recv, Err(err.into())),
+    }
 }

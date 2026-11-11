@@ -8,8 +8,8 @@ mod ticket;
 
 use std::rc::Rc;
 
-use client::transcript::{Item, Outcome, Transcript};
-use client::{HostLink, LinkOptions, LinkState, PathKind, Status, Update};
+use client::transcript::{Item, Outcome, ReplyState, Transcript};
+use client::{HostLink, LinkOptions, LinkState, PathKind, Status, Target, Update};
 use dioxus::prelude::*;
 use proto::{CommandBody, CommandResult, Decision, RequestId, Ticket};
 
@@ -89,7 +89,7 @@ fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
 #[component]
 fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     let mut status = use_signal(|| None::<Status>);
-    let mut transcript = use_signal(Transcript::default);
+    let mut transcript = use_signal(Transcript::empty);
     let mut link = use_signal(|| None::<Rc<HostLink>>);
     let notice = use_signal(|| None::<String>);
 
@@ -105,8 +105,8 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
             };
             let (handle, mut updates) = HostLink::spawn(
                 endpoint,
-                (&ticket).into(),
-                LinkOptions::new(ticket::CLIENT_NAME),
+                Target::of_ticket(&ticket),
+                LinkOptions::new(String::from(ticket::CLIENT_NAME)),
             );
             link.set(Some(Rc::new(handle)));
             while let Some(update) = updates.recv().await {
@@ -115,8 +115,10 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
                         tracing::info!(state = ?next.state, path = ?next.path, error = ?next.error, "link status");
                         status.set(Some(next));
                     }
-                    Update::Reset(_) => transcript.set(Transcript::default()),
-                    Update::Event(event) => transcript.write().apply(&event.kind),
+                    Update::Reset(_) => transcript.set(Transcript::empty()),
+                    Update::Event(event) => transcript.with_mut(|t| {
+                        *t = std::mem::replace(t, Transcript::empty()).apply(event.kind)
+                    }),
                 }
             }
         }
@@ -205,8 +207,8 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
 #[component]
 fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) -> Element {
     match item {
-        Item::Reply { text, done } => rsx! {
-            p { class: if done { "reply" } else { "reply streaming" }, "{text}" }
+        Item::Reply { text, state } => rsx! {
+            p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
         },
         Item::Message(text) => rsx! { p { class: "message", "{text}" } },
         Item::TurnFinished => rsx! { p { class: "turn-end", "Turn finished" } },

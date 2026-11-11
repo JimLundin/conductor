@@ -1,19 +1,20 @@
 //! A host's transcript folded from its events: what the UI renders. No UI
 //! types, so it is unit-testable and shared by every client target.
 
+use std::cmp::Ordering;
+
 use proto::{Decision, EventKind, RequestId};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transcript {
     pub items: Vec<Item>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
-    /// Streamed text; `done` once something else follows it.
     Reply {
         text: String,
-        done: bool,
+        state: ReplyState,
     },
     Approval {
         id: RequestId,
@@ -25,6 +26,13 @@ pub enum Item {
     TurnFinished,
 }
 
+/// A reply streams until something else follows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyState {
+    Streaming,
+    Done,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub decision: Decision,
@@ -32,101 +40,163 @@ pub struct Outcome {
 }
 
 impl Transcript {
-    pub fn apply(&mut self, kind: &EventKind) {
-        if let EventKind::TranscriptDelta { text } = kind {
-            if let Some(Item::Reply { text: open, done }) = self.items.last_mut()
-                && !*done
-            {
-                open.push_str(text);
-            } else {
-                self.items.push(Item::Reply {
-                    text: text.clone(),
-                    done: false,
-                });
-            }
-            return;
-        }
-        if let Some(Item::Reply { done, .. }) = self.items.last_mut() {
-            *done = true;
-        }
+    pub fn empty() -> Transcript {
+        Transcript { items: Vec::new() }
+    }
+
+    pub fn apply(self, kind: EventKind) -> Transcript {
         match kind {
-            EventKind::TranscriptDelta { .. } => unreachable!("handled above"),
-            EventKind::ApprovalRequested { id, tool, detail } => self.items.push(Item::Approval {
-                id: *id,
-                tool: tool.clone(),
-                detail: detail.clone(),
-                outcome: None,
-            }),
-            EventKind::ApprovalResolved { id, decision, by } => {
-                let target = self.items.iter_mut().find_map(|item| match item {
-                    Item::Approval {
-                        id: open, outcome, ..
-                    } if open == id => Some(outcome),
-                    _ => None,
-                });
-                if let Some(outcome) = target {
-                    *outcome = Some(Outcome {
-                        decision: *decision,
-                        by: by.clone(),
-                    });
-                }
+            EventKind::TranscriptDelta { text } => self.append(text),
+            EventKind::ApprovalRequested { id, tool, detail } => {
+                self.close_reply().push(Item::Approval {
+                    id,
+                    tool,
+                    detail,
+                    outcome: None,
+                })
             }
-            EventKind::AssistantMessage { text } => self.items.push(Item::Message(text.clone())),
-            EventKind::TurnFinished => self.items.push(Item::TurnFinished),
+            EventKind::ApprovalResolved { id, decision, by } => {
+                self.close_reply().resolve(id, Outcome { decision, by })
+            }
+            EventKind::AssistantMessage { text } => self.close_reply().push(Item::Message(text)),
+            EventKind::TurnFinished => self.close_reply().push(Item::TurnFinished),
+        }
+    }
+
+    fn append(self, text: String) -> Transcript {
+        let mut items = self.items;
+        match items.pop() {
+            Some(Item::Reply {
+                text: open,
+                state: ReplyState::Streaming,
+            }) => items.push(Item::Reply {
+                text: format!("{open}{text}"),
+                state: ReplyState::Streaming,
+            }),
+            Some(last) => {
+                items.push(last);
+                items.push(Item::Reply {
+                    text,
+                    state: ReplyState::Streaming,
+                });
+            }
+            None => items.push(Item::Reply {
+                text,
+                state: ReplyState::Streaming,
+            }),
+        }
+        Transcript { items }
+    }
+
+    fn close_reply(self) -> Transcript {
+        let mut items = self.items;
+        match items.pop() {
+            Some(Item::Reply { text, state: _ }) => items.push(Item::Reply {
+                text,
+                state: ReplyState::Done,
+            }),
+            Some(last) => items.push(last),
+            None => {}
+        }
+        Transcript { items }
+    }
+
+    fn push(self, item: Item) -> Transcript {
+        let mut items = self.items;
+        items.push(item);
+        Transcript { items }
+    }
+
+    fn resolve(self, id: RequestId, outcome: Outcome) -> Transcript {
+        Transcript {
+            items: self
+                .items
+                .into_iter()
+                .map(|item| item.resolved(id, &outcome))
+                .collect(),
+        }
+    }
+}
+
+impl Item {
+    fn resolved(self, id: RequestId, outcome: &Outcome) -> Item {
+        match self {
+            Item::Approval {
+                id: open,
+                tool,
+                detail,
+                outcome: current,
+            } => Item::Approval {
+                id: open,
+                tool,
+                detail,
+                outcome: match open.0.cmp(&id.0) {
+                    Ordering::Equal => Some(outcome.clone()),
+                    Ordering::Less | Ordering::Greater => current,
+                },
+            },
+            other => other,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use proto::{Decision, EventKind, RequestId};
+
+    use super::{Item, Outcome, ReplyState, Transcript};
 
     #[test]
     fn deltas_join_into_one_reply_until_the_approval() {
-        let mut t = Transcript::default();
-        let events = [
-            EventKind::TranscriptDelta { text: "Hel".into() },
-            EventKind::TranscriptDelta { text: "lo".into() },
+        let events = Vec::from([
+            EventKind::TranscriptDelta {
+                text: String::from("Hel"),
+            },
+            EventKind::TranscriptDelta {
+                text: String::from("lo"),
+            },
             EventKind::ApprovalRequested {
                 id: RequestId(1),
-                tool: "Bash".into(),
-                detail: "ls".into(),
+                tool: String::from("Bash"),
+                detail: String::from("ls"),
             },
             EventKind::ApprovalResolved {
                 id: RequestId(1),
                 decision: Decision::Deny,
-                by: "phone".into(),
+                by: String::from("phone"),
             },
-            EventKind::AssistantMessage { text: "ok".into() },
+            EventKind::AssistantMessage {
+                text: String::from("ok"),
+            },
             EventKind::TurnFinished,
             EventKind::TranscriptDelta {
-                text: "Next".into(),
+                text: String::from("Next"),
             },
-        ];
-        for event in &events {
-            t.apply(event);
-        }
+        ]);
+        let transcript = events
+            .into_iter()
+            .fold(Transcript::empty(), Transcript::apply);
         assert_eq!(
-            t.items,
+            transcript.items,
             [
                 Item::Reply {
-                    text: "Hello".into(),
-                    done: true
+                    text: String::from("Hello"),
+                    state: ReplyState::Done,
                 },
                 Item::Approval {
                     id: RequestId(1),
-                    tool: "Bash".into(),
-                    detail: "ls".into(),
+                    tool: String::from("Bash"),
+                    detail: String::from("ls"),
                     outcome: Some(Outcome {
                         decision: Decision::Deny,
-                        by: "phone".into()
-                    })
+                        by: String::from("phone"),
+                    }),
                 },
-                Item::Message("ok".into()),
+                Item::Message(String::from("ok")),
                 Item::TurnFinished,
                 Item::Reply {
-                    text: "Next".into(),
-                    done: false
+                    text: String::from("Next"),
+                    state: ReplyState::Streaming,
                 },
             ]
         );

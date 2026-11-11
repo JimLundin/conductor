@@ -57,7 +57,7 @@ async fn host() -> Fixture {
 async fn link(target: Target, resume: Option<Cursor>) -> (HostLink, mpsc::Receiver<Update>) {
     let options = LinkOptions {
         resume,
-        ..LinkOptions::new("test-client")
+        ..LinkOptions::new(String::from("test-client"))
     };
     HostLink::spawn(endpoint().await, target, options)
 }

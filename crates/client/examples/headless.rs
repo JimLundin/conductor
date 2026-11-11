@@ -53,8 +53,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     log(format!("client endpoint {}", endpoint.id().fmt_short()));
     let (link, mut updates) = HostLink::spawn(
         endpoint.clone(),
-        (&args.ticket).into(),
-        LinkOptions::new("headless"),
+        client::Target::of_ticket(&args.ticket),
+        LinkOptions::new(String::from("headless")),
     );
 
     // Events up to this seq predate our prompt.
