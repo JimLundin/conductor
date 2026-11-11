@@ -213,13 +213,10 @@ async fn replay(name: &str, decisions: Vec<PermissionDecision>) -> Replayed {
         .expect("initialize is answered by the recording's first line");
 
     let recording = std::fs::read_to_string(&path).unwrap();
-    let results =
-        recording
-            .lines()
-            .fold(0_usize, |results, line| match frame_type(line).as_deref() {
-                Some("result") => results.saturating_add(1),
-                _ => results,
-            });
+    let results = recording
+        .lines()
+        .filter(|line| matches!(frame_type(line).as_deref(), Some("result")))
+        .count();
     let played = Replay::new(session, events, decisions, results).run().await;
     assert_ne!(
         played.seen.len().cmp(&recording.lines().count()),

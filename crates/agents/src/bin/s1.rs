@@ -188,12 +188,8 @@ impl Turn {
             })
             .collect::<String>();
         self.text.push_str(&text);
-        match (&self.plan, &self.interrupted) {
-            (Plan::InterruptOnFirstReply, None) => {
-                self.interrupted = Some(self.live.session.interrupt().await);
-            }
-            (Plan::InterruptOnFirstReply, Some(_))
-            | (Plan::Answer(_) | Plan::InterruptOnPermission, _) => {}
+        if let (Plan::InterruptOnFirstReply, None) = (&self.plan, &self.interrupted) {
+            self.interrupted = Some(self.live.session.interrupt().await);
         }
     }
 
@@ -292,9 +288,8 @@ async fn spawn(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> Result
 
 fn fresh_scratch() -> Result<()> {
     let scratch = Path::new(SCRATCH);
-    match presence(scratch) {
-        Presence::Present => std::fs::remove_dir_all(scratch)?,
-        Presence::Missing => {}
+    if let Presence::Present = presence(scratch) {
+        std::fs::remove_dir_all(scratch)?;
     }
     std::fs::create_dir_all(scratch)?;
     let git = std::process::Command::new("git")
@@ -537,10 +532,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         unknown_id,
     ])
     .into_iter()
-    .fold(0_usize, |failed, verdict| match verdict {
-        Verdict::Pass => failed,
-        Verdict::Fail => failed.saturating_add(1),
-    });
+    .filter(|verdict| matches!(verdict, Verdict::Fail))
+    .count();
     match failed {
         0 => Ok(()),
         failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),

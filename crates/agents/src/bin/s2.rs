@@ -354,9 +354,8 @@ async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
 
 fn fresh_scratch() -> Result<()> {
     let scratch = Path::new(SCRATCH);
-    match presence(scratch) {
-        Presence::Present => std::fs::remove_dir_all(scratch)?,
-        Presence::Missing => {}
+    if let Presence::Present = presence(scratch) {
+        std::fs::remove_dir_all(scratch)?;
     }
     std::fs::create_dir_all(scratch)?;
     let git = std::process::Command::new("git")
@@ -594,10 +593,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let failed = Vec::from([approve, decline, interrupt, two_threads, resume, ids])
         .into_iter()
-        .fold(0_usize, |failed, verdict| match verdict {
-            Verdict::Pass => failed,
-            Verdict::Fail => failed.saturating_add(1),
-        });
+        .filter(|verdict| matches!(verdict, Verdict::Fail))
+        .count();
     match failed {
         0 => Ok(()),
         failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),

@@ -389,10 +389,8 @@ impl Actor {
     }
 
     async fn on_line(&mut self, line: &str) {
-        match self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
-            Some(Ok(())) => {}
-            Some(Err(e)) => tracing::warn!("writing stdout log: {e}"),
-            None => {}
+        if let Some(Err(e)) = self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
+            tracing::warn!("writing stdout log: {e}");
         }
         let inbound = match parse_line(line) {
             Ok(inbound) => inbound,
@@ -402,10 +400,11 @@ impl Actor {
             }
         };
         match inbound {
-            Inbound::Event(event) => match self.track(&event) {
-                News::Fresh => self.emit(event).await,
-                News::Repeat => {}
-            },
+            Inbound::Event(event) => {
+                if let News::Fresh = self.track(&event) {
+                    self.emit(event).await;
+                }
+            }
             Inbound::ControlResponse {
                 request_id,
                 outcome,
@@ -424,15 +423,14 @@ impl Actor {
             } => {
                 let message = format!("unsupported control request subtype: {subtype}");
                 tracing::warn!("{message}");
-                match self
+                if let Err(e) = self
                     .write(Outbound::ControlError {
                         request_id,
                         message,
                     })
                     .await
                 {
-                    Ok(()) => {}
-                    Err(e) => tracing::error!("replying to {subtype}: {e}"),
+                    tracing::error!("replying to {subtype}: {e}");
                 }
             }
         }
@@ -452,9 +450,9 @@ impl Actor {
             ClaudeEvent::SessionStarted { session_id } => match self
                 .session_id
                 .replace(session_id.clone())
-                .and_then(|seen| seen.eq(session_id).then_some(News::Repeat))
+                .filter(|seen| seen == session_id)
             {
-                Some(repeat) => repeat,
+                Some(_) => News::Repeat,
                 None => News::Fresh,
             },
             _ => News::Fresh,

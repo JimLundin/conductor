@@ -373,10 +373,8 @@ impl Actor {
     }
 
     async fn on_line(&mut self, line: &str) {
-        match self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
-            Some(Ok(())) => {}
-            Some(Err(e)) => tracing::warn!("writing stdout log: {e}"),
-            None => {}
+        if let Some(Err(e)) = self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
+            tracing::warn!("writing stdout log: {e}");
         }
         let inbound = match parse_line(line) {
             Ok(inbound) => inbound,
@@ -408,15 +406,12 @@ impl Actor {
                 let id = ApprovalId::of(&rpc_id);
                 // Codex also resolves requests we answered; only an unanswered
                 // one means Codex withdrew it.
-                match self.open.remove(&id) {
-                    Some(_) => {
-                        self.emit(CodexEvent::Thread {
-                            thread,
-                            event: ThreadEvent::ApprovalCancelled { id },
-                        })
-                        .await;
-                    }
-                    None => tracing::trace!("codex resolved {}, which we answered", id.0),
+                if let Some(Open { .. }) = self.open.remove(&id) {
+                    self.emit(CodexEvent::Thread {
+                        thread,
+                        event: ThreadEvent::ApprovalCancelled { id },
+                    })
+                    .await;
                 }
             }
             Inbound::Unsupported {
@@ -426,9 +421,8 @@ impl Actor {
             } => {
                 let message = format!("conductor does not handle {method}");
                 tracing::warn!("{message}");
-                match self.write(Outbound::Reject { rpc_id, message }).await {
-                    Ok(()) => {}
-                    Err(e) => tracing::error!("rejecting {method}: {e}"),
+                if let Err(e) = self.write(Outbound::Reject { rpc_id, message }).await {
+                    tracing::error!("rejecting {method}: {e}");
                 }
                 self.emit(event).await;
             }
@@ -442,17 +436,13 @@ impl Actor {
         };
         match pending {
             Some(Pending { method, reply }) => {
-                match (method.as_str(), &outcome) {
-                    (methods::INITIALIZE, Ok(_)) => match self.write(Outbound::Initialized).await {
+                if let (methods::INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
+                    match self.write(Outbound::Initialized).await {
                         Ok(()) => {}
                         Err(e) => tracing::error!("sending initialized: {e}"),
-                    },
-                    (methods::INITIALIZE, Err(message)) => {
-                        tracing::debug!("codex refused initialize: {message}")
                     }
-                    _ => {}
                 }
-                drop(reply.send(outcome.map_err(|message| Error::Rpc { method, message })));
+                let _ = reply.send(outcome.map_err(|message| Error::Rpc { method, message }));
             }
             None => tracing::warn!("response for unknown request {id}"),
         }
