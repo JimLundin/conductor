@@ -172,7 +172,7 @@ impl Conductor {
         };
         let transport = Transport::WebRtc(upgrade.session);
         let mut channels = upgrade.channels;
-        while let Some((send, recv)) = channels.recv().await {
+        while let Some(rtc::Stream { send, recv }) = channels.recv().await {
             self.clone()
                 .spawn_stream(transport.clone(), send, recv, client.clone());
         }

@@ -1499,6 +1499,7 @@ dependencies = [
  "getrandom 0.4.3",
  "iroh",
  "iroh-mdns-address-lookup",
+ "n0-future",
  "netdev 0.46.3",
  "proto",
  "qrcode",

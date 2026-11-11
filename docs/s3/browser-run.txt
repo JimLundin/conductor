@@ -1,386 +1,390 @@
-# Web build in headless Chromium and WebKit (390x844) against conductord s3-host, 2026-11-11T05:39:42Z
+# Web build in headless Chromium and WebKit (390x844) against conductord s3-host, 2026-11-11T16:26:08Z
 
-wasm: 5740994 bytes raw, 1823904 bytes gzip -9
+wasm: 5769583 bytes raw, 1837571 bytes gzip -9
 
 ## Upgrade, Chromium
-[  0.622s] engine: chromium 158.0.8127.18, scenario: upgrade
-[  0.854s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.996s] Live 1142ms after navigation (first connect)
-[  2.010s] status line: "s3-host Live WebRTC prflx/host Change host"
-[  2.010s] ok: the join fragment was removed from the address bar
-[  2.016s] ok: the ticket is in local storage
-[  2.025s] WebRtc 302ms after Live on the relay (page clock)
-[  2.029s] status line: "s3-host Live WebRTC prflx/host Change host"
-[  2.033s] selected candidate pair (local/remote): prflx/host
-[  2.076s] submitted "hello from the phone" on WebRtc
-[  2.475s] ok: deltas rendered live (3 distinct partial texts seen)
-[  3.778s] approval card: "Bash wants to run echo "hello from the phone" Approve Deny"
-[  3.825s] ok: .approval button.approve is at least 44px (162x44)
-[  3.838s] ok: .approval button.deny is at least 44px (162x44)
-[  3.855s] ok: .composer input is at least 44px (273x44)
-[  3.871s] ok: .composer button is at least 44px (77x44)
-[  3.931s] tapped Approve on WebRtc
-[  3.970s] ok: the streamed reply is every delta exactly once
-[  3.972s] ok: exactly 1 approval card(s)
-[  3.975s] ok: the approval resolved once, by this browser
-[  3.978s] ok: the final message arrived once
-[  3.980s] ok: exactly 1 "Turn finished"
-[  3.984s] ok: the turn ended still on WebRTC
-[  3.984s] ok: WebRTC never dropped during the turn
-[  4.200s] screenshot /tmp/tmp.lzLTMRVG02/chromium.png
-[  5.129s] Live 929ms after reload without the fragment (reconnect)
-[  5.136s] ok: the transcript replayed after reload
-[  5.144s] WebRtc 132ms after Live on the relay, after reload (page clock)
-[  5.368s] ok: a fresh install asks for a join link
-[  6.280s] Live 898ms after pasting the join link
-[  6.438s] ok: Change host forgets the saved host, across a relaunch
-[  7.290s] ok: pairing again after Change host reaches Live
-[  7.298s] ok: the link never reported an error
-[  7.298s] ok: no console errors
-[  7.348s] PASS
+[  0.662s] engine: chromium 158.0.8127.18, scenario: upgrade
+[  1.014s] open http://localhost:8080/conductor/#join=<ticket>
+[  2.226s] Live 1212ms after navigation (first connect)
+[  2.235s] status line: "s3-host Live WebRTC host/host Change host"
+[  2.235s] ok: the join fragment was removed from the address bar
+[  2.240s] ok: the ticket is in local storage
+[  2.247s] WebRtc 213ms after Live on the relay (page clock)
+[  2.250s] status line: "s3-host Live WebRTC host/host Change host"
+[  2.253s] selected candidate pair (local/remote): host/host
+[  2.303s] submitted "hello from the phone" on WebRtc
+[  2.689s] ok: deltas rendered live (3 distinct partial texts seen)
+[  3.989s] approval card: "Bash wants to run echo "hello from the phone" Approve Deny"
+[  4.027s] ok: .approval button.approve is at least 44px (162x44)
+[  4.038s] ok: .approval button.deny is at least 44px (162x44)
+[  4.047s] ok: .composer input is at least 44px (273x44)
+[  4.056s] ok: .composer button is at least 44px (77x44)
+[  4.121s] tapped Approve on WebRtc
+[  4.130s] ok: the streamed reply is every delta exactly once
+[  4.132s] ok: exactly 1 approval card(s)
+[  4.135s] ok: the approval resolved once, by this browser
+[  4.137s] ok: the final message arrived once
+[  4.140s] ok: exactly 1 "Turn finished"
+[  4.142s] ok: the turn ended still on WebRTC
+[  4.142s] ok: WebRTC never dropped during the turn
+[  4.316s] screenshot /tmp/tmp.RZOElGqou5/chromium.png
+[  5.206s] Live 890ms after reload without the fragment (reconnect)
+[  5.212s] ok: the transcript replayed after reload
+[  5.219s] WebRtc 122ms after Live on the relay, after reload (page clock)
+[  5.411s] ok: a fresh install asks for a join link
+[  6.339s] Live 914ms after pasting the join link
+[  6.559s] ok: Change host forgets the saved host, across a relaunch
+[  7.411s] ok: pairing again after Change host reaches Live
+[  7.430s] ok: the link never reported an error
+[  7.430s] ok: no relay dialled with the root dot
+[  7.430s] ok: no console errors
+[  7.491s] PASS
 
 ## Upgrade, WebKit
-[  0.487s] engine: webkit 27.2, scenario: upgrade
-[  1.272s] open http://localhost:8080/conductor/#join=<ticket>
-[  2.351s] Live 1079ms after navigation (first connect)
-[  2.364s] status line: "s3-host Live Relayed Change host"
-[  2.364s] ok: the join fragment was removed from the address bar
-[  2.370s] ok: the ticket is in local storage
-[  2.405s] WebRtc 185ms after Live on the relay (page clock)
-[  2.409s] status line: "s3-host Live WebRTC host/host Change host"
-[  2.415s] selected candidate pair (local/remote): host/host
-[  2.470s] submitted "hello from the phone" on WebRtc
-[  2.859s] ok: deltas rendered live (3 distinct partial texts seen)
-[  4.156s] approval card: "Bash wants to run echo "hello from the phone" Approve Deny"
-[  4.178s] ok: .approval button.approve is at least 44px (162x44)
-[  4.185s] ok: .approval button.deny is at least 44px (162x44)
-[  4.191s] ok: .composer input is at least 44px (273x44)
-[  4.200s] ok: .composer button is at least 44px (77x44)
-[  4.249s] tapped Approve on WebRtc
-[  4.262s] ok: the streamed reply is every delta exactly once
-[  4.266s] ok: exactly 2 approval card(s)
-[  4.269s] ok: the approval resolved once, by this browser
-[  4.272s] ok: the final message arrived once
-[  4.275s] ok: exactly 2 "Turn finished"
-[  4.277s] ok: the turn ended still on WebRTC
-[  4.277s] ok: WebRTC never dropped during the turn
-[  4.461s] screenshot docs/s3/iphone-390x844.png
-[  5.425s] Live 964ms after reload without the fragment (reconnect)
-[  5.436s] ok: the transcript replayed after reload
-[  5.446s] WebRtc 128ms after Live on the relay, after reload (page clock)
-[  5.995s] ok: a fresh install asks for a join link
-[  6.929s] Live 911ms after pasting the join link
-[  7.290s] ok: Change host forgets the saved host, across a relaunch
-[  8.206s] ok: pairing again after Change host reaches Live
-[  8.213s] ok: the link never reported an error
-[  8.213s] ok: no console errors
-[  8.346s] PASS
+[  0.778s] engine: webkit 27.2, scenario: upgrade
+[  2.288s] open http://localhost:8080/conductor/#join=<ticket>
+[  3.757s] Live 1469ms after navigation (first connect)
+[  3.795s] status line: "s3-host Live Relayed Change host"
+[  3.795s] ok: the join fragment was removed from the address bar
+[  3.806s] ok: the ticket is in local storage
+[  3.995s] WebRtc 282ms after Live on the relay (page clock)
+[  3.999s] status line: "s3-host Live WebRTC prflx/host Change host"
+[  4.004s] selected candidate pair (local/remote): prflx/host
+[  4.092s] submitted "hello from the phone" on WebRtc
+[  4.479s] ok: deltas rendered live (3 distinct partial texts seen)
+[  5.775s] approval card: "Bash wants to run echo "hello from the phone" Approve Deny"
+[  5.803s] ok: .approval button.approve is at least 44px (162x44)
+[  5.809s] ok: .approval button.deny is at least 44px (162x44)
+[  5.817s] ok: .composer input is at least 44px (273x44)
+[  5.825s] ok: .composer button is at least 44px (77x44)
+[  5.892s] tapped Approve on WebRtc
+[  5.904s] ok: the streamed reply is every delta exactly once
+[  5.908s] ok: exactly 2 approval card(s)
+[  5.911s] ok: the approval resolved once, by this browser
+[  5.915s] ok: the final message arrived once
+[  5.917s] ok: exactly 2 "Turn finished"
+[  5.922s] ok: the turn ended still on WebRTC
+[  5.922s] ok: WebRTC never dropped during the turn
+[  6.187s] screenshot docs/s3/iphone-390x844.png
+[  7.198s] Live 1011ms after reload without the fragment (reconnect)
+[  7.206s] ok: the transcript replayed after reload
+[  7.215s] WebRtc 140ms after Live on the relay, after reload (page clock)
+[  8.088s] ok: a fresh install asks for a join link
+[  9.035s] Live 924ms after pasting the join link
+[  9.378s] ok: Change host forgets the saved host, across a relaunch
+[ 10.257s] ok: pairing again after Change host reaches Live
+[ 10.262s] ok: the link never reported an error
+[ 10.262s] ok: no relay dialled with the root dot
+[ 10.262s] ok: no console errors
+[ 10.355s] PASS
 
 ## Upgrade, host log
-INFO daemon::server: client connected peer=b3cd9bb111579f1f3b1b2d3e0edd56393303e667dd24fec72b468adf2704409f client="browser"
+INFO daemon::server: client connected peer=07533cfba08f1d983ce1f696d8ddcbcb1bf659213576dc542295eb5270430d74 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:38509, 172.23.130.230:38697] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3382928379 1 udp 2113937151 8a47f4a0-e2f2-44a7-b6f8-fa6edef87dfc.local 49247 typ host generation 0 ufrag j5Ya network-cost 999: bad address: invalid IP address syntax candidate="candidate:3382928379 1 udp 2113937151 8a47f4a0-e2f2-44a7-b6f8-fa6edef87dfc.local 49247 typ host generation 0 ufrag j5Ya network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52765
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52725 base=172.17.0.1:38509
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52725 base=172.17.0.1:38509
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52693 base=172.23.130.230:38697
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52693 base=172.23.130.230:38697
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52725 base=172.17.0.1:38509
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52693 base=172.23.130.230:38697
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:49247
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:39229, 172.17.0.1:38839] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:1792855857 1 udp 2113937151 2f4d6f4e-041b-4588-99e3-87e813d5fe9b.local 36758 typ host generation 0 ufrag WZYN network-cost 999: bad address: invalid IP address syntax candidate="candidate:1792855857 1 udp 2113937151 2f4d6f4e-041b-4588-99e3-87e813d5fe9b.local 36758 typ host generation 0 ufrag WZYN network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64660
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64641 base=172.23.130.230:39229
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64641 base=172.23.130.230:39229
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64687 base=172.17.0.1:38839
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64687 base=172.17.0.1:38839
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64641 base=172.23.130.230:39229
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64687 base=172.17.0.1:38839
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:36758
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=237 remote=Some(10.255.255.254:49247)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=123 remote=Some(172.23.130.230:36758)
 INFO daemon::server: subscribed transport="webrtc" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=prflx host_side=host
-INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(14856495602985617847), body: Prompt { text: "hello from the phone" } }
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="host" host_side="host"
+INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(3667354773555493036), body: Prompt { text: "hello from the phone" } }
 INFO daemon::server: subscription ended transport="iroh" events_sent=0 ended="stream write failed: sending stopped by peer: error 0"
-INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(14856495602985617848), body: Resolve { approval: RequestId(1), decision: Approve } }
+INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(3667354773555493037), body: Resolve { approval: RequestId(1), decision: Approve } }
 WARN str0m: Drop BufferedAmountLow for id: 4
-INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=2621 frames_out=20 datagrams_in=45 datagrams_out=61 connected=true last_remote=Some(172.23.130.230:49247)
+INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=2485 frames_out=20 datagrams_in=39 datagrams_out=55 connected=true last_remote=Some(172.23.130.230:36758)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=18 ended="closed"
-INFO daemon::server: client connected peer=d44156abdaeaed2eb5144828d015347df1636825ffca980a6ee26cc4ae669ad3 client="browser"
+INFO daemon::server: client connected peer=4bc57113faf0fa7e742f7371deeb0833af117f8dc6970f38106e9f85e9e86dd9 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=18
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:38094, 172.17.0.1:47881] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2113716158 1 udp 2113937151 e8c5a7b8-7bf0-4baa-ab66-0707e9e8bfd1.local 39682 typ host generation 0 ufrag fVof network-cost 999: bad address: invalid IP address syntax candidate="candidate:2113716158 1 udp 2113937151 e8c5a7b8-7bf0-4baa-ab66-0707e9e8bfd1.local 39682 typ host generation 0 ufrag fVof network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52702
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52748 base=172.23.130.230:38094
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52748 base=172.23.130.230:38094
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52695 base=172.17.0.1:47881
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52695 base=172.17.0.1:47881
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52748 base=172.23.130.230:38094
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52695 base=172.17.0.1:47881
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:39682
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:35980, 172.17.0.1:36852] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3511807083 1 udp 2113937151 0b4d9f11-7152-41ad-a3b2-2a0689cb77e8.local 33174 typ host generation 0 ufrag zghw network-cost 999: bad address: invalid IP address syntax candidate="candidate:3511807083 1 udp 2113937151 0b4d9f11-7152-41ad-a3b2-2a0689cb77e8.local 33174 typ host generation 0 ufrag zghw network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64740
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64654 base=172.17.0.1:36852
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64654 base=172.17.0.1:36852
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64736 base=172.23.130.230:35980
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64736 base=172.23.130.230:35980
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64654 base=172.17.0.1:36852
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64736 base=172.23.130.230:35980
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:33174
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=78 remote=Some(172.23.130.230:39682)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=71 remote=Some(172.23.130.230:33174)
 INFO daemon::server: subscribed transport="webrtc" after_seq=18 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::server: client connected peer=bcae47c7f9c27df858cc926cd8fc5311038085f4d383e5e2c195d83dbc48aecb client="browser"
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="host" host_side="host"
+INFO daemon::server: client connected peer=92a86b8466c5273fd5b218cbd08c0b4b853ba0b1980f737ee83946c62c81df21 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=18
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:47626, 172.17.0.1:36587] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:940342194 1 udp 2113937151 a3318443-b1ba-488e-962f-545c521f7dc6.local 56297 typ host generation 0 ufrag vOHr network-cost 999: bad address: invalid IP address syntax candidate="candidate:940342194 1 udp 2113937151 a3318443-b1ba-488e-962f-545c521f7dc6.local 56297 typ host generation 0 ufrag vOHr network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52701
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52758 base=172.23.130.230:47626
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52758 base=172.23.130.230:47626
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52755 base=172.17.0.1:36587
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52755 base=172.17.0.1:36587
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52755 base=172.17.0.1:36587
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52758 base=172.23.130.230:47626
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:56297
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:46280, 172.17.0.1:35535] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:929093613 1 udp 2113937151 03b617ae-c6af-4c3f-a078-0f53eea993da.local 59396 typ host generation 0 ufrag Vv5x network-cost 999: bad address: invalid IP address syntax candidate="candidate:929093613 1 udp 2113937151 03b617ae-c6af-4c3f-a078-0f53eea993da.local 59396 typ host generation 0 ufrag Vv5x network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64706
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64676 base=172.23.130.230:46280
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64676 base=172.23.130.230:46280
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64729 base=172.17.0.1:35535
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64729 base=172.17.0.1:35535
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64676 base=172.23.130.230:46280
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64729 base=172.17.0.1:35535
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:59396
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=73 remote=Some(172.23.130.230:56297)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=65 remote=Some(172.23.130.230:59396)
 INFO daemon::server: subscribed transport="webrtc" after_seq=18 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=334 frames_out=0 datagrams_in=15 datagrams_out=20 connected=true last_remote=Some(172.23.130.230:56297)
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="host" host_side="host"
+INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=369 frames_out=0 datagrams_in=15 datagrams_out=18 connected=true last_remote=Some(172.23.130.230:59396)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=0 ended="closed"
-INFO daemon::server: client connected peer=b0565a21db02c6647c135f44f88fb3f2ac06212b95f5a1e18b2ae1872505511c client="browser"
+INFO daemon::server: client connected peer=88642369cd88b5a17ea6bef8319caf7bfc3434d5325a260d7f4d3f6773bb47c9 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=18
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:42324, 172.23.130.230:50421] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2451269515 1 udp 2113937151 47a78310-6a0f-4235-8067-49d9fe6ae509.local 56771 typ host generation 0 ufrag aaNL network-cost 999: bad address: invalid IP address syntax candidate="candidate:2451269515 1 udp 2113937151 47a78310-6a0f-4235-8067-49d9fe6ae509.local 56771 typ host generation 0 ufrag aaNL network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52737
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52763 base=172.23.130.230:50421
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52763 base=172.23.130.230:50421
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52754 base=172.17.0.1:42324
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52754 base=172.17.0.1:42324
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52754 base=172.17.0.1:42324
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52763 base=172.23.130.230:50421
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:56771
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:52512, 172.23.130.230:50986] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2095934932 1 udp 2113937151 27c0e9cb-e4af-424d-aa54-31a81b07d735.local 52278 typ host generation 0 ufrag YSiF network-cost 999: bad address: invalid IP address syntax candidate="candidate:2095934932 1 udp 2113937151 27c0e9cb-e4af-424d-aa54-31a81b07d735.local 52278 typ host generation 0 ufrag YSiF network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64718
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64738 base=172.17.0.1:52512
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64738 base=172.17.0.1:52512
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64724 base=172.23.130.230:50986
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64724 base=172.23.130.230:50986
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64724 base=172.23.130.230:50986
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64738 base=172.17.0.1:52512
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:52278
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=65 remote=Some(10.255.255.254:56771)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=84 remote=Some(10.255.255.254:52278)
 INFO daemon::server: subscribed transport="webrtc" after_seq=18 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=prflx host_side=host
-INFO daemon::server: client connected peer=eea4aace9a5ac8584e6ee3471a6fde75cb94809c08f72820c06b333e522c0c47 client="browser"
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="prflx" host_side="host"
+INFO daemon::server: client connected peer=5f6a3614f4a85f2cb0863b32766e4f6b38f533c3b6efeef4bc2c4d0171461dde client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=18
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:56154, 172.17.0.1:34899] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:814247814 1 udp 2113937151 07bad554-e4ed-4bcd-9631-f918de4ef93f.local 38431 typ host generation 0 ufrag LeM4 network-cost 999: bad address: invalid IP address syntax candidate="candidate:814247814 1 udp 2113937151 07bad554-e4ed-4bcd-9631-f918de4ef93f.local 38431 typ host generation 0 ufrag LeM4 network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52747
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52760 base=172.23.130.230:56154
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52760 base=172.23.130.230:56154
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52781 base=172.17.0.1:34899
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52781 base=172.17.0.1:34899
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52760 base=172.23.130.230:56154
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52781 base=172.17.0.1:34899
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:38431
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:43574, 172.23.130.230:59609] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3014274244 1 udp 2113937151 01099ad3-e77a-4705-a283-95f91a0ddd49.local 60782 typ host generation 0 ufrag eM3k network-cost 999: bad address: invalid IP address syntax candidate="candidate:3014274244 1 udp 2113937151 01099ad3-e77a-4705-a283-95f91a0ddd49.local 60782 typ host generation 0 ufrag eM3k network-cost 999"
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64662 base=172.17.0.1:43574
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64662 base=172.17.0.1:43574
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64662 base=172.17.0.1:43574
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64717 base=172.23.130.230:59609
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64717 base=172.23.130.230:59609
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64717 base=172.23.130.230:59609
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64696
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:60782
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=86 remote=Some(172.23.130.230:38431)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=112 remote=Some(10.255.255.254:60782)
 INFO daemon::server: subscribed transport="webrtc" after_seq=18 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(17034485072697814324), body: Prompt { text: "hello from the phone" } }
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="prflx" host_side="host"
+INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(12379851293556091599), body: Prompt { text: "hello from the phone" } }
 INFO daemon::server: subscription ended transport="iroh" events_sent=18 ended="stream write failed: sending stopped by peer: error 0"
 INFO daemon::server: subscription ended transport="iroh" events_sent=18 ended="stream write failed: sending stopped by peer: error 0"
 INFO daemon::server: subscription ended transport="iroh" events_sent=18 ended="stream write failed: sending stopped by peer: error 0"
 INFO daemon::server: subscription ended transport="iroh" events_sent=18 ended="stream write failed: sending stopped by peer: error 0"
-INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(17034485072697814325), body: Resolve { approval: RequestId(2), decision: Approve } }
-INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=2177 frames_out=20 datagrams_in=37 datagrams_out=53 connected=true last_remote=Some(172.23.130.230:38431)
+INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(12379851293556091600), body: Resolve { approval: RequestId(2), decision: Approve } }
+WARN str0m: Drop BufferedAmountLow for id: 4
+INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=2420 frames_out=20 datagrams_in=48 datagrams_out=65 connected=true last_remote=Some(172.23.130.230:60782)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=18 ended="closed"
-INFO daemon::server: client connected peer=9c96aad82149661a3f7db588034a0fad4cbd75e74ff42de68c9643dd692c108a client="browser"
+INFO daemon::server: client connected peer=a05c04a284d84970e6e367e5366369849b4d5febc9877fdb82680d301b3ff53c client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=36
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:59912, 172.17.0.1:49375] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3020381177 1 udp 2113937151 28bc4dbe-df9a-440b-9caa-5e1cdf6349b0.local 47359 typ host generation 0 ufrag 49FR network-cost 999: bad address: invalid IP address syntax candidate="candidate:3020381177 1 udp 2113937151 28bc4dbe-df9a-440b-9caa-5e1cdf6349b0.local 47359 typ host generation 0 ufrag 49FR network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52729
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52736 base=172.23.130.230:59912
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52736 base=172.23.130.230:59912
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52697 base=172.17.0.1:49375
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52697 base=172.17.0.1:49375
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52736 base=172.23.130.230:59912
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52697 base=172.17.0.1:49375
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:47359
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:41264, 172.17.0.1:52751] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2943836278 1 udp 2113937151 e6036ab0-c119-462f-b338-6c8aa1fb650f.local 54482 typ host generation 0 ufrag MitB network-cost 999: bad address: invalid IP address syntax candidate="candidate:2943836278 1 udp 2113937151 e6036ab0-c119-462f-b338-6c8aa1fb650f.local 54482 typ host generation 0 ufrag MitB network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64670
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64726 base=172.23.130.230:41264
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64726 base=172.23.130.230:41264
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64653 base=172.17.0.1:52751
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64653 base=172.17.0.1:52751
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64726 base=172.23.130.230:41264
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64653 base=172.17.0.1:52751
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:54482
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=73 remote=Some(172.23.130.230:47359)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=81 remote=Some(172.23.130.230:54482)
 INFO daemon::server: subscribed transport="webrtc" after_seq=36 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::server: client connected peer=66541b181e6ffaadde0e9977ac694d644ed2eb72f4d1ce08d49996fa4ba5db4e client="browser"
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="host" host_side="host"
+INFO daemon::server: client connected peer=04bce198d67fe6e2ba7055ee93d4a4be5c0a4378edfc58439d0b0a72e2722453 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=36
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:58141, 172.23.130.230:60137] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:796940435 1 udp 2113937151 403af6f6-cb9d-4d06-b00c-51b530a30fc3.local 38043 typ host generation 0 ufrag clVn network-cost 999: bad address: invalid IP address syntax candidate="candidate:796940435 1 udp 2113937151 403af6f6-cb9d-4d06-b00c-51b530a30fc3.local 38043 typ host generation 0 ufrag clVn network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52699
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52703 base=172.17.0.1:58141
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52703 base=172.17.0.1:58141
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52757 base=172.23.130.230:60137
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52757 base=172.23.130.230:60137
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52757 base=172.23.130.230:60137
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52703 base=172.17.0.1:58141
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:38043
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:46159, 172.23.130.230:51849] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3118212170 1 udp 2113937151 19882032-5d36-4162-bcb1-d9e8e9ff588e.local 38170 typ host generation 0 ufrag +u3T network-cost 999: bad address: invalid IP address syntax candidate="candidate:3118212170 1 udp 2113937151 19882032-5d36-4162-bcb1-d9e8e9ff588e.local 38170 typ host generation 0 ufrag +u3T network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64656
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64655 base=172.17.0.1:46159
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64655 base=172.17.0.1:46159
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64727 base=172.23.130.230:51849
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64727 base=172.23.130.230:51849
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64655 base=172.17.0.1:46159
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64727 base=172.23.130.230:51849
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:38170
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=155 remote=Some(10.255.255.254:38043)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=72 remote=Some(10.255.255.254:38170)
 INFO daemon::server: subscribed transport="webrtc" after_seq=36 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=prflx host_side=host
-INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=273 frames_out=0 datagrams_in=16 datagrams_out=16 connected=true last_remote=Some(10.255.255.254:38043)
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="prflx" host_side="host"
+INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=256 frames_out=0 datagrams_in=15 datagrams_out=16 connected=true last_remote=Some(172.23.130.230:38170)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=0 ended="closed"
-INFO daemon::server: client connected peer=54942f0f7b778320bca05069952910014803f3c21f0d957eae13988f812becda client="browser"
+INFO daemon::server: client connected peer=eb21210602c90abb79772f1109a5dfcce4d896ee392cf21d21d303ce866a948b client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=36
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:47204, 172.17.0.1:57585] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:1669408591 1 udp 2113937151 42053627-8105-410d-bc7a-4d9c9332c57b.local 56837 typ host generation 0 ufrag vosF network-cost 999: bad address: invalid IP address syntax candidate="candidate:1669408591 1 udp 2113937151 42053627-8105-410d-bc7a-4d9c9332c57b.local 56837 typ host generation 0 ufrag vosF network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52785
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52705 base=172.17.0.1:57585
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52705 base=172.17.0.1:57585
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52774 base=172.23.130.230:47204
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52774 base=172.23.130.230:47204
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52774 base=172.23.130.230:47204
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52705 base=172.17.0.1:57585
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:56837
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:56776, 172.23.130.230:60250] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3378663699 1 udp 2113937151 12c64520-9e54-4999-8ab7-394399e9b560.local 36371 typ host generation 0 ufrag kcPx network-cost 999: bad address: invalid IP address syntax candidate="candidate:3378663699 1 udp 2113937151 12c64520-9e54-4999-8ab7-394399e9b560.local 36371 typ host generation 0 ufrag kcPx network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64691
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64702 base=172.23.130.230:60250
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64702 base=172.23.130.230:60250
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64694 base=172.17.0.1:56776
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64694 base=172.17.0.1:56776
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64702 base=172.23.130.230:60250
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64694 base=172.17.0.1:56776
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:36371
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=72 remote=Some(172.23.130.230:56837)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=63 remote=Some(10.255.255.254:36371)
 INFO daemon::server: subscribed transport="webrtc" after_seq=36 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=305 frames_out=0 datagrams_in=13 datagrams_out=15 connected=true last_remote=Some(172.23.130.230:56837)
-INFO daemon::server: subscription ended transport="webrtc" events_sent=0 ended="closed"
-INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=3071 frames_out=0 datagrams_in=19 datagrams_out=28 connected=true last_remote=Some(172.23.130.230:47359)
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="prflx" host_side="host"
+INFO daemon::rtc: webrtc session ended client="browser" reason="the connection closed" lasted_ms=323 frames_out=0 datagrams_in=20 datagrams_out=25 connected=true last_remote=Some(172.23.130.230:36371)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=0 ended="closed"
 
 ok: host upgrade: both turns' commands went over WebRTC (4)
 ok: host upgrade: no command went over iroh (0)
 
 ## Fallback (host drops every WebRTC datagram), chromium
-[  0.056s] engine: chromium 158.0.8127.18, scenario: fallback
-[  0.109s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.093s] Live 984ms after navigation (first connect)
-[  1.101s] status line: "s3-host Live Relayed Change host"
-[  1.104s] ok: Live on the relay
-[  1.136s] submitted "are you there?" on Relayed
-[  1.579s] ok: deltas rendered live (3 distinct partial texts seen)
-[  2.871s] approval card: "Bash wants to run echo "are you there?" Approve Deny"
-[  2.915s] tapped Approve on Relayed
-[  2.996s] ok: the streamed reply is every delta exactly once
-[  2.997s] ok: exactly 1 approval card(s)
-[  2.999s] ok: the approval resolved once, by this browser
-[  3.001s] ok: the final message arrived once
-[  3.002s] ok: exactly 1 "Turn finished"
-[  3.004s] ok: the turn completed on the relay
-[ 15.876s] upgrade error shown to the client: "timed out after 15014 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
-[ 15.878s] ok: still Live after the upgrade failed
-[ 15.957s] ok: the link never reported an error
-[ 15.957s] ok: no console errors
-[ 15.981s] PASS
+[  0.080s] engine: chromium 158.0.8127.18, scenario: fallback
+[  0.153s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.168s] Live 1015ms after navigation (first connect)
+[  1.178s] status line: "s3-host Live Relayed Change host"
+[  1.182s] ok: Live on the relay
+[  1.220s] submitted "are you there?" on Relayed
+[  1.662s] ok: deltas rendered live (3 distinct partial texts seen)
+[  2.953s] approval card: "Bash wants to run echo "are you there?" Approve Deny"
+[  2.991s] tapped Approve on Relayed
+[  3.071s] ok: the streamed reply is every delta exactly once
+[  3.073s] ok: exactly 1 approval card(s)
+[  3.075s] ok: the approval resolved once, by this browser
+[  3.077s] ok: the final message arrived once
+[  3.079s] ok: exactly 1 "Turn finished"
+[  3.081s] ok: the turn completed on the relay
+[ 15.941s] upgrade error shown to the client: "timed out after 15012 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
+[ 15.943s] ok: still Live after the upgrade failed
+[ 16.031s] ok: the link never reported an error
+[ 16.031s] ok: no relay dialled with the root dot
+[ 16.031s] ok: no console errors
+[ 16.060s] PASS
 
 ## Fallback, chromium, host log
-INFO daemon::server: client connected peer=6afbd4ace2edf3d4e39e0579b8290fde9526db53ef98b71c54ff0604963016a1 client="browser"
+INFO daemon::server: client connected peer=b0e0fd329aebbf85a68ad453e8ac9afb12ba7084cae0dab4300e42c2bfe368a9 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:56356, 172.17.0.1:42832] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=true
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2106086050 1 udp 2113937151 160983cf-34ef-4b95-8f15-35a2345a1654.local 35887 typ host generation 0 ufrag 38CC network-cost 999: bad address: invalid IP address syntax candidate="candidate:2106086050 1 udp 2113937151 160983cf-34ef-4b95-8f15-35a2345a1654.local 35887 typ host generation 0 ufrag 38CC network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52707
-INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(17100128628311360855), body: Prompt { text: "are you there?" } }
-INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(17100128628311360856), body: Resolve { approval: RequestId(1), decision: Approve } }
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.23.130.230:56356)
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.17.0.1:42832)
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.23.130.230:56356)
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.17.0.1:42832)
-WARN daemon::rtc: webrtc client gave up client="browser" reason="timed out after 15014 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
-INFO daemon::rtc: webrtc session ended client="browser" reason="the client closed the signaling stream" lasted_ms=15010 frames_out=0 datagrams_in=0 datagrams_out=0 connected=false last_remote=None
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:45981, 172.23.130.230:48251] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=Some(Blackhole)
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:4072217496 1 udp 2113937151 2c443608-cff8-424e-8d5e-e8c90da2ae69.local 37013 typ host generation 0 ufrag vrGd network-cost 999: bad address: invalid IP address syntax candidate="candidate:4072217496 1 udp 2113937151 2c443608-cff8-424e-8d5e-e8c90da2ae69.local 37013 typ host generation 0 ufrag vrGd network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64693
+INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(4906002381506288444), body: Prompt { text: "are you there?" } }
+INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(4906002381506288445), body: Resolve { approval: RequestId(1), decision: Approve } }
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.17.0.1:45981)
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.23.130.230:48251)
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.23.130.230:48251)
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.17.0.1:45981)
+WARN daemon::rtc: webrtc client gave up client="browser" reason="timed out after 15012 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
+INFO daemon::rtc: webrtc session ended client="browser" reason="the client closed the signaling stream" lasted_ms=15007 frames_out=0 datagrams_in=0 datagrams_out=0 connected=false last_remote=None
 
 ok: host fallback-chromium: the turn's commands went over iroh (2)
 ok: host fallback-chromium: WebRTC never connected (0)
 
 ## Fallback (host drops every WebRTC datagram), webkit
-[  0.064s] engine: webkit 27.2, scenario: fallback
-[  0.198s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.147s] Live 949ms after navigation (first connect)
-[  1.154s] status line: "s3-host Live Relayed Change host"
-[  1.157s] ok: Live on the relay
-[  1.185s] submitted "are you there?" on Relayed
-[  1.628s] ok: deltas rendered live (3 distinct partial texts seen)
-[  2.925s] approval card: "Bash wants to run echo "are you there?" Approve Deny"
-[  2.972s] tapped Approve on Relayed
-[  3.053s] ok: the streamed reply is every delta exactly once
-[  3.055s] ok: exactly 1 approval card(s)
-[  3.057s] ok: the approval resolved once, by this browser
-[  3.060s] ok: the final message arrived once
-[  3.062s] ok: exactly 1 "Turn finished"
-[  3.065s] ok: the turn completed on the relay
-[ 15.953s] upgrade error shown to the client: "timed out after 15028 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
-[ 15.955s] ok: still Live after the upgrade failed
-[ 16.072s] ok: the link never reported an error
-[ 16.072s] ok: no console errors
-[ 16.126s] PASS
+[  0.067s] engine: webkit 27.2, scenario: fallback
+[  0.230s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.226s] Live 996ms after navigation (first connect)
+[  1.234s] status line: "s3-host Live Relayed Change host"
+[  1.237s] ok: Live on the relay
+[  1.263s] submitted "are you there?" on Relayed
+[  1.707s] ok: deltas rendered live (3 distinct partial texts seen)
+[  2.999s] approval card: "Bash wants to run echo "are you there?" Approve Deny"
+[  3.051s] tapped Approve on Relayed
+[  3.130s] ok: the streamed reply is every delta exactly once
+[  3.133s] ok: exactly 1 approval card(s)
+[  3.135s] ok: the approval resolved once, by this browser
+[  3.141s] ok: the final message arrived once
+[  3.143s] ok: exactly 1 "Turn finished"
+[  3.145s] ok: the turn completed on the relay
+[ 16.006s] upgrade error shown to the client: "timed out after 15030 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
+[ 16.009s] ok: still Live after the upgrade failed
+[ 16.213s] ok: the link never reported an error
+[ 16.213s] ok: no relay dialled with the root dot
+[ 16.213s] ok: no console errors
+[ 16.278s] PASS
 
 ## Fallback, webkit, host log
-INFO daemon::server: client connected peer=eb7297cb0cfd225b86113fd9cace028026e627d5329f51147e5526091324244e client="browser"
+INFO daemon::server: client connected peer=5243eebb491cc7baa54ddb8b311228289271ef4b432e512d4e2d7499f580e55c client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:52577, 172.17.0.1:37871] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=true
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:159798012 1 udp 2113937151 fd3a3493-37e5-4ae9-9edc-0960946fe060.local 55943 typ host generation 0 ufrag sRfk network-cost 999: bad address: invalid IP address syntax candidate="candidate:159798012 1 udp 2113937151 fd3a3493-37e5-4ae9-9edc-0960946fe060.local 55943 typ host generation 0 ufrag sRfk network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52767
-INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(9991001038494979072), body: Prompt { text: "are you there?" } }
-INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(9991001038494979073), body: Resolve { approval: RequestId(1), decision: Approve } }
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.23.130.230:52577)
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.17.0.1:37871)
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.23.130.230:52577)
-WARN daemon::rtc: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.17.0.1:37871)
-WARN daemon::rtc: webrtc client gave up client="browser" reason="timed out after 15028 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
-INFO daemon::rtc: webrtc session ended client="browser" reason="the client closed the signaling stream" lasted_ms=15004 frames_out=0 datagrams_in=0 datagrams_out=0 connected=false last_remote=None
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:44008, 172.17.0.1:38182] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=Some(Blackhole)
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:904147373 1 udp 2113937151 13707e6a-6141-4b19-bcf9-c747a91eff10.local 51275 typ host generation 0 ufrag hUyK network-cost 999: bad address: invalid IP address syntax candidate="candidate:904147373 1 udp 2113937151 13707e6a-6141-4b19-bcf9-c747a91eff10.local 51275 typ host generation 0 ufrag hUyK network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64699
+INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(16707959027412500834), body: Prompt { text: "are you there?" } }
+INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(16707959027412500835), body: Resolve { approval: RequestId(1), decision: Approve } }
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.23.130.230:44008)
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.23.130.230:44008)
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.cloudflare.com:3478" local=Some(172.17.0.1:38182)
+WARN daemon::stun: webrtc STUN server did not answer: no srflx candidate from it server="stun:stun.l.google.com:19302" local=Some(172.17.0.1:38182)
+WARN daemon::rtc: webrtc client gave up client="browser" reason="timed out after 15030 ms: ice Checking, connection Connecting, gathering Gathering; browser gathered [Host, Srflx]; host sent [Some(Host), Some(Host)]"
+INFO daemon::rtc: webrtc session ended client="browser" reason="the client closed the signaling stream" lasted_ms=15003 frames_out=0 datagrams_in=0 datagrams_out=0 connected=false last_remote=None
 
 ok: host fallback-webkit: the turn's commands went over iroh (2)
 ok: host fallback-webkit: WebRTC never connected (0)
 
 ## Drop (host drops WebRTC after 8 frames, mid-turn), chromium
-[  0.045s] engine: chromium 158.0.8127.18, scenario: drop
-[  0.088s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.003s] Live 914ms after navigation (first connect)
-[  1.011s] status line: "s3-host Live WebRTC host/host Change host"
-[  1.019s] WebRtc 138ms after Live on the relay (page clock)
-[  1.047s] submitted "drop me halfway" on WebRtc
-[  1.421s] ok: deltas rendered live (3 distinct partial texts seen)
-[  2.215s] fell back to the relay mid-turn: "the WebRTC connection closed"
-[  2.503s] approval card: "Bash wants to run echo "drop me halfway" Approve Deny"
-[  2.543s] tapped Approve on Relayed
-[  2.624s] ok: the streamed reply is every delta exactly once
-[  2.627s] ok: exactly 1 approval card(s)
-[  2.630s] ok: the approval resolved once, by this browser
-[  2.632s] ok: the final message arrived once
-[  2.637s] ok: exactly 1 "Turn finished"
-[  2.637s] ok: the client fell back exactly once
-[  3.422s] WebRtc again 1209ms after the drop
-[  3.505s] ok: the link never reported an error
-[  3.505s] ok: no console errors
-[  3.528s] PASS
+[  0.048s] engine: chromium 158.0.8127.18, scenario: drop
+[  0.097s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.048s] Live 951ms after navigation (first connect)
+[  1.055s] status line: "s3-host Live WebRTC host/host Change host"
+[  1.062s] WebRtc 147ms after Live on the relay (page clock)
+[  1.096s] submitted "drop me halfway" on WebRtc
+[  1.537s] ok: deltas rendered live (3 distinct partial texts seen)
+[  2.328s] fell back to the relay mid-turn: "the WebRTC connection closed"
+[  2.511s] approval card: "Bash wants to run echo "drop me halfway" Approve Deny"
+[  2.546s] tapped Approve on Relayed
+[  2.631s] ok: the streamed reply is every delta exactly once
+[  2.635s] ok: exactly 1 approval card(s)
+[  2.637s] ok: the approval resolved once, by this browser
+[  2.639s] ok: the final message arrived once
+[  2.641s] ok: exactly 1 "Turn finished"
+[  2.641s] ok: the client fell back exactly once
+[  3.933s] WebRtc again 1607ms after the drop
+[  4.023s] ok: the link never reported an error
+[  4.023s] ok: no relay dialled with the root dot
+[  4.023s] ok: no console errors
+[  4.053s] PASS
 
 ## Drop, chromium, host log
-INFO daemon::server: client connected peer=e7a179e98d1f59be1c783d9f38300930ba1f0a0ed74ebe633916261501c04020 client="browser"
+INFO daemon::server: client connected peer=37abc996362d869efe3d1996e92ba7b7c4ec438be9db7ec50ad785cd46a868f5 client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:40468, 172.17.0.1:33202] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3617536811 1 udp 2113937151 c7426998-6327-4705-82a9-d6947c36cf1c.local 60797 typ host generation 0 ufrag k+va network-cost 999: bad address: invalid IP address syntax candidate="candidate:3617536811 1 udp 2113937151 c7426998-6327-4705-82a9-d6947c36cf1c.local 60797 typ host generation 0 ufrag k+va network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52759
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52738 base=172.23.130.230:40468
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52738 base=172.23.130.230:40468
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52716 base=172.17.0.1:33202
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52716 base=172.17.0.1:33202
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52716 base=172.17.0.1:33202
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52738 base=172.23.130.230:40468
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:60797
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:34842, 172.17.0.1:55483] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3878546031 1 udp 2113937151 e173278a-f936-4de7-9642-c4da82bc1611.local 49846 typ host generation 0 ufrag uUmF network-cost 999: bad address: invalid IP address syntax candidate="candidate:3878546031 1 udp 2113937151 e173278a-f936-4de7-9642-c4da82bc1611.local 49846 typ host generation 0 ufrag uUmF network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64680
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64684 base=172.23.130.230:34842
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64684 base=172.23.130.230:34842
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64701 base=172.17.0.1:55483
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64701 base=172.17.0.1:55483
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64684 base=172.23.130.230:34842
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64701 base=172.17.0.1:55483
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:49846
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=88 remote=Some(172.23.130.230:60797)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=96 remote=Some(172.23.130.230:49846)
 INFO daemon::server: subscribed transport="webrtc" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(2697220150690806132), body: Prompt { text: "drop me halfway" } }
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="host" host_side="host"
+INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(15014144289291491795), body: Prompt { text: "drop me halfway" } }
 INFO daemon::server: subscription ended transport="iroh" events_sent=0 ended="stream write failed: sending stopped by peer: error 0"
 WARN daemon::rtc: webrtc test knob: dropping the connection frames=8
-INFO daemon::rtc: webrtc session ended client="browser" reason="test knob: dropped" lasted_ms=1173 frames_out=8 datagrams_in=23 datagrams_out=33 connected=true last_remote=Some(172.23.130.230:60797)
+INFO daemon::rtc: webrtc session ended client="browser" reason="test knob: dropped" lasted_ms=1184 frames_out=8 datagrams_in=23 datagrams_out=33 connected=true last_remote=Some(172.23.130.230:49846)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=7 ended="closed"
 INFO daemon::server: subscribed transport="iroh" after_seq=7 replayed=0
-INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(2697220150690806133), body: Resolve { approval: RequestId(1), decision: Approve } }
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:40872, 172.17.0.1:51944] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2593193790 1 udp 2113937151 c7426998-6327-4705-82a9-d6947c36cf1c.local 35091 typ host generation 0 ufrag w62I network-cost 999: bad address: invalid IP address syntax candidate="candidate:2593193790 1 udp 2113937151 c7426998-6327-4705-82a9-d6947c36cf1c.local 35091 typ host generation 0 ufrag w62I network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52761
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52772 base=172.17.0.1:51944
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52772 base=172.17.0.1:51944
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52718 base=172.23.130.230:40872
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52718 base=172.23.130.230:40872
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52718 base=172.23.130.230:40872
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52772 base=172.17.0.1:51944
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:35091
+INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(15014144289291491796), body: Resolve { approval: RequestId(1), decision: Approve } }
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:48904, 172.17.0.1:33169] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2432977827 1 udp 2113937151 e173278a-f936-4de7-9642-c4da82bc1611.local 59590 typ host generation 0 ufrag RixN network-cost 999: bad address: invalid IP address syntax candidate="candidate:2432977827 1 udp 2113937151 e173278a-f936-4de7-9642-c4da82bc1611.local 59590 typ host generation 0 ufrag RixN network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64700
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64692 base=172.23.130.230:48904
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64692 base=172.23.130.230:48904
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64735 base=172.17.0.1:33169
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64735 base=172.17.0.1:33169
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64735 base=172.17.0.1:33169
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64692 base=172.23.130.230:48904
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:59590
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=68 remote=Some(172.23.130.230:35091)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=66 remote=Some(172.23.130.230:59590)
 INFO daemon::server: subscribed transport="webrtc" after_seq=17 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="host" host_side="host"
 
 ok: host drop-chromium: WebRTC was dropped once (1)
 ok: host drop-chromium: the prompt went over WebRTC (1)
@@ -388,67 +392,68 @@ ok: host drop-chromium: the client resubscribed on iroh from its cursor (1)
 ok: host drop-chromium: the client subscribed over WebRTC before the drop and again after (2)
 
 ## Drop (host drops WebRTC after 8 frames, mid-turn), webkit
-[  0.069s] engine: webkit 27.2, scenario: drop
-[  0.201s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.234s] Live 1033ms after navigation (first connect)
-[  1.244s] status line: "s3-host Live WebRTC host/host Change host"
-[  1.254s] WebRtc 164ms after Live on the relay (page clock)
-[  1.292s] submitted "drop me halfway" on WebRtc
-[  1.671s] ok: deltas rendered live (3 distinct partial texts seen)
-[  2.462s] fell back to the relay mid-turn: "the WebRTC connection closed"
-[  2.650s] approval card: "Bash wants to run echo "drop me halfway" Approve Deny"
-[  2.696s] tapped Approve on Relayed
-[  2.777s] ok: the streamed reply is every delta exactly once
-[  2.779s] ok: exactly 1 approval card(s)
-[  2.782s] ok: the approval resolved once, by this browser
-[  2.785s] ok: the final message arrived once
-[  2.787s] ok: exactly 1 "Turn finished"
-[  2.788s] ok: the client fell back exactly once
-[  3.574s] WebRtc again 1114ms after the drop
-[  3.734s] ok: the link never reported an error
-[  3.734s] ok: no console errors
-[  3.775s] PASS
+[  0.075s] engine: webkit 27.2, scenario: drop
+[  0.237s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.197s] Live 960ms after navigation (first connect)
+[  1.206s] status line: "s3-host Live WebRTC prflx/host Change host"
+[  1.215s] WebRtc 161ms after Live on the relay (page clock)
+[  1.247s] submitted "drop me halfway" on WebRtc
+[  1.627s] ok: deltas rendered live (3 distinct partial texts seen)
+[  2.422s] fell back to the relay mid-turn: "the WebRTC connection closed"
+[  2.609s] approval card: "Bash wants to run echo "drop me halfway" Approve Deny"
+[  2.646s] tapped Approve on Relayed
+[  2.734s] ok: the streamed reply is every delta exactly once
+[  2.737s] ok: exactly 1 approval card(s)
+[  2.741s] ok: the approval resolved once, by this browser
+[  2.744s] ok: the final message arrived once
+[  2.746s] ok: exactly 1 "Turn finished"
+[  2.746s] ok: the client fell back exactly once
+[  3.532s] WebRtc again 1113ms after the drop
+[  3.675s] ok: the link never reported an error
+[  3.675s] ok: no relay dialled with the root dot
+[  3.675s] ok: no console errors
+[  3.718s] PASS
 
 ## Drop, webkit, host log
-INFO daemon::server: client connected peer=238a167d475c8cd8b58ec5ca6981f66eef549b04093724386dc42155e6b9d18a client="browser"
+INFO daemon::server: client connected peer=91b8d676bcb9f88bc8ab29bf20991f8b1c2eec3a282b33687b8c1a6995e0558a client="browser"
 INFO daemon::server: subscribed transport="iroh" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.23.130.230:56683, 172.17.0.1:56668] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:572501996 1 udp 2113937151 d738f495-3a78-4db3-8169-b991e16f46b6.local 37596 typ host generation 0 ufrag +5qq network-cost 999: bad address: invalid IP address syntax candidate="candidate:572501996 1 udp 2113937151 d738f495-3a78-4db3-8169-b991e16f46b6.local 37596 typ host generation 0 ufrag +5qq network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52788
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52744 base=172.17.0.1:56668
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52744 base=172.17.0.1:56668
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52769 base=172.23.130.230:56683
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52769 base=172.23.130.230:56683
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52744 base=172.17.0.1:56668
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52769 base=172.23.130.230:56683
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=172.23.130.230:37596
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:35529, 172.23.130.230:39932] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:1486598774 1 udp 2113937151 b94aeed6-6284-407e-9a48-de49e5ee748a.local 44400 typ host generation 0 ufrag cvIj network-cost 999: bad address: invalid IP address syntax candidate="candidate:1486598774 1 udp 2113937151 b94aeed6-6284-407e-9a48-de49e5ee748a.local 44400 typ host generation 0 ufrag cvIj network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64730
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64723 base=172.17.0.1:35529
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64723 base=172.17.0.1:35529
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64710 base=172.23.130.230:39932
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64710 base=172.23.130.230:39932
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64710 base=172.23.130.230:39932
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64723 base=172.17.0.1:35529
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:44400
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=112 remote=Some(172.23.130.230:37596)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=104 remote=Some(10.255.255.254:44400)
 INFO daemon::server: subscribed transport="webrtc" after_seq=0 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=host host_side=host
-INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(7594507397345866821), body: Prompt { text: "drop me halfway" } }
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="prflx" host_side="host"
+INFO daemon::server: command client="browser" transport="webrtc" command=Command { id: CommandId(932559681908491063), body: Prompt { text: "drop me halfway" } }
 INFO daemon::server: subscription ended transport="iroh" events_sent=0 ended="stream write failed: sending stopped by peer: error 0"
 WARN daemon::rtc: webrtc test knob: dropping the connection frames=8
-INFO daemon::rtc: webrtc session ended client="browser" reason="test knob: dropped" lasted_ms=1100 frames_out=8 datagrams_in=22 datagrams_out=33 connected=true last_remote=Some(172.23.130.230:37596)
+INFO daemon::rtc: webrtc session ended client="browser" reason="test knob: dropped" lasted_ms=1087 frames_out=8 datagrams_in=28 datagrams_out=39 connected=true last_remote=Some(172.23.130.230:44400)
 INFO daemon::server: subscription ended transport="webrtc" events_sent=7 ended="closed"
 INFO daemon::server: subscribed transport="iroh" after_seq=7 replayed=0
-INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(7594507397345866822), body: Resolve { approval: RequestId(1), decision: Approve } }
-INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:58412, 172.23.130.230:33504] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=false
-INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:3906086208 1 udp 2113937151 ac189930-0b53-49be-9164-682a93bb6c51.local 48919 typ host generation 0 ufrag 8sqG network-cost 999: bad address: invalid IP address syntax candidate="candidate:3906086208 1 udp 2113937151 ac189930-0b53-49be-9164-682a93bb6c51.local 48919 typ host generation 0 ufrag 8sqG network-cost 999"
-INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:52771
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52700 base=172.23.130.230:33504
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52700 base=172.23.130.230:33504
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:52756 base=172.17.0.1:58412
-INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:52756 base=172.17.0.1:58412
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52700 base=172.23.130.230:33504
-INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:52756 base=172.17.0.1:58412
-INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:48919
+INFO daemon::server: command client="browser" transport="iroh" command=Command { id: CommandId(932559681908491064), body: Resolve { approval: RequestId(1), decision: Approve } }
+INFO daemon::rtc: webrtc offer accepted client="browser" host_candidates=[172.17.0.1:44531, 172.23.130.230:50908] stun=["stun:stun.l.google.com:19302 (74.125.250.129:19302)", "stun:stun.cloudflare.com:3478 (162.159.207.0:3478)"] blackhole=None
+INFO daemon::rtc: webrtc remote candidate skipped client="browser" kind=Some(Host) err=ICE bad candidate: candidate:2285578177 1 udp 2113937151 39a98d72-1f62-412a-88b7-19cf25c90d83.local 48650 typ host generation 0 ufrag Ph9w network-cost 999: bad address: invalid IP address syntax candidate="candidate:2285578177 1 udp 2113937151 39a98d72-1f62-412a-88b7-19cf25c90d83.local 48650 typ host generation 0 ufrag Ph9w network-cost 999"
+INFO daemon::rtc: webrtc remote candidate client="browser" kind=Some(Srflx) addr=203.0.113.1:64664
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64661 base=172.17.0.1:44531
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64661 base=172.17.0.1:44531
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.cloudflare.com:3478" mapped=203.0.113.1:64666 base=172.23.130.230:50908
+INFO daemon::rtc: webrtc local candidate srflx client="browser" mapped=203.0.113.1:64666 base=172.23.130.230:50908
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64666 base=172.23.130.230:50908
+INFO daemon::rtc: webrtc STUN answer client="browser" server="stun:stun.l.google.com:19302" mapped=203.0.113.1:64661 base=172.17.0.1:44531
+INFO daemon::rtc: webrtc datagrams arriving client="browser" from=10.255.255.254:48650
 INFO daemon::rtc: webrtc ice state client="browser" state=Checking
 INFO daemon::rtc: webrtc ice state client="browser" state=Connected
-INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=62 remote=Some(10.255.255.254:48919)
+INFO daemon::rtc: webrtc connected: DTLS is up client="browser" after_ms=63 remote=Some(10.255.255.254:48650)
 INFO daemon::server: subscribed transport="webrtc" after_seq=17 replayed=0
-INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side=prflx host_side=host
+INFO daemon::rtc: webrtc selected candidate pair, as the browser reports it client="browser" browser_side="prflx" host_side="host"
 
 ok: host drop-webkit: WebRTC was dropped once (1)
 ok: host drop-webkit: the prompt went over WebRTC (1)
