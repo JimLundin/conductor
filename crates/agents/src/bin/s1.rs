@@ -58,8 +58,9 @@ impl Policy {
 /// How a turn is driven to its `result`.
 enum Plan {
     Answer(Policy),
-    /// Approve permissions and interrupt after the first assistant message.
-    InterruptOnFirstReply,
+    /// Interrupt as soon as the turn starts, before the model has said
+    /// anything; deny any permission request.
+    InterruptOnStart,
     /// Leave the first permission request open and interrupt; deny any later one.
     InterruptOnPermission,
 }
@@ -135,15 +136,18 @@ impl Turn {
 
     async fn on(&mut self, event: ClaudeEvent) -> Result<Progress> {
         match event {
-            ClaudeEvent::SessionStarted { session_id } => {
+            ClaudeEvent::TurnStarted { session_id } => {
                 self.session_id = Some(session_id);
+                if let (Plan::InterruptOnStart, None) = (&self.plan, &self.interrupted) {
+                    self.interrupted = Some(self.live.session.interrupt().await);
+                }
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message {
                 role: Role::Assistant,
                 content,
             } => {
-                self.on_reply(content).await;
+                self.on_reply(content);
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
@@ -177,7 +181,7 @@ impl Turn {
         }
     }
 
-    async fn on_reply(&mut self, content: Vec<Block>) {
+    fn on_reply(&mut self, content: Vec<Block>) {
         let text = content
             .into_iter()
             .filter_map(|block| match block {
@@ -189,9 +193,6 @@ impl Turn {
             })
             .collect::<String>();
         self.text.push_str(&text);
-        if let (Plan::InterruptOnFirstReply, None) = (&self.plan, &self.interrupted) {
-            self.interrupted = Some(self.live.session.interrupt().await);
-        }
     }
 
     async fn on_permission(&mut self, id: PermissionRequestId) -> Result<()> {
@@ -208,7 +209,13 @@ impl Turn {
                 };
                 self.answer(id, decision).await
             }
-            (Plan::InterruptOnFirstReply, _) => self.answer(id, PermissionDecision::Allow).await,
+            (Plan::InterruptOnStart, _) => {
+                let decision = PermissionDecision::Deny {
+                    message: String::from("interrupted"),
+                    then: AfterDeny::Continue,
+                };
+                self.answer(id, decision).await
+            }
             (Plan::Answer(policy), _) => self.answer(id, policy.decision()).await,
         }
     }
@@ -315,14 +322,14 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
 
     let t = Turn::start(
         t.live,
-        "Say the word `starting` first. Then use the Bash tool to run `sleep 30 && echo slept`. Then count from 1 to 200, one number per line.",
-        Plan::InterruptOnFirstReply,
+        "Count from 1 to 200, one number per line.",
+        Plan::InterruptOnStart,
     )
     .await?;
     let interrupted = t
         .interrupted
         .as_ref()
-        .context("turn ended before any assistant output")?;
+        .context("turn ended without starting")?;
     let after = Turn::start(
         t.live,
         "Reply with just the word pong.",

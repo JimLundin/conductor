@@ -79,7 +79,7 @@ fn block_summary(block: &Block) -> String {
 
 fn summary(event: &ClaudeEvent) -> String {
     match event {
-        ClaudeEvent::SessionStarted { session_id } => format!("session_started {}", session_id.0),
+        ClaudeEvent::TurnStarted { session_id } => format!("turn_started {}", session_id.0),
         ClaudeEvent::Message { role, content } => {
             let blocks = content.iter().map(block_summary).collect::<Vec<String>>();
             let role = match role {
@@ -255,26 +255,30 @@ async fn approve_deny_interrupt_recording() {
         replayed.events,
         [
             // 1: approve a Write.
-            "session_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: tool_use Write",
             "permission Write \"/tmp/s1-scratch/a.txt\"",
             "user: tool_result error=false",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
             "finished success is_error=false Some(\"completed\")",
             // 2: deny a Write.
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: tool_use Write",
             "permission Write \"/tmp/s1-scratch/b.txt\"",
             "user: tool_result error=true",
             "assistant: text \"The Write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I didn't retry and no file was created.\"",
             "finished success is_error=false Some(\"completed\")",
             // 3: interrupt right after the first assistant output.
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: thinking",
             "assistant: text \"starting\"",
             "user: text \"[Request interrupted by user]\"",
             "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: text \"pong\"",
             "finished success is_error=false Some(\"completed\")",
             // 3b: interrupt with a permission request open; the CLI withdraws it.
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: tool_use Write",
             "permission Write \"/tmp/s1-scratch/d.txt\"",
             "permission_cancelled",
@@ -302,10 +306,11 @@ async fn resume_and_accept_edits_recording() {
     assert_eq!(
         replayed.events,
         [
-            "session_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: text \"a.txt\"",
             "finished success is_error=false Some(\"completed\")",
             "unknown system/status",
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: tool_use Write",
             "user: tool_result error=false",
             "assistant: text \"I created `c.txt` in `/tmp/s1-scratch` with the content `accepted`.\"",

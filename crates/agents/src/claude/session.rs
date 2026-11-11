@@ -149,7 +149,6 @@ impl ClaudeSession {
             stdout_log,
             pending: HashMap::new(),
             open_permissions: HashMap::new(),
-            session_id: None,
             next_request: 0,
         };
         tokio::spawn(actor.run(commands_rx));
@@ -302,12 +301,6 @@ enum Input {
     Closed,
 }
 
-/// Whether an event tells the listener something new.
-enum News {
-    Fresh,
-    Repeat,
-}
-
 /// Every handle is gone, so the actor has stopped the process and ended.
 struct Stopped {}
 
@@ -325,8 +318,6 @@ struct Actor {
     pending: HashMap<String, Pending>,
     /// `can_use_tool` requests not yet answered, with the input `allow` echoes.
     open_permissions: HashMap<PermissionRequestId, Value>,
-    /// The CLI repeats `system/init` every turn; only a new id is news.
-    session_id: Option<SessionId>,
     next_request: u64,
 }
 
@@ -390,9 +381,8 @@ impl Actor {
         };
         match inbound {
             Inbound::Event(event) => {
-                if let News::Fresh = self.track(&event) {
-                    self.emit(event).await;
-                }
+                self.track(&event);
+                self.emit(event).await;
             }
             Inbound::ControlResponse {
                 request_id,
@@ -425,26 +415,16 @@ impl Actor {
         }
     }
 
-    /// Records what an event changes in the open permissions and the session id.
-    fn track(&mut self, event: &ClaudeEvent) -> News {
+    /// Records what an event changes in the open permissions.
+    fn track(&mut self, event: &ClaudeEvent) {
         match event {
             ClaudeEvent::PermissionRequested { id, input, .. } => {
                 self.open_permissions.insert(id.clone(), input.clone());
-                News::Fresh
             }
             ClaudeEvent::PermissionCancelled { id } => {
                 self.open_permissions.remove(id);
-                News::Fresh
             }
-            ClaudeEvent::SessionStarted { session_id } => match self
-                .session_id
-                .replace(session_id.clone())
-                .filter(|seen| seen == session_id)
-            {
-                Some(_) => News::Repeat,
-                None => News::Fresh,
-            },
-            _ => News::Fresh,
+            _ => {}
         }
     }
 

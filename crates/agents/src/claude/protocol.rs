@@ -94,7 +94,9 @@ pub enum Block {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaudeEvent {
-    SessionStarted {
+    /// The CLI read a user message and began its turn (`system/init`, which
+    /// it prints once per turn with the same `session_id`).
+    TurnStarted {
         session_id: SessionId,
     },
     Message {
@@ -154,7 +156,7 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
     match output {
         ClaudeOutput::System(msg) => match msg.subtype {
             SystemSubtype::Init => match msg.data.get("session_id").and_then(Value::as_str) {
-                Some(id) => Inbound::Event(ClaudeEvent::SessionStarted {
+                Some(id) => Inbound::Event(ClaudeEvent::TurnStarted {
                     session_id: SessionId(id.to_owned()),
                 }),
                 None => Inbound::Event(ClaudeEvent::Unknown(raw)),
