@@ -1,0 +1,294 @@
+# What is built, what is being built and what is planned. Hand-maintained;
+# tools/archmap/archmap.py turns it, with cargo metadata and the subset
+# score, into the architecture page. Update a unit when its branch is
+# created or merged.
+#
+# status: "done", "in_progress" (needs `branch`) or "planned".
+# touches: crate names, or crate/path for a single module.
+
+updated = 2026-11-11
+
+[[phase]]
+name = "Spikes"
+[[phase.unit]]
+id = "s1"
+name = "S1 Claude spike"
+status = "done"
+purpose = "Drive the claude CLI from Rust: approve, deny, interrupt, resume."
+done_when = "s1 runs a turn, approves a tool, interrupts the next and resumes."
+touches = ["agents", "claude-codes"]
+[[phase.unit]]
+id = "s2"
+name = "S2 Codex spike"
+status = "done"
+purpose = "The same checklist for codex app-server."
+done_when = "s2 passes the checklist on a Codex thread."
+touches = ["agents", "codex-codes"]
+[[phase.unit]]
+id = "s3"
+name = "S3 transport and UI spike"
+status = "done"
+purpose = "Dioxus desktop and iPhone web, iroh through n0 relays, WebRTC upgrade, simulated host."
+done_when = "A streaming transcript with an approval works from desktop and from the iPhone on mobile data."
+touches = ["proto", "client", "daemon", "app"]
+
+[[phase]]
+name = "Subset rewrite"
+[[phase.unit]]
+id = "rw-proto"
+name = "proto in the subset"
+status = "done"
+purpose = "Rewrite the wire types and codec into the Conductor subset."
+done_when = "subset check is clean on crates/proto."
+touches = ["proto"]
+[[phase.unit]]
+id = "rw-agents"
+name = "agents in the subset"
+status = "done"
+purpose = "Rewrite the Claude and Codex adapters into the subset."
+done_when = "subset check is clean on crates/agents; s1 and s2 pass live."
+touches = ["agents"]
+[[phase.unit]]
+id = "rw-client"
+name = "client in the subset"
+status = "done"
+purpose = "Rewrite the client core, link and WebRTC upgrade into the subset."
+done_when = "subset check is clean on crates/client."
+touches = ["client"]
+
+[[phase]]
+name = "Connection fixes"
+[[phase.unit]]
+id = "relay-dot"
+name = "Relay root-dot fix"
+status = "done"
+purpose = "One dotless n0 relay map for every endpoint; WebKit refused the dotted URL."
+done_when = "No dotted relay URL reaches the browser (0 of 20 runs)."
+touches = ["proto/src/relay.rs", "client"]
+[[phase.unit]]
+id = "hedged-dial"
+name = "Hedged dial"
+status = "done"
+purpose = "Dial again on a fresh endpoint when the first dial stalls for 1.5 s."
+done_when = "Reconnect after reload no longer waits for a stalled dial."
+touches = ["client/src/link.rs"]
+
+[[phase]]
+name = "P1 slice 1: the real host"
+[[phase.unit]]
+id = "p1-1"
+name = "Unit 1: gated fake CLI"
+status = "done"
+purpose = "A fake claude/codex that waits for the user message and the permission answer."
+done_when = "The gated replay test and the existing replay tests pass."
+touches = ["agents"]
+[[phase.unit]]
+id = "p1-t"
+name = "Unit T: WebRTC port"
+status = "done"
+purpose = "wire.rs, rtc.rs and stun.rs ported into the subset, same behaviour."
+done_when = "subset check is clean on those files; s3-browser.sh passes all three scenarios."
+touches = ["daemon/src/wire.rs", "daemon/src/rtc.rs", "daemon/src/stun.rs"]
+[[phase.unit]]
+id = "p1-2"
+name = "Unit 2: agents boundary"
+status = "done"
+purpose = "Claude and Codex stream deltas, typed ToolDetail, and the drift-check change."
+done_when = "Replay tests assert deltas and details; s1 and s2 pass live 5 runs in a row."
+touches = ["agents", "claude-codes"]
+[[phase.unit]]
+id = "p1-3"
+name = "Unit 3: protocol swap"
+status = "in_progress"
+branch = "p1-u3-protocol"
+purpose = "Per-session protocol; daemon log, registry and serve; the simulated host deleted."
+done_when = "Wrong-token and epoch e2e pass; StartSession answers ProviderUnavailable."
+touches = ["proto", "client", "daemon", "app"]
+[[phase.unit]]
+id = "p1-4"
+name = "Unit 4: Claude sessions"
+status = "in_progress"
+branch = "p1-u4-claude"
+purpose = "Session actor and the Claude half of mapping; the first real session runs."
+done_when = "The Claude e2e tests pass."
+touches = ["daemon", "agents"]
+[[phase.unit]]
+id = "p1-5"
+name = "Unit 5: Codex sessions"
+status = "planned"
+purpose = "CodexHub, the Codex half of mapping, Codex in the registry."
+done_when = "The Codex e2e tests pass, including two sessions on one server."
+touches = ["daemon", "agents"]
+[[phase.unit]]
+id = "p1-6"
+name = "Unit 6: app screens"
+status = "in_progress"
+branch = "p1-u6-screens"
+purpose = "Session list, new-session form, session pane, phone layout."
+done_when = "A Claude turn runs by hand in dx serve; screenshots at desktop and 390 px."
+touches = ["app"]
+[[phase.unit]]
+id = "p1-7"
+name = "Unit 7: browser e2e"
+status = "planned"
+purpose = "The browser e2e on the real daemon and the fake CLIs."
+done_when = "All three scenarios pass in Chromium and WebKit."
+touches = ["app", "daemon"]
+[[phase.unit]]
+id = "p1-8"
+name = "Unit 8: smoke and docs"
+status = "planned"
+purpose = "Run the manual smoke test with the real CLIs; update the docs."
+done_when = "The owner has run the checklist; nothing is reported under crates/daemon."
+touches = ["daemon"]
+
+[[phase]]
+name = "Later slices"
+[[phase.unit]]
+id = "sqlite"
+name = "Durability: redb + postcard"
+status = "planned"
+purpose = "The event log, receipts and pending requests survive a host restart."
+done_when = "A restarted host replays its log and clients resume from their cursors."
+touches = ["daemon"]
+[[phase.unit]]
+id = "worktrees"
+name = "Git worktrees, checkpoints, diffs"
+status = "planned"
+purpose = "One worktree per session, a checkpoint per turn, diffs and revert."
+done_when = "Review and revert a turn from the phone."
+touches = ["daemon", "app"]
+[[phase.unit]]
+id = "fleet"
+name = "Fleet key and pairing"
+status = "planned"
+purpose = "A fleet root key signs device certificates; several hosts in one view."
+done_when = "Two hosts in one sidebar."
+touches = ["proto", "client", "daemon", "app"]
+[[phase.unit]]
+id = "push"
+name = "Push notifications"
+status = "planned"
+purpose = "Web Push from the host when an approval or question opens."
+done_when = "An approval request reaches a locked iPhone and is approved from it."
+touches = ["daemon", "app"]
+
+[[phase]]
+name = "Tooling"
+[[phase.unit]]
+id = "score"
+name = "Subset score and report"
+status = "done"
+purpose = "Weighted volume score and the static subset report on Pages."
+done_when = "report/ is published next to the app."
+touches = ["subset"]
+[[phase.unit]]
+id = "subset-v6"
+name = "Subset checker v6"
+status = "done"
+purpose = "The next subset version: checker gaps and owner decisions from the reviews."
+done_when = "subset.toml says version 6 and the queued checker gaps fail their fixtures."
+touches = ["subset"]
+[[phase.unit]]
+id = "archmap"
+name = "Architecture page"
+status = "done"
+purpose = "This page, generated from docs/status.toml and the code."
+done_when = "Published at /conductor/architecture/."
+touches = []
+[[phase.unit]]
+id = "volume"
+name = "Volume control"
+status = "planned"
+purpose = "Report by role, reduction passes, and per-crate score budgets enforced in CI."
+done_when = "Each crate has an approved score budget that CI enforces."
+touches = ["proto", "agents", "client", "daemon", "app", "claude-codes", "codex-codes"]
+[[phase.unit]]
+id = "extract-subset"
+name = "Extract tools/subset"
+status = "planned"
+purpose = "Make the checker a standalone project: config-driven rules, its own docs."
+done_when = "tools/subset builds with no workspace dependencies."
+touches = ["subset"]
+
+# One line per crate. Size, dependencies and subset violations are measured.
+[purpose]
+proto = "Wire and event types, the frame codec, the ticket. No I/O."
+agents = "Drives the claude and codex CLIs in their native protocols."
+client = "One HostLink per host, reconnect, WebRTC upgrade; native and wasm."
+daemon = "conductord: serves a host over iroh and WebRTC."
+app = "The Dioxus UI for desktop and the iPhone web app."
+claude-codes = "Vendored: typed Claude stream-json messages."
+codex-codes = "Vendored: typed Codex app-server JSON-RPC."
+subset = "Checks, measures and scores the Rust subset."
+
+# Modules a unit adds, rewrites or deletes. A module's status is its unit's.
+[[module]]
+path = "daemon/src/log.rs"
+unit = "p1-3"
+note = "Log actor: seq, replay, live broadcast."
+[[module]]
+path = "daemon/src/registry.rs"
+unit = "p1-3"
+note = "Registry actor: session ids to Session handles."
+[[module]]
+path = "daemon/src/serve.rs"
+unit = "p1-3"
+note = "Hello, command dispatch, subscribe feed. Replaces server.rs."
+[[module]]
+path = "daemon/src/lib.rs"
+unit = "p1-3"
+note = "Rewritten into the subset."
+[[module]]
+path = "daemon/src/main.rs"
+unit = "p1-3"
+note = "Rewritten: conductord host."
+[[module]]
+path = "daemon/src/session.rs"
+unit = "p1-4"
+note = "Session actor: one agent, its turn, its open requests."
+[[module]]
+path = "daemon/src/mapping.rs"
+unit = "p1-4"
+note = "Pure: agent events to protocol events. Codex half in unit 5."
+[[module]]
+path = "daemon/src/codex_hub.rs"
+unit = "p1-5"
+note = "The shared CodexServer and thread routing."
+[[module]]
+path = "daemon/tests/e2e.rs"
+unit = "p1-3"
+note = "Rewritten: real daemon, fake CLIs, HostLink."
+[[module]]
+path = "daemon/src/host.rs"
+unit = "p1-3"
+delete = true
+note = "The simulated agent and its log."
+[[module]]
+path = "daemon/src/server.rs"
+unit = "p1-3"
+delete = true
+note = "Becomes serve.rs."
+[[module]]
+path = "client/src/host_view.rs"
+unit = "p1-3"
+note = "The event stream folded by session id."
+[[module]]
+path = "client/src/transcript.rs"
+unit = "p1-3"
+delete = true
+note = "Replaced by host_view.rs."
+
+# Dependencies that do not exist yet.
+[[planned_dep]]
+from = "daemon"
+to = "agents"
+unit = "p1-4"
+
+[[bug]]
+title = "Rare 30 s \"connection lost\""
+detail = "A fresh connection sometimes gets no Welcome and dies at the 30 s idle timeout. Not reproduced yet."
+[[bug]]
+title = "app is not in the subset yet"
+detail = "Unit 6 rewrites the screens into the subset."
+crate = "app"

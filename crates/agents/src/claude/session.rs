@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::protocol::{
     ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
     PermissionRequestId, SessionId, UnsupportedVersion, check_version, encode, parse_line,
+    tool_detail,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -149,7 +150,6 @@ impl ClaudeSession {
             stdout_log,
             pending: HashMap::new(),
             open_permissions: HashMap::new(),
-            session_id: None,
             next_request: 0,
         };
         tokio::spawn(actor.run(commands_rx));
@@ -246,6 +246,7 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
         .command(&opts.claude_path)
         .working_directory(&opts.cwd)
         .permission_prompt_tool("stdio")
+        .include_partial_messages(true)
         .permission_mode(opts.permission_mode.to_cli())
         .resume(opts.resume.as_ref().map(|id| id.0.clone()));
     let builder = match &opts.model {
@@ -302,12 +303,6 @@ enum Input {
     Closed,
 }
 
-/// Whether an event tells the listener something new.
-enum News {
-    Fresh,
-    Repeat,
-}
-
 /// Every handle is gone, so the actor has stopped the process and ended.
 struct Stopped {}
 
@@ -325,8 +320,6 @@ struct Actor {
     pending: HashMap<String, Pending>,
     /// `can_use_tool` requests not yet answered, with the input `allow` echoes.
     open_permissions: HashMap<PermissionRequestId, Value>,
-    /// The CLI repeats `system/init` every turn; only a new id is news.
-    session_id: Option<SessionId>,
     next_request: u64,
 }
 
@@ -390,9 +383,24 @@ impl Actor {
         };
         match inbound {
             Inbound::Event(event) => {
-                if let News::Fresh = self.track(&event) {
-                    self.emit(event).await;
+                if let ClaudeEvent::PermissionCancelled { id } = &event {
+                    self.open_permissions.remove(id);
                 }
+                self.emit(event).await;
+            }
+            Inbound::Permission {
+                id,
+                tool_name,
+                input,
+            } => {
+                let detail = tool_detail(&tool_name, &input);
+                self.open_permissions.insert(id.clone(), input);
+                self.emit(ClaudeEvent::PermissionRequested {
+                    id,
+                    tool_name,
+                    detail,
+                })
+                .await;
             }
             Inbound::ControlResponse {
                 request_id,
@@ -422,29 +430,6 @@ impl Actor {
                     tracing::error!("replying to {subtype}: {e}");
                 }
             }
-        }
-    }
-
-    /// Records what an event changes in the open permissions and the session id.
-    fn track(&mut self, event: &ClaudeEvent) -> News {
-        match event {
-            ClaudeEvent::PermissionRequested { id, input, .. } => {
-                self.open_permissions.insert(id.clone(), input.clone());
-                News::Fresh
-            }
-            ClaudeEvent::PermissionCancelled { id } => {
-                self.open_permissions.remove(id);
-                News::Fresh
-            }
-            ClaudeEvent::SessionStarted { session_id } => match self
-                .session_id
-                .replace(session_id.clone())
-                .filter(|seen| seen == session_id)
-            {
-                Some(_) => News::Repeat,
-                None => News::Fresh,
-            },
-            _ => News::Fresh,
         }
     }
 
@@ -579,6 +564,7 @@ mod tests {
                 "haiku",
                 "--setting-sources",
                 "project,local",
+                "--include-partial-messages",
                 "--permission-prompt-tool",
                 "stdio",
             ]

@@ -14,7 +14,7 @@ use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
     Error, Item, Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
 };
-use agents::live::{Presence, Verdict, fresh_scratch, log_path, presence, report};
+use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
 use serde_json::Value;
@@ -59,8 +59,8 @@ impl Policy {
 /// How the turns of a run are driven.
 enum Plan {
     Answer(Policy),
-    /// Approve, and interrupt after the first agent message or item.
-    InterruptOnFirstOutput,
+    /// Interrupt at the cue; decline any approval request.
+    Interrupt(Cue),
 }
 
 /// Whether every turn of a run has completed.
@@ -78,6 +78,8 @@ struct Turn {
     cancelled: usize,
     items: Vec<String>,
     text: String,
+    /// The text of every `AgentDelta`, joined.
+    streamed: String,
     outcome: Option<TurnOutcome>,
 }
 
@@ -91,6 +93,7 @@ impl Turn {
             cancelled: 0,
             items: Vec::new(),
             text: String::new(),
+            streamed: String::new(),
             outcome: None,
         }
     }
@@ -98,6 +101,7 @@ impl Turn {
     fn record(&mut self, event: ThreadEvent) {
         match event {
             ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {}
+            ThreadEvent::AgentDelta { text, .. } => self.streamed.push_str(&text),
             ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
             ThreadEvent::AgentMessage { text, .. } => {
                 self.text = match self.text.as_str() {
@@ -124,6 +128,7 @@ fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
     match event {
         ThreadEvent::TurnStarted { turn }
         | ThreadEvent::TurnCompleted { turn, .. }
+        | ThreadEvent::AgentDelta { turn, .. }
         | ThreadEvent::AgentMessage { turn, .. }
         | ThreadEvent::Item { turn, .. }
         | ThreadEvent::ApprovalRequested { turn, .. } => Some(turn),
@@ -177,7 +182,8 @@ struct Run {
 
 impl Run {
     async fn drive(live: Live, plan: Plan, turns: Vec<Turn>) -> Result<Run> {
-        Run {
+        let first = turns.first().map(|turn| turn.thread.id.clone());
+        let mut run = Run {
             live,
             plan,
             running: turns.len(),
@@ -186,9 +192,11 @@ impl Run {
                 .map(|turn| (turn.thread.id.clone(), turn))
                 .collect(),
             interrupted: None,
+        };
+        if let Some(thread) = first {
+            run.cue(&thread, Cue::Send).await?;
         }
-        .run()
-        .await
+        run.run().await
     }
 
     async fn run(mut self) -> Result<Run> {
@@ -244,16 +252,16 @@ impl Run {
         match event {
             ThreadEvent::Started
             | ThreadEvent::Unknown(_)
-            | ThreadEvent::TurnStarted { .. }
+            | ThreadEvent::AgentMessage { .. }
+            | ThreadEvent::Item { .. }
             | ThreadEvent::ApprovalCancelled { .. } => {}
+            ThreadEvent::TurnStarted { .. } => self.cue(thread, Cue::Start).await?,
+            ThreadEvent::AgentDelta { .. } => self.cue(thread, Cue::Delta).await?,
             ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
-            ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. } => {
-                self.after_output(thread).await?;
-            }
             ThreadEvent::ApprovalRequested { id, .. } => {
                 let decision = match &self.plan {
                     Plan::Answer(policy) => policy.decision(),
-                    Plan::InterruptOnFirstOutput => Decision::Accept,
+                    Plan::Interrupt(_) => Decision::Decline,
                 };
                 self.live.server.respond(id.clone(), decision).await?;
             }
@@ -261,13 +269,19 @@ impl Run {
         Ok(())
     }
 
-    async fn after_output(&mut self, thread: &ThreadId) -> Result<()> {
+    /// Interrupts once, if the plan waits for this cue.
+    async fn cue(&mut self, thread: &ThreadId, cue: Cue) -> Result<()> {
         let turn = self
             .turns
             .get(thread)
             .context("turn left the run while reacting")?;
-        if let (Plan::InterruptOnFirstOutput, None) = (&self.plan, &self.interrupted) {
-            self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
+        match (&self.plan, cue, &self.interrupted) {
+            (Plan::Interrupt(Cue::Send), Cue::Send, None)
+            | (Plan::Interrupt(Cue::Start), Cue::Start, None)
+            | (Plan::Interrupt(Cue::Delta), Cue::Delta, None) => {
+                self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -300,6 +314,76 @@ async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> R
     })
 }
 
+/// What an interrupt at a cue does to the turn.
+enum Expect {
+    Interrupted,
+    /// An interrupt sent right after `turn/start` races `turn/started`.
+    /// Before it, Codex refuses (`no active turn to interrupt`) and the
+    /// turn runs to the end; after it, the turn is interrupted.
+    Either,
+}
+
+/// Interrupts a counting turn at `cue`, then checks what the interrupt did
+/// and that the next turn works.
+async fn interrupted(
+    live: Live,
+    thread: &CodexThread,
+    step: &str,
+    cue: Cue,
+    expect: Expect,
+) -> Result<(Live, Verdict)> {
+    let s = single(
+        live,
+        thread,
+        "Count from 1 to 300, one number per line.",
+        Plan::Interrupt(cue),
+    )
+    .await?;
+    let interrupted = s
+        .interrupted
+        .as_ref()
+        .context("turn ended before the interrupt cue")?;
+    let t = &s.turn;
+    let after = single(
+        s.live,
+        thread,
+        "Reply with just the word pong.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let verdict = report(
+        step,
+        match (
+            expect,
+            interrupted,
+            &t.outcome,
+            &after.turn.outcome,
+            after.turn.text.to_lowercase().find("pong"),
+        ) {
+            (
+                Expect::Interrupted | Expect::Either,
+                Ok(()),
+                Some(TurnOutcome::Interrupted),
+                Some(TurnOutcome::Completed),
+                Some(_),
+            )
+            | (
+                Expect::Either,
+                Err(_),
+                Some(TurnOutcome::Completed),
+                Some(TurnOutcome::Completed),
+                Some(_),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "interrupt()={interrupted:?} streamed={:?} output before the interrupt landed {:?} items={:?} outcome={:?}; next turn outcome={:?} reply={:?}",
+            t.streamed, t.text, t.items, t.outcome, after.turn.outcome, after.turn.text
+        ),
+    )?;
+    Ok((after.live, verdict))
+}
+
 async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: PathBuf::from(CODEX),
@@ -329,14 +413,15 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         live.server.user_agent(),
         models.iter().map(|m| &m.id).collect::<Vec<&String>>()
     )?;
-    // on-request + workspace-write ran writes inside the workspace without
-    // asking; read-only makes every write an approval request.
+    // untrusted asks before every command, even `pwd`, whatever the
+    // model thinks of the sandbox, and workspace-write gives it no reason to
+    // refuse the write.
     let thread_opts = ThreadOptions {
         cwd: PathBuf::from(SCRATCH),
         model: Some(model),
         effort: Some(String::from("low")),
-        approval_policy: ApprovalPolicy::OnRequest,
-        sandbox: Sandbox::ReadOnly,
+        approval_policy: ApprovalPolicy::Untrusted,
+        sandbox: Sandbox::WorkspaceWrite,
     };
 
     let a = live.server.start_thread(thread_opts.clone()).await?;
@@ -390,45 +475,25 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     )?;
 
-    let s = single(
+    let (live, interrupt) = interrupted(
         s.live,
         &a,
-        "First say `starting`. Then run the shell command `sleep 60`. Then count from 1 to 300, one number per line.",
-        Plan::InterruptOnFirstOutput,
+        "3 interrupt at start",
+        Cue::Start,
+        Expect::Interrupted,
     )
     .await?;
-    let interrupted = s
-        .interrupted
-        .as_ref()
-        .context("turn ended before any output")?;
-    let t = &s.turn;
-    let after = single(
-        s.live,
+    let (live, mid_stream) = interrupted(
+        live,
         &a,
-        "Reply with just the word pong.",
-        Plan::Answer(Policy::Decline),
+        "3c interrupt mid-stream",
+        Cue::Delta,
+        Expect::Interrupted,
     )
     .await?;
-    let interrupt = report(
-        "3 interrupt",
-        match (
-            interrupted,
-            &t.outcome,
-            &after.turn.outcome,
-            after.turn.text.to_lowercase().find("pong"),
-        ) {
-            (Ok(()), Some(TurnOutcome::Interrupted), Some(TurnOutcome::Completed), Some(_)) => {
-                Verdict::Pass
-            }
-            _ => Verdict::Fail,
-        },
-        format!(
-            "interrupt()={interrupted:?} after output {:?} outcome={:?}; next turn outcome={:?} reply={:?}",
-            t.text, t.outcome, after.turn.outcome, after.turn.text
-        ),
-    )?;
+    let (live, at_send) =
+        interrupted(live, &a, "3d interrupt at send", Cue::Send, Expect::Either).await?;
 
-    let live = after.live;
     let b = live.server.start_thread(thread_opts.clone()).await?;
     let c = live.server.start_thread(thread_opts.clone()).await?;
     let (tb, tc) = n0_future::future::try_zip(
@@ -533,10 +598,19 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
 
     let status = server.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
-    let failed = Vec::from([approve, decline, interrupt, two_threads, resume, ids])
-        .into_iter()
-        .filter(|verdict| matches!(verdict, Verdict::Fail))
-        .count();
+    let failed = Vec::from([
+        approve,
+        decline,
+        interrupt,
+        mid_stream,
+        at_send,
+        two_threads,
+        resume,
+        ids,
+    ])
+    .into_iter()
+    .filter(|verdict| matches!(verdict, Verdict::Fail))
+    .count();
     match failed {
         0 => Ok(()),
         failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),

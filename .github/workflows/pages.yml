@@ -1,4 +1,4 @@
-name: Deploy the web app and the subset report to GitHub Pages
+name: Deploy the web app, the subset report and the architecture page to GitHub Pages
 
 on:
   push:
@@ -17,6 +17,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # CI keeps ./target: .cargo/config.toml points local checkouts at a
+    # shared directory beside them, and this overrides it.
+    env:
+      CARGO_TARGET_DIR: target
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,6 +54,14 @@ jobs:
           cargo run --release -p subset -- report-html
           --out target/dx/app/release/web/public/report
           --compare tools --compare vendor --history 30
+
+      # A static page beside report/, at /conductor/architecture/; the app's
+      # hash routing never sees it. Reuses the subset binary built above.
+      - name: Generate the architecture page at /conductor/architecture/
+        run: >
+          python3 tools/archmap/archmap.py
+          --out target/dx/app/release/web/public/architecture
+          --subset target/release/subset
 
       - uses: actions/upload-pages-artifact@v3
         with:
