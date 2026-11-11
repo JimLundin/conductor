@@ -13,7 +13,7 @@ use agents::claude::{
     PermissionDecision, PermissionMode, PermissionRequestId, Role, SessionId, SettingSource,
     VersionPolicy,
 };
-use agents::live::{Presence, Verdict, fresh_scratch, log_path, presence, report};
+use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
@@ -58,9 +58,8 @@ impl Policy {
 /// How a turn is driven to its `result`.
 enum Plan {
     Answer(Policy),
-    /// Interrupt as soon as the turn starts, before the model has said
-    /// anything; deny any permission request.
-    InterruptOnStart,
+    /// Interrupt at the cue; deny any permission request.
+    Interrupt(Cue),
     /// Leave the first permission request open and interrupt; deny any later one.
     InterruptOnPermission,
 }
@@ -104,7 +103,7 @@ struct Turn {
 impl Turn {
     async fn start(live: Live, prompt: &str, plan: Plan) -> Result<Turn> {
         live.session.send_user(String::from(prompt)).await?;
-        Turn {
+        let mut turn = Turn {
             live,
             plan,
             permissions: Vec::new(),
@@ -115,9 +114,9 @@ impl Turn {
             session_id: None,
             interrupted: None,
             open: None,
-        }
-        .run()
-        .await
+        };
+        turn.cue(Cue::Send).await;
+        turn.run().await
     }
 
     async fn run(mut self) -> Result<Turn> {
@@ -141,9 +140,7 @@ impl Turn {
         match event {
             ClaudeEvent::TurnStarted { session_id } => {
                 self.session_id = Some(session_id);
-                if let (Plan::InterruptOnStart, None) = (&self.plan, &self.interrupted) {
-                    self.interrupted = Some(self.live.session.interrupt().await);
-                }
+                self.cue(Cue::Start).await;
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message {
@@ -155,6 +152,7 @@ impl Turn {
             }
             ClaudeEvent::StreamDelta { text } => {
                 self.streamed.push_str(&text);
+                self.cue(Cue::Delta).await;
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
@@ -188,6 +186,18 @@ impl Turn {
         }
     }
 
+    /// Interrupts once, if the plan waits for this cue.
+    async fn cue(&mut self, cue: Cue) {
+        match (&self.plan, cue, &self.interrupted) {
+            (Plan::Interrupt(Cue::Send), Cue::Send, None)
+            | (Plan::Interrupt(Cue::Start), Cue::Start, None)
+            | (Plan::Interrupt(Cue::Delta), Cue::Delta, None) => {
+                self.interrupted = Some(self.live.session.interrupt().await);
+            }
+            _ => {}
+        }
+    }
+
     fn on_reply(&mut self, content: Vec<Block>) {
         let text = content
             .into_iter()
@@ -209,16 +219,9 @@ impl Turn {
                 self.interrupted = Some(self.live.session.interrupt().await);
                 Ok(())
             }
-            (Plan::InterruptOnPermission, Some(_)) => {
+            (Plan::InterruptOnPermission, Some(_)) | (Plan::Interrupt(_), _) => {
                 let decision = PermissionDecision::Deny {
-                    message: String::from("late request"),
-                    then: AfterDeny::Continue,
-                };
-                self.answer(id, decision).await
-            }
-            (Plan::InterruptOnStart, _) => {
-                let decision = PermissionDecision::Deny {
-                    message: String::from("interrupted"),
+                    message: String::from("not expected after an interrupt"),
                     then: AfterDeny::Continue,
                 };
                 self.answer(id, decision).await
@@ -263,6 +266,51 @@ fn options(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOpti
 async fn spawn(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> Result<Live> {
     let (session, events) = ClaudeSession::spawn(options(resume, stdout_log)).await?;
     Ok(Live { session, events })
+}
+
+/// Interrupts a counting turn at `cue`, then checks that the turn ended
+/// `aborted_streaming` and that the next turn works.
+async fn interrupted(live: Live, step: &str, cue: Cue) -> Result<(Live, Verdict)> {
+    let t = Turn::start(
+        live,
+        "Count from 1 to 200, one number per line.",
+        Plan::Interrupt(cue),
+    )
+    .await?;
+    let interrupted = t
+        .interrupted
+        .as_ref()
+        .context("turn ended before the interrupt cue")?;
+    let after = Turn::start(
+        t.live,
+        "Reply with just the word pong.",
+        Plan::Answer(Policy::Deny(String::from("no tools"))),
+    )
+    .await?;
+    let verdict = report(
+        step,
+        match (
+            interrupted,
+            t.finished
+                .as_ref()
+                .map(|finished| (finished.outcome, finished.terminal_reason())),
+            after.result(),
+            after.text.to_lowercase().find("pong"),
+        ) {
+            (
+                Ok(()),
+                Some((Outcome::Failed, Some("aborted_streaming"))),
+                Some(("success", Outcome::Succeeded)),
+                Some(_),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "interrupt()={interrupted:?} streamed={:?} text={:?} permissions={:?} finished={:?}; next turn finished={:?} reply={:?}",
+            t.streamed, t.text, t.permissions, t.finished, after.finished, after.text
+        ),
+    )?;
+    Ok((after.live, verdict))
 }
 
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
@@ -331,56 +379,12 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         ),
     )?;
 
-    let t = Turn::start(
-        t.live,
-        "Count from 1 to 200, one number per line.",
-        Plan::InterruptOnStart,
-    )
-    .await?;
-    let interrupted = t
-        .interrupted
-        .as_ref()
-        .context("turn ended without starting")?;
-    let after = Turn::start(
-        t.live,
-        "Reply with just the word pong.",
-        Plan::Answer(Policy::Deny(String::from("no tools"))),
-    )
-    .await?;
-    let interrupt = report(
-        "3 interrupt",
-        match (
-            interrupted,
-            t.finished.as_ref().map(|finished| finished.outcome),
-            t.finished
-                .as_ref()
-                .and_then(Finished::terminal_reason)
-                .and_then(|reason| reason.strip_prefix("aborted")),
-            after.result(),
-            after.text.to_lowercase().find("pong"),
-        ) {
-            (
-                Ok(()),
-                Some(Outcome::Failed),
-                Some(_),
-                Some(("success", Outcome::Succeeded)),
-                Some(_),
-            ) => Verdict::Pass,
-            _ => Verdict::Fail,
-        },
-        format!(
-            "interrupt()={interrupted:?} permissions={:?} cancelled={} finished={:?} terminal_reason={:?}; next turn finished={:?} reply={:?}",
-            t.permissions,
-            t.cancelled_permissions,
-            t.finished,
-            t.finished.as_ref().and_then(Finished::terminal_reason),
-            after.finished,
-            after.text
-        ),
-    )?;
+    let (live, interrupt) = interrupted(t.live, "3 interrupt at start", Cue::Start).await?;
+    let (live, mid_stream) = interrupted(live, "3c interrupt mid-stream", Cue::Delta).await?;
+    let (live, at_send) = interrupted(live, "3d interrupt at send", Cue::Send).await?;
 
     let t = Turn::start(
-        after.live,
+        live,
         "Use the Write tool to create the file d.txt in the current directory with the content `late`. Do nothing else.",
         Plan::InterruptOnPermission,
     )
@@ -493,6 +497,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         approve,
         deny,
         interrupt,
+        mid_stream,
+        at_send,
         pending,
         resume,
         accept_edits,

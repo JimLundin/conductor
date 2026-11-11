@@ -18,6 +18,16 @@ pub fn presence(path: &Path) -> Presence {
         Err(_) => Presence::Missing,
     }
 }
+/// When a live step interrupts its turn.
+#[derive(Debug, Clone, Copy)]
+pub enum Cue {
+    /// Right after sending the message, before the CLI has started the turn.
+    Send,
+    /// When the turn starts, before the model has produced anything.
+    Start,
+    /// On the first streamed delta, while the model is producing text.
+    Delta,
+}
 #[derive(Clone, Copy)]
 pub enum Verdict {
     Pass,
