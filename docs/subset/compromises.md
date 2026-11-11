@@ -52,7 +52,7 @@ doesn't expand macros, so a reviewer still checks these:
   allows any inside a listed trait impl). Also 0024 an order that means
   something (the tool checks that the type is a newtype), 0025 `drop` only
   of a value that owns a resource released early (the tool checks that the
-  argument is a plain name), 0026 every round trip going through `ask` and
+  argument is a plain name, and flags `drop` passed as a function), 0026 every round trip going through `ask` and
   its closure only building the variant (the tool checks the helper's
   shape), and 0028 a `fold` or `map(..).sum()` used only to count (the tool
   flags `filter_map(..).count()`).

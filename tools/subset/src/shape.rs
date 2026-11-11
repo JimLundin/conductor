@@ -931,7 +931,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                         ours: false,
                     },
                 };
-                let drop = callee.path == ["drop"] || callee.ends_with(&["mem", "drop"]);
+                let drop = matches!(&*e.func, Expr::Path(p) if is_drop(&p.path));
                 let named =
                     matches!(e.args.first(), Some(Expr::Path(p)) if p.path.get_ident().is_some());
                 if drop && !named {
@@ -1003,6 +1003,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 if !placed {
                     self.flag(e.async_token.span, &rules::ASYNC_BLOCK);
                 }
+            }
+            Expr::Path(e)
+                if matches!(slot, Slot::CallArg(_) | Slot::MethodArg { .. })
+                    && is_drop(&e.path) =>
+            {
+                self.flag(e.span(), &rules::DROP_FN);
             }
             Expr::Lit(e) if matches!(e.lit, Lit::Bool(_)) && !library_value(&slot) => {
                 self.flag(e.span(), &rules::BOOL_LIT);
@@ -1171,6 +1177,12 @@ fn library_value(slot: &Slot) -> bool {
             | Slot::MethodArg { on_self: false, .. }
             | Slot::FieldValue { ours: false }
     )
+}
+
+/// `drop`, `mem::drop` or `std::mem::drop`.
+fn is_drop(path: &syn::Path) -> bool {
+    let names: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    names == ["drop"] || names.ends_with(&["mem".to_string(), "drop".to_string()])
 }
 
 fn path_string(path: &syn::Path) -> String {

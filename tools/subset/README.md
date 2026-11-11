@@ -112,6 +112,7 @@ are names, not resolved paths.
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
 | `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposals 0008, 0023) |
 | `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |
+| `expr.path` | `drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025) |
 | `expr.method_call` | `.ok()` is not a discard; write `let _ = value;` (proposal 0025) |
 | `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
 | `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
@@ -438,7 +439,7 @@ commit whose files don't parse is left out, with a note on stderr.
   0009 generics only where the trait demands them (any are allowed inside a
   listed trait impl), 0024 an order that means something, 0025 `drop` only
   of a value that owns a resource (checked as "the argument is a plain
-  name"), 0026 every round trip going through `ask` (the helper's shape is
+  name", and `drop` passed as a function is flagged), 0026 every round trip going through `ask` (the helper's shape is
   checked), and 0028 a `fold` that only counts (`filter_map(..).count()` is
   checked). Neither can it see what a body does: 0017's callback
   only forwards to a channel, and 0019's `main` turns its `bool` into an

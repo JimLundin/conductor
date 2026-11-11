@@ -80,6 +80,10 @@ pub const DROP_DISCARD: Rule = rule(
     "expr.call",
     "`drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)",
 );
+pub const DROP_FN: Rule = rule(
+    "expr.path",
+    "`drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025)",
+);
 pub const OK_DISCARD: Rule = rule(
     "expr.method_call",
     "`.ok()` is not a discard; write `let _ = value;` (proposal 0025)",
@@ -226,6 +230,7 @@ pub const RULES: &[&Rule] = &[
     &ASSIGN,
     &REF_MUT_OURS,
     &DROP_DISCARD,
+    &DROP_FN,
     &OK_DISCARD,
     &PREDICATE_MATCHES,
     &PREDICATE_EQ,

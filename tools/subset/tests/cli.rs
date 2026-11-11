@@ -916,11 +916,12 @@ fn discard_with_let_underscore() {
             "discard",
             "crates/daemon/src/a.rs",
             "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, guard: Lease) {\n    let _ = reply.send(head);\n    drop(guard);\n}\n",
-            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, lost: oneshot::Sender<HostSeq>) {\n    drop(reply.send(head));\n    lost.send(head).ok();\n    std::mem::drop(tokio::spawn(work()));\n}\n",
+            "fn answer(reply: oneshot::Sender<HostSeq>, head: HostSeq, lost: oneshot::Sender<HostSeq>) {\n    drop(reply.send(head));\n    lost.send(head).ok();\n    std::mem::drop(tokio::spawn(work()));\n}\n\nfn sent(reply: Reply) -> Result<(), Lost> {\n    reply.send().map(drop)\n}\n",
         ),
         "crates/daemon/src/a_fail.rs:2:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n\
          crates/daemon/src/a_fail.rs:3:21: expr.method_call: `.ok()` is not a discard; write `let _ = value;` (proposal 0025)\n\
-         crates/daemon/src/a_fail.rs:4:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n"
+         crates/daemon/src/a_fail.rs:4:5: expr.call: `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025)\n\
+         crates/daemon/src/a_fail.rs:8:22: expr.path: `drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025)\n"
     );
 }
 
