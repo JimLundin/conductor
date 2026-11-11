@@ -33,14 +33,14 @@ pub enum WireError {
 /// What carries the protocol's streams: the iroh connection, or a WebRTC
 /// connection negotiated over it. Only the browser builds the second.
 #[derive(Debug, Clone)]
-pub enum Transport {
+pub(crate) enum Transport {
     Iroh(Connection),
     WebRtc(Session),
 }
 
 impl Transport {
     /// A QUIC bi-stream, or a new ordered, reliable data channel.
-    pub async fn open_bi(&self) -> Result<(SendHalf, RecvHalf), WireError> {
+    pub(crate) async fn open_bi(&self) -> Result<(SendHalf, RecvHalf), WireError> {
         match self {
             Self::Iroh(conn) => {
                 let (send, recv) = conn.open_bi().await?;
@@ -54,18 +54,18 @@ impl Transport {
     }
 }
 
-pub enum SendHalf {
+pub(crate) enum SendHalf {
     Iroh(SendStream),
     WebRtc(ChannelSend),
 }
 
-pub enum RecvHalf {
+pub(crate) enum RecvHalf {
     Iroh(RecvStream),
     WebRtc(ChannelRecv),
 }
 
 impl SendHalf {
-    pub async fn write<T: Serialize>(self, msg: &T) -> Result<SendHalf, WireError> {
+    pub(crate) async fn write<T: Serialize>(self, msg: &T) -> Result<SendHalf, WireError> {
         let frame = proto::encode(msg)?;
         match self {
             Self::Iroh(mut send) => {
@@ -81,7 +81,7 @@ impl SendHalf {
 
     /// Ends this direction. A data channel can't half-close, so the host
     /// closes it once it has replied.
-    pub fn finish(self) -> Result<SendHalf, WireError> {
+    pub(crate) fn finish(self) -> Result<SendHalf, WireError> {
         match self {
             Self::Iroh(mut send) => {
                 send.finish()?;
@@ -94,7 +94,9 @@ impl SendHalf {
 
 impl RecvHalf {
     /// `Ok(None)` when the peer finished the stream between frames.
-    pub async fn read<T: DeserializeOwned>(self) -> (RecvHalf, Result<Option<T>, WireError>) {
+    pub(crate) async fn read<T: DeserializeOwned>(
+        self,
+    ) -> (RecvHalf, Result<Option<T>, WireError>) {
         let (recv, body) = match self {
             Self::Iroh(recv) => {
                 let (recv, body) = read_iroh(recv).await;
