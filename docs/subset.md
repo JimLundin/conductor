@@ -46,7 +46,12 @@ is rejected, however much code it saves.
      as in `fn label(kind: Kind) -> &'static str { match kind { .. } }`;
    - enum variants that carry their data, as in `Exit::Code(i32)` rather
      than one variant per code;
-   - test cases as a table with one assertion over them.
+   - test cases as a table with one assertion over them, once a group has
+     **4 or more cases**. Three cases written as a table cost about 20%
+     more than three tests, because the named struct that 0001 requires
+     for a lasting table outweighs what the shared assertion saves
+     (`docs/subset/reviews/v4-agents-proto.md`). Below four cases, the
+     tests stay separate.
 
 ## Core
 
@@ -56,7 +61,7 @@ The ids are those used in `subset.toml`.
 |---|---|---|
 | Data | `item.struct.named`, `item.struct.newtype`, `item.enum` | `bool` is not a type in our code: a two-state value is a two-variant enum. IDs and units are newtypes. |
 | Behaviour | `item.fn`, `item.impl.inherent`, `item.const` | Free functions and inherent methods. |
-| Branching | `expr.match`, `pat.*` | Matches are exhaustive. `true` / `false` are not patterns, because that would be a boolean check written as a match. A single-branch `if let` (0027) is the one other branching form. |
+| Branching | `expr.match`, `pat.ident`, `pat.path`, `pat.struct`, `pat.tuple_struct`, `pat.lit`, `pat.or`, `pat.wild` | Matches are exhaustive. `true` / `false` are not patterns, because that would be a boolean check written as a match. `&pat` (`pat.reference`) and the rest pattern `..` in a tuple or tuple struct (`pat.rest`, as in `Some(..)`) are not allowed; `..` that elides fields in a struct pattern (`Open { .. }`) is part of `pat.struct`. A single-branch `if let` (0027) is the one other branching form. |
 | Building values | `expr.call`, `expr.method_call`, `expr.field`, `expr.struct`, `expr.path`, `expr.lit`, `expr.reference`, `expr.block`, `expr.paren` | |
 | Errors | `expr.try`, plus `Result` / `Option` through the core | `?` is the only early exit. |
 | Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method. |
@@ -86,7 +91,7 @@ The ids are those used in `subset.toml`.
 | Library boundary | `type.unit`, `expr.unit`, `type.bool`, `expr.lit.bool`, `expr.reference.mut`, `type.reference.mut` | Proposal 0023. Where a library API demands `()`, `bool` or `&mut`, the shape is allowed in a type argument, call argument or field value of something we don't define, and only there. It never becomes a field, a variant payload, a parameter or a return type of our own items. |
 | Ordered newtypes | `attr.derive` of `PartialOrd`, `Ord` | Proposal 0024. Only on a newtype whose order means something, such as `HostSeq`. Callers compare with `a.cmp(&b)` and match the `Ordering`, never through `.0`. |
 | Request helper | `type.impl_trait.arg`, `generics.type_param`, `expr.closure` | Proposal 0026. Each actor handle may have one private `ask<T>` helper taking `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, and every request/reply round trip goes through it. Nothing else takes an `impl Trait` argument. |
-| One-case branch | `expr.if_let.single` | Proposal 0027. `if let Pattern = expr { … }` with no `else`, no `else if` and no `&&` let-chain, the one form for "act only on this case". Anything with an alternative branch is a `match`. |
+| One-case branch | `expr.if_let.single` | Proposal 0027. `if let Pattern = expr { … }` with no `else`, no `else if` and no `&&` let-chain, the one form for "act only on this case". Anything with an alternative branch is a `match`. To act when a value is present and ignore it, name its pattern with the fields elided, `if let Some(Open { .. }) = ..`: clippy's `redundant_pattern_matching` rejects `Some(_)`, and `Some(..)` is `pat.rest`. |
 | Discarding | `stmt.let` with `_` | Proposal 0025, revised. `let _ = value;` is the one way to discard a value. `drop(..)` only releases a resource early, and `.ok()` is never a discard. No lint is switched off. |
 | Build-time constants | `macro.allowed` for `env` | Proposal 0022. `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR`. |
 | Modules | `item.use`, `item.mod` | |

@@ -424,6 +424,16 @@ pub fn announce(host_name: Option<&str>) {
         tracing::info!(host = %name, "host named");
     }
 }
+
+pub struct Pending {
+    reply: oneshot::Sender<HostSeq>,
+}
+
+pub fn cancel(open: Option<Pending>) {
+    if let Some(Pending { .. }) = open {
+        tracing::info!("request cancelled");
+    }
+}
 ```
 
 When only one case needs doing and the rest need nothing, write `if let`
@@ -431,6 +441,10 @@ with no `else`, no `else if` and no `&&` let-chain (proposal 0027). It
 replaces a `match` whose other arm is `None => {}`, which clippy's
 `single_match` rejects. As soon as another case needs something, it is a
 `match` with every arm written out (§6).
+
+To act only when a value is present, name the payload's pattern with its
+fields elided, as `cancel` does. clippy's `redundant_pattern_matching`
+rejects `Some(_)`, and `Some(..)` is `pat.rest`, which isn't allowed.
 
 ## 22. Counting and searching take a predicate closure
 
