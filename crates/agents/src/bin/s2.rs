@@ -221,9 +221,10 @@ impl Run {
                     None => Ok(()),
                 }?;
                 self.react(&thread, &event).await?;
-                if let Some(turn) = self.turns.get_mut(&thread) {
-                    turn.record(event);
-                }
+                self.turns
+                    .get_mut(&thread)
+                    .context("turn left the run while reacting")?
+                    .record(event);
                 Ok(match self.running {
                     0 => Progress::Done,
                     _ => Progress::Playing,
@@ -246,7 +247,7 @@ impl Run {
             | ThreadEvent::ApprovalCancelled { .. } => {}
             ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
             ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. } => {
-                self.after_output(thread).await;
+                self.after_output(thread).await?;
             }
             ThreadEvent::ApprovalRequested { id, .. } => {
                 let decision = match &self.plan {
@@ -259,12 +260,15 @@ impl Run {
         Ok(())
     }
 
-    async fn after_output(&mut self, thread: &ThreadId) {
-        if let (Plan::InterruptOnFirstOutput, None, Some(turn)) =
-            (&self.plan, &self.interrupted, self.turns.get(thread))
-        {
+    async fn after_output(&mut self, thread: &ThreadId) -> Result<()> {
+        let turn = self
+            .turns
+            .get(thread)
+            .context("turn left the run while reacting")?;
+        if let (Plan::InterruptOnFirstOutput, None) = (&self.plan, &self.interrupted) {
             self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
         }
+        Ok(())
     }
 }
 
