@@ -1774,7 +1774,7 @@ fn report_html_writes_one_static_page_with_history() {
     // History: the first commit's enum alone scored 3.0.
     for expected in [
         "<div class=\"value\">29</div>",
-        "<div class=\"value\">≈ 3 lines</div>",
+        "<div class=\"value\">≈ 3</div>",
         "<div class=\"value\">40</div>",
         "4 lines, comments excluded",
         "40 tokens · 4 lines, score ≈ 3 lines",

@@ -105,8 +105,8 @@ fn tiles(total: &Row, violations: usize, w: &TierWeights) -> String {
         )
     };
     let in_lines = format!(
-        "<div class=\"tile\" title=\"{APPROX_LINES}\"><div class=\"label\">Score in lines</div><div class=\"value\">{}</div><div class=\"hint\">approximate: score ÷ tokens per line</div></div>",
-        approx_lines(total, w)
+        "<div class=\"tile\" title=\"{APPROX_LINES}\"><div class=\"label\">Score in lines</div><div class=\"value\">≈ {}</div><div class=\"hint\">approximate: score ÷ tokens per line</div></div>",
+        whole(total.approx_lines(w))
     );
     format!(
         "<div class=\"tiles\">{}{in_lines}{}{}{}{}</div>",
@@ -1126,7 +1126,7 @@ h2 { font-size: 22px; margin: 0 0 4px; }
 h3 { font-size: 17px; margin: 32px 0 4px; }
 h4 { font-size: 15px; margin: 20px 0 8px; color: var(--text-secondary); font-weight: 600; }
 .badge { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--axis); border-radius: 4px; padding: 1px 6px; vertical-align: 3px; color: var(--text-secondary); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
 .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
 .tile .label { font-size: 13px; color: var(--text-secondary); }
 .tile .value { font-size: 26px; font-weight: 600; margin: 2px 0; }
