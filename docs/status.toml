@@ -99,7 +99,7 @@ touches = ["agents", "claude-codes"]
 [[phase.unit]]
 id = "p1-3"
 name = "Unit 3: protocol swap"
-status = "in_progress"
+status = "done"
 branch = "p1-u3-protocol"
 purpose = "Per-session protocol; daemon log, registry and serve; the simulated host deleted."
 done_when = "Wrong-token and epoch e2e pass; StartSession answers ProviderUnavailable."
