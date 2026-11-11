@@ -225,6 +225,7 @@ enum Out {
 }
 
 /// A UDP socket of ours, bound to one interface.
+#[derive(Clone)]
 pub(crate) struct Socket {
     pub(crate) udp: Arc<UdpSocket>,
     pub(crate) addr: SocketAddr,
@@ -249,13 +250,9 @@ pub(crate) async fn accept(
         // so checking it binds this DTLS session to that peer.
         .set_fingerprint_verification(true)
         .build(started);
-    let local = sockets
+    let candidates = sockets
         .iter()
-        .map(|socket| socket.addr)
-        .collect::<Vec<SocketAddr>>();
-    let candidates = local
-        .iter()
-        .map(|addr| Candidate::host(addr.to_owned(), "udp"))
+        .map(|socket| Candidate::host(socket.addr, "udp"))
         .collect::<Result<Vec<Candidate>, str0m::error::IceError>>()?;
     candidates.into_iter().for_each(|candidate| {
         let _ = rtc.add_local_candidate(candidate);
@@ -264,7 +261,7 @@ pub(crate) async fn accept(
     let answer = rtc.sdp_api().accept_offer(offer)?;
     tracing::info!(
         client,
-        host_candidates = ?local,
+        host_candidates = ?sockets.iter().map(|socket| socket.addr).collect::<Vec<SocketAddr>>(),
         stun = ?stun.server_names(),
         blackhole = ?options.blackhole,
         "webrtc offer accepted"
@@ -277,14 +274,8 @@ pub(crate) async fn accept(
         .await?;
 
     let (packets_tx, packets) = mpsc::channel(256);
-    sockets.iter().for_each(|socket| {
-        tokio::spawn(read_socket(
-            Socket {
-                udp: socket.udp.clone(),
-                addr: socket.addr,
-            },
-            packets_tx.clone(),
-        ));
+    sockets.iter().cloned().for_each(|socket| {
+        tokio::spawn(read_socket(socket, packets_tx.clone()));
     });
     let (signals_tx, signals) = mpsc::channel(16);
     tokio::spawn(read_signals(RecvHalf::Iroh(signal_recv), signals_tx));
