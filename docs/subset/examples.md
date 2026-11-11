@@ -38,8 +38,9 @@ impl HostSeq {
 }
 ```
 
-There are no `+ - * /` operators. Overflow is a `None` the caller has to
-handle. `HostSeq` derives `PartialOrd` and `Ord` because its order means
+There are no `+ - * /` operators, and no `a.add(b)` or `Add::add(a, b)`
+either (proposal 0038). Overflow is a `None` the caller has to handle.
+`HostSeq` derives `PartialOrd` and `Ord` because its order means
 something (proposal 0024). An ID such as `RequestId`, whose order means
 nothing, doesn't.
 
