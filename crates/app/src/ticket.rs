@@ -28,6 +28,19 @@ pub fn save(ticket: &Ticket) {
 #[cfg(not(target_family = "wasm"))]
 pub fn save(_ticket: &Ticket) {}
 
+/// Drops the saved host, so the next launch asks for a join link. A Home
+/// Screen app can't receive a new join link from the camera; iOS opens those
+/// in Safari, so pairing again starts here.
+#[cfg(target_family = "wasm")]
+pub fn forget() {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        storage.remove_item(KEY).ok();
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn forget() {}
+
 #[cfg(target_family = "wasm")]
 pub fn initial() -> Result<Option<Ticket>, TicketError> {
     let window = web_sys::window().expect("running in a browser window");

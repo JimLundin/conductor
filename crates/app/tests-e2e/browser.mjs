@@ -181,6 +181,17 @@ if (scenario === 'upgrade') {
   await installed.locator('form.pair button').click();
   await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
   log(`Live ${Date.now() - pasted}ms after pasting the join link`);
+  // The camera can't hand a new join link to a Home Screen app, so a paired
+  // app must be able to drop its host and pair again from inside.
+  await installed.getByRole('button', { name: 'Change host' }).click();
+  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 10_000 });
+  await installed.reload();
+  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 30_000 });
+  check(true, 'Change host forgets the saved host, across a relaunch');
+  await installed.locator('form.pair input').fill(joinUrl);
+  await installed.locator('form.pair button').click();
+  await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+  check(true, 'pairing again after Change host reaches Live');
   await fresh.close();
 } else if (scenario === 'fallback') {
   check((await path()) === 'Relayed', 'Live on the relay');

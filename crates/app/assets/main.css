@@ -54,6 +54,12 @@ body { margin: 0; }
 .status .host { font-weight: 600; }
 .status .state, .status .path { color: var(--muted); }
 .status .error { flex-basis: 100%; color: var(--bad); font-size: 0.8rem; }
+.status .change-host {
+  margin-left: auto;
+  background: var(--line);
+  color: var(--text);
+  font-weight: 500;
+}
 
 /* column-reverse keeps the newest output in view without scripting. */
 .transcript {

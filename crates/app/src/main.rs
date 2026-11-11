@@ -29,7 +29,15 @@ fn App() -> Element {
     rsx! {
         document::Stylesheet { href: CSS }
         match paired() {
-            Some(ticket) => rsx! { Host { ticket } },
+            Some(ticket) => rsx! {
+                Host {
+                    ticket,
+                    on_change_host: move |()| {
+                        ticket::forget();
+                        paired.set(None);
+                    },
+                }
+            },
             None => rsx! {
                 Pair {
                     error: first_error,
@@ -79,7 +87,7 @@ fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
 }
 
 #[component]
-fn Host(ticket: Ticket) -> Element {
+fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     let mut status = use_signal(|| None::<Status>);
     let mut transcript = use_signal(Transcript::default);
     let mut link = use_signal(|| None::<Rc<HostLink>>);
@@ -118,7 +126,7 @@ fn Host(ticket: Ticket) -> Element {
 
     rsx! {
         div { class: "app",
-            StatusLine { status: status() }
+            StatusLine { status: status(), on_change_host }
             main { class: "transcript",
                 div { class: "items",
                     for (i, item) in transcript.read().items.iter().enumerate() {
@@ -154,7 +162,7 @@ fn run_command(
 }
 
 #[component]
-fn StatusLine(status: Option<Status>) -> Element {
+fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Element {
     let status = status.unwrap_or(Status {
         state: LinkState::Disconnected,
         path: PathKind::Unknown,
@@ -185,6 +193,7 @@ fn StatusLine(status: Option<Status>) -> Element {
             span { class: "host", "{host}" }
             span { class: "state", "{state}" }
             span { class: "path", "{path}" }
+            button { class: "change-host", onclick: move |_| on_change_host.call(()), "Change host" }
             if let Some(error) = status.error {
                 span { class: "error", "{error}" }
             }
