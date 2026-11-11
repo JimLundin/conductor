@@ -99,7 +99,10 @@ not committed. Where this file disagrees with the JSON Schema or architecture
   `turn/started`, is refused with JSON-RPC error -32600 `no active turn to
   interrupt`, although the `turn/start` result already says
   `status: "inProgress"`. The turn then runs to the end and completes
-  normally. (Step 3d, 2026-11-11, six runs.) An interrupt for a turn that
+  normally. (Step 3d, 2026-11-11, six runs.) It is a race: in one of five
+  later runs `turn/started` arrived before the interrupt, which was then
+  accepted and the turn ended `interrupted` (unit 2 verification,
+  2026-11-11). Step 3d accepts either outcome. An interrupt for a turn that
   has not started must wait for `turn/started`.
 - The thread takes a new turn right after an interrupt. (Steps 3, 3c, 3d,
   `pong`.)
