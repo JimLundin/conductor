@@ -974,8 +974,8 @@ recordings come from unit 2's new `s1` recording with
 
 | Recording | Built in | Status |
 |---|---|---|
-| `claude-approve.jsonl` | unit 1, rebuilt in unit 2 | provisional: unit 1's version has no deltas |
-| `claude-deny-interrupt.jsonl` | unit 2 | |
+| `claude-approve.jsonl` | unit 1, rebuilt in unit 2 | built by `fixtures/e2e/build-claude.py` |
+| `claude-deny-interrupt.jsonl` | unit 2 | built by `fixtures/e2e/build-claude.py` from steps 2 and 3c; a `pong` turn follows the interrupt |
 | `codex-two-threads.jsonl` | unit 5 | |
 | `codex-interrupt.jsonl` | unit 5 | |
 
