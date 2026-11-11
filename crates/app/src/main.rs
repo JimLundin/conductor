@@ -135,9 +135,11 @@ pub(crate) fn Shell(
         Screen::Session(id) => view.read().sessions.get(&id).cloned(),
         Screen::Sessions | Screen::NewSession => None,
     };
-    let shown = match screen() {
-        Screen::Sessions => "list",
-        Screen::NewSession | Screen::Session(_) => "detail",
+    // A session the host no longer reports (after a reset) falls back to the
+    // list, which on a phone is the only way out of the detail pane.
+    let shown = match (screen(), &session) {
+        (Screen::NewSession, _) | (Screen::Session(_), Some(_)) => "detail",
+        (Screen::Sessions, _) | (Screen::Session(_), None) => "list",
     };
     rsx! {
         div { class: "app", "data-screen": shown,

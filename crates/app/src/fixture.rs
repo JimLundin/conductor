@@ -55,7 +55,6 @@ fn view() -> HostView {
         (4, created("/tmp/scratch")),
         (4, EventKind::SessionReady),
         (4, user("Run the flaky test 50 times and tell me how often it fails.", "desktop")),
-        (4, run("s1", "for i in $(seq 50); do cargo test -q flaky || echo FAIL; done")),
         (4, ask(1, "Bash", "for i in $(seq 50); do cargo test -q flaky || echo FAIL; done")),
         (4, EventKind::RequestResolved { request: RequestId(1), resolution: Resolution::Withdrawn }),
         (4, EventKind::TurnCompleted { outcome: TurnOutcome::Interrupted }),

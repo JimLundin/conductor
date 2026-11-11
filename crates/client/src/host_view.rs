@@ -469,15 +469,7 @@ mod tests {
             ),
             (3, EventKind::SessionReady),
         ]);
-        let view = events
-            .into_iter()
-            .enumerate()
-            .map(|(index, (session, kind))| Event {
-                seq: HostSeq(u64::try_from(index).unwrap()),
-                session: SessionId(session),
-                kind,
-            })
-            .fold(HostView::empty(), HostView::apply);
+        let view = fold(events);
         assert_eq!(
             view.sessions,
             BTreeMap::from([

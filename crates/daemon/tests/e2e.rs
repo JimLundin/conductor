@@ -160,8 +160,9 @@ fn fold(events: Vec<Event>) -> HostView {
     events.into_iter().fold(HostView::empty(), HostView::apply)
 }
 
-/// The view of session 1 after `created()` and deltas that join into `text`.
-fn streaming(text: &str) -> HostView {
+/// The view of session 1 after `created()` and deltas that join into `text`,
+/// the last at `activity`.
+fn streaming(text: &str, activity: u64) -> HostView {
     HostView {
         sessions: BTreeMap::from([(
             SessionId(1),
@@ -173,6 +174,7 @@ fn streaming(text: &str) -> HostView {
                     text: String::from(text),
                     state: ReplyState::Streaming,
                 }]),
+                activity: HostSeq(activity),
             },
         )]),
     }
@@ -257,7 +259,7 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
     let after = events_through(&mut updates, HostSeq(6)).await;
     let seen = before.into_iter().chain(after).collect::<Vec<Event>>();
     assert_eq!(seqs(&seen), [1, 2, 3, 4, 5, 6].map(HostSeq));
-    assert_eq!(fold(seen), streaming("Hello world!"));
+    assert_eq!(fold(seen), streaming("Hello world!", 6));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -282,7 +284,7 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     assert_eq!(seqs(&rest), [HostSeq(3)]);
     assert_eq!(
         fold(seen.into_iter().chain(rest).collect()),
-        streaming("Hello")
+        streaming("Hello", 3)
     );
     second.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
@@ -315,7 +317,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
             Update::Status(_) | Update::Reset(_) => None,
         })
         .collect::<Vec<Event>>();
-    assert_eq!(fold(replayed), streaming("Hi"));
+    assert_eq!(fold(replayed), streaming("Hi", 2));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
