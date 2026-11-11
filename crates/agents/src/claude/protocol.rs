@@ -75,6 +75,31 @@ pub enum Role {
     User,
 }
 
+/// What a tool call is about, read from the CLI's `input` by `tool_detail`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolDetail {
+    Command(String),
+    Path(String),
+    /// A listed text field, or the compact JSON input of a tool not listed.
+    Text(String),
+}
+
+/// The `input` field worth showing for each tool that has one, in its shape.
+pub(crate) fn tool_detail(tool: &str, input: &Value) -> ToolDetail {
+    let shown = match tool {
+        "Bash" => field(input, "command").map(ToolDetail::Command),
+        "Edit" | "Write" | "MultiEdit" | "Read" => field(input, "file_path").map(ToolDetail::Path),
+        "Grep" | "Glob" => field(input, "pattern").map(ToolDetail::Text),
+        "WebFetch" => field(input, "url").map(ToolDetail::Text),
+        _ => None,
+    };
+    shown.unwrap_or_else(|| ToolDetail::Text(input.to_string()))
+}
+
+fn field(input: &Value, name: &str) -> Option<String> {
+    input.get(name).and_then(Value::as_str).map(str::to_owned)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Text(String),
@@ -82,7 +107,7 @@ pub enum Block {
     ToolUse {
         id: String,
         name: String,
-        input: Value,
+        detail: ToolDetail,
     },
     ToolResult {
         tool_use_id: String,
@@ -94,17 +119,24 @@ pub enum Block {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaudeEvent {
-    SessionStarted {
+    /// The CLI read a user message and began its turn (`system/init`, which
+    /// it prints once per turn with the same `session_id`).
+    TurnStarted {
         session_id: SessionId,
     },
     Message {
         role: Role,
         content: Vec<Block>,
     },
+    /// A piece of assistant text as it streams (`--include-partial-messages`).
+    /// The whole text follows in a `Message`.
+    StreamDelta {
+        text: String,
+    },
     PermissionRequested {
         id: PermissionRequestId,
         tool_name: String,
-        input: Value,
+        detail: ToolDetail,
     },
     /// The CLI withdrew a permission request; answering it is now an error.
     PermissionCancelled {
@@ -128,6 +160,13 @@ pub enum ClaudeEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Inbound {
     Event(ClaudeEvent),
+    /// A `can_use_tool` request. The actor keeps `input`, which `allow`
+    /// echoes, and emits `PermissionRequested`.
+    Permission {
+        id: PermissionRequestId,
+        tool_name: String,
+        input: Value,
+    },
     /// Answer to a control request we sent.
     ControlResponse {
         request_id: String,
@@ -154,7 +193,7 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
     match output {
         ClaudeOutput::System(msg) => match msg.subtype {
             SystemSubtype::Init => match msg.data.get("session_id").and_then(Value::as_str) {
-                Some(id) => Inbound::Event(ClaudeEvent::SessionStarted {
+                Some(id) => Inbound::Event(ClaudeEvent::TurnStarted {
                     session_id: SessionId(id.to_owned()),
                 }),
                 None => Inbound::Event(ClaudeEvent::Unknown(raw)),
@@ -163,6 +202,15 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
         },
         ClaudeOutput::Assistant(msg) => message(Role::Assistant, msg.message.content, raw),
         ClaudeOutput::User(msg) => message(Role::User, msg.message.content, raw),
+        ClaudeOutput::StreamEvent(msg) => match (
+            msg.event.pointer("/delta/type").and_then(Value::as_str),
+            msg.event.pointer("/delta/text").and_then(Value::as_str),
+        ) {
+            (Some("text_delta"), Some(text)) => Inbound::Event(ClaudeEvent::StreamDelta {
+                text: text.to_owned(),
+            }),
+            _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
+        },
         ClaudeOutput::Result(msg) => Inbound::Event(ClaudeEvent::TurnFinished {
             subtype: msg.subtype.as_str().to_owned(),
             outcome: match msg.is_error.then_some(Outcome::Failed) {
@@ -173,13 +221,11 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
             session_id: SessionId(msg.session_id),
         }),
         ClaudeOutput::ControlRequest(req) => match req.request {
-            ControlRequestPayload::CanUseTool(perm) => {
-                Inbound::Event(ClaudeEvent::PermissionRequested {
-                    id: PermissionRequestId(req.request_id),
-                    tool_name: perm.tool_name,
-                    input: perm.input,
-                })
-            }
+            ControlRequestPayload::CanUseTool(perm) => Inbound::Permission {
+                id: PermissionRequestId(req.request_id),
+                tool_name: perm.tool_name,
+                input: perm.input,
+            },
             other => Inbound::UnsupportedControlRequest {
                 request_id: req.request_id,
                 subtype: other.subtype().to_owned(),
@@ -226,9 +272,9 @@ fn block(b: ContentBlock) -> serde_json::Result<Block> {
         ContentBlock::Text(t) => Block::Text(t.text),
         ContentBlock::Thinking(t) => Block::Thinking(t.thinking),
         ContentBlock::ToolUse(t) => Block::ToolUse {
+            detail: tool_detail(&t.name, &t.input),
             id: t.id,
             name: t.name,
-            input: t.input,
         },
         ContentBlock::ToolResult(t) => Block::ToolResult {
             tool_use_id: t.tool_use_id,
@@ -370,7 +416,7 @@ mod tests {
 
     use super::{
         AfterDeny, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
-        PermissionRequestId, encode, parse_line,
+        PermissionRequestId, ToolDetail, encode, parse_line, tool_detail,
     };
 
     fn json(text: &str) -> Value {
@@ -479,6 +525,28 @@ mod tests {
                 r#"{"type": "control_response", "response": {"subtype": "error", "request_id": "cli_9",
                 "error": "unsupported control request subtype: hook_callback"}}"#
             )
+        );
+    }
+
+    #[test]
+    fn tool_input_becomes_a_tool_detail() {
+        let details = Vec::from([
+            ("Bash", r#"{"command":"ls -a","description":"list"}"#),
+            ("Grep", r#"{"pattern":"fn main"}"#),
+            ("Write", r#"{"content":"no path"}"#),
+            ("TodoWrite", r#"{"todos":[]}"#),
+        ])
+        .into_iter()
+        .map(|(tool, input)| tool_detail(tool, &json(input)))
+        .collect::<Vec<ToolDetail>>();
+        assert_eq!(
+            details,
+            [
+                ToolDetail::Command(String::from("ls -a")),
+                ToolDetail::Text(String::from("fn main")),
+                ToolDetail::Text(String::from(r#"{"content":"no path"}"#)),
+                ToolDetail::Text(String::from(r#"{"todos":[]}"#)),
+            ]
         );
     }
 

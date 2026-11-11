@@ -1,0 +1,6 @@
+# One build directory for the main checkout and every worktree beside it
+# (~/projects/apps/conductor-target), so parallel worktrees share compiled
+# dependencies instead of each keeping a full copy. Scripts find it with
+# tools/target-dir rather than assuming ./target.
+[build]
+target-dir = "../conductor-target"
