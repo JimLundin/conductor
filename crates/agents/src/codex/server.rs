@@ -19,9 +19,9 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::protocol::{
-    AnswerShape, ApprovalId, Call, CodexEvent, Decision, Inbound, ModelInfo, NotApplicable,
-    Outbound, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer, encode, models, parse_line,
-    thread_id, turn_id, user_agent,
+    AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, Inbound, ModelInfo, Outbound,
+    ThreadEvent, ThreadId, ThreadOptions, TurnId, answer, encode, models, parse_line, thread_id,
+    turn_id, user_agent,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -484,7 +484,18 @@ impl Actor {
             .open
             .remove(&id)
             .ok_or(Error::UnknownApproval(id.clone()))?;
-        match answer(&open.shape, decision) {
+        let answered = answer(&open.shape, decision);
+        self.settle(id, open, answered).await
+    }
+
+    /// Sends the answer, or puts the approval back when the decision didn't fit.
+    async fn settle(
+        &mut self,
+        id: ApprovalId,
+        open: Open,
+        answered: Result<Value, AnswerError>,
+    ) -> Result<(), Error> {
+        match answered {
             Ok(result) => {
                 tracing::debug!("answering {} on thread {}", id.0, open.thread.0);
                 self.write(Outbound::Answer {
@@ -493,10 +504,11 @@ impl Actor {
                 })
                 .await
             }
-            Err(NotApplicable {}) => {
+            Err(AnswerError::NotApplicable) => {
                 self.open.insert(id.clone(), open);
                 Err(Error::DecisionNotApplicable(id))
             }
+            Err(AnswerError::Encode(e)) => Err(Error::Json(e)),
         }
     }
 
@@ -540,9 +552,53 @@ impl Actor {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
     use std::path::Path;
+    use std::process::ExitStatus;
 
-    use super::{ServerOptions, command};
+    use codex_codes::RequestId;
+    use tokio::sync::mpsc;
+
+    use super::{
+        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Open, Process, ServerOptions,
+        ThreadId, command,
+    };
+
+    #[tokio::test]
+    async fn an_answer_that_does_not_encode_fails_and_closes_the_approval() {
+        let (events, _listening) = mpsc::channel(1);
+        let mut actor = Actor {
+            process: Process::Exited(ExitStatus::default()),
+            events,
+            stdout_log: None,
+            pending: HashMap::new(),
+            open: HashMap::new(),
+            next_id: 0,
+        };
+        let id = ApprovalId(String::from("ap_1"));
+        let open = Open {
+            rpc_id: RequestId::Integer(3),
+            thread: ThreadId(String::from("th_1")),
+            shape: AnswerShape::Command,
+        };
+        let failure = serde_json::to_value(BTreeMap::from([((1, 2), 0)])).unwrap_err();
+        let first = actor
+            .settle(id.clone(), open, Err(AnswerError::Encode(failure)))
+            .await;
+        let again = actor.respond(id, Decision::Accept).await;
+        assert_eq!(
+            (
+                first.map_err(|e| e.to_string()),
+                again.map_err(|e| e.to_string())
+            ),
+            (
+                Err(String::from(
+                    "could not encode or decode a codex message: key must be a string"
+                )),
+                Err(String::from("no open approval with id ap_1"))
+            )
+        );
+    }
 
     #[test]
     fn app_server_argv() {

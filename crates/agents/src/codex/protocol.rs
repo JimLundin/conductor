@@ -666,9 +666,14 @@ pub(crate) enum Outbound {
     },
 }
 
-/// Why a decision cannot answer a request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NotApplicable {}
+/// Why a decision did not become an answer.
+#[derive(Debug)]
+pub(crate) enum AnswerError {
+    /// The decision cannot answer a request of this shape.
+    NotApplicable,
+    /// The answer would not encode as JSON.
+    Encode(serde_json::Error),
+}
 
 /// What `permissions/requestApproval` grants back, and for how long.
 #[derive(Serialize)]
@@ -685,10 +690,10 @@ enum GrantScope {
 }
 
 /// The JSON-RPC `result` that answers an open request with `decision`.
-pub(crate) fn answer(shape: &AnswerShape, decision: Decision) -> Result<Value, NotApplicable> {
+pub(crate) fn answer(shape: &AnswerShape, decision: Decision) -> Result<Value, AnswerError> {
     match (shape, decision) {
         (_, Decision::Raw(result)) => Ok(result),
-        (AnswerShape::UserInput, _) => Err(NotApplicable {}),
+        (AnswerShape::UserInput, _) => Err(AnswerError::NotApplicable),
         (AnswerShape::Command, decision) => encoded(command_answer(decision)),
         (AnswerShape::FileChange, decision) => encoded(file_change_answer(decision)),
         (AnswerShape::Permissions(requested), Decision::Accept) => encoded(PermissionGrant {
@@ -715,8 +720,8 @@ struct NoPermissions {
     permissions: Value,
 }
 
-fn encoded<T: Serialize>(answer: T) -> Result<Value, NotApplicable> {
-    serde_json::to_value(answer).map_err(|_| NotApplicable {})
+fn encoded<T: Serialize>(answer: T) -> Result<Value, AnswerError> {
+    serde_json::to_value(answer).map_err(AnswerError::Encode)
 }
 
 fn command_answer(decision: Decision) -> CommandExecutionRequestApprovalResponse {
@@ -796,13 +801,15 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use codex_codes::RequestId;
     use serde_json::Value;
 
     use super::{
-        AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call, CodexEvent, Decision, Inbound,
-        NotApplicable, Outbound, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer,
-        encode, parse_line,
+        AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call, CodexEvent,
+        Decision, Inbound, Outbound, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer,
+        encode, encoded, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -965,8 +972,24 @@ mod tests {
     #[test]
     fn user_input_needs_a_raw_answer() {
         assert_eq!(
-            answer(&AnswerShape::UserInput, Decision::Accept),
-            Err(NotApplicable {})
+            match answer(&AnswerShape::UserInput, Decision::Accept) {
+                Err(AnswerError::NotApplicable) => "not applicable",
+                Err(AnswerError::Encode(_)) => "encode",
+                Ok(_) => "answered",
+            },
+            "not applicable"
+        );
+    }
+
+    #[test]
+    fn an_answer_that_does_not_encode_is_an_encode_error() {
+        assert_eq!(
+            match encoded(BTreeMap::from([((1, 2), "a tuple is not a JSON key")])) {
+                Err(AnswerError::Encode(e)) => e.to_string(),
+                Err(AnswerError::NotApplicable) => String::from("not applicable"),
+                Ok(value) => value.to_string(),
+            },
+            "key must be a string"
         );
     }
 
