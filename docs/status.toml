@@ -145,7 +145,7 @@ touches = ["daemon"]
 name = "Later slices"
 [[phase.unit]]
 id = "sqlite"
-name = "SQLite durability"
+name = "Durability: redb + postcard"
 status = "planned"
 purpose = "The event log, receipts and pending requests survive a host restart."
 done_when = "A restarted host replays its log and clients resume from their cursors."
