@@ -22,7 +22,6 @@ use super::protocol::{
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
-const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingSource {
@@ -282,21 +281,11 @@ struct Running {
 impl Running {
     async fn stop(self) -> Exit {
         let Running {
-            mut child,
+            child,
             stdin,
             stdout: _,
         } = self;
-        drop(stdin);
-        match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
-            Ok(Ok(status)) => Exit::Status(status),
-            Ok(Err(_)) | Err(_) => {
-                let _ = child.start_kill();
-                match child.wait().await {
-                    Ok(status) => Exit::Status(status),
-                    Err(e) => Exit::Unknown(e.to_string()),
-                }
-            }
-        }
+        crate::process::stop(child, stdin).await
     }
 }
 
