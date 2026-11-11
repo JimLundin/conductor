@@ -394,21 +394,13 @@ async fn read_signals(
     signals: mpsc::Sender<Signal>,
 ) -> Result<Infallible, Stopped> {
     loop {
-        let read = recv.read::<Signal>().await;
-        forward_signal(read, &signals).await?;
-    }
-}
-
-async fn forward_signal(
-    read: Result<Option<Signal>, WireError>,
-    signals: &mpsc::Sender<Signal>,
-) -> Result<(), Stopped> {
-    match read {
-        Ok(Some(signal)) => signals.send(signal).await.map_err(|_| Stopped {}),
-        Ok(None) => Err(Stopped {}),
-        Err(err) => {
-            tracing::debug!(%err, "webrtc signaling stream ended");
-            Err(Stopped {})
+        match recv.read::<Signal>().await {
+            Ok(Some(signal)) => signals.send(signal).await.map_err(|_| Stopped {})?,
+            Ok(None) => break Err(Stopped {}),
+            Err(err) => {
+                tracing::debug!(%err, "webrtc signaling stream ended");
+                break Err(Stopped {});
+            }
         }
     }
 }
@@ -507,7 +499,7 @@ impl Driver {
         tracing::info!(
             client = self.client,
             reason = ended.to_string(),
-            lasted_ms = millis(self.started.elapsed()),
+            lasted_ms = self.started.elapsed().as_millis(),
             frames_out = self.frames_out.0,
             datagrams_in = self.datagrams_in.0,
             datagrams_out = self.datagrams_out.0,
@@ -629,7 +621,7 @@ impl Driver {
                 self.connected_at = Some(now);
                 tracing::info!(
                     client = self.client,
-                    after_ms = millis(now.duration_since(self.started)),
+                    after_ms = now.duration_since(self.started).as_millis(),
                     remote = ?self.remote,
                     "webrtc connected: DTLS is up"
                 );
@@ -851,8 +843,4 @@ fn flushed(done: usize, written: Option<Result<Option<()>, RtcError>>) -> Contro
             error: Some(error),
         }),
     }
-}
-
-fn millis(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
