@@ -6102,8 +6102,8 @@ version = "0.1.0"
 dependencies = [
  "data-encoding",
  "iroh-base",
+ "postcard",
  "serde",
- "serde_json",
  "thiserror 2.0.21",
  "url",
 ]

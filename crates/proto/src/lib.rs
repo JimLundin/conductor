@@ -8,6 +8,9 @@
 //! side closes it. A [`Open::Rtc`] stream negotiates a WebRTC connection that
 //! carries the same streams as data channels (§5.4); it then carries
 //! [`Signal`]s both ways for as long as that connection lives.
+//!
+//! Frame bodies are postcard, which is not self-describing: any breaking
+//! change to these types bumps [`ALPN`].
 
 mod frame;
 mod relay;
@@ -27,7 +30,6 @@ pub const ALPN: &[u8] = b"conductor/1";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct HostSeq(pub u64);
 
 impl HostSeq {
@@ -39,22 +41,18 @@ impl HostSeq {
 /// Identifies one incarnation of a host's event log. A cursor from another
 /// epoch is meaningless, so the client starts over from seq 0 (§8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct Epoch(pub u64);
 
 /// Chosen by the client. P1 makes it a ULID for idempotent retries (§5.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct CommandId(pub u64);
 
 /// An approval request, assigned by the host per session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct RequestId(pub u64);
 
 /// The first frame on every client-opened bi-stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "open", rename_all = "snake_case")]
 pub enum Open {
     Hello(Hello),
     Subscribe(Subscribe),
@@ -80,7 +78,6 @@ pub struct RtcOffer {
 /// Everything after the offer on an [`Open::Rtc`] stream. Closing the stream
 /// ends the WebRTC connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "signal", rename_all = "snake_case")]
 pub enum Signal {
     /// Host to client, once, first.
     Answer { sdp: String },
@@ -98,7 +95,6 @@ pub enum Signal {
 
 /// How an ICE candidate's address was found (RFC 8445 §5.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CandidateType {
     /// An interface address.
     Host,
@@ -154,7 +150,6 @@ pub struct Hello {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reply", rename_all = "snake_case")]
 pub enum HelloReply {
     Welcome(Welcome),
     Refused { reason: String },
@@ -178,28 +173,23 @@ pub struct Subscribe {
 /// Assigned by the host, from 1, in order of creation. Unique within an
 /// epoch, which is all an in-memory log needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct SessionId(pub u64);
 
 /// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct ToolCallId(pub String);
 
 /// A path on the host, as the host's OS spells it. The client never
 /// interprets it: a browser on a phone can't know a Windows path's rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct HostPath(pub String);
 
 /// The name a client gave in `Hello`. Shown as "by" on a resolution and a
 /// user message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct ClientName(pub String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum Provider {
     Claude,
     Codex,
@@ -213,7 +203,6 @@ pub struct Command {
 
 /// Every command after `StartSession` names the session it acts on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandBody {
     StartSession {
         provider: Provider,
@@ -234,14 +223,12 @@ pub enum CommandBody {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum Decision {
     Approve,
     Deny,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "result", rename_all = "snake_case")]
 pub enum CommandResult {
     Accepted,
     /// The answer to `StartSession`. `SessionCreated` follows in the log.
@@ -252,7 +239,6 @@ pub enum CommandResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Rejection {
     NoSuchDirectory,
     /// `message` says why: the tag already takes the name `reason`.
@@ -296,7 +282,6 @@ pub struct Event {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventKind {
     SessionCreated {
         provider: Provider,
@@ -343,14 +328,12 @@ pub enum EventKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
 pub enum ToolPhase {
     Started { tool: ToolKind },
     Finished { outcome: ToolOutcome },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolKind {
     Command { command: String },
     FileChange { paths: Vec<String> },
@@ -358,7 +341,6 @@ pub enum ToolKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ToolOutcome {
     Succeeded,
     Failed,
@@ -366,7 +348,6 @@ pub enum ToolOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "resolution", rename_all = "snake_case")]
 pub enum Resolution {
     Decided {
         decision: Decision,
@@ -377,7 +358,6 @@ pub enum Resolution {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum TurnOutcome {
     Completed,
     Interrupted,
@@ -385,7 +365,6 @@ pub enum TurnOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reason", rename_all = "snake_case")]
 pub enum CloseReason {
     FailedToStart { message: String },
     Exited { status: String },

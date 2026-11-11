@@ -1,4 +1,4 @@
-//! A frame is a `u32` big-endian body length followed by a JSON body (D8).
+//! A frame is a `u32` big-endian body length followed by a postcard body.
 //! Callers own the I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`],
 //! read that many bytes, pass them to [`decode`].
 //!
@@ -26,11 +26,11 @@ pub enum FrameError {
     #[error("frame of {0} bytes exceeds the {MAX_FRAME_LEN}-byte limit")]
     TooLarge(u64),
     #[error("malformed frame body: {0}")]
-    Json(#[from] serde_json::Error),
+    Body(#[from] postcard::Error),
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, FrameError> {
-    let body = serde_json::to_vec(msg)?;
+    let body = postcard::to_allocvec(msg)?;
     match u32::try_from(body.len()).map(|len| (len, len.cmp(&MAX_FRAME_LEN))) {
         Ok((len, Ordering::Less | Ordering::Equal)) => Ok(len
             .to_be_bytes()
@@ -54,7 +54,7 @@ pub fn body_len(header: [u8; HEADER_LEN]) -> Result<usize, FrameError> {
 }
 
 pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
-    Ok(serde_json::from_slice(body)?)
+    Ok(postcard::from_bytes(body)?)
 }
 
 /// Reassembles frames from data channel messages, which split and join
@@ -126,36 +126,35 @@ mod tests {
         Resolution, RtcOffer, SessionId, Signal, Subscribe, TurnOutcome, Welcome,
     };
 
-    fn frame(body: &str) -> Vec<u8> {
+    fn frame(body: &[u8]) -> Vec<u8> {
         u32::try_from(body.len())
             .unwrap()
             .to_be_bytes()
             .into_iter()
-            .chain(body.bytes())
+            .chain(body.iter().copied())
             .collect()
     }
 
     /// A buffer and the bodies taken out of it so far.
     struct Drained {
         buffer: FrameBuffer,
-        bodies: Vec<String>,
+        bodies: Vec<Vec<u8>>,
     }
 
-    fn drain(buffer: FrameBuffer, bodies: Vec<String>) -> Drained {
+    fn drain(buffer: FrameBuffer, bodies: Vec<Vec<u8>>) -> Drained {
         match buffer.next_body().unwrap() {
             Reassembly::Frame { body, rest } => drain(
                 rest,
-                bodies
-                    .into_iter()
-                    .chain(std::iter::once(String::from_utf8(body).unwrap()))
-                    .collect(),
+                bodies.into_iter().chain(std::iter::once(body)).collect(),
             ),
             Reassembly::Incomplete => Drained { buffer, bodies },
         }
     }
 
     #[test]
-    fn command_frame_is_length_then_json() {
+    /// Postcard writes enum variants as their index and integers and lengths
+    /// as varints.
+    fn command_frame_is_length_then_postcard() {
         let open = Open::Command(Command {
             id: CommandId(7),
             body: CommandBody::SendMessage {
@@ -164,12 +163,9 @@ mod tests {
             },
         });
         let bytes = encode(&open).unwrap();
-        assert_eq!(
-            bytes,
-            b"\x00\x00\x00\x50{\"open\":\"command\",\"id\":7,\"body\":{\"type\":\"send_message\",\"session\":2,\"text\":\"hi\"}}"
-        );
+        assert_eq!(bytes, b"\x00\x00\x00\x07\x02\x07\x01\x02\x02hi");
         let (header, body) = bytes.split_first_chunk::<HEADER_LEN>().unwrap();
-        assert_eq!(body_len(header.to_owned()).unwrap(), 80);
+        assert_eq!(body_len(header.to_owned()).unwrap(), 7);
         assert_eq!(decode::<Open>(body).unwrap(), open);
     }
 
@@ -182,9 +178,7 @@ mod tests {
                 token
             }))
             .unwrap(),
-            frame(
-                r#"{"open":"hello","client":"phone","token":"abababababababababababababababab"}"#
-            )
+            frame(b"\x00\x05phone\x20abababababababababababababababab")
         );
         assert_eq!(
             encode(&Open::Subscribe(Subscribe {
@@ -192,7 +186,7 @@ mod tests {
                 after_seq: HostSeq(41)
             }))
             .unwrap(),
-            frame(r#"{"open":"subscribe","epoch":9,"after_seq":41}"#)
+            frame(b"\x01\x09\x29")
         );
     }
 
@@ -205,7 +199,7 @@ mod tests {
                 head_seq: HostSeq(0),
             }))
             .unwrap(),
-            frame(r#"{"reply":"welcome","host":"desk","epoch":1,"head_seq":0}"#)
+            frame(b"\x00\x04desk\x01\x00")
         );
         assert_eq!(
             encode(&Event {
@@ -220,9 +214,7 @@ mod tests {
                 },
             })
             .unwrap(),
-            frame(
-                r#"{"seq":3,"session":1,"kind":{"type":"request_resolved","request":2,"resolution":{"resolution":"decided","decision":"approve","by":"phone"}}}"#
-            )
+            frame(b"\x03\x01\x08\x02\x00\x00\x05phone")
         );
         assert_eq!(
             encode(&Event {
@@ -235,28 +227,23 @@ mod tests {
                 },
             })
             .unwrap(),
-            frame(
-                r#"{"seq":4,"session":1,"kind":{"type":"turn_completed","outcome":{"outcome":"failed","message":"boom"}}}"#
-            )
+            frame(b"\x04\x01\x09\x02\x04boom")
         );
         assert_eq!(
             encode(&CommandResult::Rejected(Rejection::ProviderUnavailable {
                 message: String::from("no codex"),
             }))
             .unwrap(),
-            frame(r#"{"result":"rejected","reason":"provider_unavailable","message":"no codex"}"#)
+            frame(b"\x02\x01\x08no codex")
         );
         assert_eq!(
             encode(&CommandResult::Started {
                 session: SessionId(3),
             })
             .unwrap(),
-            frame(r#"{"result":"started","session":3}"#)
+            frame(b"\x01\x03")
         );
-        assert_eq!(
-            encode(&CommandResult::Accepted).unwrap(),
-            frame(r#"{"result":"accepted"}"#)
-        );
+        assert_eq!(encode(&CommandResult::Accepted).unwrap(), frame(b"\x00"));
     }
 
     #[test]
@@ -287,13 +274,7 @@ mod tests {
             },
             |drained, message| drain(drained.buffer.push(message), drained.bodies),
         );
-        assert_eq!(
-            drained.bodies,
-            [
-                r#"{"seq":1,"session":1,"kind":{"type":"session_ready"}}"#,
-                r#"{"result":"accepted"}"#
-            ]
-        );
+        assert_eq!(drained.bodies, [b"\x01\x01\x01".to_vec(), b"\x00".to_vec()]);
         assert_eq!(drained.buffer.remainder(), Remainder::Nothing);
         let partial = drained.buffer.push(&[0_u8; 2]);
         assert_eq!(partial.next_body().unwrap(), Reassembly::Incomplete);
@@ -307,7 +288,7 @@ mod tests {
                 sdp: String::from("v=0")
             }))
             .unwrap(),
-            frame(r#"{"open":"rtc","sdp":"v=0"}"#)
+            frame(b"\x03\x03v=0")
         );
         assert_eq!(
             encode(&Signal::Selected {
@@ -315,7 +296,7 @@ mod tests {
                 remote: CandidateType::Prflx,
             })
             .unwrap(),
-            frame(r#"{"signal":"selected","local":"srflx","remote":"prflx"}"#)
+            frame(b"\x02\x01\x02")
         );
         assert_eq!(
             CandidateType::of_candidate(
@@ -327,11 +308,11 @@ mod tests {
     }
 
     #[test]
-    fn unknown_message_type_is_a_json_error() {
+    fn an_unknown_variant_is_a_body_error() {
         assert_eq!(
-            decode::<Open>(br#"{"open":"teleport"}"#).map_err(|error| error.to_string()),
+            decode::<Open>(b"\x07").map_err(|error| error.to_string()),
             Err(String::from(
-                "malformed frame body: unknown variant `teleport`, expected one of `hello`, `subscribe`, `command`, `rtc` at line 1 column 18"
+                "malformed frame body: Serde Deserialization Error"
             ))
         );
     }
