@@ -1,0 +1,42 @@
+From 13c50bdf6d2181e128de6880454b83c5b2827367 Mon Sep 17 00:00:00 2001
+From: s <s@s>
+Date: Wed, 11 Nov 2026 21:32:33 +0100
+Subject: [PATCH] G2row
+
+---
+ crates/app/src/sessions.rs | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/crates/app/src/sessions.rs b/crates/app/src/sessions.rs
+index 0786f68..929d9e8 100644
+--- a/crates/app/src/sessions.rs
++++ b/crates/app/src/sessions.rs
+@@ -1,6 +1,6 @@
+ //! The session list and the form that starts a session.
+ 
+-use client::host_view::{Attention, HostView, SessionStatus, SessionView};
++use client::host_view::{Attention, HostView, SessionView};
+ use client::new_session::{Attempt, PROVIDERS, Refusal, label};
+ use dioxus::prelude::*;
+ use proto::{Availability, CommandBody, CommandResult, HostPath, Provider, Providers, SessionId};
+@@ -60,16 +60,14 @@ fn SessionRow(
+     screen: Screen,
+     on_select: EventHandler<Screen>,
+ ) -> Element {
+-    let (status, text, badge) = match (&session.status, session.attention()) {
+-        (SessionStatus::Closed(_), _) | (_, Attention::Quiet) => {
+-            (session.status.word(), session.status.word(), String::new())
+-        }
+-        (_, Attention::Requests(1)) => (
++    let (status, text, badge) = match session.attention() {
++        Attention::Quiet => (session.status.word(), session.status.word(), String::new()),
++        Attention::Requests(1) => (
+             String::from("approval"),
+             String::from("needs approval"),
+             String::from("1"),
+         ),
+-        (_, Attention::Requests(open)) => (
++        Attention::Requests(open) => (
+             String::from("approval"),
+             format!("{open} need approval"),
+             format!("{open}"),

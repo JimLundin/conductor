@@ -1,0 +1,185 @@
+From 05e9a08e5e5fcd2bbb81fb4d73005503fca5c465 Mon Sep 17 00:00:00 2001
+From: scratch <s@s>
+Date: Wed, 11 Nov 2026 21:26:01 +0100
+Subject: [PATCH] F1 F2
+
+---
+ crates/app/src/session.rs        | 11 ++----
+ crates/app/src/sessions.rs       | 61 +++++++++++++-------------------
+ crates/client/src/host_view.rs   | 12 +++++++
+ crates/client/src/new_session.rs | 11 ++++++
+ 4 files changed, 50 insertions(+), 45 deletions(-)
+
+diff --git a/crates/app/src/session.rs b/crates/app/src/session.rs
+index 1cb9922..9ad2e20 100644
+--- a/crates/app/src/session.rs
++++ b/crates/app/src/session.rs
+@@ -23,12 +23,7 @@ pub(crate) fn SessionPane(
+ ) -> Element {
+     let controls = session.controls();
+     let provider = label(session.provider);
+-    let (status, status_text) = match &session.status {
+-        SessionStatus::Starting => ("starting", String::from("Starting")),
+-        SessionStatus::Idle => ("idle", String::from("Idle")),
+-        SessionStatus::Running => ("running", String::from("Running")),
+-        SessionStatus::Closed(_) => ("closed", String::from("Closed")),
+-    };
++    let status = session.status.word();
+     let empty = match (&session.status, session.items.first()) {
+         (_, Some(_)) => None,
+         (SessionStatus::Starting, None) => Some(format!("Starting {provider}…")),
+@@ -40,9 +35,9 @@ pub(crate) fn SessionPane(
+         }
+     };
+     rsx! {
+-        section { class: "pane session-pane", "data-status": status,
++        section { class: "pane session-pane", "data-status": "{status}",
+             PaneHeader { title: "{short(&session.directory)}", subtitle: "{session.directory.0}", on_back,
+-                span { class: "pill", "data-status": status, "{provider}, {status_text.to_lowercase()}" }
++                span { class: "pill", "data-status": "{status}", "{provider}, {status}" }
+                 match controls.interrupt {
+                     Interrupt::Offered => rsx! {
+                         button {
+diff --git a/crates/app/src/sessions.rs b/crates/app/src/sessions.rs
+index f2c24a0..77338ef 100644
+--- a/crates/app/src/sessions.rs
++++ b/crates/app/src/sessions.rs
+@@ -1,7 +1,7 @@
+ //! The session list and the form that starts a session.
+ 
+ use client::host_view::{Attention, HostView, SessionStatus, SessionView};
+-use client::new_session::{Attempt, Availability, PROVIDERS, Refusal, StartForm, label};
++use client::new_session::{Attempt, PROVIDERS, Refusal, StartForm, label};
+ use dioxus::prelude::*;
+ use proto::{CommandBody, CommandResult, HostPath, Provider, SessionId};
+ 
+@@ -60,29 +60,28 @@ fn SessionRow(
+     screen: Screen,
+     on_select: EventHandler<Screen>,
+ ) -> Element {
+-    let (status, text) = match (&session.status, session.attention()) {
+-        (SessionStatus::Closed(_), _) => ("closed", String::from("Closed")),
+-        (_, Attention::Requests(1)) => ("approval", String::from("Needs approval")),
+-        (_, Attention::Requests(open)) => ("approval", format!("{open} need approval")),
+-        (SessionStatus::Starting, Attention::Quiet) => ("starting", String::from("Starting")),
+-        (SessionStatus::Idle, Attention::Quiet) => ("idle", String::from("Idle")),
+-        (SessionStatus::Running, Attention::Quiet) => ("running", String::from("Running")),
+-    };
+-    let badge = match session.attention() {
+-        Attention::Requests(open) => format!("{open}"),
+-        Attention::Quiet => String::new(),
++    let (status, text, badge) = match (&session.status, session.attention()) {
++        (SessionStatus::Closed(_), _) | (_, Attention::Quiet) => {
++            (session.status.word(), session.status.word(), String::new())
++        }
++        (_, Attention::Requests(1)) => {
++            (String::from("approval"), String::from("needs approval"), String::from("1"))
++        }
++        (_, Attention::Requests(open)) => {
++            (String::from("approval"), format!("{open} need approval"), format!("{open}"))
++        }
+     };
+     rsx! {
+         li {
+             button {
+                 class: "session-row",
+-                "data-status": status,
++                "data-status": "{status}",
+                 "aria-current": screen == Screen::Session(id),
+                 onclick: move |_| on_select(Screen::Session(id)),
+                 span { class: "dot", "aria-hidden": "true" }
+                 span { class: "row-text",
+                     span { class: "row-title", "{short(&session.directory)}" }
+-                    span { class: "row-sub", "{label(session.provider)}, {text.to_lowercase()}" }
++                    span { class: "row-sub", "{label(session.provider)}, {text}" }
+                 }
+                 span { class: "badge", "{badge}" }
+             }
+@@ -139,31 +138,19 @@ pub(crate) fn NewSession(
+                 fieldset { class: "providers",
+                     legend { "Agent" }
+                     div { class: "segments",
+-                        for choice in PROVIDERS.iter().copied() {
+-                            label {
+-                                class: "segment",
+-                                "data-available": match form.read().availability(&host, choice) {
+-                                    Availability::Available => "yes",
+-                                    Availability::Unavailable(_) => "no",
+-                                    Availability::Unknown => "unknown",
+-                                },
+-                                input {
+-                                    r#type: "radio",
+-                                    name: "provider",
+-                                    checked: provider() == choice,
+-                                    onchange: move |_| provider.set(choice),
+-                                }
+-                                span { class: "segment-name", "{label(choice)}" }
+-                                span { class: "segment-state",
+-                                    match form.read().availability(&host, choice) {
+-                                        Availability::Available => "Available",
+-                                        Availability::Unavailable(_) => "Unavailable",
+-                                        Availability::Unknown => "",
+-                                    }
+-                                }
+-                            }
++                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, form.read().availability(&host, *choice).word())) {
++                    label { class: "segment", "data-available": "{state}",
++                        input {
++                            r#type: "radio",
++                            name: "provider",
++                            checked: provider() == choice,
++                            onchange: move |_| provider.set(choice),
+                         }
++                        span { class: "segment-name", "{label(choice)}" }
++                        span { class: "segment-state", "{state}" }
+                     }
++                }
++            }
+                     Hint { error: provider_error }
+                 }
+                 label { class: "field",
+diff --git a/crates/client/src/host_view.rs b/crates/client/src/host_view.rs
+index 7b06148..1b76139 100644
+--- a/crates/client/src/host_view.rs
++++ b/crates/client/src/host_view.rs
+@@ -84,6 +84,18 @@ enum Change {
+     Finish(ToolCallId, ToolOutcome),
+ }
+ 
++impl SessionStatus {
++    /// The status in one word, for the UI's text and its `data-status`.
++    pub fn word(&self) -> String {
++        String::from(match self {
++            SessionStatus::Starting => "starting",
++            SessionStatus::Idle => "idle",
++            SessionStatus::Running => "running",
++            SessionStatus::Closed(_) => "closed",
++        })
++    }
++}
++
+ /// What the UI offers for a session, decided here so markup only shows it.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct Controls {
+diff --git a/crates/client/src/new_session.rs b/crates/client/src/new_session.rs
+index 3d938d2..aeae83d 100644
+--- a/crates/client/src/new_session.rs
++++ b/crates/client/src/new_session.rs
+@@ -47,6 +47,17 @@ pub enum Availability {
+     Unknown,
+ }
+ 
++impl Availability {
++    /// The word the form shows, and its `data-available`.
++    pub fn word(&self) -> String {
++        String::from(match self {
++            Availability::Available => "available",
++            Availability::Unavailable(_) => "unavailable",
++            Availability::Unknown => "unknown",
++        })
++    }
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ struct Unavailable {
+     provider: Provider,
