@@ -88,7 +88,19 @@ not committed. Where this file disagrees with the JSON Schema or architecture
   interrupt (`hook/started` with a run id such as
   `interrupt:4:/home/jim/.codex/hooks.json`, then `hook/completed`). (Step 3,
   2026-11-11.)
-- The thread takes a new turn right after an interrupt. (Step 3, `pong`.)
+- `turn/interrupt` sent on the first `item/agentMessage/delta` is accepted
+  the same way, and the turn completes `interrupted`. Between `1` and
+  `1` to `9` of the count streamed before it landed, and no
+  `item/completed` for the message followed. (Step 3c, 2026-11-11, six
+  runs.)
+- `turn/interrupt` sent as soon as `turn/start` answers, before
+  `turn/started`, is refused with JSON-RPC error -32600 `no active turn to
+  interrupt`, although the `turn/start` result already says
+  `status: "inProgress"`. The turn then runs to the end and completes
+  normally. (Step 3d, 2026-11-11, six runs.) An interrupt for a turn that
+  has not started must wait for `turn/started`.
+- The thread takes a new turn right after an interrupt. (Steps 3, 3c, 3d,
+  `pong`.)
 
 ## Several threads on one process
 

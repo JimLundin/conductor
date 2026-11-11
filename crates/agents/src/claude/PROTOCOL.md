@@ -1,9 +1,11 @@
 # Claude Code stream-json: observed behaviour
 
 These facts come from `s1` runs against Claude Code 2.1.316 with model `haiku`, on
-2026-11-10. Steps refer to the `s1` checklist. The committed recordings are in
-`fixtures/claude/`. Where this file disagrees with the Python SDK source, trust
-this file and re-check it when the CLI version changes.
+2026-11-10 and 2026-11-11. Steps refer to the `s1` checklist. The committed
+recordings in `fixtures/claude/` are one 2026-11-11 run with
+`--include-partial-messages`, steps 1 to 6 including 3c and 3d. The 2026-11-10
+recordings they replaced are in git history. Where this file disagrees with the
+Python SDK source, trust this file and re-check it when the CLI version changes.
 
 ## Startup
 
@@ -22,8 +24,7 @@ this file and re-check it when the CLI version changes.
 
 ## Partial messages
 
-From the 2026-11-11 `s1` run with `--include-partial-messages`, which
-recorded the current `fixtures/claude/` files.
+From the 2026-11-11 `s1` runs with `--include-partial-messages`.
 
 - Each API response streams as `stream_event` frames: `message_start`,
   `content_block_start`, `content_block_delta`s, `content_block_stop`,
@@ -62,18 +63,28 @@ recorded the current `fixtures/claude/` files.
 - The CLI acknowledges `interrupt` with
   `control_response/success` and `{"still_queued": []}`. (Steps 3, 3b.)
 - Interrupt as soon as `init` arrives, before the model has printed
-  anything: the CLI acknowledges it, prints no assistant message, then the
-  user message `[Request interrupted by user]` and `result` with
-  `subtype: "error_during_execution"` and `terminal_reason:
+  anything: the CLI acknowledges it, prints no assistant message and no
+  stream events, then the user message `[Request interrupted by user]` and
+  `result` with `subtype: "error_during_execution"` and `terminal_reason:
   "aborted_streaming"`. The model's reply never reaches stdout, so `s1` step 3
-  does not depend on what the model would have said. (Step 3, 2026-11-11,
-  five runs.) Earlier runs interrupted after the first assistant message,
-  which depended on the model printing one.
-- Interrupt during streaming: the CLI prints the user message
-  `[Request interrupted by user]`, then `result` with
-  `subtype: "error_during_execution"`, `is_error: true`, `stop_reason: null` and
-  `terminal_reason: "aborted_streaming"`. (Step 3.) In one run the cut-off
-  assistant message also carried `"aborted": true` and the partial text `"star"`.
+  does not depend on what the model would have said. (Step 3, 2026-11-11:
+  eleven recorded runs, each printing `text=""`.)
+- Interrupt during streaming, sent on the first `text_delta`: the CLI
+  acknowledges (before any further delta in ten runs, after 44 more in one),
+  prints the cut-off assistant message with `"aborted": true` and exactly the
+  text streamed so far, then `[Request interrupted by user]`, then
+  `content_block_stop`, `message_delta` and `message_stop`, then `result`
+  with `subtype: "error_during_execution"`, `is_error: true`,
+  `stop_reason: null` and `terminal_reason: "aborted_streaming"`. (Step 3c,
+  2026-11-11, eleven recorded runs, all in this order.) Step 3c checks this
+  live. It replaces a 2026-11-10 note from one unrecorded run of the old
+  step 3, which cut the message off at `"star"`.
+- Interrupt sent right after the user message, before `init`: the CLI
+  acknowledges it with `{"still_queued": []}` before it prints `init`. Then it
+  either aborts the turn as at step 3 (one run of eleven) or ignores the
+  interrupt and runs the whole turn to `result/success` (ten runs). The ack
+  does not say which. (Step 3d, 2026-11-11.) So an interrupt that reaches
+  the CLI before it starts the turn can be lost.
 - Interrupt while a permission request is open: the CLI sends
   `control_cancel_request` for that `request_id` before it acknowledges the
   interrupt. It then prints a rejected `tool_result`, the user message
@@ -81,9 +92,9 @@ recorded the current `fixtures/claude/` files.
   `subtype: "error_during_execution"`, `is_error: true` and
   `terminal_reason: "aborted_tools"`. (Step 3b.)
 - `result.subtype` alone cannot tell an interrupt from a failure.
-  `terminal_reason` can. (Steps 3, 3b.)
+  `terminal_reason` can. (Steps 3, 3b, 3c.)
 - The session accepts the next user message normally after an interrupt.
-  (Step 3, `pong`.)
+  (Steps 3, 3c, 3d, `pong`.)
 
 ## Resume and exit
 

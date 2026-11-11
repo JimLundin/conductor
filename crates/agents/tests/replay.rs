@@ -137,8 +137,8 @@ enum Progress {
 enum Until {
     /// The next permission request, left for the test to answer.
     Permission,
-    /// The next `TurnStarted`.
-    Started,
+    /// The next `StreamDelta`.
+    Delta,
     /// This many turns have finished since the session began.
     Turns(usize),
 }
@@ -154,6 +154,8 @@ struct Replay {
     until: Until,
     finished: usize,
     seen: Vec<String>,
+    /// The deltas since the last other event, recorded as one line.
+    deltas: Option<Vec<String>>,
     unknown: BTreeMap<String, usize>,
     ids: Vec<PermissionRequestId>,
 }
@@ -171,6 +173,7 @@ impl Replay {
             until: Until::Turns(0),
             finished: 0,
             seen: Vec::new(),
+            deltas: None,
             unknown: BTreeMap::new(),
             ids: Vec::new(),
         }
@@ -201,16 +204,19 @@ impl Replay {
         }
         match &event {
             ClaudeEvent::Unknown(raw) => self.tally(frame(raw)),
-            _ => self.seen.push(summary(&event)),
+            ClaudeEvent::StreamDelta { text } => {
+                self.deltas.get_or_insert_with(Vec::new).push(text.clone())
+            }
+            _ => self.record(summary(&event)),
         }
         match (&self.until, &event) {
             (Until::Permission, ClaudeEvent::PermissionRequested { .. })
-            | (Until::Started, ClaudeEvent::TurnStarted { .. }) => Progress::Done,
+            | (Until::Delta, ClaudeEvent::StreamDelta { .. }) => Progress::Done,
             (Until::Turns(turns), _) => match self.finished.cmp(turns) {
                 Ordering::Less => Progress::Playing,
                 Ordering::Equal | Ordering::Greater => Progress::Done,
             },
-            (Until::Permission | Until::Started, _) => Progress::Playing,
+            (Until::Permission | Until::Delta, _) => Progress::Playing,
         }
     }
 
@@ -221,6 +227,14 @@ impl Replay {
         };
         answered.unwrap();
         self.ids.push(id.clone());
+    }
+
+    /// Records a line, after one for the deltas that came before it.
+    fn record(&mut self, line: String) {
+        if let Some(deltas) = self.deltas.take() {
+            self.seen.push(format!("streams {deltas:?}"));
+        }
+        self.seen.push(line);
     }
 
     fn tally(&mut self, frame: String) {
@@ -300,46 +314,51 @@ async fn approve_deny_interrupt_recording() {
     assert_eq!(
         replayed.events,
         [
-            // 1: approve a Write. Only the text streams; tool input stays Unknown.
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            // 1: approve a Write. Only text streams; tool input stays Unknown.
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
             "permission Write Path(\"/tmp/s1-scratch/a.txt\")",
             "user: tool_result error=false",
-            "delta \"I\"",
-            "delta \" created `/\"",
-            "delta \"tmp/s1-sc\"",
-            "delta \"ratch/a.txt`\"",
-            "delta \" with the content `hello from s\"",
-            "delta \"1`.\"",
-            "assistant: text \"I created `/tmp/s1-scratch/a.txt` with the content `hello from s1`.\"",
+            "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
+            "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
             "finished success is_error=false Some(\"completed\")",
             // 2: deny a Write.
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
             "permission Write Path(\"/tmp/s1-scratch/b.txt\")",
             "user: tool_result error=true",
-            "delta \"The\"",
-            "delta \" Write for\"",
-            "delta \" `\"",
-            "delta \"b.txt` was denied\"",
-            "delta \" \"",
-            "delta \"(\\\"The user does not want b.\"",
-            "delta \"txt.\\\"\"",
-            "delta \"), so I did not ret\"",
-            "delta \"ry and\"",
-            "delta \" did not create the file.\"",
-            "assistant: text \"The Write for `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and did not create the file.\"",
+            "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
+            "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",
             "finished success is_error=false Some(\"completed\")",
             // 3: interrupt as the turn starts, then a normal turn.
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "user: text \"[Request interrupted by user]\"",
             "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
-            "delta \"pong\"",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"pong\"]",
+            "assistant: text \"pong\"",
+            "finished success is_error=false Some(\"completed\")",
+            // 3c: interrupt on the first delta; the cut-off message repeats it.
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"1\"]",
+            "assistant: text \"1\"",
+            "user: text \"[Request interrupted by user]\"",
+            "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"pong\"]",
+            "assistant: text \"pong\"",
+            "finished success is_error=false Some(\"completed\")",
+            // 3d: interrupt right after sending; this time the CLI ran the turn.
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"1\\n2\\n3\\n4\", \"\\n5\\n6\\n7\\n8\", \"\\n9\\n10\\n11\\n12\", \"\\n13\\n14\\n15\\n16\", \"\\n17\\n18\\n19\\n20\", \"\\n21\\n22\\n23\\n24\", \"\\n25\\n26\\n27\\n28\", \"\\n29\\n30\\n31\\n32\", \"\\n33\\n34\\n35\\n36\", \"\\n37\\n38\\n39\\n40\", \"\\n41\\n42\\n43\\n44\", \"\\n45\\n46\\n47\\n48\", \"\\n49\\n50\\n51\\n52\", \"\\n53\\n54\\n55\\n56\", \"\\n57\\n58\\n59\\n60\", \"\\n61\\n62\\n63\\n64\", \"\\n65\\n66\\n67\\n68\", \"\\n69\\n70\\n71\\n72\", \"\\n73\\n74\\n75\\n76\", \"\\n77\\n78\\n79\\n80\", \"\\n81\\n82\\n83\\n84\", \"\\n85\\n86\\n87\\n88\", \"\\n89\\n90\\n91\\n92\", \"\\n93\\n94\\n95\\n96\", \"\\n97\\n98\\n99\\n100\", \"\\n101\\n102\\n103\\n104\", \"\\n105\\n106\\n107\\n108\", \"\\n109\\n110\\n111\\n112\", \"\\n113\\n114\\n115\\n116\", \"\\n117\\n118\\n119\\n120\", \"\\n121\\n122\\n123\\n124\", \"\\n125\\n126\\n127\\n128\", \"\\n129\\n130\\n131\\n132\", \"\\n133\\n134\\n135\\n136\", \"\\n137\\n138\\n139\\n140\", \"\\n141\\n142\\n143\\n144\", \"\\n145\\n146\\n147\\n148\", \"\\n149\\n150\\n151\\n152\", \"\\n153\\n154\\n155\\n156\", \"\\n157\\n158\\n159\\n160\", \"\\n161\\n162\\n163\\n164\", \"\\n165\\n166\\n167\\n168\", \"\\n169\\n170\\n171\\n172\", \"\\n173\\n174\\n175\\n176\", \"\\n177\\n178\\n179\\n180\", \"\\n181\\n182\\n183\\n184\", \"\\n185\\n186\\n187\\n188\", \"\\n189\\n190\\n191\\n192\", \"\\n193\\n194\\n195\\n196\", \"\\n197\\n198\\n199\\n200\"]",
+            "assistant: text \"1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n19\\n20\\n21\\n22\\n23\\n24\\n25\\n26\\n27\\n28\\n29\\n30\\n31\\n32\\n33\\n34\\n35\\n36\\n37\\n38\\n39\\n40\\n41\\n42\\n43\\n44\\n45\\n46\\n47\\n48\\n49\\n50\\n51\\n52\\n53\\n54\\n55\\n56\\n57\\n58\\n59\\n60\\n61\\n62\\n63\\n64\\n65\\n66\\n67\\n68\\n69\\n70\\n71\\n72\\n73\\n74\\n75\\n76\\n77\\n78\\n79\\n80\\n81\\n82\\n83\\n84\\n85\\n86\\n87\\n88\\n89\\n90\\n91\\n92\\n93\\n94\\n95\\n96\\n97\\n98\\n99\\n100\\n101\\n102\\n103\\n104\\n105\\n106\\n107\\n108\\n109\\n110\\n111\\n112\\n113\\n114\\n115\\n116\\n117\\n118\\n119\\n120\\n121\\n122\\n123\\n124\\n125\\n126\\n127\\n128\\n129\\n130\\n131\\n132\\n133\\n134\\n135\\n136\\n137\\n138\\n139\\n140\\n141\\n142\\n143\\n144\\n145\\n146\\n147\\n148\\n149\\n150\\n151\\n152\\n153\\n154\\n155\\n156\\n157\\n158\\n159\\n160\\n161\\n162\\n163\\n164\\n165\\n166\\n167\\n168\\n169\\n170\\n171\\n172\\n173\\n174\\n175\\n176\\n177\\n178\\n179\\n180\\n181\\n182\\n183\\n184\\n185\\n186\\n187\\n188\\n189\\n190\\n191\\n192\\n193\\n194\\n195\\n196\\n197\\n198\\n199\\n200\"",
+            "finished success is_error=false Some(\"completed\")",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"pong\"]",
             "assistant: text \"pong\"",
             "finished success is_error=false Some(\"completed\")",
             // 3b: interrupt with a permission request open; the CLI withdraws it.
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/d.txt\")",
             "permission Write Path(\"/tmp/s1-scratch/d.txt\")",
             "permission_cancelled",
@@ -348,21 +367,21 @@ async fn approve_deny_interrupt_recording() {
             "finished error_during_execution is_error=true Some(\"aborted_tools\")",
         ]
     );
-    // a.txt and b.txt were answered above and d.txt was withdrawn by the CLI,
-    // so none of them can be answered now.
     assert_eq!(
         replayed.unknown,
         BTreeMap::from([
-            ("stream_event/-".to_owned(), 61),
-            ("system/status".to_owned(), 7),
+            ("stream_event/-".to_owned(), 81),
+            ("system/status".to_owned(), 11),
         ])
     );
+    // a.txt and b.txt were answered above and d.txt was withdrawn by the CLI,
+    // so none of them can be answered now.
     assert_eq!(
         replayed.second,
         [
-            "no open permission request with id 08ba8a65-0e31-4c45-bc0a-93802e116ce5",
-            "no open permission request with id adc468ff-e524-4997-8fd4-b464d099e19d",
-            "no open permission request with id ae41147b-8f2f-49bd-ae20-ce933ef2260c",
+            "no open permission request with id ef41e4d8-de15-458b-88d0-f46aa4286c9a",
+            "no open permission request with id 0a710d2a-6061-4dba-96f1-3dc74607c276",
+            "no open permission request with id 8e8d863f-1d3f-4910-8591-5d1453ca9b6a",
         ]
     );
 }
@@ -374,25 +393,22 @@ async fn resume_and_accept_edits_recording() {
     assert_eq!(
         replayed.events,
         [
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
-            "delta \"a.txt\"",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"a.txt\"]",
             "assistant: text \"a.txt\"",
             "finished success is_error=false Some(\"completed\")",
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/c.txt\")",
             "user: tool_result error=false",
-            "delta \"I created `/tmp/\"",
-            "delta \"s1-scratch/c\"",
-            "delta \".txt` with the content `\"",
-            "delta \"accepted`.\"",
-            "assistant: text \"I created `/tmp/s1-scratch/c.txt` with the content `accepted`.\"",
+            "streams [\"I created `c.txt`\", \" in `/tmp/s\", \"1-scratch` with the\", \" content `accepted`.\"]",
+            "assistant: text \"I created `c.txt` in `/tmp/s1-scratch` with the content `accepted`.\"",
             "finished success is_error=false Some(\"completed\")",
         ]
     );
     assert_eq!(
         replayed.unknown,
         BTreeMap::from([
-            ("stream_event/-".to_owned(), 26),
+            ("stream_event/-".to_owned(), 25),
             ("system/status".to_owned(), 4),
         ])
     );
@@ -551,7 +567,7 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
 
     r.session
         .respond(
-            PermissionRequestId(String::from("08ba8a65-0e31-4c45-bc0a-93802e116ce5")),
+            PermissionRequestId(String::from("ef41e4d8-de15-458b-88d0-f46aa4286c9a")),
             PermissionDecision::Allow,
         )
         .await
@@ -560,24 +576,19 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
     assert_eq!(
         r.seen,
         [
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
             "permission Write Path(\"/tmp/s1-scratch/a.txt\")",
             "user: tool_result error=false",
-            "delta \"I\"",
-            "delta \" created `/\"",
-            "delta \"tmp/s1-sc\"",
-            "delta \"ratch/a.txt`\"",
-            "delta \" with the content `hello from s\"",
-            "delta \"1`.\"",
-            "assistant: text \"I created `/tmp/s1-scratch/a.txt` with the content `hello from s1`.\"",
+            "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
+            "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
             "finished success is_error=false Some(\"completed\")",
         ]
     );
     assert_eq!(
         r.unknown,
         BTreeMap::from([
-            ("stream_event/-".to_owned(), 21),
+            ("stream_event/-".to_owned(), 20),
             ("system/status".to_owned(), 2),
         ])
     );
@@ -602,7 +613,7 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
     };
     r.session
         .respond(
-            PermissionRequestId(String::from("adc468ff-e524-4997-8fd4-b464d099e19d")),
+            PermissionRequestId(String::from("0a710d2a-6061-4dba-96f1-3dc74607c276")),
             deny,
         )
         .await
@@ -610,13 +621,10 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
     let mut r = r.until(Until::Turns(1)).await;
     assert_eq!(early(&mut r.events).await, None);
 
+    // The ack waits for our interrupt; had it come first, `interrupt` would
+    // time out on an ack it never matched.
     r.session.send_user(String::from("count")).await.unwrap();
-    let mut r = r.until(Until::Started).await;
-    assert_eq!(
-        [early(&mut r.events).await, early(&mut r.events).await],
-        [Some(String::from("unknown system/status")), None]
-    );
-
+    let r = r.until(Until::Delta).await;
     r.session.interrupt().await.unwrap();
     let mut r = r.until(Until::Turns(2)).await;
     assert_eq!(early(&mut r.events).await, None);
@@ -626,37 +634,29 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
     assert_eq!(
         r.seen,
         [
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
             "permission Write Path(\"/tmp/s1-scratch/b.txt\")",
             "user: tool_result error=true",
-            "delta \"The\"",
-            "delta \" Write for\"",
-            "delta \" `\"",
-            "delta \"b.txt` was denied\"",
-            "delta \" \"",
-            "delta \"(\\\"The user does not want b.\"",
-            "delta \"txt.\\\"\"",
-            "delta \"), so I did not ret\"",
-            "delta \"ry and\"",
-            "delta \" did not create the file.\"",
-            "assistant: text \"The Write for `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and did not create the file.\"",
+            "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
+            "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",
             "finished success is_error=false Some(\"completed\")",
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"1\"]",
+            "assistant: text \"1\"",
             "user: text \"[Request interrupted by user]\"",
             "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
-            "turn_started 1bebd975-cd18-4136-9879-313ada0c1fa7",
-            "delta \"pong\"",
+            "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
+            "streams [\"pong\"]",
             "assistant: text \"pong\"",
             "finished success is_error=false Some(\"completed\")",
         ]
     );
-    // The fourth `system/status` is the one `early` read above.
     assert_eq!(
         r.unknown,
         BTreeMap::from([
-            ("stream_event/-".to_owned(), 25),
-            ("system/status".to_owned(), 3),
+            ("stream_event/-".to_owned(), 31),
+            ("system/status".to_owned(), 4),
         ])
     );
     assert_eq!(

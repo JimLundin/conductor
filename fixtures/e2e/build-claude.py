@@ -7,19 +7,24 @@ by rule, so every gate matches what a session writes:
 - each turn's `system/init` waits for a user message;
 - a `can_use_tool` request is followed by a wait for our `control_response`;
 - any later `control_response` (an interrupt's ack) waits for a `control_request`.
+
+Acks are renumbered `req_1`, `req_2`, ... in order, because the session that
+replays a recording numbers its control requests from 1.
 """
 
 import json
 import pathlib
+import re
 
 HERE = pathlib.Path(__file__).parent
 SOURCE = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
 
-# The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt,
-# 3 pong, 3b interrupt with a permission open.
+# The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt at
+# start, pong, 3c interrupt mid-stream, pong, 3d interrupt at send, pong,
+# 3b interrupt with a permission open.
 RECORDINGS = {
     "claude-approve.jsonl": [0],
-    "claude-deny-interrupt.jsonl": [1, 2, 3],
+    "claude-deny-interrupt.jsonl": [1, 4, 5],
 }
 
 
@@ -46,8 +51,14 @@ def turns(lines):
     return lines[0], [lines[s:e] for s, e in zip(starts, ends)]
 
 
+def renumbered(lines):
+    acks = iter(range(1, len(lines) + 1))
+    ack = re.compile(r'^(\{"type":"control_response","response":\{"subtype":"success","request_id":")req_\d+"')
+    return [ack.sub(lambda m: f'{m.group(1)}req_{next(acks)}"', line) for line in lines]
+
+
 initialize, played = turns(SOURCE.read_text().splitlines())
 for name, picked in RECORDINGS.items():
-    lines = [initialize] + [line for t in picked for line in played[t]]
+    lines = renumbered([initialize] + [line for t in picked for line in played[t]])
     out = [m for line in lines for m in gated(line)]
     (HERE / name).write_text("\n".join(out) + "\n")
