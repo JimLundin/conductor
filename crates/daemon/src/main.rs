@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -56,14 +56,6 @@ struct HostArgs {
     test_rtc_drop_after: Option<u64>,
 }
 
-/// Where the host is reachable, as the ticket tells clients.
-struct Serving {
-    data_dir: PathBuf,
-    web_url: String,
-    router: Router,
-    ticket: Ticket,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -95,10 +87,9 @@ async fn main() -> anyhow::Result<()> {
                 test_rtc_blackhole.then_some(Blackhole {}),
                 test_rtc_drop_after,
             )));
-            let serving = host(data_dir, web_url, name, rtc).await?;
-            announce(&serving)?;
+            let router = host(data_dir, web_url, name, rtc).await?;
             tokio::signal::ctrl_c().await?;
-            serving.router.shutdown().await?;
+            router.shutdown().await?;
             Ok(())
         }
     }
@@ -109,7 +100,7 @@ async fn host(
     web_url: String,
     name: String,
     rtc: Option<Arc<RtcOptions>>,
-) -> anyhow::Result<Serving> {
+) -> anyhow::Result<Router> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
         .secret_key(daemon::load_or_create_key(&data_dir)?)
@@ -135,30 +126,28 @@ async fn host(
         token,
         rtc,
     };
-    Ok(Serving {
-        data_dir,
-        web_url,
-        ticket: Ticket {
-            host: endpoint.id(),
-            relay,
-            token,
-        },
-        router: Router::builder(endpoint)
-            .accept(proto::ALPN, conductor)
-            .spawn(),
-    })
+    let ticket = Ticket {
+        host: endpoint.id(),
+        relay,
+        token,
+    };
+    let router = Router::builder(endpoint)
+        .accept(proto::ALPN, conductor)
+        .spawn();
+    announce(&data_dir, &web_url, &ticket)?;
+    Ok(router)
 }
 
 /// Prints the ticket, the join link and its QR code, and writes the code as
 /// an image to the data dir.
-fn announce(serving: &Serving) -> anyhow::Result<()> {
-    let ticket = serving.ticket.to_text();
-    let join = format!("{}#join={ticket}", serving.web_url);
+fn announce(data_dir: &Path, web_url: &str, ticket: &Ticket) -> anyhow::Result<()> {
+    let text = ticket.to_text();
+    let join = format!("{web_url}#join={text}");
     let mut out = std::io::stdout();
-    writeln!(out, "data dir: {}", serving.data_dir.display())?;
-    writeln!(out, "host id:  {}", serving.ticket.host)?;
-    writeln!(out, "relay:    {}", serving.ticket.relay)?;
-    writeln!(out, "ticket:   {ticket}")?;
+    writeln!(out, "data dir: {}", data_dir.display())?;
+    writeln!(out, "host id:  {}", ticket.host)?;
+    writeln!(out, "relay:    {}", ticket.relay)?;
+    writeln!(out, "ticket:   {text}")?;
     writeln!(out, "join:     {join}")?;
     match qrcode::QrCode::new(&join) {
         Ok(code) => {
@@ -173,7 +162,7 @@ fn announce(serving: &Serving) -> anyhow::Result<()> {
                     .quiet_zone(true)
                     .build()
             )?;
-            let svg_path = serving.data_dir.join("join-qr.svg");
+            let svg_path = data_dir.join("join-qr.svg");
             let image = code.render::<svg::Color>().min_dimensions(512, 512).build();
             match std::fs::write(&svg_path, image) {
                 Ok(()) => writeln!(out, "qr image: {}", svg_path.display())?,
