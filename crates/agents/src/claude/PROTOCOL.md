@@ -20,6 +20,27 @@ this file and re-check it when the CLI version changes.
 - With `--setting-sources=project,local`, `init` still lists built-in skills and
   plugins. (Every session.)
 
+## Partial messages
+
+From the 2026-11-11 `s1` run with `--include-partial-messages`, which
+recorded the current `fixtures/claude/` files.
+
+- Each API response streams as `stream_event` frames: `message_start`,
+  `content_block_start`, `content_block_delta`s, `content_block_stop`,
+  `message_delta`, `message_stop`. (Every response.)
+- Text arrives as `content_block_delta` with `delta.type: "text_delta"`, in
+  chunks of one to thirty characters. The chunks join to exactly the text of
+  the assistant message. The adapter reports each as `StreamDelta`. (Steps 1,
+  2, 3, 4, 5.)
+- Tool input streams as `input_json_delta` chunks. The adapter leaves them
+  `Unknown` and reads the input from the assistant message. (Steps 1, 2, 3b, 5.)
+- The full assistant message is printed after the last delta but before its
+  `content_block_stop` and `message_stop`. (Every response.)
+- Every API request is announced by `system/status` with
+  `"status": "requesting"`: after each `init`, and after a tool result the
+  model goes on to answer. (Every turn.)
+- A turn interrupted as it starts prints no stream events. (Step 3.)
+
 ## Permission requests
 
 - `can_use_tool` carries `tool_name`, `display_name`, `description` (the file
