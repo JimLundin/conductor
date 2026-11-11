@@ -673,7 +673,7 @@ form). The two tables below are those matches.
 
 | Claude event | Steps |
 |---|---|
-| `SessionStarted { .. }` | none (`SessionReady` is logged after `spawn` returns) |
+| `TurnStarted { .. }` | none. Since the drift-check change it fires on every `system/init`, once per turn, and carries the session id; `SessionReady` is still logged after `spawn` returns, and the Codex `turn/started` is what maps to a step |
 | `Message { Assistant, [Text(t)] }`, per block | `Emit(AssistantMessage { t })` |
 | `Message { Assistant, [ToolUse { id, name, detail }] }`, per block | `Emit(ToolCall { id, Started { tool_kind(name, detail) } })` |
 | `Message { User, [ToolResult { tool_use_id, outcome }] }`, per block | `Emit(ToolCall { tool_use_id, Finished { outcome } })` |
@@ -964,7 +964,7 @@ plus markers:
 | Recording | From | Plays |
 |---|---|---|
 | `claude-approve.jsonl` | `fixtures/claude/session1-…` turn 1 | message, deltas, one `Write` permission, tool result, final text, `result` |
-| `claude-deny-interrupt.jsonl` | `session1-…` turns 2 and 3 | a denied permission, then a long turn that ends `aborted_streaming` |
+| `claude-deny-interrupt.jsonl` | unit 2's new `s1` mid-stream interrupt step (interrupt on the first `StreamDelta`) | a denied permission, then a turn with deltas that ends `aborted_streaming` |
 | `codex-two-threads.jsonl` | `fixtures/codex/server1.jsonl` | two threads: command approval accepted on one, declined on the other, deltas on both |
 | `codex-interrupt.jsonl` | `server1.jsonl` | a turn interrupted mid-stream |
 
@@ -1053,7 +1053,7 @@ green `tools/check.sh` commit, and leaves the system working
 | # | Unit | Depends on | Parallel with | Done when |
 |---|---|---|---|---|
 | 1 | **Gated fake CLI.** `fake-cli.py`, the two `.sh` wrappers, `fixtures/e2e/claude-approve.jsonl` (provisional). A small agents test drives `ClaudeSession` through `claude-approve.jsonl`: no event before `send_user`, nothing after the permission before `respond` | none | 2, 3, T | the new test and the existing replay tests pass |
-| 2 | **Agents boundary.** Codex `item/agentMessage/delta` as `ThreadEvent::AgentDelta`; Claude `ToolDetail` (§2.7); Claude `--include-partial-messages` and `StreamDelta`, with a new `s1` recording, from which it rebuilds `claude-approve.jsonl` and builds `claude-deny-interrupt.jsonl`; originally: a new `s1` recording if open question 2 says yes | none | 1, 3, T | replay tests assert the deltas and details as literal lists; `s1` and `s2` pass live |
+| 2 | **Agents boundary.** Codex `item/agentMessage/delta` as `ThreadEvent::AgentDelta`; Claude `ToolDetail` (§2.7); Claude `--include-partial-messages` and `StreamDelta`, with a new `s1` recording, from which it rebuilds `claude-approve.jsonl` and builds `claude-deny-interrupt.jsonl`; originally: a new `s1` recording if open question 2 says yes | none | 1, 3, T | replay tests assert the deltas and details as literal lists; `s1` and `s2` pass live, including the new mid-stream interrupt step (interrupt on the first delta) and the immediate interrupt step (before `system/init`), 5 runs in a row; it also carries the drift-check fixes (`docs/subset/reviews/drift-checks.md`) |
 | 3 | **Protocol swap.** New `proto` types and `ALPN`; client `host_view.rs` with its fold tests; daemon `log.rs`, `registry.rs` (both providers `Unavailable`, the permanent path for a missing CLI), `serve.rs`, `main.rs` as `host`; `host.rs` and the spike types deleted; the app compiles against `HostView` and shows each session's transcript in order (the screens are unit 6) | T | 1, 2 | e2e: the wrong-token and epoch tests pass, and `StartSession` answers `ProviderUnavailable`; `log.rs` unit tests cover replay after the cursor; the app builds for web and desktop |
 | 4 | **Claude sessions.** `session.rs`, `mapping.rs` (Claude half), Claude in the registry | 1, 2, 3 | 6, T | the Claude e2e tests in §4.2 pass |
 | 5 | **Codex sessions.** `codex_hub.rs`, `mapping.rs` (Codex half), Codex in the registry; builds `codex-two-threads.jsonl` and `codex-interrupt.jsonl` | 4 | 6, T | the Codex e2e tests pass, including two sessions on one server |
@@ -1152,3 +1152,16 @@ All four open questions are answered as recommended:
 4. The directory is a text field the host validates, with earlier sessions' directories offered as suggestions.
 
 Also approved: the hedged dial from the reconnect forensics (`docs/forensics/reconnect/` on the local branch `reconnect-forensics`), as its own `client` unit. Git worktrees stay out of slice 1. The volume estimate (~25,800 added tokens) is treated as P1's budget.
+
+## 9. Changes from the drift-check review (2026-11-11)
+
+- Claude's adapter now emits `TurnStarted` on every `system/init` (§2.7),
+  and the live step 3 interrupts at turn start. Nothing interrupted
+  mid-stream any more, so unit 2 adds a mid-stream step (interrupt on the
+  first delta) to `s1` and `s2`, and `claude-deny-interrupt.jsonl` is built
+  from it (§4.1, §5).
+- Interrupting before `system/init` was unobserved, and P1 marks a turn
+  running on `Send` (§2.5). Unit 2 adds an immediate-interrupt step and
+  records the behaviour in `claude/PROTOCOL.md`.
+- `codex-interrupt.jsonl` stays mid-stream because it is built from
+  `fixtures/codex/server1.jsonl` (unit 5).
