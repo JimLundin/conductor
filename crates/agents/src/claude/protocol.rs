@@ -75,7 +75,7 @@ pub enum Role {
     User,
 }
 
-/// What a tool call is about, read from the CLI's `input` by `tool_field`.
+/// What a tool call is about, read from the CLI's `input` by `tool_detail`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolDetail {
     Command(String),
@@ -84,33 +84,20 @@ pub enum ToolDetail {
     Text(String),
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Shape {
-    Command,
-    Path,
-    Text,
-}
-
-/// The `input` field worth showing for each tool that has one, and its shape.
-fn tool_field(tool: &str) -> Option<(&str, Shape)> {
-    match tool {
-        "Bash" => Some(("command", Shape::Command)),
-        "Edit" | "Write" | "MultiEdit" | "Read" => Some(("file_path", Shape::Path)),
-        "Grep" | "Glob" => Some(("pattern", Shape::Text)),
-        "WebFetch" => Some(("url", Shape::Text)),
-        _ => None,
-    }
-}
-
+/// The `input` field worth showing for each tool that has one, in its shape.
 pub(crate) fn tool_detail(tool: &str, input: &Value) -> ToolDetail {
-    let shown = tool_field(tool)
-        .and_then(|(field, shape)| Some((shape, input.get(field)?.as_str()?.to_owned())));
-    match shown {
-        Some((Shape::Command, text)) => ToolDetail::Command(text),
-        Some((Shape::Path, text)) => ToolDetail::Path(text),
-        Some((Shape::Text, text)) => ToolDetail::Text(text),
-        None => ToolDetail::Text(input.to_string()),
-    }
+    let shown = match tool {
+        "Bash" => field(input, "command").map(ToolDetail::Command),
+        "Edit" | "Write" | "MultiEdit" | "Read" => field(input, "file_path").map(ToolDetail::Path),
+        "Grep" | "Glob" => field(input, "pattern").map(ToolDetail::Text),
+        "WebFetch" => field(input, "url").map(ToolDetail::Text),
+        _ => None,
+    };
+    shown.unwrap_or_else(|| ToolDetail::Text(input.to_string()))
+}
+
+fn field(input: &Value, name: &str) -> Option<String> {
+    input.get(name).and_then(Value::as_str).map(str::to_owned)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -428,8 +415,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        AfterDeny, Block, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision,
-        PermissionMode, PermissionRequestId, Role, ToolDetail, encode, parse_line,
+        AfterDeny, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
+        PermissionRequestId, ToolDetail, encode, parse_line, tool_detail,
     };
 
     fn json(text: &str) -> Value {
@@ -541,42 +528,25 @@ mod tests {
         );
     }
 
-    fn tool(id: &str, name: &str, detail: ToolDetail) -> Block {
-        Block::ToolUse {
-            id: String::from(id),
-            name: String::from(name),
-            detail,
-        }
-    }
-
     #[test]
-    fn tool_use_input_becomes_a_tool_detail() {
-        let line = r#"{"type":"assistant","session_id":"s","uuid":"u","parent_tool_use_id":null,"message":{
-            "id":"m1","model":"haiku","type":"message","role":"assistant","stop_reason":null,"stop_sequence":null,
-            "usage":{"input_tokens":1,"output_tokens":1},"content":[
-            {"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls -a","description":"list"}},
-            {"type":"tool_use","id":"t2","name":"Grep","input":{"pattern":"fn main"}},
-            {"type":"tool_use","id":"t3","name":"Write","input":{"content":"no path"}},
-            {"type":"tool_use","id":"t4","name":"TodoWrite","input":{"todos":[]}}]}}"#;
+    fn tool_input_becomes_a_tool_detail() {
+        let details = Vec::from([
+            ("Bash", r#"{"command":"ls -a","description":"list"}"#),
+            ("Grep", r#"{"pattern":"fn main"}"#),
+            ("Write", r#"{"content":"no path"}"#),
+            ("TodoWrite", r#"{"todos":[]}"#),
+        ])
+        .into_iter()
+        .map(|(tool, input)| tool_detail(tool, &json(input)))
+        .collect::<Vec<ToolDetail>>();
         assert_eq!(
-            parse_line(line).unwrap(),
-            Inbound::Event(ClaudeEvent::Message {
-                role: Role::Assistant,
-                content: Vec::from([
-                    tool("t1", "Bash", ToolDetail::Command(String::from("ls -a"))),
-                    tool("t2", "Grep", ToolDetail::Text(String::from("fn main"))),
-                    tool(
-                        "t3",
-                        "Write",
-                        ToolDetail::Text(String::from(r#"{"content":"no path"}"#))
-                    ),
-                    tool(
-                        "t4",
-                        "TodoWrite",
-                        ToolDetail::Text(String::from(r#"{"todos":[]}"#))
-                    ),
-                ]),
-            })
+            details,
+            [
+                ToolDetail::Command(String::from("ls -a")),
+                ToolDetail::Text(String::from("fn main")),
+                ToolDetail::Text(String::from(r#"{"content":"no path"}"#)),
+                ToolDetail::Text(String::from(r#"{"todos":[]}"#)),
+            ]
         );
     }
 
