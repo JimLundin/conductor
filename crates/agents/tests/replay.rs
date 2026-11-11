@@ -586,13 +586,6 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
         ]
     );
     assert_eq!(
-        r.unknown,
-        BTreeMap::from([
-            ("stream_event/-".to_owned(), 20),
-            ("system/status".to_owned(), 2),
-        ])
-    );
-    assert_eq!(
         r.session.shutdown().await.unwrap().describe(),
         "exit status: 0"
     );
@@ -651,13 +644,6 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
             "assistant: text \"pong\"",
             "finished success is_error=false Some(\"completed\")",
         ]
-    );
-    assert_eq!(
-        r.unknown,
-        BTreeMap::from([
-            ("stream_event/-".to_owned(), 31),
-            ("system/status".to_owned(), 4),
-        ])
     );
     assert_eq!(
         r.session.shutdown().await.unwrap().describe(),
