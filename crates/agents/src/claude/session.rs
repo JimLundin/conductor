@@ -300,12 +300,18 @@ enum News {
 /// Every handle is gone, so the actor has stopped the process and ended.
 struct Stopped {}
 
+/// A control request we sent, waiting for its `control_response`.
+struct Pending {
+    call: ControlCall,
+    reply: oneshot::Sender<Result<Value, Error>>,
+}
+
 struct Actor {
     process: Process,
     events: mpsc::Sender<ClaudeEvent>,
     stdout_log: Option<std::fs::File>,
     /// Our control requests awaiting a `control_response`, by request_id.
-    pending: HashMap<String, (ControlCall, oneshot::Sender<Result<Value, Error>>)>,
+    pending: HashMap<String, Pending>,
     /// `can_use_tool` requests not yet answered, with the input `allow` echoes.
     open_permissions: HashMap<PermissionRequestId, Value>,
     /// The CLI repeats `system/init` every turn; only a new id is news.
@@ -382,7 +388,7 @@ impl Actor {
                 request_id,
                 outcome,
             } => match self.pending.remove(&request_id) {
-                Some((call, reply)) => {
+                Some(Pending { call, reply }) => {
                     drop(reply.send(outcome.map_err(|message| Error::Control {
                         subtype: String::from(call.subtype()),
                         message,
@@ -449,7 +455,7 @@ impl Actor {
                     .await
                 {
                     Ok(()) => {
-                        self.pending.insert(request_id, (call, reply));
+                        self.pending.insert(request_id, Pending { call, reply });
                     }
                     Err(e) => drop(reply.send(Err(e))),
                 }
@@ -498,7 +504,7 @@ impl Actor {
                 self.process = Process::Exited(status);
                 self.pending
                     .drain()
-                    .for_each(|(_, (_, reply))| drop(reply.send(Err(Error::Exited))));
+                    .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
                 self.open_permissions.clear();
                 self.emit(ClaudeEvent::Exited { status }).await;
                 status

@@ -304,12 +304,18 @@ struct Open {
     shape: AnswerShape,
 }
 
+/// A request we sent, waiting for its response.
+struct Pending {
+    method: String,
+    reply: oneshot::Sender<Result<Value, Error>>,
+}
+
 struct Actor {
     process: Process,
     events: mpsc::Sender<CodexEvent>,
     stdout_log: Option<std::fs::File>,
-    /// Our requests awaiting a response, by JSON-RPC id, with their method.
-    pending: HashMap<i64, (String, oneshot::Sender<Result<Value, Error>>)>,
+    /// Our requests awaiting a response, by JSON-RPC id.
+    pending: HashMap<i64, Pending>,
     open: HashMap<ApprovalId, Open>,
     next_id: i64,
 }
@@ -430,7 +436,7 @@ impl Actor {
             RequestId::String(_) => None,
         };
         match pending {
-            Some((method, reply)) => {
+            Some(Pending { method, reply }) => {
                 match (method.as_str(), &outcome) {
                     (methods::INITIALIZE, Ok(_)) => match self.write(Outbound::Initialized).await {
                         Ok(()) => {}
@@ -455,7 +461,7 @@ impl Actor {
                 let method = String::from(call.method());
                 match self.write(Outbound::Request { id, call }).await {
                     Ok(()) => {
-                        self.pending.insert(id, (method, reply));
+                        self.pending.insert(id, Pending { method, reply });
                     }
                     Err(e) => drop(reply.send(Err(e))),
                 }
@@ -514,7 +520,7 @@ impl Actor {
                 self.process = Process::Exited(status);
                 self.pending
                     .drain()
-                    .for_each(|(_, (_, reply))| drop(reply.send(Err(Error::Exited))));
+                    .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
                 self.open.clear();
                 self.emit(CodexEvent::Exited { status }).await;
                 status
