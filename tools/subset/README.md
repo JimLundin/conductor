@@ -90,7 +90,8 @@ facts from other files, so `check` first gathers, from every file under
 types used as a `Result`'s error, the actor loop-state types (the `Self`
 of a `run(mut self)` whose body is an actor loop, and the type a loop's
 `let mut` state is built from), the types of ours named in a loop-state
-type's fields, and the newtypes that derive `Ord`. The facts
+type's fields or in the variants of an enum of ours it owns, and the
+newtypes that derive `Ord`. The facts
 are names, not resolved paths.
 
 | Id | Rule |
@@ -106,7 +107,7 @@ are names, not resolved paths.
 | `expr.loop` | a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007) |
 | `expr.break` | `break` only with a value, out of an actor loop (proposal 0007) |
 | `item.fn.receiver.mut` | `mut self` only on a fn whose body is an actor loop (proposal 0008) |
-| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008) |
+| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
@@ -446,9 +447,12 @@ commit whose files don't parse is left out, with a note on stderr.
   enum. `docs/subset/compromises.md` lists these.
 - **Ownership and receivers are approximated by name.** 0008's "a value
   that loop state owns" is a type of ours named anywhere in a field type of
-  a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down. A
-  type that a loop state merely mentions, say in `PhantomData<T>`, counts
-  too, and a value two fields down doesn't. 0024's `.0.cmp(` is flagged
+  a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down.
+  An enum of ours is transparent, as `Option` is: the types in its
+  variants' payloads are owned wherever the enum is, so `Connected` in
+  `phase: Phase` with `Phase::Connected(Connected)` is owned. A type that a
+  loop state merely mentions, say in `PhantomData<T>`, counts too, and a
+  value two struct fields down doesn't. 0024's `.0.cmp(` is flagged
   only where the receiver is `self` in an impl of an ordered newtype or a
   parameter declared as one; `event.seq.0.cmp(..)` passes.
 - **`cfg` pairs are matched by name.** A `cfg` fn or impl is paired when an

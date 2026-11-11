@@ -39,7 +39,8 @@ doesn't expand macros, so a reviewer still checks these:
   because `Option` and `Some` aren't ours. The reviewer checks that a
   boundary value doesn't flow on into our types. 0008's "a value that loop
   state owns" is approximated as "a type of ours named in a field type of a
-  loop-state type", one step down. 0024's "never compare through `.0`" is
+  loop-state type", one step down, with enums of ours transparent so
+  their variant payloads count too. 0024's "never compare through `.0`" is
   checked only where the receiver is `self` in an impl of an ordered
   newtype or a parameter declared as one. 0028's predicate leaves aren't
   typed, so `|x| x.flag` on a library `bool` passes.

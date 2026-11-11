@@ -28,8 +28,10 @@ pub struct Facts {
     /// actor loop, and the type a loop's `let mut` state is built from.
     pub loop_states: BTreeSet<String>,
     /// Types of ours that a loop state owns: named anywhere in the type of
-    /// one of its fields, as in `Vec<Turn>` or `Option<FrameBuffer>`. One
-    /// step down only (proposal 0008, widened in version 4).
+    /// one of its fields, as in `Vec<Turn>` or `Option<FrameBuffer>`, or in
+    /// a variant payload of an enum of ours it owns, as `Connected` in
+    /// `phase: Phase` with `Phase::Connected(Connected)`. One struct step
+    /// down only (proposal 0008, widened in version 4; payloads in version 5).
     pub owned_by_state: BTreeSet<String>,
     /// Newtype structs that derive `Ord` (proposal 0024).
     pub ord_newtypes: BTreeSet<String>,
@@ -41,13 +43,14 @@ impl Facts {
             facts: Facts::default(),
             self_ty: None,
             field_types: BTreeMap::new(),
+            enums: BTreeSet::new(),
         };
         for (path, file) in files {
             gather.facts.crates.extend(crate_name(path));
             gather.visit_file(file);
         }
         let mut facts = gather.facts;
-        facts.owned_by_state = facts
+        let mut owned: BTreeSet<String> = facts
             .loop_states
             .iter()
             .filter_map(|state| gather.field_types.get(state))
@@ -55,6 +58,22 @@ impl Facts {
             .filter(|name| facts.types.contains(*name))
             .cloned()
             .collect();
+        // An enum is transparent, as `Option` is: its payloads are owned
+        // wherever the enum is.
+        let mut enums: Vec<String> = owned
+            .iter()
+            .filter(|name| gather.enums.contains(*name))
+            .cloned()
+            .collect();
+        while let Some(name) = enums.pop() {
+            let payloads = gather.field_types.get(&name).into_iter().flatten();
+            for payload in payloads.filter(|p| facts.types.contains(*p)) {
+                if owned.insert(payload.clone()) && gather.enums.contains(payload) {
+                    enums.push(payload.clone());
+                }
+            }
+        }
+        facts.owned_by_state = owned;
         facts
     }
 
@@ -84,6 +103,7 @@ struct Gather {
     self_ty: Option<String>,
     /// For each struct or enum, every name in the types of its fields.
     field_types: BTreeMap<String, BTreeSet<String>>,
+    enums: BTreeSet<String>,
 }
 
 impl Gather {
@@ -116,6 +136,7 @@ impl<'ast> Visit<'ast> for Gather {
 
     fn visit_item_enum(&mut self, i: &'ast syn::ItemEnum) {
         self.facts.types.insert(i.ident.to_string());
+        self.enums.insert(i.ident.to_string());
         self.field_types
             .entry(i.ident.to_string())
             .or_default()
