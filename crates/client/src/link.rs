@@ -644,10 +644,10 @@ impl Link {
     async fn adopt(&mut self, welcome: &Welcome) -> Result<(), Stopped> {
         match self
             .cursor
-            .map(|cursor| cursor.epoch.0.cmp(&welcome.epoch.0))
+            .and_then(|cursor| cursor.epoch.eq(&welcome.epoch).then_some(cursor))
         {
-            Some(Ordering::Equal) => Ok(()),
-            Some(Ordering::Less | Ordering::Greater) | None => {
+            Some(_) => Ok(()),
+            None => {
                 self.cursor = Some(Cursor {
                     epoch: welcome.epoch,
                     seq: HostSeq(0),

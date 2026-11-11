@@ -1,8 +1,6 @@
 //! A host's transcript folded from its events: what the UI renders. No UI
 //! types, so it is unit-testable and shared by every client target.
 
-use std::cmp::Ordering;
-
 use proto::{Decision, EventKind, RequestId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,9 +128,9 @@ impl Item {
                 id: open,
                 tool,
                 detail,
-                outcome: match open.0.cmp(&id.0) {
-                    Ordering::Equal => Some(outcome.clone()),
-                    Ordering::Less | Ordering::Greater => current,
+                outcome: match open.eq(&id).then_some(outcome) {
+                    Some(resolved) => Some(resolved.clone()),
+                    None => current,
                 },
             },
             other => other,

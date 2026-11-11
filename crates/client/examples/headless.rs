@@ -221,9 +221,11 @@ impl Session {
         match event.kind {
             EventKind::TranscriptDelta { .. } => {
                 self.deltas = self.deltas.saturating_add(1);
-                let due = self.reconnect_after.map(|after| after.cmp(&self.deltas));
+                let due = self
+                    .reconnect_after
+                    .and_then(|after| after.eq(&self.deltas).then_some(after));
                 match (due, self.reconnected) {
-                    (Some(Ordering::Equal), Reconnected::No) => {
+                    (Some(_), Reconnected::No) => {
                         self.reconnected = Reconnected::Yes;
                         self.log(format!(
                             "dropping the connection mid-turn at seq {}",
