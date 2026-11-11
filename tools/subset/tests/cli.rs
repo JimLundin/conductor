@@ -553,3 +553,598 @@ fn tokio_test_fns_may_use_the_test_macros() {
         ""
     );
 }
+
+/// Checks one rule: `pass` must be clean, and `fail` must give `expected`.
+fn rule_case(name: &str, path: &str, pass: &str, fail: &str) -> String {
+    let fail_path = path.replace(".rs", "_fail.rs");
+    check_repo_config(name, &[(path, pass), (&fail_path, fail)])
+}
+
+#[test]
+fn only_pub_crate_restricts_visibility() {
+    assert_eq!(
+        rule_case(
+            "vis-crate",
+            "crates/daemon/src/a.rs",
+            "pub(crate) fn shared() {}\n",
+            "pub(super) fn shared() {}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: vis.restricted: only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003)\n"
+    );
+}
+
+#[test]
+fn a_pub_crate_struct_has_no_pub_fields() {
+    assert_eq!(
+        rule_case(
+            "pub-field",
+            "crates/daemon/src/a.rs",
+            "pub(crate) struct Seen {\n    pub(crate) seq: u64,\n}\n",
+            "pub(crate) struct Seen {\n    pub seq: u64,\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: vis.pub: a field of a `pub(crate)` struct is `pub(crate)`, never `pub` (proposal 0003)\n"
+    );
+}
+
+#[test]
+fn struct_update_takes_a_path_or_a_constructor_call() {
+    assert_eq!(
+        rule_case(
+            "struct-update",
+            "crates/daemon/src/a.rs",
+            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host }\n}\n\nfn options(model: String) -> Options {\n    Options { model, ..Options::new() }\n}\n",
+            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host.clone() }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.struct.update: the base of `..base` is a path or a constructor call (proposal 0004)\n"
+    );
+}
+
+#[test]
+fn unit_type_only_in_results_signals_and_main() {
+    assert_eq!(
+        rule_case(
+            "unit-type",
+            "crates/daemon/src/a.rs",
+            "fn ready(done: oneshot::Sender<()>) -> Result<(), Lost> {\n    done.send(()).map_err(Lost::from_unit)\n}\n",
+            "fn nothing() -> Option<()> {\n    None\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:24: type.unit: `()` as a type only in `Result<(), E>`, a signalling channel or future, or `fn main`'s return type (proposal 0005)\n"
+    );
+}
+
+#[test]
+fn unit_value_only_in_ok_and_signals() {
+    assert_eq!(
+        rule_case(
+            "unit-value",
+            "crates/daemon/src/a.rs",
+            "fn ok() -> Result<(), Lost> {\n    Ok(())\n}\n",
+            "fn nothing() {\n    drop(())\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:10: expr.unit: `()` as a value only in `Ok(())`, or creating or sending on a signalling channel (proposal 0005)\n"
+    );
+}
+
+#[test]
+fn async_blocks_only_spawned_or_as_stream_bodies() {
+    assert_eq!(
+        rule_case(
+            "async-block",
+            "crates/daemon/src/a.rs",
+            "fn start(rx: Inbox) {\n    drop(tokio::spawn(async move { work(rx).await }));\n}\n\nfn events(rx: Inbox) -> Events {\n    stream::unfold(rx, |rx| async move { next(rx).await })\n}\n",
+            "async fn attempt() -> Result<u8, Lost> {\n    let result = async { step().await }.await;\n    result\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:18: expr.async: an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006)\n"
+    );
+}
+
+#[test]
+fn tokio_main_marks_fn_main() {
+    assert_eq!(
+        check_repo_config(
+            "tokio-main-host",
+            &[
+                (
+                    "crates/daemon/src/main.rs",
+                    "#[tokio::main]\nasync fn main() {}\n"
+                ),
+                (
+                    "crates/agents/src/bin/s1.rs",
+                    "#[tokio::main]\nasync fn start() {}\n"
+                ),
+            ]
+        ),
+        "crates/agents/src/bin/s1.rs:1:1: attr.tokio::main: `#[tokio::main]` only on `fn main` (proposal 0006)\n"
+    );
+}
+
+const ACTOR: &str = "impl Log {
+    async fn run(mut self, mut inbox: Inbox) -> Result<Infallible, Stopped> {
+        loop {
+            let msg = inbox.recv().await.ok_or(Stopped {})?;
+            self.on(msg);
+        }
+    }
+
+    fn on(&mut self, msg: Msg) {
+        self.head = msg.seq;
+    }
+}
+
+async fn drive(inbox: Inbox) -> Outcome {
+    let mut state = Turns::new();
+    loop {
+        match inbox.recv().await {
+            Some(Msg::Done(outcome)) => break outcome,
+            Some(msg) => state = state.on(msg),
+            None => break Outcome::Lost,
+        }
+    }
+}
+
+impl Turns {
+    fn count(&mut self) {
+        self.seen = self.seen.saturating_add(1);
+    }
+}
+";
+
+#[test]
+fn a_loop_is_the_whole_body_of_an_actor_fn() {
+    assert_eq!(
+        rule_case(
+            "loop-position",
+            "crates/daemon/src/a.rs",
+            ACTOR,
+            "async fn run(inbox: Inbox) {\n    let host = Host::new();\n    loop {\n        host.on(inbox.recv().await);\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:3:5: expr.loop: loop must be the whole body of an actor run fn, after at most one `let mut` state (proposal 0007)\n"
+    );
+}
+
+#[test]
+fn a_loop_turn_takes_one_input_and_handles_it_once() {
+    assert_eq!(
+        rule_case(
+            "loop-turn",
+            "crates/daemon/src/a.rs",
+            ACTOR,
+            "async fn run(inbox: Inbox) -> Result<Infallible, Stopped> {\n    loop {\n        let msg = inbox.recv().await.ok_or(Stopped {})?;\n        log(&msg);\n        handle(msg);\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.loop: a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007)\n"
+    );
+}
+
+#[test]
+fn break_carries_a_value_out_of_an_actor_loop() {
+    assert_eq!(
+        rule_case(
+            "break",
+            "crates/daemon/src/a.rs",
+            ACTOR,
+            "async fn drive(inbox: Inbox) -> Outcome {\n    loop {\n        match inbox.recv().await {\n            Some(msg) => handle(msg),\n            None => break,\n        }\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:5:21: expr.break: `break` only with a value, out of an actor loop (proposal 0007)\n"
+    );
+}
+
+#[test]
+fn mut_self_only_on_an_actor_loop_fn() {
+    assert_eq!(
+        rule_case(
+            "mut-self",
+            "crates/daemon/src/a.rs",
+            ACTOR,
+            "impl Log {\n    fn with_head(mut self, head: HostSeq) -> Log {\n        self.head = head;\n        self\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:18: item.fn.receiver.mut: `mut self` only on a fn whose body is an actor loop (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn ref_mut_self_only_on_loop_state_methods() {
+    assert_eq!(
+        rule_case(
+            "ref-mut-self",
+            "crates/daemon/src/a.rs",
+            ACTOR,
+            "impl Host {\n    fn rename(&mut self, name: String) {\n        self.name = name;\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn let_mut_is_loop_state_or_lent_as_mut() {
+    assert_eq!(
+        rule_case(
+            "let-mut",
+            "crates/daemon/src/a.rs",
+            "async fn body(mut reader: Reader) -> Result<Vec<u8>, Lost> {\n    let mut buf = Vec::new();\n    reader.read_to_end(&mut buf).await.map_err(Lost::Read)?;\n    Ok(buf)\n}\n",
+            "fn count(n: u64) -> Option<u64> {\n    let mut total = n;\n    total = total.checked_add(1)?;\n    Some(total)\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: stmt.let.mut: `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:3:11: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn a_mut_binding_is_never_reassigned() {
+    assert_eq!(
+        rule_case(
+            "pat-mut",
+            "crates/daemon/src/a.rs",
+            "fn drain(mut rx: Inbox) {\n    drop(rx.try_recv());\n}\n",
+            "fn reset(mut n: u64) -> u64 {\n    n = 0;\n    n\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:10: pat.ident.mut: a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:2:7: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn assignment_only_to_self_fields_and_loop_state() {
+    assert_eq!(
+        rule_case(
+            "assign",
+            "crates/daemon/src/a.rs",
+            ACTOR,
+            "impl Log {\n    fn head(&self, seen: Seen) {\n        seen.seq = self.head;\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:3:18: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn no_mut_reference_to_our_own_types() {
+    assert_eq!(
+        rule_case(
+            "ref-mut-ours",
+            "crates/daemon/src/a.rs",
+            "struct Log {\n    head: HostSeq,\n}\n\nasync fn fill(reader: Reader, buf: &mut Vec<u8>) -> Result<usize, Lost> {\n    reader.read(buf).await.map_err(Lost::Read)\n}\n",
+            "fn bump(log: &mut Log) {\n    drop(log)\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:15: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposal 0008)\n"
+    );
+}
+
+#[test]
+fn trait_impls_only_for_library_traits() {
+    assert_eq!(
+        rule_case(
+            "impl-trait",
+            "crates/daemon/src/a.rs",
+            "impl Drop for Guard {\n    fn drop(&mut self) {\n        self.child.start_kill().ok();\n    }\n}\n",
+            "impl Display for Guard {\n    fn fmt(&self, f: &mut Formatter) -> fmt::Result {\n        f.write_str(\"guard\")\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: item.impl.trait: trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)\n"
+    );
+}
+
+#[test]
+fn lifetimes_only_in_library_trait_impls() {
+    assert_eq!(
+        rule_case(
+            "lifetimes",
+            "crates/proto/src/a.rs",
+            "impl<'de> Deserialize<'de> for Seq {\n    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Seq, D::Error> {\n        u64::deserialize(d).map(Seq)\n    }\n}\n",
+            "fn first<'a>(name: &'a str) -> &'a str {\n    name\n}\n",
+        ),
+        "crates/proto/src/a_fail.rs:1:10: generics.lifetime: lifetime parameters only in a library trait impl (proposal 0009)\n\
+         crates/proto/src/a_fail.rs:1:21: type.lifetime: lifetimes only in a library trait impl, where its signature demands them (proposal 0009)\n\
+         crates/proto/src/a_fail.rs:1:33: type.lifetime: lifetimes only in a library trait impl, where its signature demands them (proposal 0009)\n"
+    );
+}
+
+#[test]
+fn thiserror_only_on_error_types() {
+    assert_eq!(
+        rule_case(
+            "thiserror-host",
+            "crates/daemon/src/a.rs",
+            "#[derive(Debug, thiserror::Error)]\nenum Lost {\n    #[error(\"the peer closed\")]\n    Closed,\n}\n\nfn wait() -> Result<u8, Lost> {\n    Err(Lost::Closed)\n}\n",
+            "#[derive(Debug, thiserror::Error)]\nenum Outcome {\n    #[error(\"done\")]\n    Done,\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: attr.derive: `thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010)\n"
+    );
+}
+
+#[test]
+fn each_error_variant_has_one_message() {
+    assert_eq!(
+        rule_case(
+            "error-message",
+            "crates/daemon/src/a.rs",
+            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading {0}\")]\n    Read(String),\n}\n",
+            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(transparent)]\n    Io(std::io::Error),\n    Parse(String),\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:3:5: attr.error: each error variant carries one `#[error(\"…\")]` message, never `transparent` (proposal 0010)\n\
+         crates/daemon/src/a_fail.rs:5:5: attr.error: each error variant carries one `#[error(\"…\")]` message, never `transparent` (proposal 0010)\n"
+    );
+}
+
+#[test]
+fn from_only_on_the_one_variant_holding_a_foreign_type() {
+    assert_eq!(
+        rule_case(
+            "from-once",
+            "crates/daemon/src/a.rs",
+            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading: {0}\")]\n    Read(#[from] std::io::Error),\n    #[error(\"parsing: {0}\")]\n    Parse(#[from] toml::de::Error),\n}\n",
+            "#[derive(Debug, thiserror::Error)]\nenum LoadError {\n    #[error(\"reading: {0}\")]\n    Read(#[from] std::io::Error),\n    #[error(\"writing: {0}\")]\n    Write(std::io::Error),\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:4:10: attr.from: `#[from]` only on the one variant holding a given foreign error type (proposal 0011)\n"
+    );
+}
+
+#[test]
+fn serde_attributes_take_only_the_listed_keys() {
+    assert_eq!(
+        rule_case(
+            "serde-keys",
+            "crates/proto/src/a.rs",
+            "#[derive(Serialize, Deserialize)]\n#[serde(tag = \"type\", rename_all = \"snake_case\")]\nenum Frame {\n    Hello { host: String },\n}\n",
+            "#[derive(Serialize, Deserialize)]\nstruct Hello {\n    #[serde(default)]\n    host: String,\n}\n",
+        ),
+        "crates/proto/src/a_fail.rs:3:5: attr.serde: `#[serde]` only with `transparent`, `tag`, `content`, `rename_all` and `rename` (proposal 0012)\n"
+    );
+}
+
+#[test]
+fn type_params_only_on_codec_fns() {
+    assert_eq!(
+        rule_case(
+            "type-param",
+            "crates/proto/src/a.rs",
+            "pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {\n    serde_json::to_vec(value)\n}\n",
+            "pub struct Tagged<T> {\n    value: T,\n}\n\nfn copy<T: Clone>(value: &T) -> T {\n    value.clone()\n}\n",
+        ),
+        "crates/proto/src/a_fail.rs:1:19: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n\
+         crates/proto/src/a_fail.rs:5:9: generics.type_param: a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)\n"
+    );
+}
+
+#[test]
+fn slices_only_as_parameters_and_consts() {
+    assert_eq!(
+        rule_case(
+            "slice",
+            "crates/daemon/src/a.rs",
+            "const ALPN: &[u8] = b\"conductor/1\";\n\nfn total(sizes: &[u64]) -> Option<u64> {\n    sizes.iter().copied().try_fold(0, |sum, size| sum.checked_add(size))\n}\n",
+            "struct Packet {\n    bytes: Box<[u8]>,\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:16: type.slice: `&[T]` only as a parameter type or a `const` type (proposal 0014)\n"
+    );
+}
+
+#[test]
+fn array_types_only_for_bytes_and_const_tables() {
+    assert_eq!(
+        rule_case(
+            "array-type",
+            "crates/daemon/src/a.rs",
+            "struct Key([u8; 32]);\n\nconst BACKOFF: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(5)];\n",
+            "struct Pair([u64; 2]);\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:13: type.array: an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015)\n"
+    );
+}
+
+#[test]
+fn array_literals_only_as_call_arguments_and_consts() {
+    assert_eq!(
+        rule_case(
+            "array-value",
+            "crates/daemon/src/a.rs",
+            "fn git(cmd: Command) -> Command {\n    cmd.args([\"init\", \"-q\"])\n}\n\nfn hosts(a: Host, b: Host) -> Vec<Host> {\n    Vec::from([a, b])\n}\n",
+            "fn pair(a: Host, b: Host) -> Vec<Host> {\n    let hosts = [a, b];\n    Vec::from(hosts)\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:17: expr.array: an array literal only passed straight to a call, or as a `const` table (proposal 0015)\n"
+    );
+}
+
+#[test]
+fn array_repeats_only_of_a_literal() {
+    assert_eq!(
+        rule_case(
+            "repeat",
+            "crates/daemon/src/a.rs",
+            "fn buffer() -> [u8; 16] {\n    [0u8; 16]\n}\n",
+            "fn buffer(fill: u8) -> [u8; 16] {\n    [fill; 16]\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.repeat: an array repeat only of a literal, as in `[0u8; N]` (proposal 0015)\n"
+    );
+}
+
+const CFG_PAIR_SRC: &str = "#[cfg(unix)]\nfn socket() -> Socket {\n    Socket::Unix\n}\n\n#[cfg(not(unix))]\nfn socket() -> Socket {\n    Socket::Tcp\n}\n";
+
+#[test]
+fn cfg_takes_only_the_platform_predicates() {
+    assert_eq!(
+        rule_case(
+            "cfg-predicate",
+            "crates/daemon/src/a.rs",
+            CFG_PAIR_SRC,
+            "#[cfg(feature = \"tls\")]\nmod tls;\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: attr.cfg: `cfg` only with `target_family = \"wasm\"`, `unix` or their `not` (proposal 0016)\n"
+    );
+}
+
+#[test]
+fn cfg_sits_on_items_or_atop_a_test_file() {
+    assert_eq!(
+        check_repo_config(
+            "cfg-host",
+            &[
+                (
+                    "crates/agents/tests/replay.rs",
+                    "#![cfg(unix)]\n\nfn replay() {}\n"
+                ),
+                (
+                    "crates/agents/src/wire.rs",
+                    "fn send(frame: Frame) -> Result<(), Lost> {\n    #[cfg(unix)]\n    let socket = frame.socket();\n    Ok(())\n}\n"
+                ),
+            ]
+        ),
+        "crates/agents/src/wire.rs:2:5: attr.cfg: `cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016)\n"
+    );
+}
+
+#[test]
+fn a_cfg_item_has_its_counterpart_in_the_same_file() {
+    assert_eq!(
+        rule_case(
+            "cfg-pair",
+            "crates/daemon/src/a.rs",
+            CFG_PAIR_SRC,
+            "#[cfg(unix)]\nfn socket() -> Socket {\n    Socket::Unix\n}\n\n#[cfg(not(unix))]\nfn listen() -> Socket {\n    Socket::Tcp\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:1: attr.cfg: a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016)\n\
+         crates/daemon/src/a_fail.rs:6:1: attr.cfg: a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016)\n"
+    );
+}
+
+#[test]
+fn dyn_only_as_a_wasm_closure() {
+    assert_eq!(
+        rule_case(
+            "dyn",
+            "crates/client/src/platform/a.rs",
+            "struct Listeners {\n    on_open: Closure<dyn FnMut(Event)>,\n}\n",
+            "struct Listeners {\n    on_open: Box<dyn Fn(Event)>,\n}\n",
+        ),
+        "crates/client/src/platform/a_fail.rs:2:18: type.dyn: `dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017)\n"
+    );
+}
+
+#[test]
+fn closures_outside_method_calls_only_for_callbacks_streams_and_hooks() {
+    assert_eq!(
+        rule_case(
+            "closure",
+            "crates/client/src/platform/a.rs",
+            "fn on_open(tx: Sender) -> Callback {\n    Closure::new(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
+            "fn on_open(tx: Sender) -> Callback {\n    Callback::wrap(move |event| drop(tx.send(Msg::Open(event))))\n}\n",
+        ),
+        "crates/client/src/platform/a_fail.rs:2:20: expr.closure: a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018)\n"
+    );
+}
+
+#[test]
+fn glob_imports_only_for_the_dioxus_prelude() {
+    assert_eq!(
+        rule_case(
+            "glob",
+            "crates/app/src/a.rs",
+            "use dioxus::prelude::*;\n",
+            "use std::collections::*;\n",
+        ),
+        "crates/app/src/a_fail.rs:1:23: item.use.glob: a glob import only for `dioxus::prelude::*` (proposal 0018)\n"
+    );
+}
+
+#[test]
+fn allow_only_for_useless_format_at_the_app_root() {
+    assert_eq!(
+        check_repo_config(
+            "allow",
+            &[(
+                "crates/app/src/main.rs",
+                "#![allow(clippy::useless_format)]\n#![allow(dead_code)]\n\nfn main() {}\n"
+            )]
+        ),
+        "crates/app/src/main.rs:2:1: attr.allow: only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018)\n"
+    );
+}
+
+#[test]
+fn bool_only_as_a_clap_flag_field() {
+    assert_eq!(
+        check_repo_config(
+            "clap-bool",
+            &[
+                (
+                    "crates/daemon/src/main.rs",
+                    "#[derive(Parser)]\nstruct Args {\n    #[arg(long)]\n    verbose: bool,\n}\n"
+                ),
+                (
+                    "crates/client/examples/headless.rs",
+                    "fn verbosity(verbose: bool) -> Verbosity {\n    Verbosity::from_flag(verbose)\n}\n"
+                ),
+            ]
+        ),
+        "crates/client/examples/headless.rs:1:23: type.bool: `bool` only as a flag field of a clap `Parser` struct (proposal 0019)\n"
+    );
+}
+
+#[test]
+fn named_choices_are_a_value_enum() {
+    assert_eq!(
+        check_repo_config(
+            "value-parser",
+            &[
+                (
+                    "crates/daemon/src/main.rs",
+                    "#[derive(Parser)]\nstruct Args {\n    #[arg(long, value_enum)]\n    provider: Provider,\n}\n"
+                ),
+                (
+                    "crates/client/examples/headless.rs",
+                    "#[derive(Parser)]\nstruct Args {\n    #[arg(long, value_parser = [\"claude\", \"codex\"])]\n    provider: String,\n}\n"
+                ),
+            ]
+        ),
+        "crates/client/examples/headless.rs:3:5: attr.arg: a choice between named values is a `ValueEnum`, not `value_parser = [...]` (proposal 0019)\n"
+    );
+}
+
+#[test]
+fn tokio_test_takes_no_arguments_and_marks_an_async_fn() {
+    assert_eq!(
+        rule_case(
+            "tokio-test-args",
+            "crates/daemon/tests/a.rs",
+            "#[tokio::test]\nasync fn replays() {\n    assert_eq!(replay().await, Some(3));\n}\n",
+            "#[tokio::test(flavor = \"multi_thread\")]\nasync fn replays() {\n    assert_eq!(replay().await, Some(3));\n}\n",
+        ),
+        "crates/daemon/tests/a_fail.rs:1:1: attr.tokio::test: `#[tokio::test]` takes no arguments and marks an `async fn` (proposal 0020)\n"
+    );
+}
+
+#[test]
+fn bool_literals_only_for_external_apis() {
+    assert_eq!(
+        rule_case(
+            "bool-lit",
+            "crates/daemon/src/a.rs",
+            "fn open(path: &Path) -> Result<File, Lost> {\n    OpenOptions::new().create(true).open(path).map_err(Lost::Open)\n}\n\nfn init() -> Capabilities {\n    Capabilities { experimental_api: Some(true) }\n}\n",
+            "enum Live {\n    On,\n    Off,\n}\n\nstruct Flags {\n    live: Live,\n}\n\nimpl Flags {\n    fn on(&self) -> Live {\n        self.live(true)\n    }\n}\n\nfn off() -> Live {\n    Live::from_flag(false)\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:12:19: expr.lit.bool: `true` / `false` only as an argument or field value of an external API (proposal 0021)\n\
+         crates/daemon/src/a_fail.rs:17:21: expr.lit.bool: `true` / `false` only as an argument or field value of an external API (proposal 0021)\n"
+    );
+}
+
+#[test]
+fn env_only_for_cargo_build_constants() {
+    assert_eq!(
+        rule_case(
+            "env",
+            "crates/daemon/src/a.rs",
+            "const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\n",
+            "const HOME: &str = env!(\"HOME\");\n",
+        ),
+        "crates/daemon/src/a_fail.rs:1:20: macro.env: `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR` (proposal 0022)\n"
+    );
+}
+
+#[test]
+fn the_readme_lists_every_shape_rule() {
+    let (code, table, _) = subset(&["rules"]);
+    assert_eq!(code, 0);
+    let readme = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+        .expect("README.md");
+    assert!(
+        readme.contains(&table),
+        "README.md is out of date; paste the output of `subset rules` into it"
+    );
+}

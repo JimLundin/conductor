@@ -23,12 +23,30 @@ list to revisit first when one of them starts to spread.
 
 ## Enforcement is partly by review
 
-The checker enforces ids, not rules. Today it can't check that a construct
-appears only where its rule allows:
+`tools/subset` checks the location rules as `[[scope]]` tables in
+`subset.toml`, the shape rules it can see in the syntax, and the interior
+mutability types (`tools/subset/README.md`). It has no type information and
+doesn't expand macros, so a reviewer still checks these:
 
-- **Location rules:** `rsx!` only in `crates/app`, `dyn` only in `platform/`, clap only in `main.rs`.
-- **Shape rules:** `loop` only as an actor's `run` body, and `mut` only for the loop state.
-- **Interior mutability:** `RefCell` and atomics are not flagged at all. 14 lines use them today.
-
-Until the checker learns location rules and these types, a reviewer checks
-those rules.
+- **Whose type it is.** The tool knows our types and functions only by name.
+  0008(b) `let mut` for an external value is approximated as "never
+  reassigned", 0011 "foreign type" and 0021 "external API" as "not a name we
+  define", and a method call's receiver is ours only when it is `self`.
+  0021's "the parameter is declared `bool`, not a generic we fill with
+  `bool`" needs types.
+- **Why a construct is there.** 0002 `pub` only for what another crate
+  uses, 0006 `async fn` only for I/O, 0012 serde only on types that cross a
+  wire (the tool checks the location), 0013 generics only at the wire
+  boundary (the tool checks the bound), 0014 a slice only for a read-only
+  sequence, 0015 a byte array only where its size is part of a format, and
+  0009 generics only where the trait's signature demands them (the tool
+  allows any inside a listed trait impl).
+- **Macro bodies.** 0007's "each `select!` arm is a single call", Dioxus
+  markup (0018) and `tracing` fields are not parsed.
+- **What a body does.** 0017's callback only forwards the event to a
+  channel, 0018's logic lives in `client`, and 0019's `main` turns the flag
+  into an enum before passing it on.
+- **Pairs by name.** 0016 counts a `cfg` fn or impl as paired when the other
+  platform's item has the same name, and any `use` pairs with any `use`. A
+  `cfg` module needs no pair, since the rule exempts modules that exist on
+  one platform only.

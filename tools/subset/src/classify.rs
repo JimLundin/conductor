@@ -12,7 +12,7 @@ use syn::{
     Item, Lit, Pat, Path, Stmt, TraitItem, Type, TypeParamBound, UnOp, Visibility,
 };
 
-use crate::ids;
+use crate::{ids, rules};
 
 pub struct Rules<'a> {
     pub derives: &'a [String],
@@ -605,7 +605,9 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let span = mac.path.span();
-        if self.macro_allowed(&mac.path) {
+        if mac.path.is_ident("env") && !build_constant(mac) {
+            self.emit_with(span, "macro.env".to_string(), rules::ENV.message);
+        } else if self.macro_allowed(&mac.path) {
             self.emit(span, "macro.allowed");
         } else {
             let id = format!("macro.{}", path_string(&mac.path));
@@ -719,4 +721,15 @@ fn pattern_has_mut(pat: &Pat) -> bool {
     let mut finder = Finder(false);
     finder.visit_pat(pat);
     finder.0
+}
+
+/// `env!` of a variable Cargo sets at build time (proposal 0022).
+fn build_constant(mac: &syn::Macro) -> bool {
+    let args = mac.parse_body_with(Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated);
+    let first = args.ok().and_then(|args| args.into_iter().next());
+    matches!(
+        first,
+        Some(syn::Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }))
+            if ["CARGO_PKG_VERSION", "CARGO_PKG_NAME", "CARGO_MANIFEST_DIR"].contains(&s.value().as_str())
+    )
 }

@@ -1,9 +1,12 @@
 //! `subset`: enforce and measure the Conductor Rust subset (docs/subset.md).
 
+mod actor;
 mod classify;
+mod facts;
 mod ids;
 mod measure;
 mod rules;
+mod shape;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -17,7 +20,8 @@ const USAGE: &str = "usage:
   subset check [--config subset.toml]
   subset report [--config subset.toml] [--json]
   subset measure <paths...> [--json]
-  subset ids";
+  subset ids
+  subset rules";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +120,10 @@ fn run(args: &[String]) -> Result<ExitCode, Fatal> {
         "measure" if !paths.is_empty() => measure(&paths, json),
         "ids" => {
             print!("{}", ids::markdown_table());
+            Ok(ExitCode::SUCCESS)
+        }
+        "rules" => {
+            print!("{}", rules::markdown_table());
             Ok(ExitCode::SUCCESS)
         }
         _ => Err(Fatal(USAGE.to_string())),
@@ -241,48 +249,74 @@ fn violations(config_path: &Path) -> Result<Vec<Violation>, Fatal> {
         macros: &config.macros,
         test_macros: &config.test_macros,
     };
-    let mut out = Vec::new();
+    let mut parsed_files = Vec::new();
     let mut parse_errors = Vec::new();
     for file in &files {
         let relative_path = file.strip_prefix(root).unwrap_or(file);
-        let relative = display(relative_path);
         let src = read(file)?;
-        let parsed = match syn::parse_file(&src) {
-            Ok(parsed) => parsed,
+        match syn::parse_file(&src) {
+            Ok(parsed) => parsed_files.push((relative_path, parsed)),
             Err(e) => {
                 let start = e.span().start();
                 parse_errors.push(format!(
-                    "{relative}:{}:{}: parse error: {e}",
+                    "{}:{}:{}: parse error: {e}",
+                    display(relative_path),
                     start.line,
                     start.column + 1
                 ));
-                continue;
             }
+        }
+    }
+    if !parse_errors.is_empty() {
+        return Err(Fatal(parse_errors.join("\n")));
+    }
+    let facts = facts::Facts::gather(parsed_files.iter().map(|(path, parsed)| (*path, parsed)));
+    let mut out = Vec::new();
+    for (relative_path, parsed) in &parsed_files {
+        let relative = display(relative_path);
+        let kind = shape::FileKind {
+            test: relative_path
+                .components()
+                .any(|c| c == Component::Normal("tests".as_ref())),
+            crate_root: crate_root(relative_path),
         };
-        let test_file = relative_path
-            .components()
-            .any(|c| c == Component::Normal("tests".as_ref()));
         let allowed = Allowed::for_file(&config, relative_path)?;
-        let mut found = classify::classify(&parsed, &rules, test_file);
-        found.sort_by_key(|o| (o.line, o.col));
-        out.extend(
-            found
-                .into_iter()
-                .filter(|o| !allowed.contains(&o.id))
-                .map(|o| Violation {
-                    path: relative.clone(),
-                    reason: allowed.reason(&o),
-                    id: o.id,
-                    line: o.line,
-                    col: o.col,
-                }),
-        );
+        let plain = classify::classify(parsed, &rules, kind.test)
+            .into_iter()
+            .filter(|o| !allowed.contains(&o.id))
+            .map(|o| Violation {
+                path: relative.clone(),
+                reason: allowed.reason(&o),
+                id: o.id,
+                line: o.line,
+                col: o.col,
+            });
+        let shaped = shape::check(parsed, &kind, &facts)
+            .into_iter()
+            .filter(|f| allowed.contains(f.rule.id))
+            .map(|f| Violation {
+                path: relative.clone(),
+                id: f.rule.id.to_string(),
+                reason: f.rule.message.to_string(),
+                line: f.line,
+                col: f.col,
+            });
+        let mut found: Vec<Violation> = plain.chain(shaped).collect();
+        found.sort_by_key(|v| (v.line, v.col));
+        out.extend(found);
     }
-    if parse_errors.is_empty() {
-        Ok(out)
-    } else {
-        Err(Fatal(parse_errors.join("\n")))
-    }
+    Ok(out)
+}
+
+/// `src/lib.rs` or `src/main.rs`: the files whose inner attributes are crate
+/// attributes.
+fn crate_root(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str());
+    let parent = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str());
+    matches!((parent, name), (Some("src"), Some("lib.rs" | "main.rs")))
 }
 
 /// The ids one file may use: the global list and every scope that covers the

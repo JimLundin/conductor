@@ -1,4 +1,220 @@
-//! Reasons named after the accepted proposals' rules.
+//! The shape rules of accepted proposals: where an allowed id may stand and
+//! what form it takes. A rule applies only where its id is allowed; where the
+//! id isn't allowed at all, the id itself is the violation. `subset rules`
+//! prints this as the README table.
+
+pub struct Rule {
+    pub id: &'static str,
+    pub message: &'static str,
+}
+
+const fn rule(id: &'static str, message: &'static str) -> Rule {
+    Rule { id, message }
+}
+
+pub const VIS_CRATE: Rule = rule(
+    "vis.restricted",
+    "only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003)",
+);
+pub const PUB_FIELD: Rule = rule(
+    "vis.pub",
+    "a field of a `pub(crate)` struct is `pub(crate)`, never `pub` (proposal 0003)",
+);
+pub const STRUCT_UPDATE: Rule = rule(
+    "expr.struct.update",
+    "the base of `..base` is a path or a constructor call (proposal 0004)",
+);
+pub const UNIT_TYPE: Rule = rule(
+    "type.unit",
+    "`()` as a type only in `Result<(), E>`, a signalling channel or future, or `fn main`'s return type (proposal 0005)",
+);
+pub const UNIT_VALUE: Rule = rule(
+    "expr.unit",
+    "`()` as a value only in `Ok(())`, or creating or sending on a signalling channel (proposal 0005)",
+);
+pub const ASYNC_BLOCK: Rule = rule(
+    "expr.async",
+    "an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006)",
+);
+pub const TOKIO_MAIN: Rule = rule(
+    "attr.tokio::main",
+    "`#[tokio::main]` only on `fn main` (proposal 0006)",
+);
+pub const LOOP_POSITION: Rule = rule(
+    "expr.loop",
+    "loop must be the whole body of an actor run fn, after at most one `let mut` state (proposal 0007)",
+);
+pub const LOOP_TURN: Rule = rule(
+    "expr.loop",
+    "a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007)",
+);
+pub const BREAK: Rule = rule(
+    "expr.break",
+    "`break` only with a value, out of an actor loop (proposal 0007)",
+);
+pub const MUT_SELF: Rule = rule(
+    "item.fn.receiver.mut",
+    "`mut self` only on a fn whose body is an actor loop (proposal 0008)",
+);
+pub const REF_MUT_SELF: Rule = rule(
+    "item.fn.receiver.mut",
+    "`&mut self` only on methods of an actor's loop state (proposal 0008)",
+);
+pub const LET_MUT: Rule = rule(
+    "stmt.let.mut",
+    "`let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008)",
+);
+pub const PAT_MUT: Rule = rule(
+    "pat.ident.mut",
+    "a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008)",
+);
+pub const ASSIGN: Rule = rule(
+    "expr.assign",
+    "assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)",
+);
+pub const REF_MUT_OURS: Rule = rule(
+    "type.reference.mut",
+    "no `&mut` of our own types other than `&mut self` (proposal 0008)",
+);
+pub const IMPL_TRAIT: Rule = rule(
+    "item.impl.trait",
+    "trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)",
+);
+pub const LIFETIME_PARAM: Rule = rule(
+    "generics.lifetime",
+    "lifetime parameters only in a library trait impl (proposal 0009)",
+);
+pub const LIFETIME: Rule = rule(
+    "type.lifetime",
+    "lifetimes only in a library trait impl, where its signature demands them (proposal 0009)",
+);
+pub const THISERROR_HOST: Rule = rule(
+    "attr.derive",
+    "`thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010)",
+);
+pub const ERROR_MESSAGE: Rule = rule(
+    "attr.error",
+    "each error variant carries one `#[error(\"…\")]` message, never `transparent` (proposal 0010)",
+);
+pub const FROM_ONCE: Rule = rule(
+    "attr.from",
+    "`#[from]` only on the one variant holding a given foreign error type (proposal 0011)",
+);
+pub const SERDE_KEYS: Rule = rule(
+    "attr.serde",
+    "`#[serde]` only with `transparent`, `tag`, `content`, `rename_all` and `rename` (proposal 0012)",
+);
+pub const TYPE_PARAM: Rule = rule(
+    "generics.type_param",
+    "a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013)",
+);
+pub const SLICE: Rule = rule(
+    "type.slice",
+    "`&[T]` only as a parameter type or a `const` type (proposal 0014)",
+);
+pub const ARRAY_TYPE: Rule = rule(
+    "type.array",
+    "an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015)",
+);
+pub const ARRAY_VALUE: Rule = rule(
+    "expr.array",
+    "an array literal only passed straight to a call, or as a `const` table (proposal 0015)",
+);
+pub const REPEAT: Rule = rule(
+    "expr.repeat",
+    "an array repeat only of a literal, as in `[0u8; N]` (proposal 0015)",
+);
+pub const CFG_PREDICATE: Rule = rule(
+    "attr.cfg",
+    "`cfg` only with `target_family = \"wasm\"`, `unix` or their `not` (proposal 0016)",
+);
+pub const CFG_HOST: Rule = rule(
+    "attr.cfg",
+    "`cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016)",
+);
+pub const CFG_PAIR: Rule = rule(
+    "attr.cfg",
+    "a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016)",
+);
+pub const DYN: Rule = rule(
+    "type.dyn",
+    "`dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017)",
+);
+pub const CLOSURE: Rule = rule(
+    "expr.closure",
+    "a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018)",
+);
+pub const GLOB: Rule = rule(
+    "item.use.glob",
+    "a glob import only for `dioxus::prelude::*` (proposal 0018)",
+);
+pub const ALLOW: Rule = rule(
+    "attr.allow",
+    "only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018)",
+);
+pub const CLAP_BOOL: Rule = rule(
+    "type.bool",
+    "`bool` only as a flag field of a clap `Parser` struct (proposal 0019)",
+);
+pub const VALUE_PARSER: Rule = rule(
+    "attr.arg",
+    "a choice between named values is a `ValueEnum`, not `value_parser = [...]` (proposal 0019)",
+);
+pub const TOKIO_TEST: Rule = rule(
+    "attr.tokio::test",
+    "`#[tokio::test]` takes no arguments and marks an `async fn` (proposal 0020)",
+);
+pub const BOOL_LIT: Rule = rule(
+    "expr.lit.bool",
+    "`true` / `false` only as an argument or field value of an external API (proposal 0021)",
+);
+pub const ENV: Rule = rule(
+    "macro.env",
+    "`env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR` (proposal 0022)",
+);
+
+pub const RULES: &[&Rule] = &[
+    &VIS_CRATE,
+    &PUB_FIELD,
+    &STRUCT_UPDATE,
+    &UNIT_TYPE,
+    &UNIT_VALUE,
+    &ASYNC_BLOCK,
+    &TOKIO_MAIN,
+    &LOOP_POSITION,
+    &LOOP_TURN,
+    &BREAK,
+    &MUT_SELF,
+    &REF_MUT_SELF,
+    &LET_MUT,
+    &PAT_MUT,
+    &ASSIGN,
+    &REF_MUT_OURS,
+    &IMPL_TRAIT,
+    &LIFETIME_PARAM,
+    &LIFETIME,
+    &THISERROR_HOST,
+    &ERROR_MESSAGE,
+    &FROM_ONCE,
+    &SERDE_KEYS,
+    &TYPE_PARAM,
+    &SLICE,
+    &ARRAY_TYPE,
+    &ARRAY_VALUE,
+    &REPEAT,
+    &CFG_PREDICATE,
+    &CFG_HOST,
+    &CFG_PAIR,
+    &DYN,
+    &CLOSURE,
+    &GLOB,
+    &ALLOW,
+    &CLAP_BOOL,
+    &VALUE_PARSER,
+    &TOKIO_TEST,
+    &BOOL_LIT,
+    &ENV,
+];
 
 const COMPOUND_ASSIGNMENT: &str =
     "compound assignment is not allowed; write `x = x.checked_add(1)?` (proposal 0008)";
@@ -14,4 +230,13 @@ pub fn forbidden(id: &str) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+pub fn markdown_table() -> String {
+    let rows = RULES
+        .iter()
+        .map(|r| format!("| `{}` | {} |\n", r.id, r.message.replace('|', "\\|")));
+    std::iter::once("| Id | Rule |\n|---|---|\n".to_string())
+        .chain(rows)
+        .collect()
 }

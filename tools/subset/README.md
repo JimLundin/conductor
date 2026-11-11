@@ -13,6 +13,7 @@ subset check [--config subset.toml]
 subset report [--config subset.toml] [--json]
 subset measure <paths...> [--json]
 subset ids
+subset rules
 ```
 
 - `check` parses every file that matches `include` and prints one line per
@@ -32,6 +33,8 @@ subset ids
 - `ids` prints the id table below. A test keeps the table in this file equal
   to that output, so add an id to `src/ids.rs` and then paste the new table
   here.
+- `rules` prints the shape rule table below, kept equal the same way from
+  `src/rules.rs`.
 
 `tools/check.sh` runs `subset check` when `SUBSET=1` is set. The flag goes
 away once `crates/` passes, and then the check runs on every commit.
@@ -53,6 +56,68 @@ global `allowed` ids and the ids of every scope that covers it. A use of a
 scoped id in any other file is reported with the scope's `rule` as its
 reason. Ids that a proposal forbids outright, such as compound assignment
 and interior mutability, are reported with that proposal's rule too.
+
+## Shape rules
+
+An accepted proposal often allows an id only in some form or position, such
+as `loop` only as the whole body of an actor's `run` fn (0007). `check`
+reports a use that breaks such a rule with the id and the rule as its
+reason:
+
+```text
+crates/daemon/src/host.rs:12:5: expr.loop: loop must be the whole body of an actor run fn, after at most one `let mut` state (proposal 0007)
+```
+
+A rule is checked only where its id is allowed, by `allowed` or by a scope.
+Where the id isn't allowed, the id itself is the violation. Some rules need
+facts from other files, so `check` first gathers, from every file under
+`include`, the names of our crates, modules, types and free functions, the
+types used as a `Result`'s error, and the actor loop-state types (the `Self`
+of a `run(mut self)` whose body is an actor loop, and the type a loop's
+`let mut` state is built from). The facts are names, not resolved paths.
+
+| Id | Rule |
+|---|---|
+| `vis.restricted` | only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003) |
+| `vis.pub` | a field of a `pub(crate)` struct is `pub(crate)`, never `pub` (proposal 0003) |
+| `expr.struct.update` | the base of `..base` is a path or a constructor call (proposal 0004) |
+| `type.unit` | `()` as a type only in `Result<(), E>`, a signalling channel or future, or `fn main`'s return type (proposal 0005) |
+| `expr.unit` | `()` as a value only in `Ok(())`, or creating or sending on a signalling channel (proposal 0005) |
+| `expr.async` | an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006) |
+| `attr.tokio::main` | `#[tokio::main]` only on `fn main` (proposal 0006) |
+| `expr.loop` | loop must be the whole body of an actor run fn, after at most one `let mut` state (proposal 0007) |
+| `expr.loop` | a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007) |
+| `expr.break` | `break` only with a value, out of an actor loop (proposal 0007) |
+| `item.fn.receiver.mut` | `mut self` only on a fn whose body is an actor loop (proposal 0008) |
+| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state (proposal 0008) |
+| `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
+| `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
+| `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |
+| `type.reference.mut` | no `&mut` of our own types other than `&mut self` (proposal 0008) |
+| `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
+| `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
+| `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |
+| `attr.derive` | `thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010) |
+| `attr.error` | each error variant carries one `#[error("…")]` message, never `transparent` (proposal 0010) |
+| `attr.from` | `#[from]` only on the one variant holding a given foreign error type (proposal 0011) |
+| `attr.serde` | `#[serde]` only with `transparent`, `tag`, `content`, `rename_all` and `rename` (proposal 0012) |
+| `generics.type_param` | a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013) |
+| `type.slice` | `&[T]` only as a parameter type or a `const` type (proposal 0014) |
+| `type.array` | an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015) |
+| `expr.array` | an array literal only passed straight to a call, or as a `const` table (proposal 0015) |
+| `expr.repeat` | an array repeat only of a literal, as in `[0u8; N]` (proposal 0015) |
+| `attr.cfg` | `cfg` only with `target_family = "wasm"`, `unix` or their `not` (proposal 0016) |
+| `attr.cfg` | `cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016) |
+| `attr.cfg` | a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016) |
+| `type.dyn` | `dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017) |
+| `expr.closure` | a closure outside a method call only as the argument of `Closure::new`, `unfold` or a Dioxus hook (proposals 0006, 0017, 0018) |
+| `item.use.glob` | a glob import only for `dioxus::prelude::*` (proposal 0018) |
+| `attr.allow` | only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018) |
+| `type.bool` | `bool` only as a flag field of a clap `Parser` struct (proposal 0019) |
+| `attr.arg` | a choice between named values is a `ValueEnum`, not `value_parser = [...]` (proposal 0019) |
+| `attr.tokio::test` | `#[tokio::test]` takes no arguments and marks an `async fn` (proposal 0020) |
+| `expr.lit.bool` | `true` / `false` only as an argument or field value of an external API (proposal 0021) |
+| `macro.env` | `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR` (proposal 0022) |
 
 ## How constructs are classified
 
@@ -80,8 +145,11 @@ Some rules need context.
 - `macro.allowed` is reported when the macro's full path (such as
   `tracing::info`) or its last segment (such as `format`) is in `macros`.
   Inside a `#[cfg(test)]` item, a `#[test]` or `#[tokio::test]` fn, or a
-  file with a `tests` directory in its path, `test_macros` count too. Any other macro is
-  `macro.<path>`, such as `macro.println` or `macro.tracing::warn`.
+  file with a `tests` directory in its path, `test_macros` count too. Any
+  other macro is `macro.<path>`, such as `macro.println` or
+  `macro.tracing::warn`. `env!` of anything but `CARGO_PKG_VERSION`,
+  `CARGO_PKG_NAME` or `CARGO_MANIFEST_DIR` is `macro.env`, whatever
+  `macros` lists (0022).
 - `attr.cfg_test` covers `#[test]` and exactly `#[cfg(test)]`. Other `cfg`
   attributes are `attr.cfg`.
 - A path type or expression path that names `Cell`, `RefCell`, `OnceCell`,
@@ -111,8 +179,29 @@ Some rules need context.
   `Result`. A closure passed to any method passes.
 - **`type.bool` matches the path `bool` only.** A type alias for `bool`, or
   a `bool` returned by a std method, isn't detected.
-- **Attribute arguments aren't parsed**, apart from the names inside
-  `derive`. `#[serde(...)]` is one `attr.serde`, whatever it contains.
+- **Attribute arguments are only partly read.** The rules read the keys of
+  `#[serde(...)]`, `value_parser = [` in `#[arg(...)]`, the message of
+  `#[error(...)]` and the predicate of `#[cfg(...)]`. Other attributes are
+  one id, whatever they contain.
+- **Shape rules can't see types.** "Ours" means a path from `crate`, `self`,
+  `super`, one of our crates or modules, a name we define, or an associated
+  item of a type we define. So 0008(b) `let mut` for an external value is
+  checked as "never reassigned", 0011's foreign type and 0021's external API
+  as "not ours", and a method's receiver is ours only when it is `self`. A
+  library type that shares a name with one of ours counts as ours.
+- **Some rules stay with the reviewer.** Syntax can't tell why a construct
+  is there: 0002 `pub` only for another crate, 0006 `async fn` only for I/O,
+  0012 serde only on wire types (checked by location), 0013 generics only at
+  the wire boundary (checked by bound), 0014 a slice only for a read-only
+  sequence, 0015 a byte array only where its size is part of a format, and
+  0009 generics only where the trait demands them (any are allowed inside a
+  listed trait impl). Neither can it see what a body does: 0017's callback
+  only forwards to a channel, and 0019's `main` turns its `bool` into an
+  enum. `docs/subset/compromises.md` lists these.
+- **`cfg` pairs are matched by name.** A `cfg` fn or impl is paired when an
+  item of the same kind and name has the other platform's predicate. Any
+  `use` pairs with any `use`, and a `cfg` module needs no pair, since 0016
+  exempts modules that exist on one platform only.
 - **`pat.wild` is allowed everywhere.** The rule in `subset.toml` that
   limits `_` to the positions clippy's wildcard lints allow is left to
   clippy.
