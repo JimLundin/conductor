@@ -1,7 +1,6 @@
 //! Host and client in one process over real iroh connections on loopback, with
 //! relays off so the test needs no network.
 
-use std::str::FromStr;
 use std::time::Duration;
 
 use client::{Cursor, HostLink, LinkOptions, LinkState, PathKind, Target, Update};
@@ -328,7 +327,9 @@ async fn stalled_endpoint(relay: RelayUrl) -> Endpoint {
 async fn a_stalled_dial_goes_live_through_a_fresh_endpoint() {
     let fx = host().await;
     let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let relay = RelayUrl::from_str(&format!("http://{}", silent.local_addr().unwrap())).unwrap();
+    let relay = format!("http://{}", silent.local_addr().unwrap())
+        .parse::<RelayUrl>()
+        .unwrap();
     let target = Target {
         addr: fx.target.addr.clone().with_relay_url(relay.clone()),
         ..fx.target.clone()
