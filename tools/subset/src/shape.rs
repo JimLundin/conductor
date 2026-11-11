@@ -610,7 +610,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             }
             Type::Array(t) => {
                 let bytes = matches!(&*t.elem, Type::Path(p) if p.path.is_ident("u8"));
-                if !(bytes || slot == Slot::ConstType) {
+                if !bytes {
                     self.flag(t.span(), &rules::ARRAY_TYPE);
                 }
             }

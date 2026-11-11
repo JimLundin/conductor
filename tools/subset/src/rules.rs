@@ -110,15 +110,15 @@ pub const TYPE_PARAM: Rule = rule(
 );
 pub const SLICE: Rule = rule(
     "type.slice",
-    "`&[T]` only as a parameter type or a `const` type (proposal 0014)",
+    "`&[T]` only as a parameter type or a `const` type; a `const` list is `const NAME: &[T] = &[..]` (proposal 0014)",
 );
 pub const ARRAY_TYPE: Rule = rule(
     "type.array",
-    "an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015)",
+    "an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015)",
 );
 pub const ARRAY_VALUE: Rule = rule(
     "expr.array",
-    "an array literal only passed straight to a call, or as a `const` table (proposal 0015)",
+    "an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015)",
 );
 pub const REPEAT: Rule = rule(
     "expr.repeat",

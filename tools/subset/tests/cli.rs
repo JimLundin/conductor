@@ -943,20 +943,21 @@ fn slices_only_as_parameters_and_consts() {
             "const ALPN: &[u8] = b\"conductor/1\";\n\nfn total(sizes: &[u64]) -> Option<u64> {\n    sizes.iter().copied().try_fold(0, |sum, size| sum.checked_add(size))\n}\n",
             "struct Packet {\n    bytes: Box<[u8]>,\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:16: type.slice: `&[T]` only as a parameter type or a `const` type (proposal 0014)\n"
+        "crates/daemon/src/a_fail.rs:2:16: type.slice: `&[T]` only as a parameter type or a `const` type; a `const` list is `const NAME: &[T] = &[..]` (proposal 0014)\n"
     );
 }
 
 #[test]
-fn array_types_only_for_bytes_and_const_tables() {
+fn array_types_only_for_bytes() {
     assert_eq!(
         rule_case(
             "array-type",
             "crates/daemon/src/a.rs",
-            "struct Key([u8; 32]);\n\nconst BACKOFF: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(5)];\n",
-            "struct Pair([u64; 2]);\n",
+            "struct Key([u8; 32]);\n\nconst MAGIC: [u8; 4] = [0x63, 0x6f, 0x6e, 0x64];\n",
+            "struct Pair([u64; 2]);\n\nconst BACKOFF: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(5)];\n",
         ),
-        "crates/daemon/src/a_fail.rs:1:13: type.array: an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015)\n"
+        "crates/daemon/src/a_fail.rs:1:13: type.array: an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015)\n\
+         crates/daemon/src/a_fail.rs:3:16: type.array: an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015)\n"
     );
 }
 
@@ -969,7 +970,7 @@ fn array_literals_only_as_call_arguments_and_consts() {
             "fn git(cmd: Command) -> Command {\n    cmd.args([\"init\", \"-q\"])\n}\n\nfn hosts(a: Host, b: Host) -> Vec<Host> {\n    Vec::from([a, b])\n}\n",
             "fn pair(a: Host, b: Host) -> Vec<Host> {\n    let hosts = [a, b];\n    Vec::from(hosts)\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:17: expr.array: an array literal only passed straight to a call, or as a `const` table (proposal 0015)\n"
+        "crates/daemon/src/a_fail.rs:2:17: expr.array: an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015)\n"
     );
 }
 
@@ -982,7 +983,7 @@ fn an_array_literal_behind_a_reference_keeps_its_place() {
             "const STUN_SERVERS: &[&str] = &[\"stun:a:3478\", \"stun:b:3478\"];\n\nfn replay(name: &str) -> Recording {\n    recording(name, &[Frame::Hello, Frame::Bye])\n}\n",
             "fn pair(a: Host, b: Host) -> Pair {\n    let hosts = &[a, b];\n    Pair::new(hosts)\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:18: expr.array: an array literal only passed straight to a call, or as a `const` table (proposal 0015)\n"
+        "crates/daemon/src/a_fail.rs:2:18: expr.array: an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015)\n"
     );
 }
 

@@ -102,9 +102,9 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `attr.from` | `#[from]` only on the one variant of an enum holding a given error type (proposal 0011) |
 | `attr.serde` | `#[serde]` only with `transparent`, `tag`, `content`, `rename_all` and `rename` (proposal 0012) |
 | `generics.type_param` | a type parameter only on a fn, with exactly one bound, `Serialize` or `DeserializeOwned`, and no `where` (proposal 0013) |
-| `type.slice` | `&[T]` only as a parameter type or a `const` type (proposal 0014) |
-| `type.array` | an array type only for bytes (`[u8; N]`) or a `const` table (proposal 0015) |
-| `expr.array` | an array literal only passed straight to a call, or as a `const` table (proposal 0015) |
+| `type.slice` | `&[T]` only as a parameter type or a `const` type; a `const` list is `const NAME: &[T] = &[..]` (proposal 0014) |
+| `type.array` | an array type only for bytes whose size is part of a format or API (`[u8; N]`); a `const` list is `&[T]` (proposals 0014, 0015) |
+| `expr.array` | an array literal only passed straight to a call, as in `f([a, b])` or `f(&[a, b])`, or as a `const` value (proposal 0015) |
 | `expr.repeat` | an array repeat only of a literal, as in `[0u8; N]` (proposal 0015) |
 | `attr.cfg` | `cfg` only with `target_family = "wasm"`, `unix` or their `not` (proposal 0016) |
 | `attr.cfg` | `cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016) |
