@@ -1,13 +1,12 @@
 //! Serves `conductor/1` on accepted iroh connections, and on the data
 //! channels of WebRTC connections negotiated over them (architecture §5.4).
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use proto::{
-    AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, HostSeq, Open, Rejection,
+    AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open, Rejection,
     RtcOffer, Subscribe,
 };
 use tokio::sync::{broadcast, mpsc};
@@ -74,13 +73,13 @@ enum Upcoming {
     Gone,
 }
 
-/// A gap-free subscription (architecture §8): the replay, then the live feed
-/// minus what the replay already covered.
+/// A gap-free subscription (architecture §8): the replay, then the live feed.
+/// The log attaches the feed in the same turn as it takes the replay, so the
+/// two neither overlap nor leave a gap.
 struct Feed {
     send: SendHalf,
     replay: std::vec::IntoIter<Event>,
     live: broadcast::Receiver<Event>,
-    last: HostSeq,
 }
 
 impl ProtocolHandler for Conductor {
@@ -278,7 +277,6 @@ impl Conductor {
                     send,
                     replay: subscription.replay.into_iter(),
                     live: subscription.live,
-                    last: subscribe.after_seq,
                 };
                 let result = feed.run(transport).await;
                 tracing::info!(transport = transport.name(), ?result, "subscription ended");
@@ -292,7 +290,7 @@ impl Feed {
     async fn run(mut self, transport: &Transport) -> Result<(), StreamError> {
         loop {
             match self.next(transport).await {
-                Upcoming::Event(event) => self.write(event).await?,
+                Upcoming::Event(event) => self.send.write(&event).await?,
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
                 Upcoming::Gone => break Ok(()),
             }
@@ -307,18 +305,6 @@ impl Feed {
                 // Without this, an idle feed would outlive its connection.
                 () = transport.closed() => Upcoming::Gone,
             },
-        }
-    }
-
-    /// Skips a live event the replay already sent.
-    async fn write(&mut self, event: Event) -> Result<(), StreamError> {
-        match event.seq.cmp(&self.last) {
-            Ordering::Greater => {
-                self.send.write(&event).await?;
-                self.last = event.seq;
-                Ok(())
-            }
-            Ordering::Less | Ordering::Equal => Ok(()),
         }
     }
 }
