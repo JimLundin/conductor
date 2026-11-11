@@ -1127,3 +1127,13 @@ end, so `crates/` is left with only `app/src/ticket.rs`'s 8.
    picker. **Recommendation: the text field,** with the directories of
    earlier sessions (already in the `HostView`) offered as suggestions.
    Worktrees will change this screen anyway.
+
+## 8. Owner decisions (2026-11-11)
+
+All four open questions are answered as recommended:
+1. Unit T ports the WebRTC host into the subset in slice 1.
+2. Claude replies stream in slice 1 (`--include-partial-messages`).
+3. Deltas stay in the in-memory log for this slice; they become live-only when SQLite arrives.
+4. The directory is a text field the host validates, with earlier sessions' directories offered as suggestions.
+
+Also approved: the hedged dial from the reconnect forensics (`docs/forensics/reconnect/` on the local branch `reconnect-forensics`), as its own `client` unit. Git worktrees stay out of slice 1. The volume estimate (~25,800 added tokens) is treated as P1's budget.
