@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use daemon::host::{Host, HostOptions};
-use daemon::rtc::RtcOptions;
+use daemon::rtc::{Blackhole, RtcOptions};
 use daemon::server::Conductor;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
@@ -81,10 +81,11 @@ async fn main() -> anyhow::Result<()> {
                     .to_path_buf(),
             };
             let rtc = (!no_webrtc).then(|| {
-                let mut options = RtcOptions::new(stun_servers);
-                options.test_blackhole = test_rtc_blackhole;
-                options.test_drop_after = test_rtc_drop_after;
-                Arc::new(options)
+                Arc::new(RtcOptions::new(
+                    stun_servers,
+                    test_rtc_blackhole.then_some(Blackhole {}),
+                    test_rtc_drop_after,
+                ))
             });
             s3_host(
                 data_dir,

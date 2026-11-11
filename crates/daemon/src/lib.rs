@@ -4,6 +4,7 @@
 pub mod host;
 pub mod rtc;
 pub mod server;
+mod stun;
 mod wire;
 
 use std::path::Path;

@@ -9,32 +9,32 @@ use serde::de::DeserializeOwned;
 use crate::rtc;
 
 #[derive(Debug, thiserror::Error)]
-pub enum WireError {
+pub(crate) enum WireError {
     #[error("stream read failed: {0}")]
     Read(#[from] ReadExactError),
     #[error("stream write failed: {0}")]
     Write(#[from] WriteError),
     #[error("could not finish the stream: {0}")]
     Finish(#[from] ClosedStream),
-    #[error(transparent)]
+    #[error("{0}")]
     Channel(#[from] rtc::ChannelError),
-    #[error(transparent)]
+    #[error("{0}")]
     Frame(#[from] proto::FrameError),
 }
 
 /// One side of a QUIC bi-stream or of an ordered, reliable data channel.
-pub enum SendHalf {
+pub(crate) enum SendHalf {
     Iroh(SendStream),
     WebRtc(rtc::ChannelSend),
 }
 
-pub enum RecvHalf {
+pub(crate) enum RecvHalf {
     Iroh(RecvStream),
     WebRtc(rtc::ChannelRecv),
 }
 
 impl SendHalf {
-    pub async fn write<T: Serialize>(&mut self, msg: &T) -> Result<(), WireError> {
+    pub(crate) async fn write<T: Serialize>(&mut self, msg: &T) -> Result<(), WireError> {
         let frame = proto::encode(msg)?;
         match self {
             Self::Iroh(send) => send.write_all(&frame).await?,
@@ -44,7 +44,7 @@ impl SendHalf {
     }
 
     /// Ends this direction. A data channel can't half-close, so this closes it.
-    pub fn finish(&mut self) -> Result<(), WireError> {
+    pub(crate) fn finish(&mut self) -> Result<(), WireError> {
         match self {
             Self::Iroh(send) => send.finish()?,
             Self::WebRtc(send) => send.close(),
@@ -53,16 +53,16 @@ impl SendHalf {
     }
 
     /// Waits until the peer has read everything or stopped reading.
-    pub async fn stopped(&mut self) {
+    pub(crate) async fn stopped(&mut self) {
         if let Self::Iroh(send) = self {
-            send.stopped().await.ok();
+            let _ = send.stopped().await;
         }
     }
 }
 
 impl RecvHalf {
     /// `Ok(None)` when the peer finished the stream between frames.
-    pub async fn read<T: DeserializeOwned>(&mut self) -> Result<Option<T>, WireError> {
+    pub(crate) async fn read<T: DeserializeOwned>(&mut self) -> Result<Option<T>, WireError> {
         let body = match self {
             Self::Iroh(recv) => read_iroh(recv).await?,
             Self::WebRtc(recv) => recv.read_body().await?,
@@ -74,11 +74,12 @@ impl RecvHalf {
 async fn read_iroh(recv: &mut RecvStream) -> Result<Option<Vec<u8>>, WireError> {
     let mut header = [0u8; proto::HEADER_LEN];
     match recv.read_exact(&mut header).await {
-        Ok(()) => {}
-        Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
-        Err(err) => return Err(err.into()),
+        Ok(()) => {
+            let mut body = std::iter::repeat_n(0u8, proto::body_len(header)?).collect::<Vec<u8>>();
+            recv.read_exact(&mut body).await?;
+            Ok(Some(body))
+        }
+        Err(ReadExactError::FinishedEarly(0)) => Ok(None),
+        Err(err) => Err(err.into()),
     }
-    let mut body = vec![0u8; proto::body_len(header)?];
-    recv.read_exact(&mut body).await?;
-    Ok(Some(body))
 }
