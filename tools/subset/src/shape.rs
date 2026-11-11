@@ -61,6 +61,78 @@ pub struct Lists<'a> {
     /// Types of ours whose methods may take `&mut self` anywhere (proposal
     /// 0035).
     pub endpoints: &'a [String],
+    /// Methods whose closure argument may have a boolean expression as its
+    /// body (proposals 0028, 0037).
+    pub predicate_adapters: &'a [String],
+    /// Methods that may take a closure argument, besides the predicate
+    /// adapters.
+    pub closure_methods: &'a [String],
+}
+
+impl Lists<'_> {
+    fn predicate(&self, method: &str) -> bool {
+        self.predicate_adapters.iter().any(|m| m == method)
+    }
+
+    fn takes_closure(&self, method: &str) -> bool {
+        self.predicate(method) || self.closure_methods.iter().any(|m| m == method)
+    }
+}
+
+/// The filtering adapters of proposal 0028: the default `predicate_adapters`.
+pub const PREDICATE_ADAPTERS: &[&str] = &[
+    "filter",
+    "find",
+    "any",
+    "all",
+    "position",
+    "take_while",
+    "skip_while",
+    "retain",
+];
+/// The standard library's `Iterator`, `Option` and `Result` methods that
+/// take a closure: the default `closure_methods`.
+pub const CLOSURE_METHODS: &[&str] = &[
+    "and_then",
+    "filter_map",
+    "find_map",
+    "flat_map",
+    "fold",
+    "for_each",
+    "get_or_insert_with",
+    "inspect",
+    "inspect_err",
+    "is_err_and",
+    "is_none_or",
+    "is_ok_and",
+    "is_some_and",
+    "map",
+    "map_err",
+    "map_or",
+    "map_or_else",
+    "map_while",
+    "max_by",
+    "max_by_key",
+    "min_by",
+    "min_by_key",
+    "ok_or_else",
+    "or_else",
+    "partition",
+    "reduce",
+    "rfind",
+    "rposition",
+    "scan",
+    "try_fold",
+    "try_for_each",
+    "unwrap_or_else",
+];
+
+pub fn default_predicate_adapters() -> Vec<String> {
+    PREDICATE_ADAPTERS.iter().map(ToString::to_string).collect()
+}
+
+pub fn default_closure_methods() -> Vec<String> {
+    CLOSURE_METHODS.iter().map(ToString::to_string).collect()
 }
 
 pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) -> Shape {
@@ -184,16 +256,6 @@ const LIBRARY_TRAITS: &[&str] = &[
 ];
 const CODEC_BOUNDS: &[&str] = &["Serialize", "DeserializeOwned"];
 const CLOSURE_CALLEES: &[&str] = &["unfold", "use_signal", "use_future", "use_hook", "ask"];
-const PREDICATE_ADAPTERS: &[&str] = &[
-    "filter",
-    "find",
-    "any",
-    "all",
-    "position",
-    "take_while",
-    "skip_while",
-    "retain",
-];
 /// Macros of the standard library. Every other macro is a library's.
 const STD_MACROS: &[&str] = &[
     "assert",
@@ -983,9 +1045,14 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             }
             Expr::Closure(e) => {
                 if let Slot::MethodArg { method, .. } = &slot
-                    && PREDICATE_ADAPTERS.contains(&method.as_str())
+                    && self.lists.predicate(method)
                 {
                     self.mark_predicate(&e.body);
+                }
+                if let Slot::MethodArg { method, .. } = &slot
+                    && !self.lists.takes_closure(method)
+                {
+                    self.flag(e.span(), &rules::CLOSURE_METHOD);
                 }
                 let known = match &slot {
                     Slot::MethodArg { .. } => true,

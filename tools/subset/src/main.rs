@@ -48,6 +48,14 @@ struct Config {
     /// 0035).
     #[serde(default)]
     endpoints: Vec<String>,
+    /// Methods whose closure argument may have a boolean expression as its
+    /// body (proposals 0028, 0037).
+    #[serde(default = "shape::default_predicate_adapters")]
+    predicate_adapters: Vec<String>,
+    /// Methods that may take a closure argument (`expr.closure.adapter`),
+    /// besides the predicate adapters.
+    #[serde(default = "shape::default_closure_methods")]
+    closure_methods: Vec<String>,
     #[serde(default)]
     scope: Vec<Scope>,
     weights: Option<weights::Weights>,
@@ -628,6 +636,8 @@ fn analyse(
             });
         let lists = shape::Lists {
             endpoints: &config.endpoints,
+            predicate_adapters: &config.predicate_adapters,
+            closure_methods: &config.closure_methods,
         };
         let shape = shape::check(&parsed, &kind, &facts, &lists);
         let findings: Vec<&shape::Finding> = shape

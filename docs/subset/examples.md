@@ -461,10 +461,12 @@ pub fn first_after(events: &[Event], seen: HostSeq) -> Option<&Event> {
 }
 ```
 
-A closure passed straight to `filter`, `find`, `any`, `all`, `position`,
-`take_while`, `skip_while` or `retain` may have a boolean expression as its
-body: `matches!`, a comparison, `&&`, `||` or `!` (proposal 0028). Nowhere
-else. `filter(..).count()` is the one way to count, in place of
+A closure passed straight to a method in `predicate_adapters` (`filter`,
+`find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`,
+`retain`, and tokio's `wait_for`) may have a boolean expression as its body:
+`matches!`, a comparison, `&&`, `||` or `!` (proposals 0028 and 0037).
+Nowhere else, so `state.wait_for(|s| s == &State::Closed)` reads like
+`filter`, not `State::Closed.eq(s)`. `filter(..).count()` is the one way to count, in place of
 `filter_map(..).count()` or a `fold` that adds one. A `bool` still never
 becomes a binding, a field, a parameter or a return type of our own.
 

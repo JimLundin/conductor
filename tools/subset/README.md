@@ -105,6 +105,20 @@ endpoints = ["SendHalf", "RecvHalf"]
 - `endpoints` names types of ours, matched on the impl's type name, whose
   methods may take `&mut self` wherever they are, not only as loop state.
   The default is none.
+- `predicate_adapters` names the methods whose closure argument may have a
+  boolean expression as its body (0028, 0037). The default is `filter`,
+  `find`, `any`, `all`, `position`, `take_while`, `skip_while` and `retain`.
+- `closure_methods` names the other methods a closure may be passed to
+  (`expr.closure.adapter`). A closure passed to a method on neither list is
+  flagged. The default is the std `Iterator`, `Option` and `Result` methods
+  that take a closure: `and_then`, `filter_map`, `find_map`, `flat_map`,
+  `fold`, `for_each`, `get_or_insert_with`, `inspect`, `inspect_err`,
+  `is_err_and`, `is_none_or`, `is_ok_and`, `is_some_and`, `map`, `map_err`,
+  `map_or`, `map_or_else`, `map_while`, `max_by`, `max_by_key`, `min_by`,
+  `min_by_key`, `ok_or_else`, `or_else`, `partition`, `reduce`, `rfind`,
+  `rposition`, `scan`, `try_fold`, `try_for_each` and `unwrap_or_else`.
+
+A list that is given replaces its default. To extend a default, copy it.
 
 | Id | Rule |
 |---|---|
@@ -127,16 +141,16 @@ endpoints = ["SendHalf", "RecvHalf"]
 | `expr.call` | `drop(..)` only of a named value that owns a resource released early; discard a value with `let _ = value;` (proposal 0025) |
 | `expr.path` | `drop` passed as a function, as in `.map(drop)`, is a discard; write `let _ = value;` (proposal 0025) |
 | `expr.method_call` | `.ok()` is not a discard; write `let _ = value;` (proposal 0025) |
-| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
-| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` (proposal 0028) |
+| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
 | `expr.method_call` | count matching items with `filter(\|x\| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
@@ -157,6 +171,7 @@ endpoints = ["SendHalf", "RecvHalf"]
 | `attr.cfg` | `cfg` only on a mod, use, fn or impl item, or as `#![cfg]` atop a test file (proposal 0016) |
 | `attr.cfg` | a `cfg` fn, impl or use needs its counterpart for the other platform in the same file (proposal 0016) |
 | `type.dyn` | `dyn` only as `Closure<dyn FnMut(..)>` (proposal 0017) |
+| `expr.closure.adapter` | a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037) |
 | `expr.closure` | a closure outside a method call only as the argument of `Closure::new`, `unfold`, `ask` or a Dioxus hook (proposals 0006, 0017, 0018, 0026) |
 | `item.use.glob` | a glob import only for `dioxus::prelude::*` (proposal 0018) |
 | `attr.allow` | only `#![allow(clippy::useless_format)]` at the crate root (proposal 0018) |
@@ -428,8 +443,10 @@ commit whose files don't parse is left out, with a note on stderr.
   doesn't look inside it. Code in `format!` arguments, `tracing` fields or
   Dioxus `rsx!` can use any construct.
 - **`expr.closure.adapter` can't see types.** syn has no type information,
-  so the rule can't verify that the receiver is an iterator, `Option` or
-  `Result`. A closure passed to any method passes.
+  so the rule checks the method's name against `closure_methods` and
+  `predicate_adapters`, not that the receiver is an iterator, `Option` or
+  `Result`. A method of ours that shares a listed name, such as a `map` of
+  our own, passes.
 - **`type.bool` matches the path `bool` only.** A type alias for `bool`, or
   a `bool` returned by a std method, isn't detected.
 - **Attribute arguments are only partly read.** The rules read the keys of
