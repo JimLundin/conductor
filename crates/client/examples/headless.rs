@@ -96,8 +96,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
         times_live: 0,
         was: Liveness::NotLive,
     };
-    let link = session.run().await?;
-    link.stop().await?;
+    let ended = session.run().await;
+    ended.link.stop().await?;
+    let _ = ended.result?;
     Ok(())
 }
 
@@ -125,6 +126,11 @@ enum Reconnected {
 enum Origin {
     Ours,
     History,
+}
+
+struct Ended {
+    link: HostLink,
+    result: anyhow::Result<Flow>,
 }
 
 enum Flow {
@@ -158,13 +164,18 @@ struct Session {
 }
 
 impl Session {
-    /// Hands the link back once the turn finished.
-    async fn run(mut self) -> anyhow::Result<HostLink> {
+    /// Hands the link back however the turn ended, so it can be stopped.
+    async fn run(mut self) -> Ended {
         loop {
             let update = self.updates.recv().await;
-            match self.on(update).await? {
-                Flow::Next => {}
-                Flow::Finished => break Ok(self.link),
+            match self.on(update).await {
+                Ok(Flow::Next) => {}
+                result => {
+                    break Ended {
+                        link: self.link,
+                        result,
+                    };
+                }
             }
         }
     }
