@@ -19,7 +19,7 @@
   --amber-line: #efc77c;
   --amber-solid: #f2a93b;
   --red: #c13b27;
-  --green: #2b7f4c;
+  --green: #24713f;
   --band: #16181d;
   --band-ink: #f2f3f5;
   --band-muted: #a4a9b3;
@@ -47,7 +47,7 @@
     --amber-bg: #2b2111;
     --amber-line: #6a5023;
     --amber-solid: #f2a93b;
-    --red: #f2826c;
+    --red: #ff9c88;
     --green: #6fcb93;
     --band: #000000;
   }
@@ -96,7 +96,7 @@ input, textarea {
   font: inherit;
   font-size: 16px;
 }
-input::placeholder, textarea::placeholder { color: var(--faint); }
+input::placeholder, textarea::placeholder { color: var(--muted); }
 
 /* The shell tracks the visible viewport, so the composer stays above the
    browser chrome. */
@@ -343,7 +343,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.by { margin-top: 0.2rem; color: var(--faint); font-size: 0.75rem; }
+.by { margin-top: 0.2rem; color: var(--muted); font-size: 0.75rem; }
 
 .reply { white-space: pre-wrap; overflow-wrap: anywhere; }
 .reply.streaming::after {
@@ -431,15 +431,16 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 0.75rem;
 }
 .turn-end::before, .turn-end::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .turn-end[data-outcome="failed"] { color: var(--red); }
 .items > .error { color: var(--red); font-size: 0.875rem; }
 
+.notices { display: flex; flex-direction: column; }
 .notice {
-  min-height: 40px;
+  min-height: 44px;
   margin: 0 1rem 0.5rem;
   border-radius: 10px;
   background: var(--amber-bg);

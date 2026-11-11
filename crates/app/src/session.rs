@@ -50,7 +50,7 @@ pub(crate) fn SessionPane(
                 }
             }
             div { class: "transcript",
-                div { class: "items",
+                div { class: "items", role: "log",
                     match empty {
                         Some(text) => rsx! { p { class: "transcript-empty", "{text}" } },
                         None => rsx! {},
@@ -62,11 +62,13 @@ pub(crate) fn SessionPane(
                     }
                 }
             }
-            match notice() {
-                Some(text) => rsx! {
-                    button { class: "notice", role: "alert", onclick: move |_| notice.set(None), "{text}" }
-                },
-                None => rsx! {},
+            div { class: "notices", role: "alert",
+                match notice() {
+                    Some(text) => rsx! {
+                        button { class: "notice", onclick: move |_| notice.set(None), "{text}" }
+                    },
+                    None => rsx! {},
+                }
             }
             match session.status {
                 SessionStatus::Closed(reason) => rsx! { p { class: "closed-note", "{closed(&reason)}" } },
@@ -110,7 +112,7 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
             };
             rsx! {
                 div { class: "tool", "data-state": state, title: state,
-                    span { class: "tool-mark", "aria-hidden": "true" }
+                    span { class: "tool-mark", role: "img", "aria-label": state }
                     match tool {
                         ToolKind::Command { command } => rsx! {
                             code { class: "tool-detail", "{command}" }
