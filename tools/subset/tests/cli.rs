@@ -604,15 +604,15 @@ fn a_pub_crate_struct_has_no_pub_fields() {
 }
 
 #[test]
-fn struct_update_takes_a_path_or_a_constructor_call() {
+fn struct_update_takes_a_path_or_a_call() {
     assert_eq!(
         rule_case(
             "struct-update",
             "crates/daemon/src/a.rs",
-            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host }\n}\n\nfn options(model: String) -> Options {\n    Options { model, ..Options::new() }\n}\n",
-            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host.clone() }\n}\n",
+            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..host }\n}\n\nfn options(model: String) -> Options {\n    Options { model, ..Options::new() }\n}\n\nfn live(outbox: &Outbox) -> Status {\n    Status { state: LinkState::Live, ..outbox.current() }\n}\n",
+            "fn rename(host: Host, name: String) -> Host {\n    Host { name, ..{ host } }\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:5: expr.struct.update: the base of `..base` is a path or a constructor call (proposal 0004)\n"
+        "crates/daemon/src/a_fail.rs:2:5: expr.struct.update: the base of `..base` is a path, a constructor call or a method call (proposals 0004, 0036)\n"
     );
 }
 
@@ -1425,7 +1425,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 23);
+    assert_eq!(files.len(), 24);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))

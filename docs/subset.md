@@ -70,7 +70,7 @@ The ids are those used in `subset.toml`.
 | Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
 | Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
 | Crate-internal sharing | `vis.restricted` | Proposal 0003. Only `pub(crate)`, never `pub(super)` or `pub(in …)`, and a `pub(crate)` struct has no `pub` fields. |
-| Changed copies | `expr.struct.update` | Proposal 0004. `..base` only where the base is an existing value of the same type or an external crate's `Default::default()` or named constructor. |
+| Changed copies | `expr.struct.update` | Proposals 0004 and 0036. `..base` only where the base is an existing value of the same type, an external crate's `Default::default()` or named constructor, or a method call that returns a fresh value of the struct's type (`..self.outbox.current()`). A base used once is written in place, not bound first. |
 | Unit | `type.unit`, `expr.unit` | Proposal 0005, with its boundary part replaced by 0023. `()` only at a library boundary (0023), which covers `Result<(), E>` and `Ok(())`, and as `fn main`'s return type. |
 | Async | `item.fn.async`, `expr.await`, `expr.async`, `attr.tokio::main` | Proposal 0006. `async fn` for I/O, and an `async` block only as a spawn argument or the whole body of a stream closure. |
 | Actor loop | `expr.loop`, `expr.break`, `macro.allowed` for `tokio::select` | Proposal 0007. `loop` only as the whole body of an actor's `run` fn or a drive fn, taking one input per turn and handling it with one call or `match`. |

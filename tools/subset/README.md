@@ -110,7 +110,7 @@ endpoints = ["SendHalf", "RecvHalf"]
 |---|---|
 | `vis.restricted` | only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003) |
 | `vis.pub` | a field of a `pub(crate)` struct is `pub(crate)`, never `pub` (proposal 0003) |
-| `expr.struct.update` | the base of `..base` is a path or a constructor call (proposal 0004) |
+| `expr.struct.update` | the base of `..base` is a path, a constructor call or a method call (proposals 0004, 0036) |
 | `type.unit` | `()` as a type only in a type argument of a type we don't define, as in `Result<(), E>`, or as `fn main`'s return type (proposals 0005, 0023) |
 | `expr.unit` | `()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023) |
 | `expr.async` | an async block only as a spawn argument or the whole body of an `unfold`, `then` or `use_future` closure (proposal 0006) |
@@ -448,15 +448,17 @@ commit whose files don't parse is left out, with a note on stderr.
   is there: 0002 `pub` only for another crate, 0006 `async fn` only for I/O,
   0012 serde only on wire types (checked by location), 0013 generics only at
   the wire boundary (checked by bound), 0014 a slice only for a read-only
-  sequence, 0015 a byte array only where its size is part of a format,
-  0009 generics only where the trait demands them (any are allowed inside a
+  sequence, 0015 a byte array only where its size is part of a format, 0009
+  generics only where the trait demands them (any are allowed inside a
   listed trait impl), 0024 an order that means something, 0025 `drop` only
   of a value that owns a resource (checked as "the argument is a plain
-  name", and `drop` passed as a function is flagged), 0026 every round trip going through `ask` (the helper's shape is
-  checked), and 0028 a `fold` that only counts (`filter_map(..).count()` is
-  checked). Neither can it see what a body does: 0017's callback
-  only forwards to a channel, and 0019's `main` turns its `bool` into an
-  enum. `docs/subset/compromises.md` lists these.
+  name", and `drop` passed as a function is flagged), 0026 every round trip
+  going through `ask` (the helper's shape is checked), 0036 a struct
+  update's method-call base returning the struct's own type (any method call
+  passes), and 0028 a `fold` that only counts (`filter_map(..).count()` is
+  checked). Neither can it see what a body does: 0017's callback only
+  forwards to a channel, and 0019's `main` turns its `bool` into an enum.
+  `docs/subset/compromises.md` lists these.
 - **Ownership and receivers are approximated by name.** 0008's "a value
   that loop state owns" is a type of ours named anywhere in a field type of
   a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down.

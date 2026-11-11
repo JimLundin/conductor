@@ -45,19 +45,21 @@ doesn't expand macros, so a reviewer still checks these:
   checked only where the receiver is `self` in an impl of an ordered
   newtype or a parameter declared as one. 0028's predicate leaves aren't
   typed, so `|x| x.flag` on a library `bool` passes.
-- **Why a construct is there.** 0002 `pub` only for what another crate
-  uses, 0006 `async fn` only for I/O, 0012 serde only on types that cross a
-  wire (the tool checks the location), 0013 generics only at the wire
-  boundary (the tool checks the bound), 0014 a slice only for a read-only
-  sequence, 0015 a byte array only where its size is part of a format,
-  0009 generics only where the trait's signature demands them (the tool
-  allows any inside a listed trait impl). Also 0024 an order that means
-  something (the tool checks that the type is a newtype), 0025 `drop` only
-  of a value that owns a resource released early (the tool checks that the
-  argument is a plain name, and flags `drop` passed as a function), 0026 every round trip going through `ask` and
-  its closure only building the variant (the tool checks the helper's
-  shape), and 0028 a `fold` or `map(..).sum()` used only to count (the tool
-  flags `filter_map(..).count()`).
+- **Why a construct is there.** 0002 `pub` only for what another crate uses,
+  0006 `async fn` only for I/O, 0012 serde only on types that cross a wire
+  (the tool checks the location), 0013 generics only at the wire boundary
+  (the tool checks the bound), 0014 a slice only for a read-only sequence,
+  0015 a byte array only where its size is part of a format, 0009 generics
+  only where the trait's signature demands them (the tool allows any inside
+  a listed trait impl). Also 0024 an order that means something (the tool
+  checks that the type is a newtype), 0025 `drop` only of a value that owns
+  a resource released early (the tool checks that the argument is a plain
+  name, and flags `drop` passed as a function), 0026 every round trip going
+  through `ask` and its closure only building the variant (the tool checks
+  the helper's shape), 0036 a struct update's method-call base returning the
+  struct's own type (the tool accepts any method call), and 0028 a `fold` or
+  `map(..).sum()` used only to count (the tool flags
+  `filter_map(..).count()`).
 - **Macro bodies.** 0007's "each `select!` arm is a single call", Dioxus
   markup (0018) and `tracing` fields are not parsed.
 - **What a body does.** 0017's callback only forwards the event to a

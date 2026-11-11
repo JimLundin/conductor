@@ -22,7 +22,7 @@ pub const PUB_FIELD: Rule = rule(
 );
 pub const STRUCT_UPDATE: Rule = rule(
     "expr.struct.update",
-    "the base of `..base` is a path or a constructor call (proposal 0004)",
+    "the base of `..base` is a path, a constructor call or a method call (proposals 0004, 0036)",
 );
 pub const UNIT_TYPE: Rule = rule(
     "type.unit",

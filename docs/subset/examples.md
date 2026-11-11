@@ -499,6 +499,22 @@ write would take the half by value and hand it back, and every caller would
 rebind it. Every other type of ours keeps 0008's reach: its value-returning
 methods stay, and no fn takes a `&mut` of it.
 
+## 24. A changed copy of what a method returns
+
+```rust
+pub fn catching_up(outbox: &Outbox, host: HostName) -> Status {
+    Status {
+        host: Some(host),
+        state: LinkState::CatchingUp,
+        ..outbox.current()
+    }
+}
+```
+
+The base of a struct update may be a method call that returns a fresh
+value of the struct's type (proposal 0036). Write the call in place, as
+here, rather than binding it with `let current = outbox.current();` first.
+
 ## Still outside the subset
 
 - Generic structs, enums and traits, and any bound other than the codec

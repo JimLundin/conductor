@@ -976,7 +976,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                     self.set_expr(&field.expr, Slot::FieldValue { ours });
                 }
                 if let Some(rest) = &e.rest
-                    && !matches!(**rest, Expr::Path(_) | Expr::Call(_))
+                    && !matches!(**rest, Expr::Path(_) | Expr::Call(_) | Expr::MethodCall(_))
                 {
                     self.flag(e.span(), &rules::STRUCT_UPDATE);
                 }
