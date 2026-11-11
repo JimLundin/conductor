@@ -6,7 +6,6 @@
 //! run against Codex's real bytes, driven by the same calls `s2` made.
 #![cfg(unix)]
 
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -202,9 +201,9 @@ impl Recorder {
                         Progress::Playing
                     }
                     (ThreadEvent::TurnCompleted { turn: done, .. }, _) => {
-                        match done.0.cmp(&turn.0) {
-                            Ordering::Equal => Progress::Done,
-                            Ordering::Less | Ordering::Greater => Progress::Playing,
+                        match done.eq(turn).then_some(Progress::Done) {
+                            Some(finished) => finished,
+                            None => Progress::Playing,
                         }
                     }
                     _ => Progress::Playing,

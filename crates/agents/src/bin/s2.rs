@@ -5,7 +5,6 @@
 //! Usage: s2 [FIXTURE_DIR]
 //! Writes raw app-server stdout per process to FIXTURE_DIR/<name>.jsonl when given.
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -195,11 +194,12 @@ impl Run {
                 let turn = self.turns.remove(&thread).with_context(|| {
                     format!("event for a thread with no turn running: {}", thread.0)
                 })?;
-                match event_turn(&event).map(|got| (got.0.cmp(&turn.id.0), got)) {
-                    Some((Ordering::Less | Ordering::Greater, got)) => Err(anyhow::Error::msg(
-                        format!("event for turn {} during turn {}", got.0, turn.id.0),
-                    )),
-                    Some((Ordering::Equal, _)) | None => Ok(()),
+                match event_turn(&event).and_then(|got| got.ne(&turn.id).then_some(got)) {
+                    Some(got) => Err(anyhow::Error::msg(format!(
+                        "event for turn {} during turn {}",
+                        got.0, turn.id.0
+                    ))),
+                    None => Ok(()),
                 }?;
                 let turn = self.apply(turn, event).await?;
                 self.turns.insert(thread, turn);
@@ -552,11 +552,11 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let resume = report(
         "5 resume in a new process",
         match (
-            resumed.id.0.cmp(&a.id.0),
+            resumed.id.eq(&a.id).then_some(&resumed.id),
             s.turn.text.find("a.txt"),
             &s.turn.outcome,
         ) {
-            (Ordering::Equal, Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
+            (Some(_), Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(

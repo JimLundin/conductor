@@ -323,15 +323,13 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let approve = report(
         "1 approve",
         match (
-            t.permissions.cmp(&Vec::from([String::from("Write")])),
+            t.permissions
+                .eq(&Vec::from([String::from("Write")]))
+                .then_some(&t.permissions),
             presence(&a),
             t.result(),
         ) {
-            (
-                std::cmp::Ordering::Equal,
-                Presence::Present,
-                Some(("success", Outcome::Succeeded)),
-            ) => Verdict::Pass,
+            (Some(_), Presence::Present, Some(("success", Outcome::Succeeded))) => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(

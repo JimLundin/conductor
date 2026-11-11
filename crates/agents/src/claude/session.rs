@@ -2,7 +2,6 @@
 //! command channel; the task alone owns stdin, the pending control requests and
 //! the open permission requests, so no state is shared behind a lock.
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
@@ -425,10 +424,10 @@ impl Actor {
             ClaudeEvent::SessionStarted { session_id } => match self
                 .session_id
                 .replace(session_id.clone())
-                .map(|seen| seen.0.cmp(&session_id.0))
+                .and_then(|seen| seen.eq(session_id).then_some(News::Repeat))
             {
-                Some(Ordering::Equal) => News::Repeat,
-                Some(Ordering::Less | Ordering::Greater) | None => News::Fresh,
+                Some(repeat) => repeat,
+                None => News::Fresh,
             },
             _ => News::Fresh,
         }
