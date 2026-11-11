@@ -57,7 +57,7 @@ pub enum Open {
 
 /// Public STUN servers both ends ask for their public address by default.
 /// They are stateless and see no traffic; nothing relays (§5.4).
-pub const DEFAULT_STUN_SERVERS: [&str; 2] = [
+pub const DEFAULT_STUN_SERVERS: &[&str] = &[
     "stun:stun.l.google.com:19302",
     "stun:stun.cloudflare.com:3478",
 ];
