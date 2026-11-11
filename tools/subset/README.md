@@ -142,6 +142,10 @@ Some rules need context.
 - `stmt.let.mut` is a `let` with any `mut` binding in its pattern. Those
   bindings aren't reported again as `pat.ident.mut`, which covers `mut`
   bindings everywhere else, such as fn parameters and match arms.
+- `expr.if_let.single` is an `if let` with no `else`. An `if let` with an
+  `else` or `else if`, and an `if` whose condition is a let-chain, are
+  `expr.if_let`. The `let`s of a chain are also `expr.let` and its `&&` is
+  `expr.binary.and`.
 - `type.impl_trait.ret` is `impl Trait` anywhere in a fn's return type, and
   `type.impl_trait.arg` is `impl Trait` anywhere else.
 - `attr.derive` is reported when every derived name is in `derives`.
@@ -312,7 +316,8 @@ part comes from the source.
 | `expr.for` | `for` loop |
 | `expr.group` | invisible group expression |
 | `expr.if` | `if` expression |
-| `expr.if_let` | `if let` expression |
+| `expr.if_let` | `if let` with an `else`, or an `if` with a let-chain |
+| `expr.if_let.single` | `if let` with no `else` |
 | `expr.index` | indexing |
 | `expr.infer` | `_` in expression position |
 | `expr.let` | `let` inside a condition chain |

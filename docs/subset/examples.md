@@ -414,6 +414,22 @@ exactly this shape (proposal 0026). The closure only builds the message
 variant. `ask` is the one place outside a codec where a fn takes a type
 parameter, and the one `impl Trait` argument in the subset.
 
+## 21. Acting on one case is an `if let` with no `else`
+
+```rust
+pub fn announce(host_name: Option<&str>) {
+    if let Some(name) = host_name {
+        tracing::info!(host = %name, "host named");
+    }
+}
+```
+
+When only one case needs doing and the rest need nothing, write `if let`
+with no `else`, no `else if` and no `&&` let-chain (proposal 0027). It
+replaces a `match` whose other arm is `None => {}`, which clippy's
+`single_match` rejects. As soon as another case needs something, it is a
+`match` with every arm written out (§6).
+
 ## Still outside the subset
 
 - Generic structs, enums and traits, and any bound other than the codec
@@ -422,5 +438,6 @@ parameter, and the one `impl Trait` argument in the subset.
   methods instead (proposal 0009).
 - Derives beyond the listed ones, such as `Default`, and `PartialOrd` or
   `Ord` on anything but an ordered newtype.
-- `if`, `while`, `for`, `return` and the operators. They stay rewrites into
+- `if`, `if let` with an `else` or a let-chain, `while`, `for`, `return`
+  and the operators. They stay rewrites into
   the core (`docs/subset/bootstrap-review.md`).

@@ -54,6 +54,7 @@ allowed = [
   "expr.repeat",              # proposal 0015
   "expr.closure",             # proposals 0006, 0017, 0018, 0026; only as the listed calls' argument
   "expr.lit.bool",            # proposals 0021, 0023
+  "expr.if_let.single",       # proposal 0027; `if let` with no `else`, `else if` or let-chain
 
   # Statements
   "stmt.let",                 # immutable, with a pattern; no `else`

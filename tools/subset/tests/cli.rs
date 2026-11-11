@@ -199,7 +199,7 @@ fn control_flow_other_than_match() {
             "control.rs:3:9: expr.return: `return`",
             "control.rs:4:12: expr.if: `if` expression",
             "control.rs:5:9: expr.return: `return`",
-            "control.rs:7:5: expr.if_let: `if let` expression",
+            "control.rs:7:5: expr.if_let.single: `if let` with no `else`",
             "control.rs:8:9: expr.return: `return`",
             "control.rs:10:5: expr.while: `while` loop",
             "control.rs:11:9: expr.break: `break`",
@@ -209,6 +209,24 @@ fn control_flow_other_than_match() {
             "control.rs:17:5: expr.loop: `loop`",
             "control.rs:19:17: expr.match.guard: `if` guard on a match arm",
         ]
+    );
+}
+
+#[test]
+fn if_let_only_with_a_single_branch() {
+    assert_eq!(
+        rule_case(
+            "if-let",
+            "crates/daemon/src/a.rs",
+            "fn cancel(open: Option<Approval>) {\n    if let Some(approval) = open {\n        approval.cancel();\n    }\n}\n",
+            "fn label(name: Option<&str>, kind: Option<Kind>) -> String {\n    if let Some(name) = name {\n        name.to_string()\n    } else {\n        String::new()\n    }\n}\n\nfn note(name: Option<&str>, kind: Option<Kind>) {\n    if let Some(name) = name {\n        log(name);\n    } else if let Some(kind) = kind {\n        log(kind.label());\n    }\n    if let Some(name) = name && let Some(kind) = kind {\n        log(name);\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:10:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:15:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
+         crates/daemon/src/a_fail.rs:15:8: expr.let: `let` inside a condition chain\n\
+         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: `&&` operator\n\
+         crates/daemon/src/a_fail.rs:15:33: expr.let: `let` inside a condition chain\n"
     );
 }
 
@@ -1355,7 +1373,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 20);
+    assert_eq!(files.len(), 21);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))

@@ -291,7 +291,11 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
             Expr::Group(e) => self.emit(e.span(), "expr.group"),
             Expr::If(e) => {
                 if let Expr::Let(cond) = &*e.cond {
-                    self.emit(e.if_token.span, "expr.if_let");
+                    let id = match e.else_branch {
+                        Some(_) => "expr.if_let",
+                        None => "expr.if_let.single",
+                    };
+                    self.emit(e.if_token.span, id);
                     for attr in &e.attrs {
                         self.visit_attribute(attr);
                     }
@@ -303,7 +307,11 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                     }
                     return;
                 }
-                self.emit(e.if_token.span, "expr.if");
+                let id = match has_let(&e.cond) {
+                    true => "expr.if_let",
+                    false => "expr.if",
+                };
+                self.emit(e.if_token.span, id);
             }
             Expr::Index(e) => self.emit(e.bracket_token.span.open(), "expr.index"),
             Expr::Infer(e) => self.emit(e.span(), "expr.infer"),
@@ -634,6 +642,15 @@ fn item_attrs(item: &Item) -> &[Attribute] {
         Item::Union(i) => &i.attrs,
         Item::Use(i) => &i.attrs,
         _ => &[],
+    }
+}
+
+/// Whether a condition is a let-chain: a `let` joined by `&&`.
+fn has_let(cond: &Expr) -> bool {
+    match cond {
+        Expr::Let(_) => true,
+        Expr::Binary(b) if matches!(b.op, BinOp::And(_)) => has_let(&b.left) || has_let(&b.right),
+        _ => false,
     }
 }
 
