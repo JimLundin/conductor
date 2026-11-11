@@ -5,7 +5,7 @@ Reads docs/status.toml (what is built, being built, planned), cargo metadata
 (crates and their dependencies) and the subset tool (size and violations per
 file). Runs offline.
 
-usage: python3 tools/archmap/archmap.py --out DIR [--subset target/debug/subset]
+usage: python3 tools/archmap/archmap.py --out DIR [--subset $(tools/target-dir)/debug/subset]
 """
 
 import argparse
@@ -635,7 +635,7 @@ def page(status, units, crates, commit, date):
 def main():
     args = argparse.ArgumentParser()
     args.add_argument("--out", required=True, type=Path)
-    args.add_argument("--subset", default=str(ROOT / "target/debug/subset"))
+    args.add_argument("--subset", default=str(Path(run("tools/target-dir").strip()) / "debug/subset"))
     args = args.parse_args()
     status, units = load_status(ROOT / "docs/status.toml")
     crates = load_crates(status, args.subset)

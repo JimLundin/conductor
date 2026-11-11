@@ -317,10 +317,10 @@ async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> R
 /// What an interrupt at a cue does to the turn.
 enum Expect {
     Interrupted,
-    /// Codex refuses the interrupt (`no active turn to interrupt`) until
-    /// `turn/started`, even though `turn/start` already answered, and the
-    /// turn runs to the end.
-    Refused,
+    /// An interrupt sent right after `turn/start` races `turn/started`.
+    /// Before it, Codex refuses (`no active turn to interrupt`) and the
+    /// turn runs to the end; after it, the turn is interrupted.
+    Either,
 }
 
 /// Interrupts a counting turn at `cue`, then checks what the interrupt did
@@ -361,14 +361,14 @@ async fn interrupted(
             after.turn.text.to_lowercase().find("pong"),
         ) {
             (
-                Expect::Interrupted,
+                Expect::Interrupted | Expect::Either,
                 Ok(()),
                 Some(TurnOutcome::Interrupted),
                 Some(TurnOutcome::Completed),
                 Some(_),
             )
             | (
-                Expect::Refused,
+                Expect::Either,
                 Err(_),
                 Some(TurnOutcome::Completed),
                 Some(TurnOutcome::Completed),
@@ -492,7 +492,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )
     .await?;
     let (live, at_send) =
-        interrupted(live, &a, "3d interrupt at send", Cue::Send, Expect::Refused).await?;
+        interrupted(live, &a, "3d interrupt at send", Cue::Send, Expect::Either).await?;
 
     let b = live.server.start_thread(thread_opts.clone()).await?;
     let c = live.server.start_thread(thread_opts.clone()).await?;
