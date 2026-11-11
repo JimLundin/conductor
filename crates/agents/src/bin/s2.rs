@@ -413,14 +413,15 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         live.server.user_agent(),
         models.iter().map(|m| &m.id).collect::<Vec<&String>>()
     )?;
-    // on-request + workspace-write ran writes inside the workspace without
-    // asking; read-only makes every write an approval request.
+    // untrusted asks before every command, even `pwd`, whatever the
+    // model thinks of the sandbox, and workspace-write gives it no reason to
+    // refuse the write.
     let thread_opts = ThreadOptions {
         cwd: PathBuf::from(SCRATCH),
         model: Some(model),
         effort: Some(String::from("low")),
-        approval_policy: ApprovalPolicy::OnRequest,
-        sandbox: Sandbox::ReadOnly,
+        approval_policy: ApprovalPolicy::Untrusted,
+        sandbox: Sandbox::WorkspaceWrite,
     };
 
     let a = live.server.start_thread(thread_opts.clone()).await?;
