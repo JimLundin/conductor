@@ -1,10 +1,11 @@
 //! A host's sessions folded from its events: what the UI renders. No UI
 //! types, so it is unit-testable and shared by every client target.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use proto::{
-    ClientName, CloseReason, Event, EventKind, HostPath, Provider, RequestId, Resolution,
+    ClientName, CloseReason, Event, EventKind, HostPath, HostSeq, Provider, RequestId, Resolution,
     SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 
@@ -19,6 +20,8 @@ pub struct SessionView {
     pub directory: HostPath,
     pub status: SessionStatus,
     pub items: Vec<Item>,
+    /// The last event that touched this session.
+    pub activity: HostSeq,
 }
 
 /// Derived from the events, never sent.
@@ -101,6 +104,13 @@ pub enum Interrupt {
     Hidden,
 }
 
+/// Whether a session waits on a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attention {
+    Quiet,
+    Requests(usize),
+}
+
 impl HostView {
     pub fn empty() -> HostView {
         HostView {
@@ -124,12 +134,46 @@ impl HostView {
                 directory,
                 status: SessionStatus::Starting,
                 items: Vec::new(),
+                activity: event.seq,
             }),
             (Some(view), kind) => Some(view.apply(kind)),
             (None, _) => None,
         };
-        sessions.extend(session.map(|view| (event.session, view)));
+        sessions.extend(session.map(|view| {
+            (
+                event.session,
+                SessionView {
+                    activity: event.seq,
+                    ..view
+                },
+            )
+        }));
         HostView { sessions }
+    }
+
+    /// The sessions' ids, the most recently active first.
+    pub fn recent(&self) -> Vec<SessionId> {
+        self.sessions
+            .iter()
+            .map(|(id, view)| (Reverse(view.activity), id))
+            .collect::<BTreeMap<Reverse<HostSeq>, &SessionId>>()
+            .into_values()
+            .copied()
+            .collect()
+    }
+
+    /// Each directory a session ran in, once, the most recent first: the
+    /// suggestions for a new session.
+    pub fn directories(&self) -> Vec<HostPath> {
+        self.recent()
+            .iter()
+            .filter_map(|id| self.sessions.get(id))
+            .fold(Vec::new(), |known, view| {
+                match known.iter().find(|path| path.0 == view.directory.0) {
+                    Some(_) => known,
+                    None => known.into_iter().chain([view.directory.clone()]).collect(),
+                }
+            })
     }
 }
 
@@ -144,6 +188,26 @@ impl SessionView {
         Controls {
             composer,
             interrupt,
+        }
+    }
+
+    pub fn attention(&self) -> Attention {
+        let open = self
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    Item::Request {
+                        state: RequestState::Open,
+                        ..
+                    }
+                )
+            })
+            .count();
+        match open {
+            0 => Attention::Quiet,
+            open => Attention::Requests(open),
         }
     }
 
@@ -286,7 +350,9 @@ mod tests {
         TurnOutcome,
     };
 
-    use super::{HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState};
+    use super::{
+        Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
+    };
 
     fn text(text: &str) -> String {
         String::from(text)
@@ -458,6 +524,7 @@ mod tests {
                             },
                             Item::TurnCompleted(TurnOutcome::Completed),
                         ]),
+                        activity: HostSeq(15),
                     },
                 ),
                 (
@@ -467,9 +534,74 @@ mod tests {
                         directory: HostPath(text("/b")),
                         status: SessionStatus::Closed(CloseReason::Exited { status: text("1") }),
                         items: Vec::from([Item::Error(text("odd"))]),
+                        activity: HostSeq(17),
                     },
                 ),
             ])
+        );
+    }
+
+    fn fold(events: Vec<(u64, EventKind)>) -> HostView {
+        events
+            .into_iter()
+            .enumerate()
+            .map(|(index, (session, kind))| Event {
+                seq: HostSeq(u64::try_from(index).unwrap()),
+                session: SessionId(session),
+                kind,
+            })
+            .fold(HostView::empty(), HostView::apply)
+    }
+
+    fn opened(request: u64) -> EventKind {
+        EventKind::RequestOpened {
+            request: RequestId(request),
+            tool: text("Bash"),
+            detail: text("ls"),
+        }
+    }
+
+    #[test]
+    fn the_list_puts_the_latest_activity_first_and_suggests_each_directory_once() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (2, created("/b")),
+            (3, created("/a")),
+            (1, EventKind::SessionReady),
+            (2, delta("x")),
+        ]));
+        assert_eq!(
+            view.recent(),
+            Vec::from([SessionId(2), SessionId(1), SessionId(3)])
+        );
+        assert_eq!(
+            view.directories(),
+            Vec::from([HostPath(text("/b")), HostPath(text("/a"))])
+        );
+    }
+
+    #[test]
+    fn attention_counts_the_open_requests() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, opened(1)),
+            (1, opened(2)),
+            (1, opened(3)),
+            (
+                1,
+                EventKind::RequestResolved {
+                    request: RequestId(2),
+                    resolution: Resolution::Withdrawn,
+                },
+            ),
+            (2, created("/b")),
+        ]));
+        assert_eq!(
+            view.sessions
+                .values()
+                .map(SessionView::attention)
+                .collect::<Vec<Attention>>(),
+            Vec::from([Attention::Requests(2), Attention::Quiet])
         );
     }
 }
