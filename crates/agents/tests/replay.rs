@@ -477,7 +477,7 @@ async fn gated_recording_waits_for_the_message_and_the_answer() {
             next(&mut events).await,
         ],
         [
-            "session_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
+            "turn_started 5f66391b-ba0e-46b0-b334-94fd247e6edb",
             "assistant: tool_use Write",
             "permission Write \"/tmp/s1-scratch/a.txt\"",
         ]
