@@ -6,6 +6,7 @@
 //! run against Codex's real bytes, driven by the same calls `s2` made.
 #![cfg(unix)]
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,8 @@ use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision, Item,
     Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
 };
+use n0_future::StreamExt;
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 const FAKE_CODEX: &str = r#"#!/usr/bin/python3 -I
@@ -80,27 +83,77 @@ fn fake_codex(fixture: &Path) -> PathBuf {
 fn opts() -> ThreadOptions {
     ThreadOptions {
         cwd: "/tmp/s2-scratch".into(),
-        model: Some("gpt-6-luna".into()),
-        effort: Some("low".into()),
+        model: Some(String::from("gpt-6-luna")),
+        effort: Some(String::from("low")),
         approval_policy: ApprovalPolicy::OnRequest,
         sandbox: Sandbox::ReadOnly,
     }
+}
+
+/// What the recorder reads events until.
+enum Goal {
+    /// The turn completes. Every event must belong to its thread, and every
+    /// approval is answered with `decision`.
+    Turn {
+        thread: CodexThread,
+        turn: TurnId,
+        decision: Decision,
+    },
+    /// Every turn in `Recorder::open` completes.
+    Turns,
+    /// The app-server exits.
+    Exit,
+}
+
+/// Whether a turn interrupts itself after its first output.
+enum Interrupt {
+    Never,
+    AfterFirstOutput,
+    Sent,
+}
+
+/// Whether the recorder has reached its goal.
+enum Progress {
+    Playing,
+    Done,
 }
 
 /// Collects the event stream as readable lines. Thread ids become `A`, `B`,
 /// ... in order of first appearance; unmapped frames are tallied by method
 /// instead of listed, since deltas and status frames dominate the stream.
 struct Recorder {
+    server: CodexServer,
     events: mpsc::Receiver<CodexEvent>,
+    goal: Goal,
+    interrupt: Interrupt,
+    /// The turns `Goal::Turns` waits on, by thread.
+    open: HashMap<ThreadId, TurnId>,
     names: HashMap<ThreadId, char>,
     seen: Vec<String>,
     unknown: BTreeMap<String, usize>,
+    /// Every approval id answered so far.
+    answered: Vec<ApprovalId>,
 }
 
 impl Recorder {
-    fn name(&mut self, thread: &ThreadId) -> char {
-        let next = (b'A' + self.names.len() as u8) as char;
-        *self.names.entry(thread.clone()).or_insert(next)
+    async fn until(self, goal: Goal, interrupt: Interrupt) -> Recorder {
+        Recorder {
+            goal,
+            interrupt,
+            ..self
+        }
+        .run()
+        .await
+    }
+
+    async fn run(mut self) -> Recorder {
+        loop {
+            let event = self.next().await;
+            match self.on(event).await {
+                Progress::Playing => {}
+                Progress::Done => break self,
+            }
+        }
     }
 
     async fn next(&mut self) -> CodexEvent {
@@ -108,72 +161,112 @@ impl Recorder {
             .await
             .expect("no event within 20s; the replay is stuck")
             .expect("event stream ended early");
-        let line = match &event {
-            CodexEvent::Thread { thread, event } => {
-                summary(event).map(|s| format!("{} {s}", self.name(thread)))
-            }
-            CodexEvent::Exited { status } => Some(format!("exited {status}")),
-            CodexEvent::Unknown(_) => None,
-        };
-        match (line, &event) {
-            (Some(line), _) => self.seen.push(line),
-            (
-                None,
-                CodexEvent::Unknown(raw)
-                | CodexEvent::Thread {
-                    event: ThreadEvent::Unknown(raw),
-                    ..
-                },
-            ) => *self.unknown.entry(method(raw)).or_default() += 1,
-            (None, _) => unreachable!("summary covers every other event"),
-        }
+        self.record(&event);
         event
     }
 
-    /// Reads events for `thread` until its turn completes, answering every
-    /// approval with `decision` and interrupting after the first output when
-    /// `interrupt` is set. Returns the ids it answered.
-    async fn turn(
-        &mut self,
-        server: &CodexServer,
-        thread: &CodexThread,
-        turn: &TurnId,
-        decision: Decision,
-        interrupt: bool,
-    ) -> Vec<ApprovalId> {
-        let mut answered = Vec::new();
-        let mut interrupted = !interrupt;
-        loop {
-            let CodexEvent::Thread { thread: t, event } = self.next().await else {
-                continue;
-            };
-            assert_eq!(t, thread.id);
-            match event {
-                ThreadEvent::ApprovalRequested { id, .. } => {
-                    server.respond(id.clone(), decision.clone()).await.unwrap();
-                    answered.push(id);
+    async fn on(&mut self, event: CodexEvent) -> Progress {
+        match (&self.goal, event) {
+            (Goal::Exit, CodexEvent::Exited { .. }) => Progress::Done,
+            (
+                Goal::Turns,
+                CodexEvent::Thread {
+                    thread,
+                    event: ThreadEvent::TurnCompleted { turn, .. },
+                },
+            ) => {
+                assert_eq!(
+                    self.open.remove(&thread),
+                    Some(turn),
+                    "a completed turn belongs to {thread:?}"
+                );
+                match self.open.keys().next() {
+                    Some(_) => Progress::Playing,
+                    None => Progress::Done,
                 }
-                ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. } if !interrupted => {
-                    thread.interrupt(turn.clone()).await.unwrap();
-                    interrupted = true;
-                }
-                ThreadEvent::TurnCompleted { turn: done, .. } if &done == turn => {
-                    return answered;
-                }
-                _ => {}
             }
+            (
+                Goal::Turn {
+                    thread: expected,
+                    turn,
+                    decision,
+                },
+                CodexEvent::Thread { thread, event },
+            ) => {
+                assert_eq!(thread, expected.id);
+                match (event, &self.interrupt) {
+                    (ThreadEvent::ApprovalRequested { id, .. }, _) => {
+                        self.server
+                            .respond(id.clone(), decision.clone())
+                            .await
+                            .unwrap();
+                        self.answered.push(id);
+                        Progress::Playing
+                    }
+                    (
+                        ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. },
+                        Interrupt::AfterFirstOutput,
+                    ) => {
+                        expected.interrupt(turn.clone()).await.unwrap();
+                        self.interrupt = Interrupt::Sent;
+                        Progress::Playing
+                    }
+                    (ThreadEvent::TurnCompleted { turn: done, .. }, _) => {
+                        match done.0.cmp(&turn.0) {
+                            Ordering::Equal => Progress::Done,
+                            Ordering::Less | Ordering::Greater => Progress::Playing,
+                        }
+                    }
+                    _ => Progress::Playing,
+                }
+            }
+            (Goal::Exit | Goal::Turns | Goal::Turn { .. }, _) => Progress::Playing,
         }
+    }
+
+    fn record(&mut self, event: &CodexEvent) {
+        match event {
+            CodexEvent::Thread {
+                event: ThreadEvent::Unknown(raw),
+                ..
+            }
+            | CodexEvent::Unknown(raw) => self.tally(method(raw)),
+            CodexEvent::Thread { thread, event } => {
+                let line = format!("{} {}", self.name(thread), summary(event));
+                self.seen.push(line);
+            }
+            CodexEvent::Exited { status } => self.seen.push(format!("exited {status}")),
+        }
+    }
+
+    fn tally(&mut self, method: String) {
+        let count = self
+            .unknown
+            .get(&method)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.unknown.insert(method, count);
+    }
+
+    fn name(&mut self, thread: &ThreadId) -> char {
+        let index = u8::try_from(self.names.len()).unwrap_or(u8::MAX);
+        let next = char::from(b'A'.saturating_add(index));
+        self.names.entry(thread.clone()).or_insert(next).to_owned()
     }
 }
 
-fn method(raw: &serde_json::Value) -> String {
-    raw["method"].as_str().unwrap_or("<no method>").to_owned()
+fn method(raw: &Value) -> String {
+    raw.get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("<no method>")
+        .to_owned()
 }
 
-fn summary(event: &ThreadEvent) -> Option<String> {
-    Some(match event {
-        ThreadEvent::Started => "started".into(),
-        ThreadEvent::TurnStarted { .. } => "turn started".into(),
+fn summary(event: &ThreadEvent) -> String {
+    match event {
+        ThreadEvent::Started => String::from("started"),
+        ThreadEvent::TurnStarted { .. } => String::from("turn started"),
         ThreadEvent::TurnCompleted { outcome, .. } => format!("turn {}", outcome_name(outcome)),
         ThreadEvent::AgentMessage { text, .. } => format!("says {text:?}"),
         ThreadEvent::Item { phase, item, .. } => match item {
@@ -196,19 +289,19 @@ fn summary(event: &ThreadEvent) -> Option<String> {
             format!("approval {} {kind} ({} options)", id.0, options.len())
         }
         ThreadEvent::ApprovalCancelled { id } => format!("approval {} cancelled", id.0),
-        ThreadEvent::Unknown(_) => return None,
-    })
+        ThreadEvent::Unknown(raw) => format!("unknown {}", method(raw)),
+    }
 }
 
 fn outcome_name(outcome: &TurnOutcome) -> String {
     match outcome {
-        TurnOutcome::Completed => "completed".into(),
-        TurnOutcome::Interrupted => "interrupted".into(),
+        TurnOutcome::Completed => String::from("completed"),
+        TurnOutcome::Interrupted => String::from("interrupted"),
         TurnOutcome::Failed { message } => format!("failed {message:?}"),
     }
 }
 
-async fn spawn(name: &str) -> (CodexServer, Recorder) {
+async fn spawn(name: &str) -> Recorder {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: fake_codex(&fixture(name)),
         cwd: std::env::temp_dir(),
@@ -216,63 +309,91 @@ async fn spawn(name: &str) -> (CodexServer, Recorder) {
     })
     .await
     .expect("initialize is answered by the recording");
-    let recorder = Recorder {
+    Recorder {
+        server,
         events,
+        goal: Goal::Exit,
+        interrupt: Interrupt::Never,
+        open: HashMap::new(),
         names: HashMap::new(),
         seen: Vec::new(),
         unknown: BTreeMap::new(),
+        answered: Vec::new(),
+    }
+}
+
+/// Starts a turn on `thread` and records it until it completes.
+async fn turn(
+    rec: Recorder,
+    thread: &CodexThread,
+    text: &str,
+    decision: Decision,
+    interrupt: Interrupt,
+) -> Recorder {
+    let turn = thread.send_turn(String::from(text)).await.unwrap();
+    let goal = Goal::Turn {
+        thread: thread.clone(),
+        turn,
+        decision,
     };
-    (server, recorder)
+    rec.until(goal, interrupt).await
+}
+
+async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
+    match server.respond(id, Decision::Accept).await {
+        Ok(()) => String::from("ok"),
+        Err(e) => e.to_string(),
+    }
 }
 
 #[tokio::test]
 async fn approve_decline_interrupt_and_two_threads() {
-    let (server, mut rec) = spawn("server1.jsonl").await;
+    let rec = spawn("server1.jsonl").await;
+    let server = rec.server.clone();
     assert_eq!(server.codex_version(), Some("0.166.0"));
     let models = server.list_models().await.unwrap();
-    assert!(models.iter().any(|m| m.id == "gpt-6-luna"));
+    assert_eq!(
+        models.iter().find_map(|m| match m.id.as_str() {
+            "gpt-6-luna" => Some(m.id.as_str()),
+            _ => None,
+        }),
+        Some("gpt-6-luna")
+    );
 
     let a = server.start_thread(opts()).await.unwrap();
-    let turn = a.send_turn("a.txt".into()).await.unwrap();
-    let approved = rec.turn(&server, &a, &turn, Decision::Accept, false).await;
-    let turn = a.send_turn("b.txt".into()).await.unwrap();
-    let declined = rec.turn(&server, &a, &turn, Decision::Decline, false).await;
-    let turn = a.send_turn("long".into()).await.unwrap();
-    rec.turn(&server, &a, &turn, Decision::Decline, true).await;
-    let turn = a.send_turn("pong".into()).await.unwrap();
-    rec.turn(&server, &a, &turn, Decision::Decline, false).await;
+    let rec = turn(rec, &a, "a.txt", Decision::Accept, Interrupt::Never).await;
+    let rec = turn(rec, &a, "b.txt", Decision::Decline, Interrupt::Never).await;
+    let rec = turn(
+        rec,
+        &a,
+        "long",
+        Decision::Decline,
+        Interrupt::AfterFirstOutput,
+    )
+    .await;
+    let rec = turn(rec, &a, "pong", Decision::Decline, Interrupt::Never).await;
 
     let b = server.start_thread(opts()).await.unwrap();
     let c = server.start_thread(opts()).await.unwrap();
-    let (tb, tc) =
-        tokio::try_join!(b.send_turn("alpha".into()), c.send_turn("bravo".into())).unwrap();
-    let mut open = vec![(b.id.clone(), tb), (c.id.clone(), tc)];
-    while !open.is_empty() {
-        if let CodexEvent::Thread {
-            thread,
-            event: ThreadEvent::TurnCompleted { turn, .. },
-        } = rec.next().await
-        {
-            let before = open.len();
-            open.retain(|(t, tu)| !(t == &thread && tu == &turn));
-            assert_eq!(
-                open.len(),
-                before - 1,
-                "turn {turn:?} belongs to {thread:?}"
-            );
-        }
+    let (tb, tc) = n0_future::future::try_zip(
+        b.send_turn(String::from("alpha")),
+        c.send_turn(String::from("bravo")),
+    )
+    .await
+    .unwrap();
+    let rec = Recorder {
+        open: HashMap::from([(b.id.clone(), tb), (c.id.clone(), tc)]),
+        ..rec
     }
+    .until(Goal::Turns, Interrupt::Never)
+    .await;
 
-    let mut again = Vec::new();
-    for id in approved.into_iter().chain(declined) {
-        again.push(match server.respond(id, Decision::Accept).await {
-            Ok(()) => "ok".to_owned(),
-            Err(e) => e.to_string(),
-        });
-    }
-    let status = server.shutdown().await.unwrap();
-    assert!(status.success());
-    while !matches!(rec.next().await, CodexEvent::Exited { .. }) {}
+    let again = n0_future::stream::iter(rec.answered.clone())
+        .then(|id| answer_again(&server, id))
+        .collect::<Vec<String>>()
+        .await;
+    assert_eq!(server.shutdown().await.unwrap().code(), Some(0));
+    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
 
     assert_eq!(
         rec.seen,
@@ -343,20 +464,25 @@ async fn approve_decline_interrupt_and_two_threads() {
 
 #[tokio::test]
 async fn resume_in_a_new_process() {
-    let (server, mut rec) = spawn("server2-resume.jsonl").await;
+    let rec = spawn("server2-resume.jsonl").await;
+    let server = rec.server.clone();
     let a = ThreadId(first_thread_id(&fixture("server1.jsonl")).expect("server1 started a thread"));
     let resumed = server.resume_thread(a.clone(), opts()).await.unwrap();
     assert_eq!(resumed.id, a);
-    let turn = resumed.send_turn("which file?".into()).await.unwrap();
-    rec.turn(&server, &resumed, &turn, Decision::Decline, false)
-        .await;
+    let rec = turn(
+        rec,
+        &resumed,
+        "which file?",
+        Decision::Decline,
+        Interrupt::Never,
+    )
+    .await;
     let bogus = server
-        .respond(ApprovalId("never-sent".into()), Decision::Accept)
+        .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
         .await
         .map_err(|e| e.to_string());
-    let status = server.shutdown().await.unwrap();
-    assert!(status.success());
-    while !matches!(rec.next().await, CodexEvent::Exited { .. }) {}
+    assert_eq!(server.shutdown().await.unwrap().code(), Some(0));
+    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
 
     assert_eq!(
         rec.seen,
@@ -375,7 +501,10 @@ fn first_thread_id(fixture: &Path) -> Option<String> {
     std::fs::read_to_string(fixture)
         .ok()?
         .lines()
-        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
-        .find(|m| m["method"] == "thread/started")
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .find_map(|m| match m.get("method").and_then(Value::as_str) {
+            Some("thread/started") => Some(m),
+            _ => None,
+        })
         .and_then(|m| m.pointer("/params/thread/id")?.as_str().map(str::to_owned))
 }
