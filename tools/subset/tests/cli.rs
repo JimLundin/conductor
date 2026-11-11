@@ -1148,3 +1148,37 @@ fn the_readme_lists_every_shape_rule() {
         "README.md is out of date; paste the output of `subset rules` into it"
     );
 }
+
+/// Each rust block of `docs/subset/examples.md`, at the path its first-line
+/// comment names or at `crates/examples/src/<n>.rs`.
+fn example_files() -> Vec<(String, String)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/subset/examples.md");
+    let text = std::fs::read_to_string(path).expect("examples.md");
+    text.split("```rust\n")
+        .skip(1)
+        .enumerate()
+        .map(|(n, rest)| {
+            let code = rest.split("```").next().unwrap().to_string();
+            let named = code
+                .lines()
+                .next()
+                .and_then(|line| line.strip_prefix("// crates/"))
+                .map(|path| format!("crates/{path}"));
+            (
+                named.unwrap_or(format!("crates/examples/src/e{n}.rs")),
+                code,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn every_example_passes_the_subset() {
+    let files = example_files();
+    assert_eq!(files.len(), 18);
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, code)| (path.as_str(), code.as_str()))
+        .collect();
+    assert_eq!(check_repo_config("examples", &files), "");
+}

@@ -1,8 +1,10 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 1) look like in practice.
-Every example uses only allowed constructs. A **Note** marks where the core
-forces a longer form. Those are the likely early proposals.
+What the constructs in `subset.toml` (version 2) look like in practice.
+Every example passes `subset check`, and a test in `tools/subset` keeps it
+that way. A first-line comment naming a path, such as
+`// crates/proto/src/frame.rs`, places an example where a location rule
+allows it. A **Note** marks where the subset forces a longer form.
 
 ## 1. Two states are an enum, not a `bool`
 
@@ -145,14 +147,13 @@ pub fn load(path: &Path) -> Result<Config, LoadError> {
 ```
 
 A variant constructor such as `LoadError::Read` is passed as a function.
-**Note:** with no trait impls in the core, there's no `impl From` for `?`
-to convert through, and no `Display` or `Error` for the type, so every
-conversion is an explicit `map_err`.
+`map_err` is the form to use when one foreign error type can mean different
+things in the same enum. When it means one thing, use `#[from]` (§16).
 
 ## 8. Collections are transformed with adapters
 
 ```rust
-pub fn pending(requests: &Vec<Request>) -> Vec<RequestId> {
+pub fn pending(requests: &[Request]) -> Vec<RequestId> {
     requests
         .iter()
         .filter_map(|request| match request.state {
@@ -163,14 +164,13 @@ pub fn pending(requests: &Vec<Request>) -> Vec<RequestId> {
 }
 ```
 
-Use `filter_map` with a `match` rather than `filter` with a condition.
-**Note:** `&[Request]` (a slice type) isn't in the core yet, hence
-`&Vec`.
+Use `filter_map` with a `match` rather than `filter` with a condition. A
+function that only reads a sequence takes `&[T]` (proposal 0014).
 
 ## 9. Totals are folds with checked arithmetic
 
 ```rust
-pub fn total_bytes(frames: &Vec<Frame>) -> Option<u64> {
+pub fn total_bytes(frames: &[Frame]) -> Option<u64> {
     frames
         .iter()
         .try_fold(0_u64, |total, frame| total.checked_add(frame.len))
@@ -180,7 +180,7 @@ pub fn total_bytes(frames: &Vec<Frame>) -> Option<u64> {
 ## 10. Ask for the value, not whether it exists
 
 ```rust
-pub fn describe(events: &Vec<Event>) -> String {
+pub fn describe(events: &[Event]) -> String {
     match events.last() {
         Some(event) => format!("last event #{}", event.seq.0),
         None => String::from("no events yet"),
@@ -223,7 +223,9 @@ Use struct update instead of `let mut host = host; host.name = name;`.
 ## 13. Logging
 
 ```rust
-tracing::info!(seq = seen.0, host = %name, "caught up");
+pub fn caught_up(seen: HostSeq, name: &str) {
+    tracing::info!(seq = seen.0, host = %name, "caught up");
+}
 ```
 
 ## 14. Tests compare values
@@ -240,13 +242,122 @@ mod tests {
 }
 ```
 
-## Not expressible in the core yet
+## 15. An actor owns its state and runs one loop
 
-The bootstrap round decides each of these with a proposal:
+```rust
+use std::convert::Infallible;
 
-- `async` / `.await`, and the actor `loop` around `select!`.
-- Trait impls: `Display`, `Error` (thiserror), `From`, `Default`, serde.
-- Generic definitions.
-- Slices and the unit type `()`.
-- Derives beyond the six listed, such as `PartialOrd`, `Ord`, `Default`,
-  `Serialize` and `Deserialize`.
+use tokio::sync::{mpsc, oneshot};
+
+pub enum Msg {
+    Append(Event),
+    Head { reply: oneshot::Sender<HostSeq> },
+}
+
+/// The inbox closed: nobody can reach the actor any more.
+#[derive(Debug)]
+pub struct Stopped {}
+
+pub struct Log {
+    events: Vec<Event>,
+    head: HostSeq,
+}
+
+impl Log {
+    pub async fn run(mut self, mut inbox: mpsc::Receiver<Msg>) -> Result<Infallible, Stopped> {
+        loop {
+            let msg = inbox.recv().await.ok_or(Stopped {})?;
+            self.on(msg);
+        }
+    }
+
+    fn on(&mut self, msg: Msg) {
+        match msg {
+            Msg::Append(event) => {
+                self.head = event.seq;
+                self.events.push(event);
+            }
+            Msg::Head { reply } => drop(reply.send(self.head)),
+        }
+    }
+}
+```
+
+`run` is `async` because it waits on a channel (proposal 0006). The `loop` is
+its whole body: it takes one message and hands it to one method (0007). Only
+the actor's own state changes, through `mut self` and `&mut self` (0008).
+Every other function still builds new values.
+
+## 16. Errors convert with `?` through `#[from]`
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("reading the config: {0}")]
+    Read(#[from] std::io::Error),
+    #[error("parsing the config: {0}")]
+    Parse(#[from] toml::de::Error),
+}
+
+pub fn load_config(path: &Path) -> Result<Config, ConfigError> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(toml::from_str(&text)?)
+}
+```
+
+Each variant has one message (proposal 0010). `#[from]` fits because each
+foreign error type appears in one variant only (0011). Where the same type
+means two things, use `map_err` as in §7.
+
+## 17. Wire types derive serde
+
+```rust
+// crates/proto/src/frame.rs
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HostSeq(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Frame {
+    Hello { host: String },
+    Event { seq: HostSeq, body: String },
+}
+```
+
+Only types that cross a wire derive serde, and they live in `crates/proto` or
+an agents protocol module (proposal 0012).
+
+## 18. Platform code comes in pairs
+
+```rust
+pub enum Platform {
+    Browser,
+    Native,
+}
+
+#[cfg(target_family = "wasm")]
+pub fn platform() -> Platform {
+    Platform::Browser
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn platform() -> Platform {
+    Platform::Native
+}
+```
+
+A `cfg` sits on a whole item, and the other platform's item sits next to it
+in the same file (proposal 0016).
+
+## Still outside the subset
+
+- Generic structs, enums and traits, and any bound other than the codec
+  bounds of proposal 0013.
+- `Display`, `FromStr` and `From` impls. Write `label`, `parse` and `to_…`
+  methods instead (proposal 0009).
+- Derives beyond the listed ones, such as `PartialOrd`, `Ord` and `Default`.
+- `if`, `while`, `for`, `return` and the operators. They stay rewrites into
+  the core (`docs/subset/bootstrap-review.md`).
