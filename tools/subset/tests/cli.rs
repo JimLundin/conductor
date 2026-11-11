@@ -780,7 +780,60 @@ fn ref_mut_self_only_on_loop_state_methods() {
             ACTOR,
             "impl Host {\n    fn rename(&mut self, name: String) {\n        self.name = name;\n    }\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state (proposal 0008)\n"
+        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)\n"
+    );
+}
+
+const OWNED: &str = "struct Reader {
+    frames: FrameBuffer,
+    turns: HashMap<ThreadId, Turn>,
+}
+
+struct FrameBuffer {
+    pending: Vec<u8>,
+}
+
+struct Turn {
+    outcome: Option<Outcome>,
+}
+
+impl Reader {
+    async fn run(mut self, mut inbox: Inbox) -> Result<Infallible, Stopped> {
+        loop {
+            let msg = inbox.recv().await.ok_or(Stopped {})?;
+            self.on(msg);
+        }
+    }
+
+    fn on(&mut self, msg: Msg) {
+        self.frames.push(msg.bytes);
+    }
+}
+
+impl FrameBuffer {
+    fn push(&mut self, bytes: Vec<u8>) {
+        self.pending.extend(bytes);
+    }
+}
+
+impl Turn {
+    fn finish(&mut self, outcome: Outcome) {
+        self.outcome = Some(outcome);
+    }
+}
+";
+
+#[test]
+fn ref_mut_self_reaches_a_value_that_loop_state_owns() {
+    assert_eq!(
+        rule_case(
+            "ref-mut-owned",
+            "crates/daemon/src/a.rs",
+            OWNED,
+            "struct Session {\n    turn: Turn,\n}\n\nimpl Session {\n    fn finish(&mut self, outcome: Outcome) {\n        self.turn.finish(outcome);\n    }\n}\n\nfn apply(turn: &mut Turn, outcome: Outcome) {\n    turn.finish(outcome);\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:6:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:11:17: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)\n"
     );
 }
 

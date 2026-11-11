@@ -254,9 +254,10 @@ impl Checker<'_> {
             Some((Receiver::RefMut, _)) => {
                 let state = self.impls.last().is_some_and(|i| {
                     i.kind == ImplKind::Library
-                        || i.self_ty
-                            .as_ref()
-                            .is_some_and(|t| self.facts.loop_states.contains(t))
+                        || i.self_ty.as_ref().is_some_and(|t| {
+                            self.facts.loop_states.contains(t)
+                                || self.facts.owned_by_state.contains(t)
+                        })
                 });
                 if !state {
                     self.flag(token.span, &rules::REF_MUT_SELF);

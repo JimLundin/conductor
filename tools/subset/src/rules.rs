@@ -58,7 +58,7 @@ pub const MUT_SELF: Rule = rule(
 );
 pub const REF_MUT_SELF: Rule = rule(
     "item.fn.receiver.mut",
-    "`&mut self` only on methods of an actor's loop state (proposal 0008)",
+    "`&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008)",
 );
 pub const LET_MUT: Rule = rule(
     "stmt.let.mut",

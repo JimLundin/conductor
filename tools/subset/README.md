@@ -89,7 +89,7 @@ of a `run(mut self)` whose body is an actor loop, and the type a loop's
 | `expr.loop` | a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007) |
 | `expr.break` | `break` only with a value, out of an actor loop (proposal 0007) |
 | `item.fn.receiver.mut` | `mut self` only on a fn whose body is an actor loop (proposal 0008) |
-| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state (proposal 0008) |
+| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types (proposal 0008) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |

@@ -3,7 +3,7 @@
 //! names, not resolved paths: a library type that shares a name with one of
 //! ours counts as ours.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
 use syn::visit::{self, Visit};
@@ -27,6 +27,10 @@ pub struct Facts {
     /// Actor loop states: the `Self` of a `mut self` method whose body is an
     /// actor loop, and the type a loop's `let mut` state is built from.
     pub loop_states: BTreeSet<String>,
+    /// Types of ours that a loop state owns: named anywhere in the type of
+    /// one of its fields, as in `Vec<Turn>` or `Option<FrameBuffer>`. One
+    /// step down only (proposal 0008, widened in version 4).
+    pub owned_by_state: BTreeSet<String>,
     /// Newtype structs that derive `Ord` (proposal 0024).
     pub ord_newtypes: BTreeSet<String>,
 }
@@ -36,12 +40,22 @@ impl Facts {
         let mut gather = Gather {
             facts: Facts::default(),
             self_ty: None,
+            field_types: BTreeMap::new(),
         };
         for (path, file) in files {
             gather.facts.crates.extend(crate_name(path));
             gather.visit_file(file);
         }
-        gather.facts
+        let mut facts = gather.facts;
+        facts.owned_by_state = facts
+            .loop_states
+            .iter()
+            .filter_map(|state| gather.field_types.get(state))
+            .flatten()
+            .filter(|name| facts.types.contains(*name))
+            .cloned()
+            .collect();
+        facts
     }
 
     /// Whether a type or value path names something of ours: a path from
@@ -68,6 +82,8 @@ impl Facts {
 struct Gather {
     facts: Facts,
     self_ty: Option<String>,
+    /// For each struct or enum, every name in the types of its fields.
+    field_types: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Gather {
@@ -88,6 +104,10 @@ impl Gather {
 impl<'ast> Visit<'ast> for Gather {
     fn visit_item_struct(&mut self, i: &'ast syn::ItemStruct) {
         self.facts.types.insert(i.ident.to_string());
+        self.field_types
+            .entry(i.ident.to_string())
+            .or_default()
+            .extend(i.fields.iter().flat_map(|f| type_names(&f.ty)));
         if is_newtype(&i.fields) && i.attrs.iter().any(|a| derives(a, "Ord")) {
             self.facts.ord_newtypes.insert(i.ident.to_string());
         }
@@ -96,6 +116,14 @@ impl<'ast> Visit<'ast> for Gather {
 
     fn visit_item_enum(&mut self, i: &'ast syn::ItemEnum) {
         self.facts.types.insert(i.ident.to_string());
+        self.field_types
+            .entry(i.ident.to_string())
+            .or_default()
+            .extend(
+                i.variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().flat_map(|f| type_names(&f.ty))),
+            );
         visit::visit_item_enum(self, i);
     }
 
@@ -171,6 +199,20 @@ pub fn derives(attr: &syn::Attribute, name: &str) -> bool {
                     .iter()
                     .any(|n| n.segments.last().is_some_and(|s| s.ident == name))
             })
+}
+
+/// Every path segment named in a type, generic arguments included.
+fn type_names(ty: &Type) -> BTreeSet<String> {
+    struct Names(BTreeSet<String>);
+    impl<'ast> Visit<'ast> for Names {
+        fn visit_path_segment(&mut self, segment: &'ast syn::PathSegment) {
+            self.0.insert(segment.ident.to_string());
+            visit::visit_path_segment(self, segment);
+        }
+    }
+    let mut names = Names(BTreeSet::new());
+    names.visit_type(ty);
+    names.0
 }
 
 /// The last path segment of a type, through references.
