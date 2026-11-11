@@ -715,6 +715,17 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             Expr::Tuple(e) if e.elems.is_empty() && !library_value(&slot) => {
                 self.flag(e.span(), &rules::UNIT_VALUE);
             }
+            // `&[a, b]` stands where its array would: `f(&[a, b])` passes the
+            // list straight to a call, and `const L: &[T] = &[..]` is a const.
+            Expr::Reference(e)
+                if e.mutability.is_none()
+                    && matches!(
+                        slot,
+                        Slot::CallArg(_) | Slot::MethodArg { .. } | Slot::ConstInit
+                    ) =>
+            {
+                self.set_expr(&e.expr, slot.clone());
+            }
             Expr::Array(e) => {
                 if !matches!(
                     slot,

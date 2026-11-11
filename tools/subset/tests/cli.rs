@@ -974,6 +974,19 @@ fn array_literals_only_as_call_arguments_and_consts() {
 }
 
 #[test]
+fn an_array_literal_behind_a_reference_keeps_its_place() {
+    assert_eq!(
+        rule_case(
+            "array-ref",
+            "crates/daemon/src/a.rs",
+            "const STUN_SERVERS: &[&str] = &[\"stun:a:3478\", \"stun:b:3478\"];\n\nfn replay(name: &str) -> Recording {\n    recording(name, &[Frame::Hello, Frame::Bye])\n}\n",
+            "fn pair(a: Host, b: Host) -> Pair {\n    let hosts = &[a, b];\n    Pair::new(hosts)\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:2:18: expr.array: an array literal only passed straight to a call, or as a `const` table (proposal 0015)\n"
+    );
+}
+
+#[test]
 fn array_repeats_only_of_a_literal() {
     assert_eq!(
         rule_case(
