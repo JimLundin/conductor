@@ -2,10 +2,11 @@
 
 Conductor code is written in a small subset of Rust that grows on evidence.
 The subset starts from one idea: **every state is a named enum variant, and
-every decision is a `match` over it.** There are no boolean checks. Anything
-not listed in `subset.toml` is not allowed. A construct joins the list only
-when a reviewer shows, with measurements, that it shrinks real code without
-costing any of the qualities below, and the owner accepts it.
+every decision is a `match` over it.** There are no boolean checks outside
+a predicate closure (proposal 0028). Anything not listed in `subset.toml` is
+not allowed. A construct joins the list only when a reviewer shows, with
+measurements, that it shrinks real code without costing any of the
+qualities below, and the owner accepts it.
 
 `subset.toml` is the source of truth. `tools/subset check` enforces it on
 the paths under `include`. `tools/subset measure` counts the code volume
@@ -42,10 +43,11 @@ The ids are those used in `subset.toml`.
 |---|---|---|
 | Data | `item.struct.named`, `item.struct.newtype`, `item.enum` | `bool` is not a type in our code: a two-state value is a two-variant enum. IDs and units are newtypes. |
 | Behaviour | `item.fn`, `item.impl.inherent`, `item.const` | Free functions and inherent methods. |
-| Branching | `expr.match`, `pat.*` | Matches are exhaustive. `true` / `false` are not patterns, because that would be a boolean check written as a match. |
+| Branching | `expr.match`, `pat.*` | Matches are exhaustive. `true` / `false` are not patterns, because that would be a boolean check written as a match. A single-branch `if let` (0027) is the one other branching form. |
 | Building values | `expr.call`, `expr.method_call`, `expr.field`, `expr.struct`, `expr.path`, `expr.lit`, `expr.reference`, `expr.block`, `expr.paren` | |
 | Errors | `expr.try`, plus `Result` / `Option` through the core | `?` is the only early exit. |
 | Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method. |
+| Predicates | `macro.matches`, `expr.binary.{eq,ne,lt,le,gt,ge,and,or}`, `expr.unary.not` | Proposal 0028. A closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` may have a boolean expression as its body: `matches!`, a comparison, `&&`, `\|\|`, `!`. Nowhere else, and never a `true`/`false` literal. Counting is `filter(\|x\| matches!(x, ..)).count()`. |
 | Bindings | `stmt.let` | Immutable, with a pattern. |
 | Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
 | Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
@@ -54,14 +56,14 @@ The ids are those used in `subset.toml`.
 | Unit | `type.unit`, `expr.unit` | Proposal 0005, with its boundary part replaced by 0023. `()` only at a library boundary (0023), which covers `Result<(), E>` and `Ok(())`, and as `fn main`'s return type. |
 | Async | `item.fn.async`, `expr.await`, `expr.async`, `attr.tokio::main` | Proposal 0006. `async fn` for I/O, and an `async` block only as a spawn argument or the whole body of a stream closure. |
 | Actor loop | `expr.loop`, `expr.break`, `macro.allowed` for `tokio::select` | Proposal 0007. `loop` only as the whole body of an actor's `run` fn or a drive fn, taking one input per turn and handling it with one call or `match`. |
-| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008. Mutation only of an actor's loop state and of external values whose API takes `&mut`, and never compound assignment. |
+| Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008, widened in version 4. Mutation only of an actor's loop state, of a value that loop state owns (its methods may take `&mut self`, called on `self.field`), and of external values whose API takes `&mut`. Never a `&mut` parameter of our own types, and never compound assignment. |
 | Library traits | `item.impl.trait`, `generics.lifetime`, `type.lifetime` | Proposal 0009. Trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler`, with lifetimes only where the trait's signature demands them. |
 | Error enums | `attr.derive` of `thiserror::Error`, `attr.error` | Proposal 0010. `thiserror::Error` on an error type, with one `#[error("…")]` message per variant. |
 | Error conversion | `attr.from` | Proposal 0011. `#[from]` only on the one variant of an enum that holds a given error type, ours or a library's. |
 | Wire types | `attr.derive.Serialize`, `attr.derive.Deserialize`, `attr.serde` | Proposal 0012. serde derives only in `crates/proto` and the agents' provider protocol modules, with `transparent`, `tag`, `content`, `rename_all` and `rename` only. |
 | Codec generics | `generics.type_param` | Proposal 0013. A type parameter only on a codec fn, with one `Serialize` or `DeserializeOwned` bound and no `where`. |
-| Slices | `type.slice` | Proposal 0014. `&[T]` for a read-only sequence parameter and for a `const` list. |
-| Arrays | `type.array`, `expr.array`, `expr.repeat` | Proposal 0015. Arrays only for fixed-size bytes, `const` tables and a literal list passed straight to a call. |
+| Slices | `type.slice` | Proposal 0014, amended in version 4. `&[T]` for a read-only sequence parameter, and a constant list is always `const NAME: &[T] = &[..]`. |
+| Arrays | `type.array`, `expr.array`, `expr.repeat` | Proposal 0015, amended in version 4. `[T; N]` only for a fixed size that is part of a format or API, such as `[u8; 32]` keys, and a literal list passed straight to a call (`f([a, b])` or `f(&[a, b])`). `const` tables became `const` lists under 0014. |
 | Platform code | `attr.cfg` | Proposal 0016. `cfg` only on `target_family = "wasm"` and `unix` (or their `not`), on items, each with its counterpart. |
 | Browser callbacks | `type.dyn`, `expr.closure` | Proposal 0017. `Closure<dyn FnMut(..)>` only in `crates/client/src/platform/`, and its closure only forwards the event to a channel. |
 | UI | `macro.rsx`, `macro.asset`, `attr.component`, `item.use.glob`, `attr.allow` | Proposal 0018. Dioxus only in `crates/app`, which renders what `client` decides. |
@@ -69,6 +71,10 @@ The ids are those used in `subset.toml`.
 | Async tests | `attr.tokio::test` | Proposal 0020. `#[tokio::test]` with no arguments on an `async fn` test. |
 | External flags | `expr.lit.bool` | Proposal 0021, replaced by 0023. `true` / `false` only at a library boundary (0023). |
 | Library boundary | `type.unit`, `expr.unit`, `type.bool`, `expr.lit.bool`, `expr.reference.mut`, `type.reference.mut` | Proposal 0023. Where a library API demands `()`, `bool` or `&mut`, the shape is allowed in a type argument, call argument or field value of something we don't define, and only there. It never becomes a field, a variant payload, a parameter or a return type of our own items. |
+| Ordered newtypes | `attr.derive` of `PartialOrd`, `Ord` | Proposal 0024. Only on a newtype whose order means something, such as `HostSeq`. Callers compare with `a.cmp(&b)` and match the `Ordering`, never through `.0`. |
+| Request helper | `type.impl_trait.arg`, `generics.type_param`, `expr.closure` | Proposal 0026. Each actor handle may have one private `ask<T>` helper taking `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, and every request/reply round trip goes through it. Nothing else takes an `impl Trait` argument. |
+| One-case branch | `expr.if_let.single` | Proposal 0027. `if let Pattern = expr { … }` with no `else`, no `else if` and no `&&` let-chain, the one form for "act only on this case". Anything with an alternative branch is a `match`. |
+| Discarding | `stmt.let` with `_` | Proposal 0025, revised. `let _ = value;` is the one way to discard a value. `drop(..)` only releases a resource early, and `.ok()` is never a discard. No lint is switched off. |
 | Build-time constants | `macro.allowed` for `env` | Proposal 0022. `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR`. |
 | Modules | `item.use`, `item.mod` | |
 | Attributes | `attr.doc`, `attr.derive` (the listed derives), `attr.cfg_test` | |
@@ -81,12 +87,13 @@ Don't work around it.
 
 ## Not in the core
 
-Everything else, for example `if`, `while`, `for`, `return`, `continue`,
-`break` outside a drive loop, operators (`&&`, `==`, `+`, `as`, indexing,
-ranges), compound assignment (`+=`), `let … else`, trait definitions,
-generic types, and unlisted macros. Some of these may join through
-proposals. Others, such as `unsafe` and interior mutability, conflict with
-the qualities and won't.
+Everything else, for example `if`, `if let` with an `else` or a let-chain,
+`while`, `for`, `return`, `continue`, `break` outside a drive loop,
+operators (`+`, `as`, indexing, ranges, and the boolean operators outside a
+predicate closure), compound assignment (`+=`), `let … else`, trait
+definitions, generic types, and unlisted macros. Some of these may join
+through proposals. Others, such as `unsafe` and interior mutability,
+conflict with the qualities and won't.
 
 Where the subset gives ground on the qualities is listed in
 [`docs/subset/compromises.md`](subset/compromises.md).
@@ -108,8 +115,9 @@ pass of the pair loop therefore runs on the existing code:
    `crates/`.
 
 The owner accepted 0002 to 0022 as version 2, then 0023 and the 0011
-amendment as version 3. The rewrite starts from
-`docs/subset/rewrite-report.txt`, the report under version 3.
+amendment as version 3. Version 4 accepts 0024, 0026, 0027 and 0028,
+accepts 0025 in a revised form, widens 0008 and amends 0014 and 0015.
+The rewrite works from `docs/subset/rewrite-report.txt`, the report under version 4.
 
 ## Growing the subset
 

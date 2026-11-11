@@ -2,7 +2,7 @@
 
 The thesis is that **every state is a named enum variant and every decision is
 a `match`**, protected by six qualities (`docs/subset.md`). Version 4 accepts
-26 proposals. Most keep all six qualities. The ones below don't, or they bend
+27 proposals. Most keep all six qualities. The ones below don't, or they bend
 the thesis at its edges. Each is confined by its rule, and this page is the
 list to revisit first when one of them starts to spread.
 
@@ -20,6 +20,7 @@ list to revisit first when one of them starts to spread.
 - **Library shapes come back at the boundary.** 0023 allows `()`, `bool`, `true`/`false` and library `&mut` where an API we don't define demands them: in a type argument, call argument or field value of something we don't define, as in `EventHandler<()>`, `watch::channel(false)` and `tx.send(())`. 0019 also allows a `bool` for a command-line flag. Neither reaches a field, variant payload, parameter or return type of our own items, but the rule "no `bool`" is now "no `bool` past the edge".
 - **Branching outside `match`.** 0016 `cfg` is a compile-time branch. It is kept visible by being item-level and paired. 0006 `.await` and 0007 `loop` add suspension and repetition outside iterator adapters, both needed for actors and I/O.
 - **A second branching form.** 0027 allows `if let` for "act only on this case", because clippy's `single_match` rejects the `match` with an empty arm and no lint is switched off (0025 revised). It is confined to one branch: with an `else`, an `else if` or a let-chain it is a `match` again, so every two-way decision is still a `match`.
+- **`bool` comes back inside predicates.** 0028 lets a closure passed straight to `filter`, `find`, `any`, `all`, `position`, `take_while`, `skip_while` or `retain` return a boolean expression: `matches!`, a comparison, `&&`, `||` or `!`. This is the one place a decision is written as a `bool` rather than a `match`. It is confined to the closure body, the adapter is the branch, and the `bool` never becomes a binding, field, parameter or return type of ours. `true` and `false` stay out of it.
 - **Iteration outside adapters.** The actor `loop` (0007) is the one loop. Every other loop is still an adapter.
 
 ## Enforcement is partly by review
@@ -36,14 +37,25 @@ doesn't expand macros, so a reviewer still checks these:
   library wrapper hides where a value ends up: the tool allows
   `Option<bool>` as a field of our struct and `Some(true)` as its value,
   because `Option` and `Some` aren't ours. The reviewer checks that a
-  boundary value doesn't flow on into our types.
+  boundary value doesn't flow on into our types. 0008's "a value that loop
+  state owns" is approximated as "a type of ours named in a field type of a
+  loop-state type", one step down. 0024's "never compare through `.0`" is
+  checked only where the receiver is `self` in an impl of an ordered
+  newtype or a parameter declared as one. 0028's predicate leaves aren't
+  typed, so `|x| x.flag` on a library `bool` passes.
 - **Why a construct is there.** 0002 `pub` only for what another crate
   uses, 0006 `async fn` only for I/O, 0012 serde only on types that cross a
   wire (the tool checks the location), 0013 generics only at the wire
   boundary (the tool checks the bound), 0014 a slice only for a read-only
-  sequence, 0015 a byte array only where its size is part of a format, and
+  sequence, 0015 a byte array only where its size is part of a format,
   0009 generics only where the trait's signature demands them (the tool
-  allows any inside a listed trait impl).
+  allows any inside a listed trait impl). Also 0024 an order that means
+  something (the tool checks that the type is a newtype), 0025 `drop` only
+  of a value that owns a resource released early (the tool checks that the
+  argument is a plain name), 0026 every round trip going through `ask` and
+  its closure only building the variant (the tool checks the helper's
+  shape), and 0028 a `fold` or `map(..).sum()` used only to count (the tool
+  flags `filter_map(..).count()`).
 - **Macro bodies.** 0007's "each `select!` arm is a single call", Dioxus
   markup (0018) and `tracing` fields are not parsed.
 - **What a body does.** 0017's callback only forwards the event to a

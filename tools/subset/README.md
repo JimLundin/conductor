@@ -72,9 +72,11 @@ A rule is checked only where its id is allowed, by `allowed` or by a scope.
 Where the id isn't allowed, the id itself is the violation. Some rules need
 facts from other files, so `check` first gathers, from every file under
 `include`, the names of our crates, modules, types and free functions, the
-types used as a `Result`'s error, and the actor loop-state types (the `Self`
+types used as a `Result`'s error, the actor loop-state types (the `Self`
 of a `run(mut self)` whose body is an actor loop, and the type a loop's
-`let mut` state is built from). The facts are names, not resolved paths.
+`let mut` state is built from), the types of ours named in a loop-state
+type's fields, and the newtypes that derive `Ord`. The facts
+are names, not resolved paths.
 
 | Id | Rule |
 |---|---|
@@ -215,11 +217,22 @@ Some rules need context.
   is there: 0002 `pub` only for another crate, 0006 `async fn` only for I/O,
   0012 serde only on wire types (checked by location), 0013 generics only at
   the wire boundary (checked by bound), 0014 a slice only for a read-only
-  sequence, 0015 a byte array only where its size is part of a format, and
+  sequence, 0015 a byte array only where its size is part of a format,
   0009 generics only where the trait demands them (any are allowed inside a
-  listed trait impl). Neither can it see what a body does: 0017's callback
+  listed trait impl), 0024 an order that means something, 0025 `drop` only
+  of a value that owns a resource (checked as "the argument is a plain
+  name"), 0026 every round trip going through `ask` (the helper's shape is
+  checked), and 0028 a `fold` that only counts (`filter_map(..).count()` is
+  checked). Neither can it see what a body does: 0017's callback
   only forwards to a channel, and 0019's `main` turns its `bool` into an
   enum. `docs/subset/compromises.md` lists these.
+- **Ownership and receivers are approximated by name.** 0008's "a value
+  that loop state owns" is a type of ours named anywhere in a field type of
+  a loop-state type (`Vec<Turn>`, `Option<FrameBuffer>`), one step down. A
+  type that a loop state merely mentions, say in `PhantomData<T>`, counts
+  too, and a value two fields down doesn't. 0024's `.0.cmp(` is flagged
+  only where the receiver is `self` in an impl of an ordered newtype or a
+  parameter declared as one; `event.seq.0.cmp(..)` passes.
 - **`cfg` pairs are matched by name.** A `cfg` fn or impl is paired when an
   item of the same kind and name has the other platform's predicate. Any
   `use` pairs with any `use`, and a `cfg` module needs no pair, since 0016

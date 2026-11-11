@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 3) look like in practice.
+What the constructs in `subset.toml` (version 4) look like in practice.
 Every example passes `subset check`, and a test in `tools/subset` keeps it
 that way. A first-line comment naming a path, such as
 `// crates/proto/src/frame.rs`, places an example where a location rule

@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 3
+version = 4
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
