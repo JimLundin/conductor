@@ -433,14 +433,6 @@ enum Ended {
     Dropped,
 }
 
-/// What the driver does next: str0m's next output, or, once str0m has only a
-/// timeout left, what arrived while it waited.
-enum Wake {
-    Transmit(Transmit),
-    Event(Box<Event>),
-    Input { input: Input, deadline: Instant },
-}
-
 /// What arrived while str0m waited.
 enum Input {
     Packet(Option<Packet>),
@@ -503,8 +495,7 @@ struct Driver {
 impl Driver {
     async fn run(mut self) {
         loop {
-            let wake = self.next().await;
-            match self.on(wake).await {
+            match self.turn().await {
                 Ok(()) => {}
                 Err(ended) => break self.end(ended),
             }
@@ -526,17 +517,29 @@ impl Driver {
         );
     }
 
-    async fn next(&mut self) -> Result<Wake, Ended> {
+    /// Handles str0m's next output, or, once str0m has only a timeout left,
+    /// what arrives while it waits.
+    async fn turn(&mut self) -> Result<(), Ended> {
         match (self.rtc.poll_output(), self.phase) {
-            (Ok(Output::Transmit(transmit)), _) => Ok(Wake::Transmit(transmit)),
-            (Ok(Output::Event(event)), _) => Ok(Wake::Event(Box::new(event))),
-            (Ok(Output::Timeout(deadline)), Phase::Running) => self.wait(deadline).await,
+            (Ok(Output::Transmit(transmit)), _) => {
+                self.transmit(transmit).await;
+                Ok(())
+            }
+            (Ok(Output::Event(event)), _) => {
+                self.event(event);
+                Ok(())
+            }
+            (Ok(Output::Timeout(deadline)), Phase::Running) => {
+                let input = self.wait(deadline).await?;
+                self.input(input).await?;
+                self.timeout(deadline)
+            }
             (Ok(Output::Timeout(_)) | Err(_), Phase::Dropping) => Err(Ended::Dropped),
             (Err(err), Phase::Running) => Err(Ended::Str0m(err)),
         }
     }
 
-    async fn wait(&mut self, deadline: Instant) -> Result<Wake, Ended> {
+    async fn wait(&mut self, deadline: Instant) -> Result<Input, Ended> {
         self.rtc.is_alive().then_some(()).ok_or(Ended::Closed)?;
         self.connecting_in_time()?;
         let wake = self
@@ -549,7 +552,7 @@ impl Driver {
             out = self.out.recv() => Input::Out(out),
             signal = self.signals.recv() => Input::Signal(signal),
         };
-        Ok(Wake::Input { input, deadline })
+        Ok(input)
     }
 
     fn connecting_in_time(&self) -> Result<(), Ended> {
@@ -561,23 +564,6 @@ impl Driver {
                 }),
                 Ordering::Less | Ordering::Equal => Ok(()),
             },
-        }
-    }
-
-    async fn on(&mut self, wake: Result<Wake, Ended>) -> Result<(), Ended> {
-        match wake? {
-            Wake::Transmit(transmit) => {
-                self.transmit(transmit).await;
-                Ok(())
-            }
-            Wake::Event(event) => {
-                self.event(&event);
-                Ok(())
-            }
-            Wake::Input { input, deadline } => {
-                self.input(input).await?;
-                self.timeout(deadline)
-            }
         }
     }
 
@@ -630,7 +616,7 @@ impl Driver {
         }
     }
 
-    fn event(&mut self, event: &Event) {
+    fn event(&mut self, event: Event) {
         match event {
             Event::IceConnectionStateChange(state) => {
                 tracing::info!(client = self.client, ?state, "webrtc ice state");
@@ -648,16 +634,16 @@ impl Driver {
                     "webrtc connected: DTLS is up"
                 );
             }
-            Event::ChannelOpen(id, label) => self.open_channel(id.to_owned(), label),
+            Event::ChannelOpen(id, label) => self.open_channel(id, &label),
             Event::ChannelData(data) => {
                 if let Some(messages) = self.inbound.get(&data.id) {
-                    let _ = messages.send(data.data.clone());
+                    let _ = messages.send(data.data);
                 }
             }
             Event::ChannelClose(id) => {
-                let _ = self.inbound.remove(id);
-                let _ = self.writable.remove(id);
-                self.pending.retain(|write| &write.id != id);
+                let _ = self.inbound.remove(&id);
+                let _ = self.writable.remove(&id);
+                self.pending.retain(|write| write.id != id);
             }
             Event::ChannelBufferedAmountLow(_) => {
                 if let Err(err) = self.flush() {
