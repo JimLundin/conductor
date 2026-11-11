@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 2) look like in practice.
+What the constructs in `subset.toml` (version 3) look like in practice.
 Every example passes `subset check`, and a test in `tools/subset` keeps it
 that way. A first-line comment naming a path, such as
 `// crates/proto/src/frame.rs`, places an example where a location rule
@@ -147,7 +147,7 @@ pub fn load(path: &Path) -> Result<Config, LoadError> {
 ```
 
 A variant constructor such as `LoadError::Read` is passed as a function.
-`map_err` is the form to use when one foreign error type can mean different
+`map_err` is the form to use when one error type can mean different
 things in the same enum. When it means one thing, use `#[from]` (§16).
 
 ## 8. Collections are transformed with adapters
@@ -306,7 +306,7 @@ pub fn load_config(path: &Path) -> Result<Config, ConfigError> {
 ```
 
 Each variant has one message (proposal 0010). `#[from]` fits because each
-foreign error type appears in one variant only (0011). Where the same type
+source error type appears in one variant only (0011). Where the same type
 means two things, use `map_err` as in §7.
 
 ## 17. Wire types derive serde

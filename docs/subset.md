@@ -51,13 +51,13 @@ The ids are those used in `subset.toml`.
 | Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
 | Crate-internal sharing | `vis.restricted` | Proposal 0003. Only `pub(crate)`, never `pub(super)` or `pub(in …)`, and a `pub(crate)` struct has no `pub` fields. |
 | Changed copies | `expr.struct.update` | Proposal 0004. `..base` only where the base is an existing value of the same type or an external crate's `Default::default()` or named constructor. |
-| Unit | `type.unit`, `expr.unit` | Proposal 0005. `()` only in `Result<(), E>`, as a signalling channel's item type, in `fn main`'s return type and as `Ok(())`. |
+| Unit | `type.unit`, `expr.unit` | Proposal 0005, with its boundary part replaced by 0023. `()` only at a library boundary (0023), which covers `Result<(), E>` and `Ok(())`, and as `fn main`'s return type. |
 | Async | `item.fn.async`, `expr.await`, `expr.async`, `attr.tokio::main` | Proposal 0006. `async fn` for I/O, and an `async` block only as a spawn argument or the whole body of a stream closure. |
 | Actor loop | `expr.loop`, `expr.break`, `macro.allowed` for `tokio::select` | Proposal 0007. `loop` only as the whole body of an actor's `run` fn or a drive fn, taking one input per turn and handling it with one call or `match`. |
 | Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008. Mutation only of an actor's loop state and of external values whose API takes `&mut`, and never compound assignment. |
 | Library traits | `item.impl.trait`, `generics.lifetime`, `type.lifetime` | Proposal 0009. Trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler`, with lifetimes only where the trait's signature demands them. |
 | Error enums | `attr.derive` of `thiserror::Error`, `attr.error` | Proposal 0010. `thiserror::Error` on an error type, with one `#[error("…")]` message per variant. |
-| Error conversion | `attr.from` | Proposal 0011. `#[from]` only on the one variant of an enum that holds a given foreign error type. |
+| Error conversion | `attr.from` | Proposal 0011. `#[from]` only on the one variant of an enum that holds a given error type, ours or a library's. |
 | Wire types | `attr.derive.Serialize`, `attr.derive.Deserialize`, `attr.serde` | Proposal 0012. serde derives only in `crates/proto` and the agents' provider protocol modules, with `transparent`, `tag`, `content`, `rename_all` and `rename` only. |
 | Codec generics | `generics.type_param` | Proposal 0013. A type parameter only on a codec fn, with one `Serialize` or `DeserializeOwned` bound and no `where`. |
 | Slices | `type.slice` | Proposal 0014. `&[T]` for a read-only sequence parameter and for a `const` list. |
@@ -67,7 +67,8 @@ The ids are those used in `subset.toml`.
 | UI | `macro.rsx`, `macro.asset`, `attr.component`, `item.use.glob`, `attr.allow` | Proposal 0018. Dioxus only in `crates/app`, which renders what `client` decides. |
 | Command line | `attr.derive.Parser`, `attr.derive.Subcommand`, `attr.derive.ValueEnum`, `attr.command`, `attr.arg`, `type.bool` | Proposal 0019. clap only in a binary's `main.rs` and in `examples/`, and a flag `bool` becomes an enum before it leaves `main`. |
 | Async tests | `attr.tokio::test` | Proposal 0020. `#[tokio::test]` with no arguments on an `async fn` test. |
-| External flags | `expr.lit.bool` | Proposal 0021. `true` / `false` only as an argument or field value of an external API whose type is `bool`. |
+| External flags | `expr.lit.bool` | Proposal 0021, replaced by 0023. `true` / `false` only at a library boundary (0023). |
+| Library boundary | `type.unit`, `expr.unit`, `type.bool`, `expr.lit.bool`, `expr.reference.mut`, `type.reference.mut` | Proposal 0023. Where a library API demands `()`, `bool` or `&mut`, the shape is allowed in a type argument, call argument or field value of something we don't define, and only there. It never becomes a field, a variant payload, a parameter or a return type of our own items. |
 | Build-time constants | `macro.allowed` for `env` | Proposal 0022. `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR`. |
 | Modules | `item.use`, `item.mod` | |
 | Attributes | `attr.doc`, `attr.derive` (the listed derives), `attr.cfg_test` | |
@@ -87,7 +88,7 @@ generic types, and unlisted macros. Some of these may join through
 proposals. Others, such as `unsafe` and interior mutability, conflict with
 the qualities and won't.
 
-Where version 2 gives ground on the qualities is listed in
+Where the subset gives ground on the qualities is listed in
 [`docs/subset/compromises.md`](subset/compromises.md).
 
 ## Bootstrap round
@@ -106,8 +107,9 @@ pass of the pair loop therefore runs on the existing code:
    the agreed subset, until `tools/subset check` passes on all of
    `crates/`.
 
-The owner accepted 0002 to 0022 as version 2. The rewrite starts from
-`docs/subset/rewrite-report.txt`, the report under version 2.
+The owner accepted 0002 to 0022 as version 2, then 0023 and the 0011
+amendment as version 3. The rewrite starts from
+`docs/subset/rewrite-report.txt`, the report under version 3.
 
 ## Growing the subset
 

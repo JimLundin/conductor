@@ -186,9 +186,11 @@ Some rules need context.
 - **Shape rules can't see types.** "Ours" means a path from `crate`, `self`,
   `super`, one of our crates or modules, a name we define, or an associated
   item of a type we define. So 0008(b) `let mut` for an external value is
-  checked as "never reassigned", 0011's foreign type and 0021's external API
-  as "not ours", and a method's receiver is ours only when it is `self`. A
-  library type that shares a name with one of ours counts as ours.
+  checked as "never reassigned", 0023's library boundary as "not ours", and
+  a method's receiver is ours only when it is `self`. A library type that
+  shares a name with one of ours counts as ours, and a library wrapper hides
+  where a value goes: `Option<bool>` as our field and `Some(true)` as its
+  value pass, because `Option` and `Some` aren't ours.
 - **Some rules stay with the reviewer.** Syntax can't tell why a construct
   is there: 0002 `pub` only for another crate, 0006 `async fn` only for I/O,
   0012 serde only on wire types (checked by location), 0013 generics only at
