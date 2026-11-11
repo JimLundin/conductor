@@ -16,3 +16,6 @@ codex-codes = { workspace = true, features = ["cli"] }
 # Used only by the s1 spike binary.
 anyhow.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+n0-future.workspace = true

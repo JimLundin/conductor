@@ -4,14 +4,16 @@
 //! Usage: s1 [FIXTURE_DIR]
 //! Writes raw CLI stdout per step to FIXTURE_DIR/<step>.jsonl when given.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agents::claude::{
-    Block, ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionDecision, PermissionMode, Role,
-    SessionId, SettingSource,
+    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, Outcome,
+    PermissionDecision, PermissionMode, PermissionRequestId, Role, SessionId, SettingSource,
+    VersionPolicy,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
 const CLAUDE: &str = "/home/jim/.local/bin/claude";
@@ -35,325 +37,512 @@ struct Live {
 }
 
 /// How a turn answers permission requests.
-#[derive(Clone, Copy)]
-enum Policy<'a> {
+enum Policy {
     Approve,
-    Deny(&'a str),
+    Deny(String),
 }
 
-#[derive(Default, Debug)]
+impl Policy {
+    fn decision(&self) -> PermissionDecision {
+        match self {
+            Policy::Approve => PermissionDecision::Allow,
+            Policy::Deny(message) => PermissionDecision::Deny {
+                message: message.clone(),
+                then: AfterDeny::Continue,
+            },
+        }
+    }
+}
+
+/// How a turn is driven to its `result`.
+enum Plan {
+    Answer(Policy),
+    /// Approve permissions and interrupt after the first assistant message.
+    InterruptOnFirstReply,
+    /// Leave the first permission request open and interrupt; deny any later one.
+    InterruptOnPermission,
+}
+
+/// Whether a turn has reached its `result`.
+enum Progress {
+    Playing,
+    Done,
+}
+
+#[derive(Debug)]
+struct Finished {
+    subtype: String,
+    outcome: Outcome,
+    terminal_reason: Option<String>,
+}
+
+impl Finished {
+    fn terminal_reason(&self) -> Option<&str> {
+        self.terminal_reason.as_deref()
+    }
+}
+
+/// One turn being driven to its `result`, and what it saw on the way.
 struct Turn {
+    live: Live,
+    plan: Plan,
     permissions: Vec<String>,
     cancelled_permissions: usize,
     text: String,
-    finished: Option<(String, bool)>,
-    terminal_reason: Option<String>,
+    finished: Option<Finished>,
     session_id: Option<SessionId>,
+    /// What `interrupt()` returned, once the plan called it.
+    interrupted: Option<Result<(), Error>>,
+    /// The permission request `InterruptOnPermission` left open.
+    open: Option<PermissionRequestId>,
 }
 
-async fn run(fixtures: Option<PathBuf>) -> Result<()> {
+impl Turn {
+    async fn start(live: Live, prompt: &str, plan: Plan) -> Result<Turn> {
+        live.session.send_user(String::from(prompt)).await?;
+        Turn {
+            live,
+            plan,
+            permissions: Vec::new(),
+            cancelled_permissions: 0,
+            text: String::new(),
+            finished: None,
+            session_id: None,
+            interrupted: None,
+            open: None,
+        }
+        .run()
+        .await
+    }
+
+    async fn run(mut self) -> Result<Turn> {
+        loop {
+            let event = self.next().await?;
+            match self.on(event).await? {
+                Progress::Playing => {}
+                Progress::Done => break Ok(self),
+            }
+        }
+    }
+
+    async fn next(&mut self) -> Result<ClaudeEvent> {
+        tokio::time::timeout(TURN_TIMEOUT, self.live.events.recv())
+            .await
+            .context("turn timed out")?
+            .context("event stream closed")
+    }
+
+    async fn on(&mut self, event: ClaudeEvent) -> Result<Progress> {
+        match event {
+            ClaudeEvent::SessionStarted { session_id } => {
+                self.session_id = Some(session_id);
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::Message {
+                role: Role::Assistant,
+                content,
+            } => {
+                self.on_reply(content).await;
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
+            ClaudeEvent::PermissionRequested { id, tool_name, .. } => {
+                self.permissions.push(tool_name);
+                self.on_permission(id).await?;
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::PermissionCancelled { .. } => {
+                self.cancelled_permissions = self.cancelled_permissions.saturating_add(1);
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::TurnFinished {
+                subtype,
+                outcome,
+                terminal_reason,
+                session_id,
+            } => {
+                self.finished = Some(Finished {
+                    subtype,
+                    outcome,
+                    terminal_reason,
+                });
+                self.session_id.get_or_insert(session_id);
+                Ok(Progress::Done)
+            }
+            ClaudeEvent::Exited { status } => Err(anyhow::Error::msg(format!(
+                "claude exited mid-turn: {status}"
+            ))),
+        }
+    }
+
+    async fn on_reply(&mut self, content: Vec<Block>) {
+        let text = content
+            .into_iter()
+            .filter_map(|block| match block {
+                Block::Text(text) => Some(text),
+                Block::Thinking(_)
+                | Block::ToolUse { .. }
+                | Block::ToolResult { .. }
+                | Block::Other(_) => None,
+            })
+            .collect::<String>();
+        self.text.push_str(&text);
+        match (&self.plan, &self.interrupted) {
+            (Plan::InterruptOnFirstReply, None) => {
+                self.interrupted = Some(self.live.session.interrupt().await);
+            }
+            (Plan::InterruptOnFirstReply, Some(_))
+            | (Plan::Answer(_) | Plan::InterruptOnPermission, _) => {}
+        }
+    }
+
+    async fn on_permission(&mut self, id: PermissionRequestId) -> Result<()> {
+        match (&self.plan, &self.open) {
+            (Plan::InterruptOnPermission, None) => {
+                self.open = Some(id);
+                self.interrupted = Some(self.live.session.interrupt().await);
+                Ok(())
+            }
+            (Plan::InterruptOnPermission, Some(_)) => {
+                let decision = PermissionDecision::Deny {
+                    message: String::from("late request"),
+                    then: AfterDeny::Continue,
+                };
+                self.answer(id, decision).await
+            }
+            (Plan::InterruptOnFirstReply, _) => self.answer(id, PermissionDecision::Allow).await,
+            (Plan::Answer(policy), _) => self.answer(id, policy.decision()).await,
+        }
+    }
+
+    async fn answer(&self, id: PermissionRequestId, decision: PermissionDecision) -> Result<()> {
+        match self.live.session.respond(id.clone(), decision).await {
+            Ok(()) => Ok(()),
+            Err(e) => Ok(writeln!(
+                std::io::stdout(),
+                "note: respond({}) failed: {e}",
+                id.0
+            )?),
+        }
+    }
+
+    /// The turn's `result` subtype and outcome, for matching.
+    fn result(&self) -> Option<(&str, Outcome)> {
+        self.finished
+            .as_ref()
+            .map(|finished| (finished.subtype.as_str(), finished.outcome))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Presence {
+    Present,
+    Missing,
+}
+
+fn presence(path: &Path) -> Presence {
+    match std::fs::metadata(path) {
+        Ok(_) => Presence::Present,
+        Err(_) => Presence::Missing,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Verdict {
+    Pass,
+    Fail,
+}
+
+fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
+    let label = match verdict {
+        Verdict::Pass => "PASS",
+        Verdict::Fail => "FAIL",
+    };
+    writeln!(std::io::stdout(), "{label} {step}: {detail}")?;
+    Ok(verdict)
+}
+
+fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
+    fixtures.map(|dir| {
+        let path = dir.join(format!("{name}.jsonl"));
+        drop(std::fs::remove_file(&path));
+        path
+    })
+}
+
+fn options(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
+    ClaudeOptions {
+        claude_path: PathBuf::from(CLAUDE),
+        cwd: PathBuf::from(SCRATCH),
+        model: Some(String::from("haiku")),
+        permission_mode: PermissionMode::Default,
+        resume,
+        // Keep the user's own hooks and plugins out of the spike.
+        setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
+        stdout_log,
+        versions: VersionPolicy::SupportedOnly,
+    }
+}
+
+async fn spawn(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> Result<Live> {
+    let (session, events) = ClaudeSession::spawn(options(resume, stdout_log)).await?;
+    Ok(Live { session, events })
+}
+
+fn fresh_scratch() -> Result<()> {
     let scratch = Path::new(SCRATCH);
-    if scratch.exists() {
-        std::fs::remove_dir_all(scratch)?;
+    match presence(scratch) {
+        Presence::Present => std::fs::remove_dir_all(scratch)?,
+        Presence::Missing => {}
     }
     std::fs::create_dir_all(scratch)?;
     let git = std::process::Command::new("git")
         .args(["init", "-q"])
         .current_dir(scratch)
         .status()?;
-    if !git.success() {
-        bail!("git init failed in {SCRATCH}");
+    match git.code() {
+        Some(0) => Ok(()),
+        _ => Err(anyhow::Error::msg(format!("git init failed in {SCRATCH}"))),
     }
-    if let Some(dir) = &fixtures {
-        std::fs::create_dir_all(dir)?;
-    }
-    let log = |name: &str| {
-        fixtures.as_ref().map(|dir| {
-            let path = dir.join(format!("{name}.jsonl"));
-            let _ = std::fs::remove_file(&path);
-            path
-        })
-    };
-    let opts = |resume: Option<SessionId>, stdout_log| ClaudeOptions {
-        claude_path: CLAUDE.into(),
-        cwd: scratch.into(),
-        model: Some("haiku".into()),
-        permission_mode: PermissionMode::Default,
-        resume,
-        // Keep the user's own hooks and plugins out of the spike.
-        setting_sources: Some(vec![SettingSource::Project, SettingSource::Local]),
-        stdout_log,
-        allow_untested_version: false,
-    };
-    let mut failures = 0;
-    let mut report = |step: &str, ok: bool, detail: String| {
-        println!("{} {step}: {detail}", if ok { "PASS" } else { "FAIL" });
-        if !ok {
-            failures += 1;
-        }
-    };
+}
 
-    let (session, events) = ClaudeSession::spawn(opts(None, log("session1"))).await?;
-    let mut live = Live { session, events };
+async fn run(fixtures: Option<PathBuf>) -> Result<()> {
+    fresh_scratch()?;
+    let scratch = Path::new(SCRATCH);
+    fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
+    let fixtures = fixtures.as_deref();
 
-    let t = turn(
-        &mut live,
+    let live = spawn(None, log_path(fixtures, "session1")).await?;
+    let t = Turn::start(
+        live,
         "Use the Write tool to create the file a.txt in the current directory with the content `hello from s1`. Do nothing else.",
-        Policy::Approve,
+        Plan::Answer(Policy::Approve),
     )
     .await?;
     let a = scratch.join("a.txt");
-    report(
+    let approve = report(
         "1 approve",
-        t.permissions == ["Write"] && a.exists() && t.finished == Some(("success".into(), false)),
+        match (
+            t.permissions.cmp(&Vec::from([String::from("Write")])),
+            presence(&a),
+            t.result(),
+        ) {
+            (
+                std::cmp::Ordering::Equal,
+                Presence::Present,
+                Some(("success", Outcome::Succeeded)),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
         format!(
-            "permissions={:?} a.txt exists={} contents={:?} finished={:?}",
+            "permissions={:?} a.txt {:?} contents={:?} finished={:?}",
             t.permissions,
-            a.exists(),
+            presence(&a),
             std::fs::read_to_string(&a).ok(),
             t.finished
         ),
-    );
+    )?;
     let session_id = t.session_id.clone().context("no session id in turn 1")?;
 
-    let t = turn(
-        &mut live,
+    let t = Turn::start(
+        t.live,
         "Use the Write tool to create the file b.txt in the current directory with the content `nope`. If it is denied, do not retry; just say so.",
-        Policy::Deny("The user does not want b.txt."),
+        Plan::Answer(Policy::Deny(String::from("The user does not want b.txt."))),
     )
     .await?;
     let b = scratch.join("b.txt");
-    report(
+    let deny = report(
         "2 deny",
-        t.permissions.first().map(String::as_str) == Some("Write")
-            && !b.exists()
-            && t.finished.is_some(),
+        match (
+            t.permissions.first().map(String::as_str),
+            presence(&b),
+            &t.finished,
+        ) {
+            (Some("Write"), Presence::Missing, Some(_)) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
         format!(
-            "permissions={:?} b.txt exists={} finished={:?} reply={:?}",
+            "permissions={:?} b.txt {:?} finished={:?} reply={:?}",
             t.permissions,
-            b.exists(),
+            presence(&b),
             t.finished,
             t.text
         ),
-    );
+    )?;
 
-    let (t, interrupted) = interrupted_turn(
-        &mut live,
+    let t = Turn::start(
+        t.live,
         "Say the word `starting` first. Then use the Bash tool to run `sleep 30 && echo slept`. Then count from 1 to 200, one number per line.",
+        Plan::InterruptOnFirstReply,
     )
     .await?;
-    let after = turn(
-        &mut live,
+    let interrupted = t
+        .interrupted
+        .as_ref()
+        .context("turn ended before any assistant output")?;
+    let after = Turn::start(
+        t.live,
         "Reply with just the word pong.",
-        Policy::Deny("no tools"),
+        Plan::Answer(Policy::Deny(String::from("no tools"))),
     )
     .await?;
-    report(
+    let interrupt = report(
         "3 interrupt",
-        interrupted.is_ok()
-            && t.finished.as_ref().is_some_and(|(_, is_error)| *is_error)
-            && t.terminal_reason
-                .as_deref()
-                .is_some_and(|r| r.starts_with("aborted"))
-            && after.finished == Some(("success".into(), false))
-            && after.text.to_lowercase().contains("pong"),
+        match (
+            interrupted,
+            t.finished.as_ref().map(|finished| finished.outcome),
+            t.finished
+                .as_ref()
+                .and_then(Finished::terminal_reason)
+                .and_then(|reason| reason.strip_prefix("aborted")),
+            after.result(),
+            after.text.to_lowercase().find("pong"),
+        ) {
+            (
+                Ok(()),
+                Some(Outcome::Failed),
+                Some(_),
+                Some(("success", Outcome::Succeeded)),
+                Some(_),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
         format!(
             "interrupt()={interrupted:?} permissions={:?} cancelled={} finished={:?} terminal_reason={:?}; next turn finished={:?} reply={:?}",
             t.permissions,
             t.cancelled_permissions,
             t.finished,
-            t.terminal_reason,
+            t.finished.as_ref().and_then(Finished::terminal_reason),
             after.finished,
             after.text
         ),
-    );
+    )?;
 
-    live.session
-        .send_user("Use the Write tool to create the file d.txt in the current directory with the content `late`. Do nothing else.".into())
-        .await?;
-    let mut t = Turn::default();
-    let mut open = None;
-    let mut interrupted = None;
-    while t.finished.is_none() {
-        match next(&mut live).await? {
-            ClaudeEvent::PermissionRequested { id, tool_name, .. } if open.is_none() => {
-                t.permissions.push(tool_name);
-                open = Some(id);
-                interrupted = Some(live.session.interrupt().await);
-            }
-            event => observe(&mut live, &mut t, event, Policy::Deny("late request")).await?,
-        }
-    }
-    let late = match &open {
+    let t = Turn::start(
+        after.live,
+        "Use the Write tool to create the file d.txt in the current directory with the content `late`. Do nothing else.",
+        Plan::InterruptOnPermission,
+    )
+    .await?;
+    let late = match &t.open {
         Some(id) => Some(
-            live.session
+            t.live
+                .session
                 .respond(id.clone(), PermissionDecision::Allow)
                 .await,
         ),
         None => None,
     };
-    report(
+    let pending = report(
         "3b interrupt pending permission",
-        matches!(interrupted, Some(Ok(())))
-            && t.cancelled_permissions == 1
-            && matches!(late, Some(Err(_)))
-            && !scratch.join("d.txt").exists(),
+        match (
+            &t.interrupted,
+            t.cancelled_permissions,
+            &late,
+            presence(&scratch.join("d.txt")),
+        ) {
+            (Some(Ok(())), 1, Some(Err(_)), Presence::Missing) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
         format!(
-            "permissions={:?} interrupt()={interrupted:?} cancelled={} finished={:?} terminal_reason={:?} respond-after={late:?}",
-            t.permissions, t.cancelled_permissions, t.finished, t.terminal_reason
+            "permissions={:?} interrupt()={:?} cancelled={} finished={:?} terminal_reason={:?} respond-after={late:?}",
+            t.permissions,
+            t.interrupted,
+            t.cancelled_permissions,
+            t.finished,
+            t.finished.as_ref().and_then(Finished::terminal_reason)
         ),
-    );
+    )?;
 
-    let status = live.session.shutdown().await?;
-    let (session, events) =
-        ClaudeSession::spawn(opts(Some(session_id.clone()), log("session2-resume"))).await?;
-    let mut live = Live { session, events };
-    let t = turn(
-        &mut live,
-        "What file did you successfully create earlier in this conversation? Answer with just the filename.",
-        Policy::Deny("no tools"),
+    let status = t.live.session.shutdown().await?;
+    let live = spawn(
+        Some(session_id.clone()),
+        log_path(fixtures, "session2-resume"),
     )
     .await?;
-    report(
+    let t = Turn::start(
+        live,
+        "What file did you successfully create earlier in this conversation? Answer with just the filename.",
+        Plan::Answer(Policy::Deny(String::from("no tools"))),
+    )
+    .await?;
+    let resume = report(
         "4 resume",
-        t.text.contains("a.txt") && t.finished == Some(("success".into(), false)),
+        match (t.text.find("a.txt"), t.result()) {
+            (Some(_), Some(("success", Outcome::Succeeded))) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
         format!(
             "first exit={status} resumed {} -> session_id={:?} reply={:?}",
             session_id.0,
-            t.session_id.as_ref().map(|s| &s.0),
+            t.session_id.as_ref().map(|id| &id.0),
             t.text
         ),
-    );
+    )?;
 
-    let mode = live
+    let mode = t
+        .live
         .session
         .set_permission_mode(PermissionMode::AcceptEdits)
         .await;
-    let t = turn(
-        &mut live,
+    let t = Turn::start(
+        t.live,
         "Use the Write tool to create the file c.txt in the current directory with the content `accepted`. Do nothing else.",
-        Policy::Deny("acceptEdits should not have asked"),
+        Plan::Answer(Policy::Deny(String::from(
+            "acceptEdits should not have asked",
+        ))),
     )
     .await?;
     let c = scratch.join("c.txt");
-    report(
+    let accept_edits = report(
         "5 acceptEdits",
-        mode.is_ok() && t.permissions.is_empty() && c.exists(),
+        match (&mode, t.permissions.first(), presence(&c)) {
+            (Ok(()), None, Presence::Present) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
         format!(
-            "set_permission_mode()={mode:?} permissions={:?} c.txt exists={} finished={:?}",
+            "set_permission_mode()={mode:?} permissions={:?} c.txt {:?} finished={:?}",
             t.permissions,
-            c.exists(),
+            presence(&c),
             t.finished
         ),
-    );
+    )?;
 
-    let bogus = live
+    let bogus = t
+        .live
         .session
         .respond(
-            agents::claude::PermissionRequestId("never-sent".into()),
+            PermissionRequestId(String::from("never-sent")),
             PermissionDecision::Allow,
         )
         .await;
-    report(
+    let unknown_id = report(
         "6 unknown id",
-        bogus.is_err(),
+        match &bogus {
+            Ok(()) => Verdict::Fail,
+            Err(_) => Verdict::Pass,
+        },
         format!("respond(never-sent)={bogus:?}"),
-    );
+    )?;
 
-    let status = live.session.shutdown().await?;
-    println!("exit status {status}");
-    if failures > 0 {
-        bail!("{failures} step(s) failed");
+    let status = t.live.session.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {status}")?;
+    let failed = Vec::from([
+        approve,
+        deny,
+        interrupt,
+        pending,
+        resume,
+        accept_edits,
+        unknown_id,
+    ])
+    .into_iter()
+    .fold(0_usize, |failed, verdict| match verdict {
+        Verdict::Pass => failed,
+        Verdict::Fail => failed.saturating_add(1),
+    });
+    match failed {
+        0 => Ok(()),
+        failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),
     }
-    Ok(())
-}
-
-async fn turn(live: &mut Live, prompt: &str, policy: Policy<'_>) -> Result<Turn> {
-    live.session.send_user(prompt.into()).await?;
-    let mut t = Turn::default();
-    while t.finished.is_none() {
-        let event = next(live).await?;
-        observe(live, &mut t, event, policy).await?;
-    }
-    Ok(t)
-}
-
-async fn interrupted_turn(
-    live: &mut Live,
-    prompt: &str,
-) -> Result<(Turn, agents::claude::Result<()>)> {
-    live.session.send_user(prompt.into()).await?;
-    let mut t = Turn::default();
-    let mut interrupted = None;
-    while t.finished.is_none() {
-        let event = next(live).await?;
-        let is_assistant = matches!(
-            event,
-            ClaudeEvent::Message {
-                role: Role::Assistant,
-                ..
-            }
-        );
-        observe(live, &mut t, event, Policy::Approve).await?;
-        if is_assistant && interrupted.is_none() {
-            interrupted = Some(live.session.interrupt().await);
-        }
-    }
-    let interrupted = interrupted.context("turn ended before any assistant output")?;
-    Ok((t, interrupted))
-}
-
-async fn next(live: &mut Live) -> Result<ClaudeEvent> {
-    tokio::time::timeout(TURN_TIMEOUT, live.events.recv())
-        .await
-        .context("turn timed out")?
-        .context("event stream closed")
-}
-
-async fn observe(
-    live: &mut Live,
-    t: &mut Turn,
-    event: ClaudeEvent,
-    policy: Policy<'_>,
-) -> Result<()> {
-    match event {
-        ClaudeEvent::SessionStarted { session_id } => t.session_id = Some(session_id),
-        ClaudeEvent::Message {
-            role: Role::Assistant,
-            content,
-        } => {
-            for block in content {
-                if let Block::Text(text) = block {
-                    t.text.push_str(&text);
-                }
-            }
-        }
-        ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => {}
-        ClaudeEvent::PermissionRequested { id, tool_name, .. } => {
-            t.permissions.push(tool_name);
-            let decision = match policy {
-                Policy::Approve => PermissionDecision::Allow,
-                Policy::Deny(message) => PermissionDecision::Deny {
-                    message: message.into(),
-                    interrupt: false,
-                },
-            };
-            if let Err(e) = live.session.respond(id.clone(), decision).await {
-                println!("note: respond({id}) failed: {e}");
-            }
-        }
-        ClaudeEvent::PermissionCancelled { .. } => t.cancelled_permissions += 1,
-        ClaudeEvent::TurnFinished {
-            subtype,
-            is_error,
-            terminal_reason,
-            session_id,
-        } => {
-            t.finished = Some((subtype, is_error));
-            t.terminal_reason = terminal_reason;
-            t.session_id.get_or_insert(session_id);
-        }
-        ClaudeEvent::Exited { status } => bail!("claude exited mid-turn: {status}"),
-    }
-    Ok(())
 }

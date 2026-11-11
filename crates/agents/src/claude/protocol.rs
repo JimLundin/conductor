@@ -18,12 +18,6 @@ pub struct SessionId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PermissionRequestId(pub String);
 
-impl std::fmt::Display for PermissionRequestId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionMode {
     Default,
@@ -34,25 +28,43 @@ pub enum PermissionMode {
     Auto,
 }
 
-impl From<PermissionMode> for claude_codes::PermissionMode {
-    fn from(mode: PermissionMode) -> Self {
-        match mode {
-            PermissionMode::Default => Self::Default,
-            PermissionMode::AcceptEdits => Self::AcceptEdits,
-            PermissionMode::Plan => Self::Plan,
-            PermissionMode::BypassPermissions => Self::BypassPermissions,
-            PermissionMode::DontAsk => Self::DontAsk,
-            PermissionMode::Auto => Self::Auto,
+impl PermissionMode {
+    pub fn to_cli(self) -> claude_codes::PermissionMode {
+        match self {
+            PermissionMode::Default => claude_codes::PermissionMode::Default,
+            PermissionMode::AcceptEdits => claude_codes::PermissionMode::AcceptEdits,
+            PermissionMode::Plan => claude_codes::PermissionMode::Plan,
+            PermissionMode::BypassPermissions => claude_codes::PermissionMode::BypassPermissions,
+            PermissionMode::DontAsk => claude_codes::PermissionMode::DontAsk,
+            PermissionMode::Auto => claude_codes::PermissionMode::Auto,
         }
     }
+}
+
+/// What happens to the turn after a denied tool call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterDeny {
+    /// The model sees the denial and carries on.
+    Continue,
+    /// The denial also ends the turn.
+    Interrupt,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PermissionDecision {
     /// Run the tool with the input the CLI proposed.
     Allow,
-    /// `interrupt: true` also ends the turn.
-    Deny { message: String, interrupt: bool },
+    Deny {
+        message: String,
+        then: AfterDeny,
+    },
+}
+
+/// The CLI's `is_error` on a tool result or a turn's `result`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Succeeded,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +85,7 @@ pub enum Block {
     ToolResult {
         tool_use_id: String,
         content: Value,
-        is_error: bool,
+        outcome: Outcome,
     },
     Other(Value),
 }
@@ -100,7 +112,7 @@ pub enum ClaudeEvent {
     /// `terminal_reason` (`aborted_streaming`, `aborted_tools`) says why.
     TurnFinished {
         subtype: String,
-        is_error: bool,
+        outcome: Outcome,
         terminal_reason: Option<String>,
         session_id: SessionId,
     },
@@ -129,19 +141,24 @@ pub(crate) enum Inbound {
 }
 
 pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
-    let raw: Value = serde_json::from_str(line)?;
-    let Ok(output) = serde_json::from_value::<ClaudeOutput>(raw.clone()) else {
-        return Ok(Inbound::Event(ClaudeEvent::Unknown(raw)));
-    };
-    Ok(match output {
-        ClaudeOutput::System(msg) if msg.subtype == SystemSubtype::Init => {
-            match msg.data.get("session_id").and_then(Value::as_str) {
+    let raw = serde_json::from_str::<Value>(line)?;
+    Ok(match serde_json::from_value::<ClaudeOutput>(raw.clone()) {
+        Ok(output) => inbound(output, raw),
+        Err(_) => Inbound::Event(ClaudeEvent::Unknown(raw)),
+    })
+}
+
+fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
+    match output {
+        ClaudeOutput::System(msg) => match msg.subtype {
+            SystemSubtype::Init => match msg.data.get("session_id").and_then(Value::as_str) {
                 Some(id) => Inbound::Event(ClaudeEvent::SessionStarted {
                     session_id: SessionId(id.to_owned()),
                 }),
                 None => Inbound::Event(ClaudeEvent::Unknown(raw)),
-            }
-        }
+            },
+            _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
+        },
         ClaudeOutput::Assistant(msg) => Inbound::Event(ClaudeEvent::Message {
             role: Role::Assistant,
             content: msg.message.content.into_iter().map(block).collect(),
@@ -152,7 +169,10 @@ pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
         }),
         ClaudeOutput::Result(msg) => Inbound::Event(ClaudeEvent::TurnFinished {
             subtype: msg.subtype.as_str().to_owned(),
-            is_error: msg.is_error,
+            outcome: match msg.is_error.then_some(Outcome::Failed) {
+                Some(failed) => failed,
+                None => Outcome::Succeeded,
+            },
             terminal_reason: msg.terminal_reason,
             session_id: SessionId(msg.session_id),
         }),
@@ -188,7 +208,7 @@ pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
             })
         }
         _ => Inbound::Event(ClaudeEvent::Unknown(raw)),
-    })
+    }
 }
 
 fn block(b: ContentBlock) -> Block {
@@ -207,7 +227,10 @@ fn block(b: ContentBlock) -> Block {
                 Some(ToolResultContent::Text(s)) => Value::String(s),
                 Some(ToolResultContent::Structured(v)) => Value::Array(v),
             },
-            is_error: t.is_error.unwrap_or(false),
+            outcome: match t.is_error.unwrap_or(false).then_some(Outcome::Failed) {
+                Some(failed) => failed,
+                None => Outcome::Succeeded,
+            },
         },
         other => Block::Other(serde_json::to_value(other).unwrap_or(Value::Null)),
     }
@@ -216,15 +239,15 @@ fn block(b: ContentBlock) -> Block {
 /// A CLI version outside the range `claude-codes` supports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnsupportedVersion {
-    pub found: String,
-    pub supported: String,
+    pub(crate) found: String,
+    pub(crate) supported: String,
 }
 
 /// Checks the `claude_code_version` an `initialize` response reports.
 pub(crate) fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map(|r| r.claude_code_version)
-        .unwrap_or_else(|_| "<missing>".into());
+        .unwrap_or_else(|_| String::from("<missing>"));
     claude_codes::check_cli_version(&found)
         .map(drop)
         .map_err(|e| UnsupportedVersion {
@@ -242,7 +265,7 @@ pub(crate) enum ControlCall {
 }
 
 impl ControlCall {
-    pub(crate) fn subtype(self) -> &'static str {
+    pub(crate) fn subtype(&self) -> &str {
         match self {
             Self::Initialize => "initialize",
             Self::Interrupt => "interrupt",
@@ -251,26 +274,26 @@ impl ControlCall {
     }
 }
 
-pub(crate) enum Outbound<'a> {
-    User(&'a str),
+pub(crate) enum Outbound {
+    User(String),
     Control {
-        request_id: &'a str,
+        request_id: String,
         call: ControlCall,
     },
     Permission {
-        id: &'a PermissionRequestId,
+        id: PermissionRequestId,
         decision: PermissionDecision,
         /// The CLI's proposed input; `allow` echoes it back as `updatedInput`.
         input: Value,
     },
     /// Reply to a control request we do not serve.
     ControlError {
-        request_id: &'a str,
-        message: &'a str,
+        request_id: String,
+        message: String,
     },
 }
 
-pub(crate) fn encode(msg: Outbound<'_>) -> serde_json::Result<String> {
+pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
     match msg {
         Outbound::User(text) => {
             serde_json::to_string(&ClaudeInput::user_message_without_session(text))
@@ -288,113 +311,147 @@ pub(crate) fn encode(msg: Outbound<'_>) -> serde_json::Result<String> {
             call: ControlCall::SetPermissionMode(mode),
         } => serde_json::to_string(&ControlRequestMessage::set_permission_mode(
             request_id,
-            mode.into(),
+            mode.to_cli(),
         )),
         Outbound::Permission {
             id,
             decision,
             input,
-        } => {
-            let result = match decision {
-                PermissionDecision::Allow => PermissionResult::allow(input),
-                PermissionDecision::Deny { message, interrupt } => {
-                    PermissionResult::Deny { message, interrupt }
-                }
-            };
-            let response: ControlResponseMessage =
-                ControlResponse::from_result(&id.0, result).into();
-            serde_json::to_string(&response)
-        }
+        } => serde_json::to_string(&ControlResponseMessage::from(ControlResponse::from_result(
+            &id.0,
+            permission_result(decision, input),
+        ))),
         Outbound::ControlError {
             request_id,
             message,
-        } => {
-            let response: ControlResponseMessage =
-                ControlResponse::error(request_id, message).into();
-            serde_json::to_string(&response)
-        }
+        } => serde_json::to_string(&ControlResponseMessage::from(ControlResponse::error(
+            &request_id,
+            message,
+        ))),
+    }
+}
+
+fn permission_result(decision: PermissionDecision, input: Value) -> PermissionResult {
+    match decision {
+        PermissionDecision::Allow => PermissionResult::allow(input),
+        PermissionDecision::Deny {
+            message,
+            then: AfterDeny::Continue,
+        } => PermissionResult::Deny {
+            message,
+            interrupt: false,
+        },
+        PermissionDecision::Deny {
+            message,
+            then: AfterDeny::Interrupt,
+        } => PermissionResult::Deny {
+            message,
+            interrupt: true,
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
+    use serde_json::Value;
 
-    fn sent(msg: Outbound<'_>) -> Value {
-        serde_json::from_str(&encode(msg).unwrap()).unwrap()
+    use super::{
+        AfterDeny, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
+        PermissionRequestId, encode, parse_line,
+    };
+
+    fn json(text: &str) -> Value {
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn sent(msg: Outbound) -> Value {
+        json(&encode(msg).unwrap())
     }
 
     #[test]
     fn allow_echoes_the_proposed_input_as_updated_input() {
-        let id = PermissionRequestId("r1".into());
         let line = sent(Outbound::Permission {
-            id: &id,
+            id: PermissionRequestId(String::from("r1")),
             decision: PermissionDecision::Allow,
-            input: json!({"file_path": "/tmp/a.txt", "content": "hi"}),
+            input: json(r#"{"file_path": "/tmp/a.txt", "content": "hi"}"#),
         });
         assert_eq!(
             line,
-            json!({"type": "control_response", "response": {"subtype": "success", "request_id": "r1",
-                "response": {"behavior": "allow", "updatedInput": {"file_path": "/tmp/a.txt", "content": "hi"}}}})
+            json(
+                r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r1",
+                "response": {"behavior": "allow", "updatedInput": {"file_path": "/tmp/a.txt", "content": "hi"}}}}"#
+            )
         );
+    }
+
+    fn denied(then: AfterDeny) -> Value {
+        sent(Outbound::Permission {
+            id: PermissionRequestId(String::from("r2")),
+            decision: PermissionDecision::Deny {
+                message: String::from("not b.txt"),
+                then,
+            },
+            input: json("{}"),
+        })
     }
 
     #[test]
     fn deny_sends_interrupt_only_when_set() {
-        let id = PermissionRequestId("r2".into());
-        let deny = |interrupt| {
-            sent(Outbound::Permission {
-                id: &id,
-                decision: PermissionDecision::Deny {
-                    message: "not b.txt".into(),
-                    interrupt,
-                },
-                input: json!({}),
-            })
-        };
         assert_eq!(
-            deny(false),
-            json!({"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
-                "response": {"behavior": "deny", "message": "not b.txt"}}})
+            denied(AfterDeny::Continue),
+            json(
+                r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
+                "response": {"behavior": "deny", "message": "not b.txt"}}}"#
+            )
         );
         assert_eq!(
-            deny(true),
-            json!({"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
-                "response": {"behavior": "deny", "message": "not b.txt", "interrupt": true}}})
+            denied(AfterDeny::Interrupt),
+            json(
+                r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
+                "response": {"behavior": "deny", "message": "not b.txt", "interrupt": true}}}"#
+            )
         );
+    }
+
+    fn control(call: ControlCall) -> Value {
+        sent(Outbound::Control {
+            request_id: String::from("req_7"),
+            call,
+        })
     }
 
     #[test]
     fn control_requests_match_the_sdk_envelope() {
-        let control = |call| {
-            sent(Outbound::Control {
-                request_id: "req_7",
-                call,
-            })
-        };
         assert_eq!(
             control(ControlCall::Interrupt),
-            json!({"type": "control_request", "request_id": "req_7", "request": {"subtype": "interrupt"}})
+            json(
+                r#"{"type": "control_request", "request_id": "req_7", "request": {"subtype": "interrupt"}}"#
+            )
         );
         assert_eq!(
             control(ControlCall::SetPermissionMode(PermissionMode::AcceptEdits)),
-            json!({"type": "control_request", "request_id": "req_7",
-                "request": {"subtype": "set_permission_mode", "mode": "acceptEdits"}})
+            json(
+                r#"{"type": "control_request", "request_id": "req_7",
+                "request": {"subtype": "set_permission_mode", "mode": "acceptEdits"}}"#
+            )
         );
         // The SDK also sends `"hooks": null`; claude-codes omits it and the CLI accepts that.
         assert_eq!(
             control(ControlCall::Initialize),
-            json!({"type": "control_request", "request_id": "req_7", "request": {"subtype": "initialize"}})
+            json(
+                r#"{"type": "control_request", "request_id": "req_7", "request": {"subtype": "initialize"}}"#
+            )
         );
     }
 
     #[test]
     fn user_text_is_sent_as_one_text_block() {
         assert_eq!(
-            sent(Outbound::User("create a.txt")),
-            json!({"type": "user", "message": {"role": "user",
-                "content": [{"type": "text", "text": "create a.txt"}]}})
+            sent(Outbound::User(String::from("create a.txt"))),
+            json(
+                r#"{"type": "user", "message": {"role": "user",
+                "content": [{"type": "text", "text": "create a.txt"}]}}"#
+            )
         );
     }
 
@@ -402,11 +459,13 @@ mod tests {
     fn unsupported_control_request_gets_an_error_reply() {
         assert_eq!(
             sent(Outbound::ControlError {
-                request_id: "cli_9",
-                message: "unsupported control request subtype: hook_callback",
+                request_id: String::from("cli_9"),
+                message: String::from("unsupported control request subtype: hook_callback"),
             }),
-            json!({"type": "control_response", "response": {"subtype": "error", "request_id": "cli_9",
-                "error": "unsupported control request subtype: hook_callback"}})
+            json(
+                r#"{"type": "control_response", "response": {"subtype": "error", "request_id": "cli_9",
+                "error": "unsupported control request subtype: hook_callback"}}"#
+            )
         );
     }
 
@@ -415,9 +474,9 @@ mod tests {
         let line = r#"{"type":"brand_new_frame","x":1}"#;
         assert_eq!(
             parse_line(line).unwrap(),
-            Inbound::Event(ClaudeEvent::Unknown(
-                json!({"type": "brand_new_frame", "x": 1})
-            ))
+            Inbound::Event(ClaudeEvent::Unknown(json(
+                r#"{"type": "brand_new_frame", "x": 1}"#
+            )))
         );
     }
 
@@ -427,8 +486,8 @@ mod tests {
         assert_eq!(
             parse_line(line).unwrap(),
             Inbound::UnsupportedControlRequest {
-                request_id: "cli_3".into(),
-                subtype: "elicit_frobnicate".into()
+                request_id: String::from("cli_3"),
+                subtype: String::from("elicit_frobnicate")
             }
         );
     }
@@ -439,8 +498,8 @@ mod tests {
         assert_eq!(
             parse_line(line).unwrap(),
             Inbound::UnsupportedControlRequest {
-                request_id: "cli_5".into(),
-                subtype: "can_use_tool".into()
+                request_id: String::from("cli_5"),
+                subtype: String::from("can_use_tool")
             }
         );
     }
@@ -451,8 +510,8 @@ mod tests {
         assert_eq!(
             parse_line(line).unwrap(),
             Inbound::UnsupportedControlRequest {
-                request_id: "cli_4".into(),
-                subtype: "hook_callback".into()
+                request_id: String::from("cli_4"),
+                subtype: String::from("hook_callback")
             }
         );
     }
