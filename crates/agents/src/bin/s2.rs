@@ -59,8 +59,9 @@ impl Policy {
 /// How the turns of a run are driven.
 enum Plan {
     Answer(Policy),
-    /// Approve, and interrupt after the first agent message or item.
-    InterruptOnFirstOutput,
+    /// Interrupt on `turn/started`, before the model has produced anything;
+    /// decline any approval request.
+    InterruptOnStart,
 }
 
 /// Whether every turn of a run has completed.
@@ -244,16 +245,15 @@ impl Run {
         match event {
             ThreadEvent::Started
             | ThreadEvent::Unknown(_)
-            | ThreadEvent::TurnStarted { .. }
+            | ThreadEvent::AgentMessage { .. }
+            | ThreadEvent::Item { .. }
             | ThreadEvent::ApprovalCancelled { .. } => {}
+            ThreadEvent::TurnStarted { .. } => self.on_start(thread).await?,
             ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
-            ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. } => {
-                self.after_output(thread).await?;
-            }
             ThreadEvent::ApprovalRequested { id, .. } => {
                 let decision = match &self.plan {
                     Plan::Answer(policy) => policy.decision(),
-                    Plan::InterruptOnFirstOutput => Decision::Accept,
+                    Plan::InterruptOnStart => Decision::Decline,
                 };
                 self.live.server.respond(id.clone(), decision).await?;
             }
@@ -261,12 +261,12 @@ impl Run {
         Ok(())
     }
 
-    async fn after_output(&mut self, thread: &ThreadId) -> Result<()> {
+    async fn on_start(&mut self, thread: &ThreadId) -> Result<()> {
         let turn = self
             .turns
             .get(thread)
             .context("turn left the run while reacting")?;
-        if let (Plan::InterruptOnFirstOutput, None) = (&self.plan, &self.interrupted) {
+        if let (Plan::InterruptOnStart, None) = (&self.plan, &self.interrupted) {
             self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
         }
         Ok(())
@@ -393,14 +393,14 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let s = single(
         s.live,
         &a,
-        "First say `starting`. Then run the shell command `sleep 60`. Then count from 1 to 300, one number per line.",
-        Plan::InterruptOnFirstOutput,
+        "Count from 1 to 300, one number per line.",
+        Plan::InterruptOnStart,
     )
     .await?;
     let interrupted = s
         .interrupted
         .as_ref()
-        .context("turn ended before any output")?;
+        .context("turn ended without turn/started")?;
     let t = &s.turn;
     let after = single(
         s.live,
@@ -423,8 +423,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
             _ => Verdict::Fail,
         },
         format!(
-            "interrupt()={interrupted:?} after output {:?} outcome={:?}; next turn outcome={:?} reply={:?}",
-            t.text, t.outcome, after.turn.outcome, after.turn.text
+            "interrupt()={interrupted:?} output before the interrupt landed {:?} items={:?} outcome={:?}; next turn outcome={:?} reply={:?}",
+            t.text, t.items, t.outcome, after.turn.outcome, after.turn.text
         ),
     )?;
 
