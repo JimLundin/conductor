@@ -231,9 +231,12 @@ fn send_on_enter(
 }
 
 fn submit(mut draft: Signal<String>, composer: host_view::Composer, on_send: EventHandler<String>) {
-    let text = Some(draft().trim().to_string()).filter(|text| !text.is_empty());
-    if let (host_view::Composer::Open, Some(text)) = (composer, text) {
-        on_send(text);
-        draft.set(String::new());
+    match (composer, draft().trim()) {
+        (host_view::Composer::Open, "")
+        | (host_view::Composer::Busy | host_view::Composer::Closed, _) => {}
+        (host_view::Composer::Open, text) => {
+            on_send(text.to_string());
+            draft.set(String::new());
+        }
     }
 }
