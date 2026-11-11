@@ -93,10 +93,29 @@ impl Turn {
             outcome: None,
         }
     }
-}
 
-fn pushed(list: Vec<String>, item: String) -> Vec<String> {
-    list.into_iter().chain(std::iter::once(item)).collect()
+    fn record(&mut self, event: ThreadEvent) {
+        match event {
+            ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {}
+            ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
+            ThreadEvent::AgentMessage { text, .. } => {
+                self.text = match self.text.as_str() {
+                    "" => text,
+                    earlier => format!("{earlier}\n{text}"),
+                };
+            }
+            ThreadEvent::Item { phase, item, .. } => self.items.push(item_label(item, phase)),
+            ThreadEvent::ApprovalRequested {
+                id, kind, options, ..
+            } => {
+                self.approvals.push(approval_label(&id, kind, &options));
+                self.answered.push(id);
+            }
+            ThreadEvent::ApprovalCancelled { .. } => {
+                self.cancelled = self.cancelled.saturating_add(1);
+            }
+        }
+    }
 }
 
 /// The turn an event names, if it names one.
@@ -191,18 +210,20 @@ impl Run {
     async fn on(&mut self, event: CodexEvent) -> Result<Progress> {
         match event {
             CodexEvent::Thread { thread, event } => {
-                let turn = self.turns.remove(&thread).with_context(|| {
+                let turn = self.turns.get(&thread).with_context(|| {
                     format!("event for a thread with no turn running: {}", thread.0)
                 })?;
-                match event_turn(&event).and_then(|got| got.ne(&turn.id).then_some(got)) {
+                match event_turn(&event).filter(|got| got != &&turn.id) {
                     Some(got) => Err(anyhow::Error::msg(format!(
                         "event for turn {} during turn {}",
                         got.0, turn.id.0
                     ))),
                     None => Ok(()),
                 }?;
-                let turn = self.apply(turn, event).await?;
-                self.turns.insert(thread, turn);
+                self.react(&thread, &event).await?;
+                if let Some(turn) = self.turns.get_mut(&thread) {
+                    turn.record(event);
+                }
                 Ok(match self.running {
                     0 => Progress::Done,
                     _ => Progress::Playing,
@@ -216,65 +237,33 @@ impl Run {
         }
     }
 
-    async fn apply(&mut self, turn: Turn, event: ThreadEvent) -> Result<Turn> {
+    /// Does what the plan asks of an event before its turn records it.
+    async fn react(&mut self, thread: &ThreadId, event: &ThreadEvent) -> Result<()> {
         match event {
-            ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {
-                Ok(turn)
+            ThreadEvent::Started
+            | ThreadEvent::Unknown(_)
+            | ThreadEvent::TurnStarted { .. }
+            | ThreadEvent::ApprovalCancelled { .. } => {}
+            ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
+            ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. } => {
+                self.after_output(thread).await;
             }
-            ThreadEvent::TurnCompleted { outcome, .. } => {
-                self.running = self.running.saturating_sub(1);
-                Ok(Turn {
-                    outcome: Some(outcome),
-                    ..turn
-                })
-            }
-            ThreadEvent::AgentMessage { text, .. } => {
-                let text = match turn.text.as_str() {
-                    "" => text,
-                    earlier => format!("{earlier}\n{text}"),
-                };
-                self.after_output(&turn).await;
-                Ok(Turn { text, ..turn })
-            }
-            ThreadEvent::Item { phase, item, .. } => {
-                self.after_output(&turn).await;
-                Ok(Turn {
-                    items: pushed(turn.items, item_label(item, phase)),
-                    ..turn
-                })
-            }
-            ThreadEvent::ApprovalRequested {
-                id, kind, options, ..
-            } => {
-                let label = approval_label(&id, kind, &options);
+            ThreadEvent::ApprovalRequested { id, .. } => {
                 let decision = match &self.plan {
                     Plan::Answer(policy) => policy.decision(),
                     Plan::InterruptOnFirstOutput => Decision::Accept,
                 };
                 self.live.server.respond(id.clone(), decision).await?;
-                Ok(Turn {
-                    approvals: pushed(turn.approvals, label),
-                    answered: turn
-                        .answered
-                        .into_iter()
-                        .chain(std::iter::once(id))
-                        .collect(),
-                    ..turn
-                })
             }
-            ThreadEvent::ApprovalCancelled { .. } => Ok(Turn {
-                cancelled: turn.cancelled.saturating_add(1),
-                ..turn
-            }),
         }
+        Ok(())
     }
 
-    async fn after_output(&mut self, turn: &Turn) {
-        match (&self.plan, &self.interrupted) {
-            (Plan::InterruptOnFirstOutput, None) => {
-                self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
-            }
-            (Plan::InterruptOnFirstOutput, Some(_)) | (Plan::Answer(_), _) => {}
+    async fn after_output(&mut self, thread: &ThreadId) {
+        if let (Plan::InterruptOnFirstOutput, None, Some(turn)) =
+            (&self.plan, &self.interrupted, self.turns.get(thread))
+        {
+            self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
         }
     }
 }
