@@ -90,7 +90,8 @@ From the 2026-11-11 `s1` runs with `--include-partial-messages`.
   interrupt. It then prints a rejected `tool_result`, the user message
   `[Request interrupted by user for tool use]`, and `result` with
   `subtype: "error_during_execution"`, `is_error: true` and
-  `terminal_reason: "aborted_tools"`. (Step 3b.)
+  `terminal_reason: "aborted_tools"` (13 of 15 runs) or `"aborted_streaming"`
+  (2 of 15, `s1-run3.log` and `s1-run4.log`). (Step 3b.)
 - `result.subtype` alone cannot tell an interrupt from a failure.
   `terminal_reason` can. (Steps 3, 3b, 3c.)
 - The session accepts the next user message normally after an interrupt.
