@@ -96,18 +96,18 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     use_future(move || {
         let ticket = ticket.clone();
         async move {
-            let endpoint = match client::platform::bind_endpoint().await {
-                Ok(endpoint) => endpoint,
+            let spawned = HostLink::spawn(
+                Target::of_ticket(&ticket),
+                LinkOptions::new(String::from(ticket::CLIENT_NAME)),
+            )
+            .await;
+            let (handle, mut updates) = match spawned {
+                Ok(spawned) => spawned,
                 Err(err) => {
                     tracing::error!(%err, "could not start iroh");
                     return;
                 }
             };
-            let (handle, mut updates) = HostLink::spawn(
-                endpoint,
-                Target::of_ticket(&ticket),
-                LinkOptions::new(String::from(ticket::CLIENT_NAME)),
-            );
             link.set(Some(Rc::new(handle)));
             while let Some(update) = updates.recv().await {
                 match update {
