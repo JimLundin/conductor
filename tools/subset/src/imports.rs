@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use proc_macro2::Span;
 use syn::UseTree;
 use syn::visit::{self, Visit};
 
@@ -15,6 +16,8 @@ use crate::facts::Facts;
 pub struct UsePath {
     pub segments: Vec<String>,
     pub name: Option<String>,
+    /// The span of the path's last segment, or of the `*`.
+    pub span: Span,
 }
 
 /// Every path a `use` tree brings in.
@@ -27,6 +30,7 @@ pub fn use_paths(tree: &UseTree) -> Vec<UsePath> {
                 .chain(std::iter::once(ident.to_string()))
                 .collect(),
             name,
+            span: ident.span(),
         };
         match tree {
             UseTree::Path(p) => {
@@ -36,9 +40,10 @@ pub fn use_paths(tree: &UseTree) -> Vec<UsePath> {
             }
             UseTree::Name(n) => out.push(leaf(prefix, &n.ident, Some(n.ident.to_string()))),
             UseTree::Rename(r) => out.push(leaf(prefix, &r.ident, Some(r.rename.to_string()))),
-            UseTree::Glob(_) => out.push(UsePath {
+            UseTree::Glob(g) => out.push(UsePath {
                 segments: prefix.clone(),
                 name: None,
+                span: g.star_token.span,
             }),
             UseTree::Group(g) => {
                 for tree in &g.items {

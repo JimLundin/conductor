@@ -16,7 +16,8 @@ use syn::{
 
 use crate::actor;
 use crate::facts::{self, Facts};
-use crate::imports::FileNames;
+use crate::imports::{FileNames, use_paths};
+use crate::named::{Named, Operator};
 use crate::rules::{self, Rule};
 
 pub struct Finding {
@@ -68,6 +69,10 @@ pub struct Lists<'a> {
     /// Methods that may take a closure argument, besides the predicate
     /// adapters.
     pub closure_methods: &'a [String],
+    /// Operator traits never named or called by name (proposal 0038).
+    pub fallible_operators: &'a [Operator],
+    /// Types and traits never named (proposal 0039).
+    pub consuming_readers: &'a [Named],
 }
 
 impl Lists<'_> {
@@ -137,6 +142,8 @@ pub fn default_closure_methods() -> Vec<String> {
 }
 
 pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) -> Shape {
+    let names = FileNames::gather(file, facts);
+    let operator_methods = imported_operator_methods(&names, lists.fallible_operators);
     let mut checker = Checker {
         facts,
         kind,
@@ -145,7 +152,8 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) ->
         types: HashMap::new(),
         cfg_hosts: HashMap::new(),
         cfg_items: CfgItems::gather(file),
-        names: FileNames::gather(file, facts),
+        names,
+        operator_methods,
         root_allows: Vec::new(),
         impls: Vec::new(),
         fns: Vec::new(),
@@ -249,6 +257,25 @@ struct FnCtx {
     params: HashMap<String, String>,
 }
 
+/// The rules of proposals 0038 and 0039 at one kind of position.
+struct NamedRules {
+    operator: &'static Rule,
+    reader: &'static Rule,
+}
+
+const USE_RULES: NamedRules = NamedRules {
+    operator: &rules::OPERATOR_USE,
+    reader: &rules::READER_USE,
+};
+const PATH_RULES: NamedRules = NamedRules {
+    operator: &rules::OPERATOR_PATH,
+    reader: &rules::READER_PATH,
+};
+const TYPE_RULES: NamedRules = NamedRules {
+    operator: &rules::OPERATOR_TYPE,
+    reader: &rules::READER_TYPE,
+};
+
 const LIBRARY_TRAITS: &[&str] = &[
     "Drop",
     "Debug",
@@ -334,6 +361,8 @@ struct Checker<'a> {
     cfg_hosts: HashMap<*const Attribute, Option<CfgItem>>,
     cfg_items: CfgItems,
     names: FileNames,
+    /// The methods of the fallible operator traits this file imports.
+    operator_methods: BTreeSet<String>,
     root_allows: Vec<*const Attribute>,
     impls: Vec<ImplCtx>,
     fns: Vec<FnCtx>,
@@ -519,6 +548,30 @@ impl Checker<'_> {
             {
                 self.flag(p.span(), &rules::PARAM_MUT_OURS);
             }
+        }
+    }
+
+    /// The rule a path breaks when it names a fallible operator trait or a
+    /// consuming reader, as the code writes it. A bare name the file
+    /// defines or imports from a path of ours is ours.
+    fn named_rule(&self, segments: &[String], rules: &NamedRules) -> Option<&'static Rule> {
+        let at = |item: &Named| {
+            item.found_in(segments).filter(|&i| {
+                i > 0
+                    || !(self.names.ours.contains(item.name())
+                        || self.names.defined.contains(item.name()))
+            })
+        };
+        let operator = self
+            .lists
+            .fallible_operators
+            .iter()
+            .any(|o| at(&o.item).is_some());
+        let reader = self.lists.consuming_readers.iter().any(|r| at(r).is_some());
+        match (operator, reader) {
+            (true, _) => Some(rules.operator),
+            (false, true) => Some(rules.reader),
+            (false, false) => None,
         }
     }
 
@@ -847,6 +900,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_item_use(&mut self, i: &'ast syn::ItemUse) {
         self.check_use_tree(&i.tree, &mut Vec::new());
+        for path in use_paths(&i.tree).iter().filter(|p| p.name.is_some()) {
+            if let Some(rule) = self.named_rule(&path.segments, &USE_RULES) {
+                self.flag(path.span, rule);
+            }
+        }
         visit::visit_item_use(self, i);
     }
 
@@ -979,6 +1037,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_type(&mut self, ty: &'ast Type) {
         let slot = self.type_slot(ty);
+        if let Type::Path(t) = ty
+            && t.qself.is_none()
+            && let Some(rule) = self.named_rule(&segments(&t.path), &TYPE_RULES)
+        {
+            self.flag(t.span(), rule);
+        }
         if library_type_arg(&slot) || matches!(slot, Slot::ClapField | Slot::MainReturn) {
             self.mark(ty.span(), Fixed::IfRestricted);
         }
@@ -1042,6 +1106,17 @@ impl<'ast> Visit<'ast> for Checker<'_> {
 
     fn visit_expr(&mut self, expr: &'ast Expr) {
         let slot = self.expr_slot(expr);
+        match expr {
+            Expr::Path(e) if e.qself.is_none() => {
+                if let Some(rule) = self.named_rule(&segments(&e.path), &PATH_RULES) {
+                    self.flag(e.span(), rule);
+                }
+            }
+            Expr::MethodCall(e) if self.operator_methods.contains(&e.method.to_string()) => {
+                self.flag(e.method.span(), &rules::OPERATOR_METHOD);
+            }
+            _ => {}
+        }
         if library_value(&slot) {
             self.mark(expr.span(), Fixed::IfRestricted);
         }
@@ -1564,6 +1639,21 @@ fn ask_build<'s>(vis: &Visibility, sig: &'s syn::Signature) -> Option<&'s Type> 
         && reply
         && builds_msg;
     shaped.then_some(&*build.ty)
+}
+
+/// The methods of the listed operator traits that a file imports, by name
+/// or through a glob of the trait's module (proposal 0038).
+fn imported_operator_methods(names: &FileNames, operators: &[Operator]) -> BTreeSet<String> {
+    operators
+        .iter()
+        .filter(|o| {
+            names.uses.iter().any(|u| match &u.name {
+                Some(_) => o.item.found_in(&u.segments) == u.segments.len().checked_sub(1),
+                None => o.item.globbed_by(&u.segments),
+            })
+        })
+        .flat_map(|o| o.methods.iter().cloned())
+        .collect()
 }
 
 fn segments(path: &syn::Path) -> Vec<String> {

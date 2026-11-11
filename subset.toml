@@ -152,6 +152,32 @@ closure_methods = [
   "ask",                      # an actor handle's request helper (0026)
 ]
 
+# Proposal 0039: types and traits that read by changing their buffer, so a
+# tuple of reads means something only by evaluation order. Never imported or
+# named; bytes are split with `split_at_checked` (bootstrap review §A7).
+consuming_readers = ["bytes::Buf"]
+
+# Proposal 0038: operator traits whose operation can overflow or panic, with
+# their methods. Never imported, named in a path or called as a method; write
+# `checked_*` or `saturating_*`. The total bitwise traits and `Not` stay
+# allowed, so `BitXor::bitxor` is the form for an XOR.
+[fallible_operators]
+"std::ops::Add" = ["add"]
+"std::ops::AddAssign" = ["add_assign"]
+"std::ops::Sub" = ["sub"]
+"std::ops::SubAssign" = ["sub_assign"]
+"std::ops::Mul" = ["mul"]
+"std::ops::MulAssign" = ["mul_assign"]
+"std::ops::Div" = ["div"]
+"std::ops::DivAssign" = ["div_assign"]
+"std::ops::Rem" = ["rem"]
+"std::ops::RemAssign" = ["rem_assign"]
+"std::ops::Neg" = ["neg"]
+"std::ops::Shl" = ["shl"]
+"std::ops::ShlAssign" = ["shl_assign"]
+"std::ops::Shr" = ["shr"]
+"std::ops::ShrAssign" = ["shr_assign"]
+
 # Ids allowed only under some paths. Elsewhere, a use of one is reported with
 # the scope's rule as the reason.
 

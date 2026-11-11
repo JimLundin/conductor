@@ -71,6 +71,15 @@ pub const PAT_MUT: Rule = rule(
 const MUT_OURS: &str = "`mut` only on a value whose type isn't ours, on an actor's loop state or on a type in `endpoints`; to lend a library field of a value of ours as `&mut`, destructure the value and bind that field `mut` (proposals 0008, 0035)";
 pub const LET_MUT_OURS: Rule = rule("stmt.let.mut", MUT_OURS);
 pub const PARAM_MUT_OURS: Rule = rule("pat.ident.mut", MUT_OURS);
+const FALLIBLE_OPERATOR: &str = "a trait in `fallible_operators` is never imported, named in a path or called as a method; write `checked_*` or `saturating_*` (proposal 0038)";
+pub const OPERATOR_USE: Rule = rule("item.use", FALLIBLE_OPERATOR);
+pub const OPERATOR_PATH: Rule = rule("expr.path", FALLIBLE_OPERATOR);
+pub const OPERATOR_TYPE: Rule = rule("type.path", FALLIBLE_OPERATOR);
+pub const OPERATOR_METHOD: Rule = rule("expr.method_call", FALLIBLE_OPERATOR);
+const CONSUMING_READER: &str = "a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039)";
+pub const READER_USE: Rule = rule("item.use", CONSUMING_READER);
+pub const READER_PATH: Rule = rule("expr.path", CONSUMING_READER);
+pub const READER_TYPE: Rule = rule("type.path", CONSUMING_READER);
 pub const ASSIGN: Rule = rule(
     "expr.assign",
     "assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)",
@@ -241,6 +250,13 @@ pub const RULES: &[&Rule] = &[
     &DROP_DISCARD,
     &DROP_FN,
     &OK_DISCARD,
+    &OPERATOR_USE,
+    &OPERATOR_PATH,
+    &OPERATOR_TYPE,
+    &OPERATOR_METHOD,
+    &READER_USE,
+    &READER_PATH,
+    &READER_TYPE,
     &PREDICATE_MATCHES,
     &PREDICATE_EQ,
     &PREDICATE_NE,

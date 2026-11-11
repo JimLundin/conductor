@@ -8,6 +8,7 @@ mod history;
 mod ids;
 mod imports;
 mod measure;
+mod named;
 mod report;
 mod rules;
 mod score;
@@ -57,6 +58,14 @@ struct Config {
     /// besides the predicate adapters.
     #[serde(default = "shape::default_closure_methods")]
     closure_methods: Vec<String>,
+    /// Operator traits that can overflow or panic, each with its methods:
+    /// never named or called by name (proposal 0038).
+    #[serde(default = "named::default_fallible_operators")]
+    fallible_operators: BTreeMap<String, Vec<String>>,
+    /// Types and traits that read by consuming their buffer: never named
+    /// (proposal 0039).
+    #[serde(default = "named::default_consuming_readers")]
+    consuming_readers: Vec<String>,
     #[serde(default)]
     scope: Vec<Scope>,
     weights: Option<weights::Weights>,
@@ -611,6 +620,8 @@ fn analyse(
             .iter()
             .map(|(path, _, parsed)| (path.as_path(), parsed)),
     );
+    let operators = named::operators(&config.fallible_operators);
+    let readers = named::readers(&config.consuming_readers);
     let mut out = Vec::new();
     for (relative_path, src, parsed) in parsed_files {
         let relative_path = relative_path.as_path();
@@ -641,6 +652,8 @@ fn analyse(
             endpoints: &config.endpoints,
             predicate_adapters: &config.predicate_adapters,
             closure_methods: &config.closure_methods,
+            fallible_operators: &operators,
+            consuming_readers: &readers,
         };
         let shape = shape::check(&parsed, &kind, &facts, &lists);
         let findings: Vec<&shape::Finding> = shape

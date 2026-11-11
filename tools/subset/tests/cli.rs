@@ -909,6 +909,51 @@ fn mut_binds_a_value_of_ours_only_as_loop_state_or_an_endpoint() {
     );
 }
 
+const FALLIBLE_OPERATOR: &str = "a trait in `fallible_operators` is never imported, named in a path or called as a method; write `checked_*` or `saturating_*` (proposal 0038)";
+const CONSUMING_READER: &str = "a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039)";
+
+#[test]
+fn fallible_operator_traits_are_never_named_or_called_by_name() {
+    let pass = "use std::ops::BitXor;\n\npub(crate) struct Add {}\n\nfn unxor(a: u8, b: u8) -> u8 {\n    a.bitxor(b)\n}\n\nfn sub(a: Seq, b: Seq) -> Option<Seq> {\n    a.sub(b)\n}\n\nfn make() -> Add {\n    Add {}\n}\n";
+    let fail = "use std::ops::{Add, Shl};\nuse core::ops::SubAssign;\n\nfn total(a: u64, b: u64) -> u64 {\n    a.add(b)\n}\n\nfn sum(a: u64, b: u64) -> u64 {\n    Add::add(a, b)\n}\n\nfn product(a: u64, b: u64) -> u64 {\n    std::ops::Mul::mul(a, b)\n}\n\nfn high(bits: u64) -> u64 {\n    bits.shl(70)\n}\n";
+    assert_eq!(
+        rule_case("operators", "crates/proto/src/a.rs", pass, fail),
+        format!(
+            "crates/proto/src/a_fail.rs:1:16: item.use: {FALLIBLE_OPERATOR}\n\
+             crates/proto/src/a_fail.rs:1:21: item.use: {FALLIBLE_OPERATOR}\n\
+             crates/proto/src/a_fail.rs:2:16: item.use: {FALLIBLE_OPERATOR}\n\
+             crates/proto/src/a_fail.rs:5:7: expr.method_call: {FALLIBLE_OPERATOR}\n\
+             crates/proto/src/a_fail.rs:9:5: expr.path: {FALLIBLE_OPERATOR}\n\
+             crates/proto/src/a_fail.rs:13:5: expr.path: {FALLIBLE_OPERATOR}\n\
+             crates/proto/src/a_fail.rs:17:10: expr.method_call: {FALLIBLE_OPERATOR}\n"
+        )
+    );
+}
+
+#[test]
+fn consuming_readers_are_never_named() {
+    let pass = "fn kind(message: &[u8]) -> Option<u16> {\n    let (kind, _) = message.split_at_checked(2)?;\n    Some(u16::from_be_bytes(kind.try_into().ok()?))\n}\n";
+    let fail = "use bytes::Buf;\n\nfn kind(message: &[u8]) -> Option<u16> {\n    let mut header = message;\n    header.try_get_u16().ok()\n}\n\nfn len(header: &[u8]) -> u16 {\n    bytes::Buf::get_u16(&mut &header[2..])\n}\n";
+    let config = "version = 6\ninclude = [\"**/*.rs\"]\nallowed = [\"item.fn\", \"item.use\", \"expr.path\", \"expr.call\", \"expr.method_call\", \"expr.try\", \"expr.reference\", \"expr.reference.mut\", \"stmt.let\", \"stmt.let.mut\", \"pat.ident\", \"pat.ident.mut\", \"pat.tuple\", \"pat.wild\", \"type.path\", \"type.reference\", \"type.slice\"]\nconsuming_readers = [\"bytes::Buf\", \"std::io::Cursor\"]\n";
+    let cursor = "fn at(reader: io::Cursor<Vec<u8>>) -> u64 {\n    reader.position()\n}\n";
+    let config = scratch(
+        "readers",
+        config,
+        &[("a.rs", pass), ("b.rs", fail), ("c.rs", cursor)],
+    );
+    let (_, stdout, stderr) = subset(&["check", "--config", config.to_str().unwrap()]);
+    assert_eq!(stderr, "");
+    let ours: Vec<&str> = stdout.lines().filter(|l| l.contains("0039")).collect();
+    assert_eq!(
+        ours,
+        [
+            format!("b.rs:1:12: item.use: {CONSUMING_READER}"),
+            format!("b.rs:9:5: expr.path: {CONSUMING_READER}"),
+            format!("c.rs:1:15: type.path: {CONSUMING_READER}"),
+        ]
+    );
+}
+
 #[test]
 fn let_mut_is_loop_state_or_lent_as_mut() {
     assert_eq!(
