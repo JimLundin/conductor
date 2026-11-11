@@ -1,17 +1,20 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::Context as _;
+use anyhow::Context;
 use clap::{Parser, Subcommand};
-use daemon::host::{Host, HostOptions};
+use daemon::log::Log;
+use daemon::registry::{Availability, Providers, Registry};
 use daemon::rtc::{Blackhole, RtcOptions};
-use daemon::server::Conductor;
+use daemon::serve::Conductor;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
-use iroh::{Endpoint, RelayMode};
+use iroh::{Endpoint, RelayMode, RelayUrl};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
-use proto::{AuthToken, Epoch, Ticket};
+use proto::Ticket;
+use qrcode::render::svg;
+use qrcode::render::unicode::Dense1x2;
 
 #[derive(Parser)]
 #[command(name = "conductord", about = "The Conductor host daemon")]
@@ -22,35 +25,43 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Spike S3: serve a simulated agent over iroh and print a join ticket.
-    S3Host {
-        /// Where the host key lives. Defaults to the OS data dir for "conductor".
-        #[arg(long)]
-        data_dir: Option<PathBuf>,
-        /// The name clients show for this host.
-        #[arg(long, default_value = "s3-host")]
-        name: String,
-        /// The web app's URL; the printed join link is this plus `#join=<ticket>`.
-        #[arg(long, default_value = "http://localhost:8080/conductor/")]
-        web_url: String,
-        /// Pause between the simulated agent's transcript chunks.
-        #[arg(long, default_value_t = 100)]
-        delta_ms: u64,
-        /// A STUN server for the WebRTC upgrade, as `stun:host:port`. Repeat
-        /// for more. STUN only reports public addresses; nothing relays.
-        #[arg(long = "stun", default_values = proto::DEFAULT_STUN_SERVERS)]
-        stun_servers: Vec<String>,
-        /// Refuse browsers' WebRTC upgrades, so they stay on iroh's relay.
-        #[arg(long)]
-        no_webrtc: bool,
-        /// Test only: drop every WebRTC datagram, so upgrades fail.
-        #[arg(long, hide = true)]
-        test_rtc_blackhole: bool,
-        /// Test only: drop the first WebRTC connection after it sends this
-        /// many frames.
-        #[arg(long, hide = true)]
-        test_rtc_drop_after: Option<u64>,
-    },
+    /// Serve this host's sessions over iroh and print a join ticket.
+    Host(HostArgs),
+}
+
+#[derive(Parser)]
+struct HostArgs {
+    /// Where the host key lives. Defaults to the OS data dir for "conductor".
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+    /// The name clients show for this host.
+    #[arg(long, default_value = "conductor")]
+    name: String,
+    /// The web app's URL; the printed join link is this plus `#join=<ticket>`.
+    #[arg(long, default_value = "http://localhost:8080/conductor/")]
+    web_url: String,
+    /// A STUN server for the WebRTC upgrade, as `stun:host:port`. Repeat
+    /// for more. STUN only reports public addresses; nothing relays.
+    #[arg(long = "stun", default_values = proto::DEFAULT_STUN_SERVERS)]
+    stun_servers: Vec<String>,
+    /// Refuse browsers' WebRTC upgrades, so they stay on iroh's relay.
+    #[arg(long = "no-webrtc", action = clap::ArgAction::SetFalse)]
+    webrtc: bool,
+    /// Test only: drop every WebRTC datagram, so upgrades fail.
+    #[arg(long, hide = true)]
+    test_rtc_blackhole: bool,
+    /// Test only: drop the first WebRTC connection after it sends this
+    /// many frames.
+    #[arg(long, hide = true)]
+    test_rtc_drop_after: Option<u64>,
+}
+
+/// Where the host is reachable, as the ticket tells clients.
+struct Serving {
+    data_dir: PathBuf,
+    web_url: String,
+    router: Router,
+    ticket: Ticket,
 }
 
 #[tokio::main]
@@ -63,16 +74,15 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     match Cli::parse().command {
-        Cmd::S3Host {
+        Cmd::Host(HostArgs {
             data_dir,
             name,
             web_url,
-            delta_ms,
             stun_servers,
-            no_webrtc,
+            webrtc,
             test_rtc_blackhole,
             test_rtc_drop_after,
-        } => {
+        }) => {
             let data_dir = match data_dir {
                 Some(dir) => dir,
                 None => directories::ProjectDirs::from("", "", "conductor")
@@ -80,36 +90,29 @@ async fn main() -> anyhow::Result<()> {
                     .data_dir()
                     .to_path_buf(),
             };
-            let rtc = (!no_webrtc).then(|| {
-                Arc::new(RtcOptions::new(
-                    stun_servers,
-                    test_rtc_blackhole.then_some(Blackhole {}),
-                    test_rtc_drop_after,
-                ))
-            });
-            s3_host(
-                data_dir,
-                name,
-                web_url,
-                Duration::from_millis(delta_ms),
-                rtc,
-            )
-            .await
+            let rtc = webrtc.then_some(Arc::new(RtcOptions::new(
+                stun_servers,
+                test_rtc_blackhole.then_some(Blackhole {}),
+                test_rtc_drop_after,
+            )));
+            let serving = host(data_dir, web_url, name, rtc).await?;
+            announce(&serving)?;
+            tokio::signal::ctrl_c().await?;
+            serving.router.shutdown().await?;
+            Ok(())
         }
     }
 }
 
-async fn s3_host(
+async fn host(
     data_dir: PathBuf,
-    name: String,
     web_url: String,
-    delta_interval: Duration,
+    name: String,
     rtc: Option<Arc<RtcOptions>>,
-) -> anyhow::Result<()> {
-    let key = daemon::load_or_create_key(&data_dir)?;
+) -> anyhow::Result<Serving> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
-        .secret_key(key)
+        .secret_key(daemon::load_or_create_key(&data_dir)?)
         .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await?;
@@ -120,54 +123,65 @@ async fn s3_host(
         .next()
         .cloned()
         .context("online, but no home relay")?;
-
-    let token = AuthToken::from_bytes(daemon::random());
-    let host = Host::spawn(HostOptions {
-        name,
-        epoch: Epoch(u64::from_le_bytes(daemon::random())),
-        delta_interval,
-    });
-    let router = Router::builder(endpoint.clone())
-        .accept(proto::ALPN, Conductor { host, token, rtc })
-        .spawn();
-
-    let ticket = Ticket {
-        host: endpoint.id(),
-        relay,
+    let token = daemon::random_token();
+    let unavailable =
+        Availability::Unavailable(String::from("this host does not run agent sessions yet"));
+    let conductor = Conductor {
+        log: Log::spawn(name, daemon::random_epoch()),
+        registry: Registry::spawn(Providers {
+            claude: unavailable.clone(),
+            codex: unavailable,
+        }),
         token,
+        rtc,
     };
-    println!("data dir: {}", data_dir.display());
-    println!("host id:  {}", endpoint.id());
-    println!("relay:    {}", ticket.relay);
-    let ticket = ticket.to_text();
-    println!("ticket:   {ticket}");
-    let join = format!("{web_url}#join={ticket}");
-    println!("join:     {join}");
+    Ok(Serving {
+        data_dir,
+        web_url,
+        ticket: Ticket {
+            host: endpoint.id(),
+            relay,
+            token,
+        },
+        router: Router::builder(endpoint)
+            .accept(proto::ALPN, conductor)
+            .spawn(),
+    })
+}
+
+/// Prints the ticket, the join link and its QR code, and writes the code as
+/// an image to the data dir.
+fn announce(serving: &Serving) -> anyhow::Result<()> {
+    let ticket = serving.ticket.to_text();
+    let join = format!("{}#join={ticket}", serving.web_url);
+    let mut out = std::io::stdout();
+    writeln!(out, "data dir: {}", serving.data_dir.display())?;
+    writeln!(out, "host id:  {}", serving.ticket.host)?;
+    writeln!(out, "relay:    {}", serving.ticket.relay)?;
+    writeln!(out, "ticket:   {ticket}")?;
+    writeln!(out, "join:     {join}")?;
     match qrcode::QrCode::new(&join) {
         Ok(code) => {
-            use qrcode::render::{svg, unicode::Dense1x2};
-            // Terminals usually draw light glyphs on a dark background, so swap the
-            // module colours; phone cameras often refuse inverted codes.
-            println!(
+            // Terminals usually draw light glyphs on a dark background, so swap
+            // the module colours; phone cameras often refuse inverted codes.
+            writeln!(
+                out,
                 "{}",
                 code.render::<Dense1x2>()
                     .dark_color(Dense1x2::Light)
                     .light_color(Dense1x2::Dark)
                     .quiet_zone(true)
                     .build()
-            );
-            let svg_path = data_dir.join("join-qr.svg");
+            )?;
+            let svg_path = serving.data_dir.join("join-qr.svg");
             let image = code.render::<svg::Color>().min_dimensions(512, 512).build();
             match std::fs::write(&svg_path, image) {
-                Ok(()) => println!("qr image: {}", svg_path.display()),
+                Ok(()) => writeln!(out, "qr image: {}", svg_path.display())?,
                 Err(err) => tracing::warn!("could not write {}: {err}", svg_path.display()),
             }
         }
         Err(err) => tracing::warn!("could not render the join link as a QR code: {err}"),
     }
-
-    tokio::signal::ctrl_c().await?;
-    router.shutdown().await?;
     Ok(())
 }
 
@@ -176,7 +190,7 @@ async fn s3_host(
 /// certificate check (`proto::without_root_dot`).
 fn n0_relays() -> iroh::RelayMap {
     iroh::defaults::prod::default_relay_map()
-        .urls::<Vec<_>>()
+        .urls::<Vec<RelayUrl>>()
         .iter()
         .map(proto::without_root_dot)
         .collect()

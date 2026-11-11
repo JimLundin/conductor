@@ -28,7 +28,7 @@ start_host() {
   local name=$1
   shift
   mkdir "$scratch/$name"
-  ./target/debug/conductord s3-host --data-dir "$scratch/$name" \
+  ./target/debug/conductord host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" "$@" >"$scratch/$name.log" 2>&1 &
   pids+=($!)
   until grep -q '^join:' "$scratch/$name.log"; do sleep 0.5; done

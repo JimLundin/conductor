@@ -1,9 +1,9 @@
 //! The client core (architecture §9). Compiles natively and to
 //! `wasm32-unknown-unknown`; target differences live in [`platform`].
 
+pub mod host_view;
 mod link;
 pub mod platform;
-pub mod transcript;
 mod upgrade;
 mod wire;
 
