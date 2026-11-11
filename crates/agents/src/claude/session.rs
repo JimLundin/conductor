@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::ExitStatus;
 use std::time::Duration;
 
 use claude_codes::ClaudeCliBuilder;
 use serde_json::Value;
+
+use crate::Exit;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
@@ -100,7 +101,7 @@ enum CommandMsg {
         reply: oneshot::Sender<Result<(), Error>>,
     },
     Shutdown {
-        reply: oneshot::Sender<ExitStatus>,
+        reply: oneshot::Sender<Exit>,
     },
 }
 
@@ -200,7 +201,7 @@ impl ClaudeSession {
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
-    pub async fn shutdown(self) -> Result<ExitStatus, Error> {
+    pub async fn shutdown(self) -> Result<Exit, Error> {
         let (reply, answer) = oneshot::channel();
         self.send(CommandMsg::Shutdown { reply }).await?;
         answer.await.map_err(|_| Error::Exited)
@@ -261,7 +262,7 @@ struct Running {
 }
 
 impl Running {
-    async fn stop(self) -> ExitStatus {
+    async fn stop(self) -> Exit {
         let Running {
             mut child,
             stdin,
@@ -269,10 +270,13 @@ impl Running {
         } = self;
         drop(stdin);
         match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
-            Ok(Ok(status)) => status,
+            Ok(Ok(status)) => Exit::Status(status),
             Ok(Err(_)) | Err(_) => {
                 drop(child.start_kill());
-                child.wait().await.unwrap_or_default()
+                match child.wait().await {
+                    Ok(status) => Exit::Status(status),
+                    Err(e) => Exit::Unknown(e.to_string()),
+                }
             }
         }
     }
@@ -280,7 +284,7 @@ impl Running {
 
 enum Process {
     Running(Box<Running>),
-    Exited(ExitStatus),
+    Exited(Exit),
 }
 
 /// One thing the actor reacts to.
@@ -497,20 +501,25 @@ impl Actor {
     }
 
     /// Moves to `Exited`, failing everything still waiting on the process.
-    async fn stop(&mut self) -> ExitStatus {
-        match std::mem::replace(&mut self.process, Process::Exited(ExitStatus::default())) {
+    async fn stop(&mut self) -> Exit {
+        // Both arms put the real state back.
+        let placeholder = Process::Exited(Exit::Unknown(String::from("stopping")));
+        match std::mem::replace(&mut self.process, placeholder) {
             Process::Running(running) => {
                 let status = running.stop().await;
-                self.process = Process::Exited(status);
+                self.process = Process::Exited(status.clone());
                 self.pending
                     .drain()
                     .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
                 self.open_permissions.clear();
-                self.emit(ClaudeEvent::Exited { status }).await;
+                self.emit(ClaudeEvent::Exited {
+                    status: status.clone(),
+                })
+                .await;
                 status
             }
             Process::Exited(status) => {
-                self.process = Process::Exited(status);
+                self.process = Process::Exited(status.clone());
                 status
             }
         }

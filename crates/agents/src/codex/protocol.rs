@@ -15,6 +15,8 @@ use codex_codes::{
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::Exit;
+
 /// A Codex thread id, as returned by `thread/start` and accepted by `thread/resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThreadId(pub String);
@@ -172,7 +174,7 @@ pub enum CodexEvent {
         event: ThreadEvent,
     },
     Exited {
-        status: std::process::ExitStatus,
+        status: Exit,
     },
     /// A frame that names no thread.
     Unknown(Value),

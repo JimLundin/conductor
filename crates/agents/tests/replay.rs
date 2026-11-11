@@ -104,7 +104,7 @@ fn summary(event: &ClaudeEvent) -> String {
             "finished {subtype} is_error={} {terminal_reason:?}",
             is_error(outcome)
         ),
-        ClaudeEvent::Exited { status } => format!("exited {status}"),
+        ClaudeEvent::Exited { status } => format!("exited {}", status.describe()),
         ClaudeEvent::Unknown(v) => format!(
             "unknown {}/{}",
             v.get("type").and_then(Value::as_str).unwrap_or("?"),
@@ -231,7 +231,10 @@ async fn replay(name: &str, decisions: Vec<PermissionDecision>) -> Replayed {
         .then(|id| answer_again(&session, id))
         .collect::<Vec<String>>()
         .await;
-    assert_eq!(session.shutdown().await.unwrap().code(), Some(0));
+    assert_eq!(
+        session.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
     Replayed {
         events: played.seen,
         second,
@@ -407,5 +410,8 @@ async fn allow_untested_version_runs_it_anyway() {
         ..options(&claude)
     };
     let (session, _events) = ClaudeSession::spawn(opts).await.unwrap();
-    assert_eq!(session.shutdown().await.unwrap().code(), Some(0));
+    assert_eq!(
+        session.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
 }

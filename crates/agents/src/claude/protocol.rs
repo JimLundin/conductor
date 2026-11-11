@@ -10,6 +10,8 @@ use claude_codes::io::{
 use claude_codes::{ClaudeInput, InitializeResponse};
 use serde_json::Value;
 
+use crate::Exit;
+
 /// A Claude session id, as printed in `system/init` and accepted by `--resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(pub String);
@@ -117,7 +119,7 @@ pub enum ClaudeEvent {
         session_id: SessionId,
     },
     Exited {
-        status: std::process::ExitStatus,
+        status: Exit,
     },
     Unknown(Value),
 }

@@ -8,12 +8,14 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use codex_codes::protocol::methods;
 use codex_codes::{AppServerBuilder, RequestId};
 use serde_json::Value;
+
+use crate::Exit;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
@@ -67,7 +69,7 @@ enum CommandMsg {
         reply: oneshot::Sender<Result<(), Error>>,
     },
     Shutdown {
-        reply: oneshot::Sender<ExitStatus>,
+        reply: oneshot::Sender<Exit>,
     },
 }
 
@@ -180,7 +182,7 @@ impl CodexServer {
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
-    pub async fn shutdown(&self) -> Result<ExitStatus, Error> {
+    pub async fn shutdown(&self) -> Result<Exit, Error> {
         let (reply, answer) = oneshot::channel();
         send(&self.commands, CommandMsg::Shutdown { reply }).await?;
         answer.await.map_err(|_| Error::Exited)
@@ -264,7 +266,7 @@ struct Running {
 }
 
 impl Running {
-    async fn stop(self) -> ExitStatus {
+    async fn stop(self) -> Exit {
         let Running {
             mut child,
             stdin,
@@ -272,10 +274,13 @@ impl Running {
         } = self;
         drop(stdin);
         match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
-            Ok(Ok(status)) => status,
+            Ok(Ok(status)) => Exit::Status(status),
             Ok(Err(_)) | Err(_) => {
                 drop(child.start_kill());
-                child.wait().await.unwrap_or_default()
+                match child.wait().await {
+                    Ok(status) => Exit::Status(status),
+                    Err(e) => Exit::Unknown(e.to_string()),
+                }
             }
         }
     }
@@ -283,7 +288,7 @@ impl Running {
 
 enum Process {
     Running(Box<Running>),
-    Exited(ExitStatus),
+    Exited(Exit),
 }
 
 /// One thing the actor reacts to.
@@ -525,20 +530,25 @@ impl Actor {
     }
 
     /// Moves to `Exited`, failing everything still waiting on the process.
-    async fn stop(&mut self) -> ExitStatus {
-        match std::mem::replace(&mut self.process, Process::Exited(ExitStatus::default())) {
+    async fn stop(&mut self) -> Exit {
+        // Both arms put the real state back.
+        let placeholder = Process::Exited(Exit::Unknown(String::from("stopping")));
+        match std::mem::replace(&mut self.process, placeholder) {
             Process::Running(running) => {
                 let status = running.stop().await;
-                self.process = Process::Exited(status);
+                self.process = Process::Exited(status.clone());
                 self.pending
                     .drain()
                     .for_each(|(_, Pending { reply, .. })| drop(reply.send(Err(Error::Exited))));
                 self.open.clear();
-                self.emit(CodexEvent::Exited { status }).await;
+                self.emit(CodexEvent::Exited {
+                    status: status.clone(),
+                })
+                .await;
                 status
             }
             Process::Exited(status) => {
-                self.process = Process::Exited(status);
+                self.process = Process::Exited(status.clone());
                 status
             }
         }
@@ -554,13 +564,12 @@ impl Actor {
 mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::path::Path;
-    use std::process::ExitStatus;
 
     use codex_codes::RequestId;
     use tokio::sync::mpsc;
 
     use super::{
-        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Open, Process, ServerOptions,
+        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Open, Process, ServerOptions,
         ThreadId, command,
     };
 
@@ -568,7 +577,7 @@ mod tests {
     async fn an_answer_that_does_not_encode_fails_and_closes_the_approval() {
         let (events, _listening) = mpsc::channel(1);
         let mut actor = Actor {
-            process: Process::Exited(ExitStatus::default()),
+            process: Process::Exited(Exit::Unknown(String::from("never started"))),
             events,
             stdout_log: None,
             pending: HashMap::new(),

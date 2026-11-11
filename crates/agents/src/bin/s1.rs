@@ -170,7 +170,8 @@ impl Turn {
                 Ok(Progress::Done)
             }
             ClaudeEvent::Exited { status } => Err(anyhow::Error::msg(format!(
-                "claude exited mid-turn: {status}"
+                "claude exited mid-turn: {}",
+                status.describe()
             ))),
         }
     }
@@ -471,7 +472,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
             _ => Verdict::Fail,
         },
         format!(
-            "first exit={status} resumed {} -> session_id={:?} reply={:?}",
+            "first exit={} resumed {} -> session_id={:?} reply={:?}",
+            status.describe(),
             session_id.0,
             t.session_id.as_ref().map(|id| &id.0),
             t.text
@@ -524,7 +526,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )?;
 
     let status = t.live.session.shutdown().await?;
-    writeln!(std::io::stdout(), "exit status {status}")?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let failed = Vec::from([
         approve,
         deny,

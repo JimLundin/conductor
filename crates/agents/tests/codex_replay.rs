@@ -224,7 +224,9 @@ impl Recorder {
                 let line = format!("{} {}", self.name(thread), summary(event));
                 self.seen.push(line);
             }
-            CodexEvent::Exited { status } => self.seen.push(format!("exited {status}")),
+            CodexEvent::Exited { status } => {
+                self.seen.push(format!("exited {}", status.describe()))
+            }
         }
     }
 
@@ -381,7 +383,10 @@ async fn approve_decline_interrupt_and_two_threads() {
         .then(|id| answer_again(&server, id))
         .collect::<Vec<String>>()
         .await;
-    assert_eq!(server.shutdown().await.unwrap().code(), Some(0));
+    assert_eq!(
+        server.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
 
     assert_eq!(
@@ -470,7 +475,10 @@ async fn resume_in_a_new_process() {
         .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
         .await
         .map_err(|e| e.to_string());
-    assert_eq!(server.shutdown().await.unwrap().code(), Some(0));
+    assert_eq!(
+        server.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
 
     assert_eq!(

@@ -209,7 +209,8 @@ impl Run {
                 })
             }
             CodexEvent::Exited { status } => Err(anyhow::Error::msg(format!(
-                "codex exited mid-turn: {status}"
+                "codex exited mid-turn: {}",
+                status.describe()
             ))),
             CodexEvent::Unknown(_) => Ok(Progress::Playing),
         }
@@ -560,8 +561,11 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
             _ => Verdict::Fail,
         },
         format!(
-            "first exit={status} resumed {} -> {} reply={:?}",
-            a.id.0, resumed.id.0, s.turn.text
+            "first exit={} resumed {} -> {} reply={:?}",
+            status.describe(),
+            a.id.0,
+            resumed.id.0,
+            s.turn.text
         ),
     )?;
 
@@ -587,7 +591,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )?;
 
     let status = server.shutdown().await?;
-    writeln!(std::io::stdout(), "exit status {status}")?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let failed = Vec::from([approve, decline, interrupt, two_threads, resume, ids])
         .into_iter()
         .fold(0_usize, |failed, verdict| match verdict {
