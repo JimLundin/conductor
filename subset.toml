@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 4
+version = 5
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -123,6 +123,11 @@ macros = [
 
 # Extra macros allowed only inside #[cfg(test)] code and tests/.
 test_macros = ["assert_eq", "assert_ne"]
+
+# Proposal 0035: stream endpoints of ours, whose methods may take `&mut self`
+# anywhere. A type joins by review: it wraps a library stream or channel
+# whose own API takes `&mut`, or it is the reassembly buffer of one.
+endpoints = ["SendHalf", "RecvHalf", "ChannelRecv", "FrameBuffer"]
 
 # Ids allowed only under some paths. Elsewhere, a use of one is reported with
 # the scope's rule as the reason.

@@ -44,6 +44,10 @@ struct Config {
     macros: Vec<String>,
     #[serde(default)]
     test_macros: Vec<String>,
+    /// Types of ours whose methods may take `&mut self` anywhere (proposal
+    /// 0035).
+    #[serde(default)]
+    endpoints: Vec<String>,
     #[serde(default)]
     scope: Vec<Scope>,
     weights: Option<weights::Weights>,
@@ -622,7 +626,10 @@ fn analyse(
                 line: o.line,
                 col: o.col,
             });
-        let shape = shape::check(&parsed, &kind, &facts);
+        let lists = shape::Lists {
+            endpoints: &config.endpoints,
+        };
+        let shape = shape::check(&parsed, &kind, &facts, &lists);
         let findings: Vec<&shape::Finding> = shape
             .findings
             .iter()

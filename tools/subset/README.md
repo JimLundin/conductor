@@ -94,6 +94,18 @@ type's fields or in the variants of an enum of ours it owns, and the
 newtypes that derive `Ord`. The facts
 are names, not resolved paths.
 
+Some rules read a list of names from the config, so a project tunes them
+without changing the tool:
+
+```toml
+# Types of ours whose methods may take `&mut self` anywhere (0035).
+endpoints = ["SendHalf", "RecvHalf"]
+```
+
+- `endpoints` names types of ours, matched on the impl's type name, whose
+  methods may take `&mut self` wherever they are, not only as loop state.
+  The default is none.
+
 | Id | Rule |
 |---|---|
 | `vis.restricted` | only `pub(crate)`, never `pub(super)` or `pub(in …)` (proposal 0003) |
@@ -107,7 +119,7 @@ are names, not resolved paths.
 | `expr.loop` | a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007) |
 | `expr.break` | `break` only with a value, out of an actor loop (proposal 0007) |
 | `item.fn.receiver.mut` | `mut self` only on a fn whose body is an actor loop (proposal 0008) |
-| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008) |
+| `item.fn.receiver.mut` | `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035) |
 | `stmt.let.mut` | `let mut` only for a loop's state just before the loop, or for a value never reassigned and only lent as `&mut` (proposal 0008) |
 | `pat.ident.mut` | a `mut` binding is never reassigned, only lent as `&mut` (proposal 0008) |
 | `expr.assign` | assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008) |

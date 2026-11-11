@@ -56,10 +56,18 @@ pub struct FileKind {
     pub crate_root: bool,
 }
 
-pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts) -> Shape {
+/// The name lists in the config that shape rules read.
+pub struct Lists<'a> {
+    /// Types of ours whose methods may take `&mut self` anywhere (proposal
+    /// 0035).
+    pub endpoints: &'a [String],
+}
+
+pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) -> Shape {
     let mut checker = Checker {
         facts,
         kind,
+        lists,
         exprs: HashMap::new(),
         types: HashMap::new(),
         cfg_hosts: HashMap::new(),
@@ -254,6 +262,7 @@ const CFG_PAIRS: &[(&str, &str)] = &[
 struct Checker<'a> {
     facts: &'a Facts,
     kind: &'a FileKind,
+    lists: &'a Lists<'a>,
     exprs: HashMap<*const Expr, Slot>,
     types: HashMap<*const Type, Slot>,
     /// `cfg` attributes on a host the rule allows, with the item they need a
@@ -381,6 +390,7 @@ impl Checker<'_> {
                         || i.self_ty.as_ref().is_some_and(|t| {
                             self.facts.loop_states.contains(t)
                                 || self.facts.owned_by_state.contains(t)
+                                || self.lists.endpoints.contains(t)
                         })
                 });
                 if !state {

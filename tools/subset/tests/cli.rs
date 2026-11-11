@@ -798,7 +798,7 @@ fn ref_mut_self_only_on_loop_state_methods() {
             ACTOR,
             "impl Host {\n    fn rename(&mut self, name: String) {\n        self.name = name;\n    }\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008)\n"
+        "crates/daemon/src/a_fail.rs:2:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n"
     );
 }
 
@@ -866,9 +866,22 @@ fn ref_mut_self_reaches_a_value_that_loop_state_owns() {
             OWNED,
             "struct Session {\n    turn: Turn,\n}\n\nimpl Session {\n    fn finish(&mut self, outcome: Outcome) {\n        self.turn.finish(outcome);\n    }\n}\n\nfn apply(turn: &mut Turn, outcome: Outcome) {\n    turn.finish(outcome);\n}\n\nstruct Conn {}\n\nimpl Conn {\n    fn close(&mut self) {}\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:6:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008)\n\
+        "crates/daemon/src/a_fail.rs:6:16: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n\
          crates/daemon/src/a_fail.rs:11:17: type.reference.mut: no `&mut` of our own types other than `&mut self` (proposals 0008, 0023)\n\
-         crates/daemon/src/a_fail.rs:18:15: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state or of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008)\n"
+         crates/daemon/src/a_fail.rs:18:15: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n"
+    );
+}
+
+#[test]
+fn ref_mut_self_on_a_listed_endpoint_anywhere() {
+    assert_eq!(
+        rule_case(
+            "ref-mut-endpoint",
+            "crates/client/src/a.rs",
+            "pub(crate) enum SendHalf {\n    Iroh(SendStream),\n}\n\nimpl SendHalf {\n    pub(crate) async fn write(&mut self, frame: &[u8]) -> Result<(), WireError> {\n        match self {\n            Self::Iroh(send) => send.write_all(frame).await?,\n        }\n        Ok(())\n    }\n}\n\nasync fn rpc(transport: Transport, frame: Vec<u8>) -> Result<(), WireError> {\n    let mut send = transport.open().await?;\n    send.write(&frame).await?;\n    Ok(())\n}\n",
+            "struct Transcript {\n    items: Vec<Item>,\n}\n\nimpl Transcript {\n    fn push(&mut self, item: Item) {\n        self.items.push(item);\n    }\n}\n",
+        ),
+        "crates/client/src/a_fail.rs:6:14: item.fn.receiver.mut: `&mut self` only on methods of an actor's loop state, of a type of ours named in one of its field types or in a variant of an enum it owns (proposal 0008), or of a type in `endpoints` (proposal 0035)\n"
     );
 }
 
@@ -1412,7 +1425,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 22);
+    assert_eq!(files.len(), 23);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))

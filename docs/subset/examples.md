@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 4) look like in practice.
+What the constructs in `subset.toml` (version 5) look like in practice.
 Every example passes `subset check`, and a test in `tools/subset` keeps it
 that way. A first-line comment naming a path, such as
 `// crates/proto/src/frame.rs`, places an example where a location rule
@@ -467,6 +467,37 @@ body: `matches!`, a comparison, `&&`, `||` or `!` (proposal 0028). Nowhere
 else. `filter(..).count()` is the one way to count, in place of
 `filter_map(..).count()` or a `fold` that adds one. A `bool` still never
 becomes a binding, a field, a parameter or a return type of our own.
+
+## 23. A stream endpoint changes in place
+
+```rust
+pub enum SendHalf {
+    Iroh(iroh::endpoint::SendStream),
+}
+
+impl SendHalf {
+    pub async fn write(&mut self, frame: &[u8]) -> Result<(), WireError> {
+        match self {
+            Self::Iroh(send) => send.write_all(frame).await?,
+        }
+        Ok(())
+    }
+}
+
+pub async fn greet(transport: Transport, hello: &[u8], ready: &[u8]) -> Result<(), WireError> {
+    let mut send = transport.open_send().await?;
+    send.write(hello).await?;
+    send.write(ready).await?;
+    send.finish()
+}
+```
+
+A type on the `endpoints` list in `subset.toml` wraps a library stream
+whose own API takes `&mut`, so its methods take `&mut self` and any code
+may call them on a `let mut` binding (proposal 0035). Without the list, each
+write would take the half by value and hand it back, and every caller would
+rebind it. Every other type of ours keeps 0008's reach: its value-returning
+methods stay, and no fn takes a `&mut` of it.
 
 ## Still outside the subset
 
