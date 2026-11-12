@@ -114,6 +114,14 @@ From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
   `availableDecisions` lists only `accept`, `acceptWithExecpolicyAmendment`
   and `cancel`. The same command (`touch t1.txt`) then ran in the next turn
   with no request, and a different one still asked. (Step 8 and probe.)
+  Nothing in the code checks that it is listed: `s2` step 8 is the guard,
+  and fails if a later pin asks again. A file change approval offers no
+  session approval, since no run has recorded one.
+- A question with `"isSecret": true` is refused with a JSON-RPC error
+  ("conductor does not take secret answers"), logged at info without its
+  content, and shown as an error. The host stores every answer and replays
+  it to every client, so it can't keep one secret. No run has sent one
+  (the field is from the schema).
 - An `agentMessage` item carries a `questions` field, `null` in every run.
 
 ## Interrupt

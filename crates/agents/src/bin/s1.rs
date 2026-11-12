@@ -101,6 +101,8 @@ struct Turn {
     /// What each permission request offered to allow for the session.
     for_session: Vec<Option<String>>,
     questions: Vec<Vec<Question>>,
+    /// The content of each failed tool result.
+    tool_errors: Vec<String>,
     cancelled_permissions: usize,
     text: String,
     /// The text of every `StreamDelta`, joined.
@@ -122,6 +124,7 @@ impl Turn {
             permissions: Vec::new(),
             for_session: Vec::new(),
             questions: Vec::new(),
+            tool_errors: Vec::new(),
             cancelled_permissions: 0,
             text: String::new(),
             streamed: String::new(),
@@ -170,7 +173,26 @@ impl Turn {
                 self.cue(Cue::Delta).await;
                 Ok(Progress::Playing)
             }
-            ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
+            ClaudeEvent::Message {
+                role: Role::User,
+                content,
+            } => {
+                self.tool_errors
+                    .extend(content.into_iter().filter_map(|block| match block {
+                        Block::ToolResult {
+                            content,
+                            outcome: Outcome::Failed,
+                            ..
+                        } => Some(content.to_string()),
+                        Block::ToolResult { .. }
+                        | Block::Text(_)
+                        | Block::Thinking(_)
+                        | Block::ToolUse { .. }
+                        | Block::Other(_) => None,
+                    }));
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
             ClaudeEvent::PermissionRequested {
                 id,
                 tool_name,
@@ -388,14 +410,15 @@ async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result
     Ok((after.live, verdict))
 }
 
-/// Steps 7 to 9, in a third session: a question answered, a command
-/// approved for the session and then run again without asking, and a
-/// question withdrawn by an interrupt.
+/// Steps 7 to 10, in a third session: a question answered, a command
+/// approved for the session and then run again without asking, a question
+/// withdrawn by an interrupt, and two questions with the same text, which
+/// the CLI refuses before asking us.
 async fn questions(
     claude: &Path,
     scratch: &Path,
     fixtures: Option<&Path>,
-) -> Result<(Verdict, Verdict, Verdict)> {
+) -> Result<(Verdict, Verdict, Verdict, Verdict)> {
     let live = spawn(claude, None, log_path(fixtures, "session3-questions")).await?;
     let t = Turn::start(
         live,
@@ -516,9 +539,32 @@ async fn questions(
             t.questions, t.interrupted, t.cancelled_permissions, t.finished
         ),
     )?;
+    let t = Turn::start(
+        t.live,
+        "Use the AskUserQuestion tool once, with exactly two questions whose text is identical: both must be exactly 'Which color?'. The first has the options Red and Blue, the second Green and Yellow. If the tool refuses, say so and do not retry.",
+        Plan::Answer(Policy::Deny(String::from("no tools besides the question"))),
+    )
+    .await?;
+    let duplicate = report(
+        "10 duplicate question texts",
+        match (
+            t.questions.len(),
+            t.tool_errors
+                .iter()
+                .filter(|error| error.contains("Question texts must be unique"))
+                .count(),
+        ) {
+            (0, 1) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "questions={:?} tool errors={:?} finished={:?}",
+            t.questions, t.tool_errors, t.finished
+        ),
+    )?;
     let status = t.live.session.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
-    Ok((question, for_session, withdrawn))
+    Ok((question, for_session, withdrawn, duplicate))
 }
 
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
@@ -717,7 +763,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
 
     let status = t.live.session.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
-    let (question, for_session, withdrawn) = questions(&claude, scratch, fixtures).await?;
+    let (question, for_session, withdrawn, duplicate) =
+        questions(&claude, scratch, fixtures).await?;
     let failed = Vec::from([
         approve,
         deny,
@@ -731,6 +778,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         question,
         for_session,
         withdrawn,
+        duplicate,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

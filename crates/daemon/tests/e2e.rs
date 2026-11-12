@@ -612,7 +612,7 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
                 }]),
             },
             reason: None,
-            for_session: Some(String::from("acceptEdits mode")),
+            for_session: None,
         },
     ])
 }

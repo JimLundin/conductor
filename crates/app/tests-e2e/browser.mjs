@@ -264,6 +264,10 @@ if (scenario === 'turn') {
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
   check((await text('.question .question-answer')) === 'Blue', 'the card shows the answer given');
   check((await text('.question .resolved')) === 'Answered by iPhone', 'the question was answered once, by this device');
+  check(
+    (await page.evaluate(() => document.activeElement.id)) === 'request-1',
+    'focus moved to the answered card, not the page',
+  );
   check((await text('.reply')) === 'Blue', 'Claude replied with the answer');
   check((await pane.locator('.tool').count()) === 0, 'the question shows no tool card of its own');
 
@@ -284,6 +288,10 @@ if (scenario === 'turn') {
   log('tapped Allow for this session');
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
   check((await text('.request .resolved')) === 'Allowed for this session by iPhone', 'the request was allowed for the session by this device');
+  check(
+    (await page.evaluate(() => document.activeElement.id)) === 'request-1',
+    'focus moved to the resolved approval card, not the page',
+  );
   await send('again');
   await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
   check((await pane.locator('.request').count()) === 1, 'the second identical call asked nothing');

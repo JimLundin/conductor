@@ -1,257 +1,259 @@
-# Web build in headless Chromium and WebKit (390x844) against conductord host on the fake CLIs, 2026-11-12T20:16:05Z
+# Web build in headless Chromium and WebKit (390x844) against conductord host on the fake CLIs, 2026-11-12T20:38:49Z
 
-wasm: 5809660 bytes raw, 1846989 bytes gzip -9
+wasm: 5811220 bytes raw, 1848919 bytes gzip -9
 
 ## Turn, Chromium
-[  0.047s] engine: chromium 158.0.8127.18, scenario: turn
-[  0.089s] open http://localhost:8080/conductor/#join=<ticket>
-[  0.993s] Live 904ms after navigation (first connect)
-[  0.998s] status line: "conductor Live Credentials Change host"
-[  0.998s] ok: the join fragment was removed from the address bar
-[  1.001s] ok: the ticket is in local storage
-[  1.440s] ok: the form says why Codex is unavailable ("Codex can't run on this host: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)")
-[  2.136s] started a Claude Code session in /tmp/conductor-e2e/turn-chromium
-[  2.155s] sent "make a file"
-[  5.974s] approval card: "Allow this? Write /tmp/s1-scratch/a.txt Deny Approve Allow for this session Allows acceptEdits mode until the session ends"
-[  5.992s] ok: .request button.approve is at least 44px (159x48)
-[  5.998s] ok: .request button.deny is at least 44px (159x48)
-[  6.004s] ok: .composer textarea is at least 44px (314x44)
-[  6.009s] ok: .composer button is at least 44px (44x44)
-[  6.063s] tapped Approve
-[  8.181s] ok: deltas rendered live (3 distinct partial texts seen)
-[  9.478s] ok: the message shows once
-[  9.481s] ok: one tool card, for the written file
-[  9.484s] ok: the card names the change a Write
-[  9.487s] ok: the tool succeeded
-[  9.490s] ok: the approval resolved once, by this device
-[  9.492s] ok: the streamed reply is every delta exactly once
-[  9.494s] ok: exactly one "Turn finished"
-[  9.591s] screenshot /tmp/conductor-e2e/chromium.png
-[  9.601s] ok: the composer keeps the home indicator inset with the keyboard down
-[  9.650s] ok: the composer drops the inset while it has focus, as with the keyboard up
-[ 10.516s] Live 866ms after reload without the fragment (reconnect)
-[ 10.578s] ok: the transcript replayed after reload
-[ 10.790s] ok: a fresh install asks for a join link
-[ 11.661s] Live 860ms after pasting the join link
-[ 11.752s] ok: Change host forgets the saved host, across a relaunch
-[ 12.591s] ok: pairing again after Change host reaches Live
-[ 12.597s] ok: the link never reported an error
-[ 12.598s] ok: no relay dialled with the root dot
-[ 12.598s] ok: no console errors
-[ 12.645s] PASS
+[  0.229s] engine: chromium 158.0.8127.18, scenario: turn
+[  0.358s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.433s] Live 1075ms after navigation (first connect)
+[  1.436s] status line: "conductor Live Credentials Change host"
+[  1.437s] ok: the join fragment was removed from the address bar
+[  1.440s] ok: the ticket is in local storage
+[  1.902s] ok: the form says why Codex is unavailable ("Codex can't run on this host: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)")
+[  2.598s] started a Claude Code session in /tmp/conductor-e2e/turn-chromium
+[  2.621s] sent "make a file"
+[  6.437s] approval card: "Allow this? Write /tmp/s1-scratch/a.txt Deny Approve"
+[  6.455s] ok: .request button.approve is at least 44px (159x48)
+[  6.462s] ok: .request button.deny is at least 44px (159x48)
+[  6.468s] ok: .composer textarea is at least 44px (314x44)
+[  6.473s] ok: .composer button is at least 44px (44x44)
+[  6.531s] tapped Approve
+[  8.652s] ok: deltas rendered live (3 distinct partial texts seen)
+[  9.945s] ok: the message shows once
+[  9.948s] ok: one tool card, for the written file
+[  9.951s] ok: the card names the change a Write
+[  9.952s] ok: the tool succeeded
+[  9.956s] ok: the approval resolved once, by this device
+[  9.959s] ok: the streamed reply is every delta exactly once
+[  9.961s] ok: exactly one "Turn finished"
+[ 10.041s] screenshot /tmp/conductor-e2e/chromium.png
+[ 10.053s] ok: the composer keeps the home indicator inset with the keyboard down
+[ 10.114s] ok: the composer drops the inset while it has focus, as with the keyboard up
+[ 10.980s] Live 866ms after reload without the fragment (reconnect)
+[ 11.034s] ok: the transcript replayed after reload
+[ 11.229s] ok: a fresh install asks for a join link
+[ 12.118s] Live 878ms after pasting the join link
+[ 12.226s] ok: Change host forgets the saved host, across a relaunch
+[ 13.071s] ok: pairing again after Change host reaches Live
+[ 13.077s] ok: the link never reported an error
+[ 13.077s] ok: no relay dialled with the root dot
+[ 13.077s] ok: no console errors
+[ 13.108s] PASS
 
 ## Turn, WebKit
-[  0.073s] engine: webkit 27.2, scenario: turn
-[  0.229s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.177s] Live 947ms after navigation (first connect)
-[  1.180s] status line: "conductor Live Credentials Change host"
-[  1.180s] ok: the join fragment was removed from the address bar
-[  1.184s] ok: the ticket is in local storage
-[  1.724s] ok: the form says why Codex is unavailable ("Codex can't run on this host: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)")
-[  2.477s] started a Claude Code session in /tmp/conductor-e2e/turn-webkit
-[  2.498s] sent "make a file"
-[  6.314s] approval card: "Allow this? Write /tmp/s1-scratch/a.txt Deny Approve Allow for this session Allows acceptEdits mode until the session ends"
-[  6.338s] ok: .request button.approve is at least 44px (159x48)
-[  6.345s] ok: .request button.deny is at least 44px (159x48)
-[  6.352s] ok: .composer textarea is at least 44px (314x44)
-[  6.359s] ok: .composer button is at least 44px (44x44)
-[  6.402s] tapped Approve
-[  8.556s] ok: deltas rendered live (3 distinct partial texts seen)
-[  9.850s] ok: the message shows once
-[  9.853s] ok: one tool card, for the written file
-[  9.856s] ok: the card names the change a Write
-[  9.858s] ok: the tool succeeded
-[  9.861s] ok: the approval resolved once, by this device
-[  9.864s] ok: the streamed reply is every delta exactly once
-[  9.867s] ok: exactly one "Turn finished"
-[  9.985s] screenshot /tmp/conductor-e2e/webkit.png
-[ 10.001s] ok: the composer keeps the home indicator inset with the keyboard down
-[ 10.042s] ok: the composer drops the inset while it has focus, as with the keyboard up
-[ 10.941s] Live 899ms after reload without the fragment (reconnect)
-[ 11.037s] ok: the transcript replayed after reload
-[ 11.886s] ok: a fresh install asks for a join link
-[ 12.900s] Live 1002ms after pasting the join link
-[ 13.308s] ok: Change host forgets the saved host, across a relaunch
-[ 14.171s] ok: pairing again after Change host reaches Live
-[ 14.175s] ok: the link never reported an error
-[ 14.175s] note: 4 console notice(s) that the viewport's interactive-widget is ignored
-[ 14.175s] ok: no relay dialled with the root dot
-[ 14.175s] ok: no console errors
-[ 14.239s] PASS
+[  0.202s] engine: webkit 27.2, scenario: turn
+[  0.609s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.671s] Live 1062ms after navigation (first connect)
+[  1.674s] status line: "conductor Live Credentials Change host"
+[  1.674s] ok: the join fragment was removed from the address bar
+[  1.678s] ok: the ticket is in local storage
+[  2.131s] ok: the form says why Codex is unavailable ("Codex can't run on this host: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)")
+[  2.890s] started a Claude Code session in /tmp/conductor-e2e/turn-webkit
+[  2.910s] sent "make a file"
+[  6.716s] approval card: "Allow this? Write /tmp/s1-scratch/a.txt Deny Approve"
+[  6.740s] ok: .request button.approve is at least 44px (159x48)
+[  6.748s] ok: .request button.deny is at least 44px (159x48)
+[  6.757s] ok: .composer textarea is at least 44px (314x44)
+[  6.765s] ok: .composer button is at least 44px (44x44)
+[  6.800s] tapped Approve
+[  8.954s] ok: deltas rendered live (3 distinct partial texts seen)
+[ 10.247s] ok: the message shows once
+[ 10.249s] ok: one tool card, for the written file
+[ 10.252s] ok: the card names the change a Write
+[ 10.254s] ok: the tool succeeded
+[ 10.256s] ok: the approval resolved once, by this device
+[ 10.258s] ok: the streamed reply is every delta exactly once
+[ 10.261s] ok: exactly one "Turn finished"
+[ 10.378s] screenshot /tmp/conductor-e2e/webkit.png
+[ 10.392s] ok: the composer keeps the home indicator inset with the keyboard down
+[ 10.447s] ok: the composer drops the inset while it has focus, as with the keyboard up
+[ 11.341s] Live 894ms after reload without the fragment (reconnect)
+[ 11.422s] ok: the transcript replayed after reload
+[ 11.974s] ok: a fresh install asks for a join link
+[ 12.909s] Live 904ms after pasting the join link
+[ 13.134s] ok: Change host forgets the saved host, across a relaunch
+[ 13.990s] ok: pairing again after Change host reaches Live
+[ 13.994s] ok: the link never reported an error
+[ 13.994s] note: 4 console notice(s) that the viewport's interactive-widget is ignored
+[ 13.994s] ok: no relay dialled with the root dot
+[ 13.994s] ok: no console errors
+[ 14.069s] PASS
 
 ## Turn, host log
 INFO conductord: ready path=/home/jim/projects/apps/conductor-questions/crates/agents/tests/fake-claude.sh version=fake-claude own=Unmanaged
 WARN conductord: unavailable: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)
-INFO daemon::serve: client connected peer=33c10c291ab1cd008d986c82c60f6fc9ebc75b7ed26b2218068151853d1ad649 client="iPhone"
+INFO daemon::serve: client connected peer=5f607b7c8eff9c13164024d6001d1b014afb5d5ee6f79ed4e73de41c24419fc3 client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=0
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(6166656566988761331), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/turn-chromium") } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(6166656566988761332), body: SendMessage { session: SessionId(1), text: "make a file" } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(6166656566988761333), body: Resolve { session: SessionId(1), request: RequestId(1), decision: Approve } }
-INFO daemon::serve: client connected peer=e320635b95966554d4e1058a6f0c08035fa7d1a0e96e2934d454ed5904638e9e client="iPhone"
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(10570081739054596222), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/turn-chromium") } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(10570081739054596223), body: SendMessage { session: SessionId(1), text: "make a file" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(10570081739054596224), body: Resolve { session: SessionId(1), request: RequestId(1), decision: Approve } }
+INFO daemon::serve: client connected peer=13edb48418c6c196bebb4ec2913797aa74b671e4e14f7787dced866de920b14a client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=9
-INFO daemon::serve: client connected peer=555a090ad1574f569441f56098e4d4830122fbed4a127dd626f0e1c2a30c0fa5 client="Linux"
+INFO daemon::serve: client connected peer=9301f2644b85794de6ff62e521e7d64fd162a4fca811748b092d1efc7d577380 client="Linux"
 INFO daemon::serve: subscribed after_seq=0 replayed=9
+INFO daemon::serve: client disconnected peer=9301f2644b85794de6ff62e521e7d64fd162a4fca811748b092d1efc7d577380 client="Linux" err=closed by peer: bye (code 0)
 INFO daemon::serve: subscription ended result=Ok(())
-INFO daemon::serve: client disconnected peer=555a090ad1574f569441f56098e4d4830122fbed4a127dd626f0e1c2a30c0fa5 client="Linux" err=closed by peer: bye (code 0)
-INFO daemon::serve: client connected peer=25d1c5711bf5f00e50749887c4acfa3da43979c37d3330c0f939910dd9c2df75 client="Linux"
+INFO daemon::serve: client connected peer=34ba39758c0a40dd65831b3137310663fcbdc24c9df722c82f5c7cf00a78aa37 client="Linux"
 INFO daemon::serve: subscribed after_seq=0 replayed=9
-INFO daemon::serve: client connected peer=782bef3a71700c72d24a440c19fad8d10f783458f0969affe57e1f872ebdcdcd client="iPhone"
+INFO daemon::serve: client connected peer=86c4a883a361d5f54cae60b17e9592f63007fb5b7f65d01e63540630d6bc57b6 client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=9
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(12701292581749239652), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/turn-webkit") } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(12701292581749239653), body: SendMessage { session: SessionId(2), text: "make a file" } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(12701292581749239654), body: Resolve { session: SessionId(2), request: RequestId(1), decision: Approve } }
-INFO daemon::serve: client connected peer=cb1a89ab0503370b7a80e0c1f710e7902eb61d7b5961da1b5f2a1c69746eb742 client="iPhone"
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3255920084067332560), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/turn-webkit") } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3255920084067332561), body: SendMessage { session: SessionId(2), text: "make a file" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3255920084067332562), body: Resolve { session: SessionId(2), request: RequestId(1), decision: Approve } }
+INFO daemon::serve: client connected peer=37af13e48342ed51d3d6e6c77c3571cc946e911a05bf1875cc24b0ad1a8464b1 client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=18
-INFO daemon::serve: client connected peer=4e142093f57a9e018a05456c18dac2f82d2ca935cb298d9d759373be37ac97dc client="Mac"
+INFO daemon::serve: client connected peer=436d600c3a59fc0cea3a97a8148be8e26a2eef8fbf2f48208c8195d951c20464 client="Mac"
 INFO daemon::serve: subscribed after_seq=0 replayed=18
-INFO daemon::serve: client disconnected peer=4e142093f57a9e018a05456c18dac2f82d2ca935cb298d9d759373be37ac97dc client="Mac" err=closed by peer: bye (code 0)
+INFO daemon::serve: client disconnected peer=436d600c3a59fc0cea3a97a8148be8e26a2eef8fbf2f48208c8195d951c20464 client="Mac" err=closed by peer: bye (code 0)
 INFO daemon::serve: subscription ended result=Ok(())
-INFO daemon::serve: client connected peer=8d0cf3504707a53d5ecb5f8f2fa44f3736ae1f41cc1d8a9e676d6dcfdb555cff client="Mac"
+INFO daemon::serve: client connected peer=61d1b54ad723d5627136dd62a4e239dc22a0fe6164f6735cbe596ff0ef56970e client="Mac"
 INFO daemon::serve: subscribed after_seq=0 replayed=18
 
 ok: host turn: both turns' commands reached the host (6)
 
 ## Codex, two sessions on one app-server, chromium
-[  0.049s] engine: chromium 158.0.8127.18, scenario: codex
-[  0.091s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.013s] Live 922ms after navigation (first connect)
-[  1.017s] status line: "conductor Live Credentials Change host"
-[  1.442s] ok: choosing Codex says what it does without asking
-[  2.137s] started a Codex session in /tmp/conductor-e2e/codex/first
-[  2.963s] started a Codex session in /tmp/conductor-e2e/codex/second
-[  3.404s] sent "write a.txt"
-[  3.602s] ok: the first reply streamed in before the request
-[  3.766s] sent "write b.txt"
-[  3.847s] second approval card: "Allow this? /usr/bin/zsh -lc 'printf %s nope > b.txt' Deny Approve Allow for this session Allows /usr/bin/zsh -lc 'printf %s nope > b.txt' until the session ends"
-[  4.721s] ok: the first request was approved by this device
-[  4.723s] ok: the approved command succeeded
-[  4.725s] ok: the first turn ended with its own answer
-[  5.368s] ok: the second request was denied by this device
-[  5.371s] ok: the second turn ended with its own answer
-[  5.494s] ok: the link never reported an error
-[  5.494s] ok: no relay dialled with the root dot
-[  5.494s] ok: no console errors
-[  5.536s] PASS
+[  0.044s] engine: chromium 158.0.8127.18, scenario: codex
+[  0.082s] open http://localhost:8080/conductor/#join=<ticket>
+[  0.981s] Live 899ms after navigation (first connect)
+[  0.986s] status line: "conductor Live Credentials Change host"
+[  1.421s] ok: choosing Codex says what it does without asking
+[  2.115s] started a Codex session in /tmp/conductor-e2e/codex/first
+[  2.927s] started a Codex session in /tmp/conductor-e2e/codex/second
+[  3.350s] sent "write a.txt"
+[  3.550s] ok: the first reply streamed in before the request
+[  3.736s] sent "write b.txt"
+[  3.818s] second approval card: "Allow this? /usr/bin/zsh -lc 'printf %s nope > b.txt' Deny Approve Allow for this session Allows /usr/bin/zsh -lc 'printf %s nope > b.txt' until the session ends"
+[  4.686s] ok: the first request was approved by this device
+[  4.689s] ok: the approved command succeeded
+[  4.691s] ok: the first turn ended with its own answer
+[  5.352s] ok: the second request was denied by this device
+[  5.355s] ok: the second turn ended with its own answer
+[  5.448s] ok: the link never reported an error
+[  5.448s] ok: no relay dialled with the root dot
+[  5.448s] ok: no console errors
+[  5.490s] PASS
 
 ## Codex, host log
 INFO conductord: ready path=/home/jim/projects/apps/conductor-questions/crates/agents/tests/fake-claude.sh version=fake-claude own=Unmanaged
 INFO conductord: ready path=/home/jim/projects/apps/conductor-questions/crates/agents/tests/fake-codex.sh version=fake-codex own=Unmanaged
-INFO daemon::serve: client connected peer=e3d2d0c1d8684ecf7f04d028c58c3bf0ac1a03a0a468572518a06bedb58c5740 client="iPhone"
+INFO daemon::serve: client connected peer=521010a4ff368c71378b55aa435fdbea8ab6c032d43b76b86a5281a3f6d29ee4 client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=0
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(7712535865649391829), body: StartSession { provider: Codex, directory: HostPath("/tmp/conductor-e2e/codex/first") } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(15555089341828136413), body: StartSession { provider: Codex, directory: HostPath("/tmp/conductor-e2e/codex/first") } }
 INFO daemon::codex_hub: codex app-server started version="0.166.0"
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(7712535865649391830), body: StartSession { provider: Codex, directory: HostPath("/tmp/conductor-e2e/codex/second") } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(7712535865649391831), body: SendMessage { session: SessionId(1), text: "write a.txt" } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(7712535865649391832), body: SendMessage { session: SessionId(2), text: "write b.txt" } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(7712535865649391833), body: Resolve { session: SessionId(1), request: RequestId(1), decision: Approve } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(7712535865649391834), body: Resolve { session: SessionId(2), request: RequestId(1), decision: Deny } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(15555089341828136414), body: StartSession { provider: Codex, directory: HostPath("/tmp/conductor-e2e/codex/second") } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(15555089341828136415), body: SendMessage { session: SessionId(1), text: "write a.txt" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(15555089341828136416), body: SendMessage { session: SessionId(2), text: "write b.txt" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(15555089341828136417), body: Resolve { session: SessionId(1), request: RequestId(1), decision: Approve } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(15555089341828136418), body: Resolve { session: SessionId(2), request: RequestId(1), decision: Deny } }
 
 ok: host codex: the host found Codex (1)
 
 ## Questions and approval for the session, webkit
-[  0.061s] engine: webkit 27.2, scenario: questions
-[  0.200s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.094s] Live 894ms after navigation (first connect)
-[  1.097s] status line: "conductor Live Credentials Change host"
-[  1.778s] started a Claude Code session in /tmp/conductor-e2e/questions/question
-[  1.808s] sent "ask me"
-[  2.000s] question card: "A question for you ColorWhich color do you prefer? Choose one, or write your own Red Choose red as your preferred color. Blue Choose blue as your preferred color. Send answer"
-[  2.012s] ok: the answer cannot be sent before an option is chosen
-[  2.087s] ok: the session list says the question waits on you
-[  2.092s] ok: the badge counts the open question
-[  2.574s] ok: the tapped option shows as chosen
-[  2.612s] ok: the option is a thumb-sized target (327x61)
-[  3.189s] tapped Send answer
-[  3.382s] ok: the card shows the answer given
-[  3.386s] ok: the question was answered once, by this device
-[  3.390s] ok: Claude replied with the answer
-[  3.392s] ok: the question shows no tool card of its own
-[  4.126s] started a Claude Code session in /tmp/conductor-e2e/questions/for-session
-[  4.144s] sent "touch t1.txt"
-[  4.239s] ok: the third button says what it allows, in the CLI's words
-[  4.824s] tapped Allow for this session
-[  4.908s] ok: the request was allowed for the session by this device
-[  4.927s] sent "again"
-[  5.116s] ok: the second identical call asked nothing
-[  5.121s] ok: both calls ran
-[  5.249s] ok: the link never reported an error
-[  5.249s] note: 1 console notice(s) that the viewport's interactive-widget is ignored
-[  5.249s] ok: no relay dialled with the root dot
-[  5.249s] ok: no console errors
-[  5.311s] PASS
+[  0.060s] engine: webkit 27.2, scenario: questions
+[  0.208s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.129s] Live 921ms after navigation (first connect)
+[  1.132s] status line: "conductor Live Credentials Change host"
+[  1.917s] started a Claude Code session in /tmp/conductor-e2e/questions/question
+[  1.937s] sent "ask me"
+[  2.037s] question card: "A question for you Color Which color do you prefer? Choose one, or write your own Red Choose red as your preferred color. Blue Choose blue as your preferred color. Send answer"
+[  2.043s] ok: the answer cannot be sent before an option is chosen
+[  2.117s] ok: the session list says the question waits on you
+[  2.121s] ok: the badge counts the open question
+[  2.625s] ok: the tapped option shows as chosen
+[  2.661s] ok: the option is a thumb-sized target (327x61)
+[  3.229s] tapped Send answer
+[  3.419s] ok: the card shows the answer given
+[  3.423s] ok: the question was answered once, by this device
+[  3.424s] ok: focus moved to the answered card, not the page
+[  3.427s] ok: Claude replied with the answer
+[  3.429s] ok: the question shows no tool card of its own
+[  4.174s] started a Claude Code session in /tmp/conductor-e2e/questions/for-session
+[  4.189s] sent "touch t1.txt"
+[  4.373s] ok: the third button says what it allows, in the CLI's words
+[  4.950s] tapped Allow for this session
+[  5.136s] ok: the request was allowed for the session by this device
+[  5.138s] ok: focus moved to the resolved approval card, not the page
+[  5.162s] sent "again"
+[  5.249s] ok: the second identical call asked nothing
+[  5.253s] ok: both calls ran
+[  5.400s] ok: the link never reported an error
+[  5.400s] note: 1 console notice(s) that the viewport's interactive-widget is ignored
+[  5.401s] ok: no relay dialled with the root dot
+[  5.401s] ok: no console errors
+[  5.440s] PASS
 
 ## Questions, host log
 INFO conductord: ready path=/home/jim/projects/apps/conductor-questions/crates/agents/tests/fake-claude.sh version=fake-claude own=Unmanaged
 WARN conductord: unavailable: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)
-INFO daemon::serve: client connected peer=42ac80bfe5d776de1024a3293d277d6380e2956b18ae002a5e1088bdce16b76c client="iPhone"
+INFO daemon::serve: client connected peer=1c4fb97ede698c319145c4a0fddd267a6f188b6d08e831961e5eea8f41603308 client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=0
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007264), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/questions/question") } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007265), body: SendMessage { session: SessionId(1), text: "ask me" } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007266), body: Answer { session: SessionId(1), request: RequestId(1), answers: [Answer(["Blue"])] } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007267), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/questions/for-session") } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007268), body: SendMessage { session: SessionId(2), text: "touch t1.txt" } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007269), body: Resolve { session: SessionId(2), request: RequestId(1), decision: ApproveForSession } }
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(3523244760813007270), body: SendMessage { session: SessionId(2), text: "again" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272391), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/questions/question") } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272392), body: SendMessage { session: SessionId(1), text: "ask me" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272393), body: Answer { session: SessionId(1), request: RequestId(1), answers: [Answer(["Blue"])] } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272394), body: StartSession { provider: Claude, directory: HostPath("/tmp/conductor-e2e/questions/for-session") } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272395), body: SendMessage { session: SessionId(2), text: "touch t1.txt" } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272396), body: Resolve { session: SessionId(2), request: RequestId(1), decision: ApproveForSession } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(11706588462844272397), body: SendMessage { session: SessionId(2), text: "again" } }
 
 ok: host questions: both starts, three messages, the answer and the approval reached the host (7)
 ok: host questions: one answer reached the host (1)
 ok: host questions: one approval for the session reached the host (1)
 
 ## Credentials, webkit
-[  0.058s] engine: webkit 27.2, scenario: credentials
-[  0.202s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.181s] Live 979ms after navigation (first connect)
-[  1.184s] status line: "conductor Live Credentials Change host"
-[  1.287s] ok: Claude starts on its own CLI
-[  1.291s] ok: Codex is unavailable on this host
-[  1.295s] ok: the token field is a password field
-[  1.742s] state: "Gateway at https://gateway.conductor-test.invalid"
-[  1.747s] ok: the token field is empty once sent
-[  1.751s] ok: the form says the app keeps nothing
-[  1.755s] ok: the token field asks a password manager not to fill it
-[  1.765s] ok: the token is in no storage, the URL or the DOM
-[  2.125s] ok: the clear is confirmed
-[  2.126s] ok: focus moves to the Claude heading
-[  2.126s] ok: the link never reported an error
-[  2.126s] note: 1 console notice(s) that the viewport's interactive-widget is ignored
-[  2.126s] ok: no relay dialled with the root dot
-[  2.127s] ok: no console errors
-[  2.160s] PASS
+[  0.056s] engine: webkit 27.2, scenario: credentials
+[  0.195s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.193s] Live 998ms after navigation (first connect)
+[  1.196s] status line: "conductor Live Credentials Change host"
+[  1.300s] ok: Claude starts on its own CLI
+[  1.305s] ok: Codex is unavailable on this host
+[  1.310s] ok: the token field is a password field
+[  1.814s] state: "Gateway at https://gateway.conductor-test.invalid"
+[  1.820s] ok: the token field is empty once sent
+[  1.827s] ok: the form says the app keeps nothing
+[  1.833s] ok: the token field asks a password manager not to fill it
+[  1.852s] ok: the token is in no storage, the URL or the DOM
+[  2.207s] ok: the clear is confirmed
+[  2.209s] ok: focus moves to the Claude heading
+[  2.209s] ok: the link never reported an error
+[  2.209s] note: 1 console notice(s) that the viewport's interactive-widget is ignored
+[  2.209s] ok: no relay dialled with the root dot
+[  2.209s] ok: no console errors
+[  2.267s] PASS
 
 ## Credentials, host log
 INFO conductord: ready path=/home/jim/projects/apps/conductor-questions/crates/agents/tests/fake-claude.sh version=fake-claude own=Unmanaged
 WARN conductord: unavailable: /tmp/conductor-e2e/no-codex does not run: No such file or directory (os error 2)
-INFO daemon::serve: client connected peer=712a05bc7db2eef3d105ee088a2c06d5f1e03e91a38d0bc31e0dac75c1036c69 client="iPhone"
+INFO daemon::serve: client connected peer=0ea02b99f0c21c08d39f5b5e56109b69a5127d8cf7fe372a77ed9811154e2c31 client="iPhone"
 INFO daemon::serve: subscribed after_seq=0 replayed=0
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(10881586574158846389), body: SetCredential { credential: Claude(Gateway) } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(17954692190679190110), body: SetCredential { credential: Claude(Gateway) } }
 INFO daemon::registry: stored a credential change provider=Claude
 WARN daemon::registry: Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them
-INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(10881586574158846390), body: ClearCredential { provider: Claude } }
+INFO daemon::serve: command client="iPhone" command=Command { id: CommandId(17954692190679190111), body: ClearCredential { provider: Claude } }
 INFO daemon::registry: stored a credential change provider=Claude
 
 ok: host credentials: the gateway was stored, then cleared (2)
 ok: host credentials: the token is in no log line (0)
 
 ## Screens, chromium
-[  0.043s] engine: chromium 158.0.8127.18, scenario: screens
-[  0.085s] open http://localhost:8080/conductor/#join=<ticket>
-[  1.005s] Live 920ms after navigation (first connect)
-[  1.008s] status line: "conductor Live Credentials Change host"
-[  1.657s] started a Claude Code session in /tmp/conductor-e2e/screens/notes
-[  2.538s] started a Claude Code session in /tmp/conductor-e2e/screens/scratch
-[  3.848s] closed: "The session has ended (exit status: 0)."
-[  4.523s] started a Claude Code session in /tmp/conductor-e2e/screens/conductor
-[  4.541s] sent "make a file"
-[ 14.389s] running, held mid-reply: "I created `a.txt` in `/tmp/s1"
-[ 14.945s] screenshot docs/p1/screens/desktop-light-running.png
-[ 15.469s] screenshot docs/p1/screens/desktop-light-closed.png
-[ 16.041s] screenshot docs/p1/screens/phone-light-running.png
-[ 16.641s] screenshot docs/p1/screens/phone-light-idle.png
-[ 17.168s] screenshot docs/p1/screens/desktop-dark-running.png
-[ 17.688s] screenshot docs/p1/screens/desktop-dark-closed.png
-[ 18.259s] screenshot docs/p1/screens/phone-dark-running.png
-[ 18.854s] screenshot docs/p1/screens/phone-dark-idle.png
-[ 18.858s] ok: the link never reported an error
-[ 18.858s] ok: no relay dialled with the root dot
-[ 18.859s] ok: no console errors
-[ 18.899s] PASS
+[  0.047s] engine: chromium 158.0.8127.18, scenario: screens
+[  0.089s] open http://localhost:8080/conductor/#join=<ticket>
+[  1.019s] Live 930ms after navigation (first connect)
+[  1.022s] status line: "conductor Live Credentials Change host"
+[  1.689s] started a Claude Code session in /tmp/conductor-e2e/screens/notes
+[  2.580s] started a Claude Code session in /tmp/conductor-e2e/screens/scratch
+[  3.897s] closed: "The session has ended (exit status: 0)."
+[  4.562s] started a Claude Code session in /tmp/conductor-e2e/screens/conductor
+[  4.580s] sent "make a file"
+[ 14.431s] running, held mid-reply: "I created `a.txt` in `/tmp/s1"
+[ 14.981s] screenshot docs/p1/screens/desktop-light-running.png
+[ 15.493s] screenshot docs/p1/screens/desktop-light-closed.png
+[ 16.069s] screenshot docs/p1/screens/phone-light-running.png
+[ 16.648s] screenshot docs/p1/screens/phone-light-idle.png
+[ 17.194s] screenshot docs/p1/screens/desktop-dark-running.png
+[ 17.710s] screenshot docs/p1/screens/desktop-dark-closed.png
+[ 18.287s] screenshot docs/p1/screens/phone-dark-running.png
+[ 18.869s] screenshot docs/p1/screens/phone-dark-idle.png
+[ 18.873s] ok: the link never reported an error
+[ 18.874s] ok: no relay dialled with the root dot
+[ 18.874s] ok: no console errors
+[ 18.924s] PASS

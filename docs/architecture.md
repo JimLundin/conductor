@@ -97,7 +97,8 @@ How each agent carries these, from the `s1` and `s2` recordings:
 | Question | `can_use_tool` for `AskUserQuestion`; the questions are in `input` | `item/tool/requestUserInput`, with question ids; needs the `default_mode_request_user_input` feature outside plan mode |
 | Answer | `allow` with `updatedInput` = the input plus `answers`, question text to answer, labels joined with ", " | RPC result `{answers: {<id>: {answers: [...]}}}` |
 | Withdrawn | `control_cancel_request` | `serverRequest/resolved` after the interrupted turn ends |
-| For the session | `allow` with `updatedPermissions`: the suggested `addRules` (or else `setMode`), destination `session` | `acceptForSession`, taken though `availableDecisions` omits it |
+| For the session | `allow` with `updatedPermissions`: the suggested allow `addRules`, destination `session`; with none suggested, not offered | `acceptForSession` on a command or a permissions request, taken though `availableDecisions` omits it (`s2` step 8 checks it); not offered on a file change, which no run has recorded |
+| Refused | Duplicate question texts, by the CLI before it asks | A question with `isSecret`, by the host, which logs and replays every answer |
 
 The `AskUserQuestion` tool call is not shown as a tool call; its question
 card is.

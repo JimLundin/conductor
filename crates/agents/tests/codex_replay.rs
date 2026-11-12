@@ -16,6 +16,7 @@ use agents::codex::{
     Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
 };
 use n0_future::StreamExt;
+use proto::Answer;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -69,6 +70,8 @@ enum Goal {
 enum Interrupt {
     Never,
     AfterFirstOutput,
+    /// Leaves the first request open and interrupts the turn instead.
+    OnRequest,
     Sent,
 }
 
@@ -157,6 +160,11 @@ impl Recorder {
             ) => {
                 assert_eq!(thread, expected.id);
                 match (event, &self.interrupt) {
+                    (ThreadEvent::ApprovalRequested { .. }, Interrupt::OnRequest) => {
+                        expected.interrupt(turn.clone()).await.unwrap();
+                        self.interrupt = Interrupt::Sent;
+                        Progress::Playing
+                    }
                     (ThreadEvent::ApprovalRequested { id, .. }, _) => {
                         self.server
                             .respond(id.clone(), decision.clone())
@@ -239,6 +247,7 @@ fn method(raw: &Value) -> String {
 fn summary(event: &ThreadEvent) -> String {
     match event {
         ThreadEvent::Started => String::from("started"),
+        ThreadEvent::SecretQuestionDeclined { .. } => String::from("secret question declined"),
         ThreadEvent::TurnStarted { .. } => String::from("turn started"),
         ThreadEvent::TurnCompleted { outcome, .. } => format!("turn {}", outcome_name(outcome)),
         ThreadEvent::AgentDelta { text, .. } => format!("delta {text:?}"),
@@ -258,7 +267,7 @@ fn summary(event: &ThreadEvent) -> String {
                 ApprovalKind::Command { .. } => "command",
                 ApprovalKind::FileChange { .. } => "fileChange",
                 ApprovalKind::Permissions { .. } => "permissions",
-                ApprovalKind::UserInput { .. } => "userInput",
+                ApprovalKind::UserInput { questions } => &format!("userInput {questions:?}"),
             };
             format!("approval {} {kind} ({} options)", id.0, options.len())
         }
@@ -486,6 +495,69 @@ async fn resume_in_a_new_process() {
         ]
     );
     assert_eq!(bogus, Err("no open approval with id never-sent".to_owned()));
+}
+
+/// `s2` steps 7 to 9. The recording holds the question's
+/// `serverRequest/resolved` until our answer, so a change to the question's
+/// shape in a later pin fails here, as does a lost feature `warning`.
+#[tokio::test]
+async fn questions_and_accept_for_session() {
+    let rec = spawn("server3-questions.jsonl").await;
+    let server = rec.server.clone();
+    let a = server.start_thread(opts()).await.unwrap();
+    let blue = Decision::Answer(Vec::from([Answer(Vec::from([String::from("Blue")]))]));
+    let rec = turn(rec, &a, "ask", blue, Interrupt::Never).await;
+    let rec = turn(
+        rec,
+        &a,
+        "touch",
+        Decision::AcceptForSession,
+        Interrupt::Never,
+    )
+    .await;
+    let rec = turn(rec, &a, "again", Decision::Decline, Interrupt::Never).await;
+    let rec = turn(
+        rec,
+        &a,
+        "ask again",
+        Decision::Decline,
+        Interrupt::OnRequest,
+    )
+    .await;
+    assert_eq!(
+        server.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
+    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    assert_eq!(
+        rec.seen,
+        [
+            "A started",
+            "A turn started",
+            "A approval 0 userInput [Question { header: \"Color\", text: \"Which color do you prefer?\", options: [QuestionOption { label: \"Red\", description: \"Choose Red.\" }, QuestionOption { label: \"Blue\", description: \"Choose Blue.\" }], selection: One }] (0 options)",
+            "A streams [\"Blue\"]",
+            "A says \"Blue\"",
+            "A turn completed",
+            "A turn started",
+            "A streams [\"I\", \"’ll\", \" run\", \" the\", \" command\", \" exactly\", \" as\", \" given\", \".\"]",
+            "A says \"I’ll run the command exactly as given.\"",
+            "A Started command inProgress",
+            "A approval 1 command (3 options)",
+            "A Completed command completed",
+            "A says \"\"",
+            "A turn completed",
+            "A turn started",
+            "A Started command inProgress",
+            "A Completed command completed",
+            "A says \"\"",
+            "A turn completed",
+            "A turn started",
+            "A approval 2 userInput [Question { header: \"Fruit\", text: \"Which fruit do you prefer?\", options: [QuestionOption { label: \"Apple\", description: \"Choose Apple.\" }, QuestionOption { label: \"Pear\", description: \"Choose Pear.\" }], selection: One }] (0 options)",
+            "A turn interrupted",
+            "exited exit status: 0",
+        ]
+    );
+    assert_eq!(rec.unknown.get("warning"), Some(&1));
 }
 
 fn first_thread_id(fixture: &Path) -> Option<String> {

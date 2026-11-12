@@ -135,84 +135,65 @@ fn TranscriptItem(
             };
             match approval {
                 Approval::NotAsked => rsx! { ToolLine { tool, state } },
+                // One section for the open and the resolved card, so the
+                // focus a button moves to it stays when the buttons go.
                 Approval::Asked {
                     request,
                     reason,
                     for_session,
-                    state: RequestState::Open,
-                } => rsx! {
-                    section { class: "request", "data-open": true,
-                        p { class: "request-title", "Allow this?" }
-                        ToolLine { tool, state }
-                        Reason { reason }
-                        div { class: "actions",
-                            button { class: "deny", onclick: move |_| on_decide((request, Decision::Deny)), "Deny" }
-                            button { class: "approve", onclick: move |_| on_decide((request, Decision::Approve)), "Approve" }
-                        }
-                        match for_session {
-                            Some(allows) => rsx! {
-                                button { class: "for-session", onclick: move |_| on_decide((request, Decision::ApproveForSession)),
-                                    span { class: "for-session-title", "Allow for this session" }
-                                    span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
-                                }
-                            },
-                            None => rsx! {},
-                        }
-                    }
-                },
-                Approval::Asked {
-                    reason,
-                    state: RequestState::Resolved(resolution),
-                    ..
-                } => rsx! {
-                    section { class: "request", "data-open": false,
-                        ToolLine { tool, state }
-                        Reason { reason }
-                        p { class: "resolved",
-                            match resolution {
-                                Resolution::Decided { decision: Decision::Approve, by } => format!("Approved by {}", by.0),
-                                Resolution::Decided { decision: Decision::ApproveForSession, by } => {
-                                    format!("Allowed for this session by {}", by.0)
-                                }
-                                Resolution::Decided { decision: Decision::Deny, by } => format!("Denied by {}", by.0),
-                                Resolution::Answered { by, .. } => format!("Answered by {}", by.0),
-                                Resolution::Withdrawn => String::from("Withdrawn"),
+                    state: request_state,
+                } => {
+                    let open = match request_state {
+                        RequestState::Open => "true",
+                        RequestState::Resolved(_) => "false",
+                    };
+                    rsx! {
+                        section { class: "request", "data-open": "{open}", id: "{card_id(request)}", tabindex: "-1",
+                            match request_state {
+                                RequestState::Open => rsx! {
+                                    p { class: "request-title", "Allow this?" }
+                                    ToolLine { tool, state }
+                                    Reason { reason }
+                                    div { class: "actions",
+                                        button { class: "deny", onclick: move |_| { on_decide((request, Decision::Deny)); document::eval(&focus_on(request)); }, "Deny" }
+                                        button { class: "approve", onclick: move |_| { on_decide((request, Decision::Approve)); document::eval(&focus_on(request)); }, "Approve" }
+                                    }
+                                    match for_session {
+                                        Some(allows) => rsx! {
+                                            button { class: "for-session", onclick: move |_| { on_decide((request, Decision::ApproveForSession)); document::eval(&focus_on(request)); },
+                                                span { class: "for-session-title", "Allow for this session" }
+                                                span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
+                                            }
+                                        },
+                                        None => rsx! {},
+                                    }
+                                },
+                                RequestState::Resolved(resolution) => rsx! {
+                                    ToolLine { tool, state }
+                                    Reason { reason }
+                                    p { class: "resolved", role: "status", "{resolved(&resolution)}" }
+                                },
                             }
                         }
                     }
-                },
+                }
             }
         }
         Item::Question {
             request,
             questions,
-            state: RequestState::Open,
-        } => rsx! { QuestionCard { request, questions, on_answer } },
-        Item::Question {
-            questions,
-            state: RequestState::Resolved(resolution),
-            ..
+            state,
         } => {
-            let (answers, outcome) = match resolution {
-                Resolution::Answered { answers, by } => (answers, format!("Answered by {}", by.0)),
-                Resolution::Decided { by, .. } => (Vec::new(), format!("Answered by {}", by.0)),
-                Resolution::Withdrawn => (Vec::new(), String::from("Withdrawn")),
+            let open = match state {
+                RequestState::Open => "true",
+                RequestState::Resolved(_) => "false",
             };
-            let answered = questions
-                .into_iter()
-                .zip(answers.into_iter().map(Some).chain(std::iter::repeat(None)))
-                .map(|(question, answer)| (question.text, answer.map(|answer| answer.0.join(", "))))
-                .collect::<Vec<(String, Option<String>)>>();
             rsx! {
-                section { class: "question", "data-open": false,
-                    for (text, answer) in answered {
-                        p { class: "question-text", "{text}" }
-                        match answer {
-                            Some(answer) => rsx! { p { class: "question-answer", "{answer}" } },
-                            None => rsx! {},
-                        }
+                section { class: "question", "data-open": "{open}", id: "{card_id(request)}", tabindex: "-1",
+                    match state {
+                        RequestState::Open => rsx! { QuestionForm { request, questions, on_answer } },
+                        RequestState::Resolved(resolution) => rsx! { Answered { questions, resolution } },
                     }
-                    p { class: "resolved", "{outcome}" }
                 }
             }
         }
@@ -228,10 +209,63 @@ fn TranscriptItem(
     }
 }
 
+/// A request card's element id, unique in the pane, which shows one session.
+fn card_id(request: RequestId) -> String {
+    format!("request-{}", request.0)
+}
+
+/// Moves focus to a request's card, which stays when its buttons go.
+fn focus_on(request: RequestId) -> String {
+    format!("document.getElementById('{}').focus()", card_id(request))
+}
+
+fn resolved(resolution: &Resolution) -> String {
+    match resolution {
+        Resolution::Decided {
+            decision: Decision::Approve,
+            by,
+        } => format!("Approved by {}", by.0),
+        Resolution::Decided {
+            decision: Decision::ApproveForSession,
+            by,
+        } => format!("Allowed for this session by {}", by.0),
+        Resolution::Decided {
+            decision: Decision::Deny,
+            by,
+        } => format!("Denied by {}", by.0),
+        Resolution::Answered { by, .. } => format!("Answered by {}", by.0),
+        Resolution::Withdrawn => String::from("Withdrawn"),
+    }
+}
+
+/// A resolved question: each question with its answer, and who answered.
+#[component]
+fn Answered(questions: Vec<Question>, resolution: Resolution) -> Element {
+    let answers = match &resolution {
+        Resolution::Answered { answers, .. } => answers.clone(),
+        Resolution::Decided { .. } | Resolution::Withdrawn => Vec::new(),
+    };
+    let answered = questions
+        .into_iter()
+        .zip(answers.into_iter().map(Some).chain(std::iter::repeat(None)))
+        .map(|(question, answer)| (question.text, answer.map(|answer| answer.0.join(", "))))
+        .collect::<Vec<(String, Option<String>)>>();
+    rsx! {
+        for (text, answer) in answered {
+            p { class: "question-text", "{text}" }
+            match answer {
+                Some(answer) => rsx! { p { class: "question-answer", "{answer}" } },
+                None => rsx! {},
+            }
+        }
+        p { class: "resolved", role: "status", "{resolved(&resolution)}" }
+    }
+}
+
 /// An open question: each one's options as buttons and a field for any
 /// other answer, sent together once each question has an answer.
 #[component]
-fn QuestionCard(
+fn QuestionForm(
     request: RequestId,
     questions: Vec<Question>,
     on_answer: EventHandler<(RequestId, Vec<Answer>)>,
@@ -239,21 +273,20 @@ fn QuestionCard(
     let draft = use_signal(|| Draft::new(&questions));
     let answers = draft.read().answers();
     rsx! {
-        section { class: "question", "data-open": true,
-            p { class: "request-title", "A question for you" }
-            for (index, question) in questions.into_iter().enumerate() {
-                QuestionField { key: "{index}", index, question, draft }
-            }
-            button {
-                class: "approve send-answer",
-                disabled: answers.is_none(),
-                onclick: move |_| {
-                    if let Some(answers) = draft.read().answers() {
-                        on_answer((request, answers));
-                    }
-                },
-                "Send answer"
-            }
+        p { class: "request-title", "A question for you" }
+        for (index, question) in questions.into_iter().enumerate() {
+            QuestionField { key: "{index}", index, question, draft }
+        }
+        button {
+            class: "approve send-answer",
+            disabled: answers.is_none(),
+            onclick: move |_| {
+                if let Some(answers) = draft.read().answers() {
+                    on_answer((request, answers));
+                    document::eval(&focus_on(request));
+                }
+            },
+            "Send answer"
         }
     }
 }
@@ -271,10 +304,10 @@ fn QuestionField(index: usize, question: Question, draft: Signal<Draft>) -> Elem
         fieldset { class: "question-field",
             legend { class: "question-text",
                 span { class: "question-header", "{question.header}" }
-                "{question.text}"
+                " {question.text}"
             }
             p { class: "question-hint", "{hint}" }
-            div { class: "options", role: "group",
+            div { class: "options",
                 for option in question.options {
                     OptionButton {
                         key: "{option.label}",

@@ -204,6 +204,12 @@ pub enum ThreadEvent {
         /// user input, whose answers are not a decision.
         options: Vec<Value>,
     },
+    /// Codex asked for an answer to keep secret (`isSecret`). The host can't
+    /// keep one: answers are logged and replayed to every client. So the
+    /// server actor refused the request, and the turn goes on without it.
+    SecretQuestionDeclined {
+        turn: TurnId,
+    },
     /// Codex resolved a request we had not answered, so answering it now is an error.
     ApprovalCancelled {
         id: ApprovalId,
@@ -276,6 +282,12 @@ pub(crate) enum Inbound {
         method: String,
         event: CodexEvent,
     },
+    /// A user-input request with a secret question, which gets an error
+    /// reply. `event` names no question.
+    Declined {
+        rpc_id: RequestId,
+        event: CodexEvent,
+    },
 }
 
 /// A JSON-RPC message: a request has an `id` and a `method`, a response an
@@ -324,6 +336,8 @@ struct WireQuestion {
     header: String,
     question: String,
     options: Option<Vec<QuestionOption>>,
+    #[serde(rename = "isSecret")]
+    is_secret: Option<bool>,
 }
 
 /// Where a server request belongs, common to every request we serve.
@@ -541,6 +555,13 @@ fn plain_decisions() -> Vec<Value> {
     PLAIN_DECISIONS.iter().copied().map(Value::from).collect()
 }
 
+/// What we do with a server request we read.
+enum Served {
+    Asked(Asked),
+    /// A user-input request with a secret question, which we decline.
+    Secret,
+}
+
 /// A server request we serve, before it is tagged with its id.
 struct Asked {
     shape: AnswerShape,
@@ -620,6 +641,19 @@ fn place(path: &Place) -> String {
     }
 }
 
+fn served(request: ServerRequest) -> serde_json::Result<Served> {
+    match request {
+        ServerRequest::UserInput { questions } => match questions
+            .iter()
+            .position(|question| question.is_secret == Some(true))
+        {
+            Some(_) => Ok(Served::Secret),
+            None => asked(ServerRequest::UserInput { questions }).map(Served::Asked),
+        },
+        request => asked(request).map(Served::Asked),
+    }
+}
+
 fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
     Ok(match request {
         ServerRequest::Command {
@@ -679,13 +713,22 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
 /// gets an error reply.
 fn request(rpc_id: RequestId, method: String, params: Option<Value>, raw: Value) -> Inbound {
     let served = serde_json::from_value::<ServerRequest>(raw.clone())
-        .and_then(asked)
-        .and_then(|asked| {
+        .and_then(served)
+        .and_then(|served| {
             serde_json::from_value::<Target>(params.unwrap_or(Value::Null))
-                .map(|target| (asked, target))
+                .map(|target| (served, target))
         });
     match served {
-        Ok((asked, target)) => Inbound::Approval {
+        Ok((Served::Secret, target)) => Inbound::Declined {
+            rpc_id,
+            event: CodexEvent::Thread {
+                thread: ThreadId(target.thread_id),
+                event: ThreadEvent::SecretQuestionDeclined {
+                    turn: TurnId(target.turn_id),
+                },
+            },
+        },
+        Ok((Served::Asked(asked), target)) => Inbound::Approval {
             thread: ThreadId(target.thread_id),
             shape: asked.shape,
             event: ThreadEvent::ApprovalRequested {
@@ -1385,13 +1428,31 @@ mod tests {
     const USER_INPUT: &str = r#"{"method": "item/tool/requestUserInput", "id": 0, "params": {"threadId": "th_1", "turnId": "tu_1", "itemId": "call_1", "questions": [{"id": "preferred_color", "header": "Color", "question": "Which color do you prefer?", "isOther": true, "isSecret": false, "options": [{"label": "Red", "description": "Choose Red."}, {"label": "Blue", "description": "Choose Blue."}]}], "isBlocking": false, "autoResolutionMs": null}}"#;
 
     #[test]
+    fn a_secret_question_is_declined_without_its_content() {
+        let line = USER_INPUT.replace(r#""isSecret": false"#, r#""isSecret": true"#);
+        assert_eq!(
+            parse_line(&line).unwrap(),
+            Inbound::Declined {
+                rpc_id: RequestId::Integer(0),
+                event: CodexEvent::Thread {
+                    thread: ThreadId(String::from("th_1")),
+                    event: ThreadEvent::SecretQuestionDeclined {
+                        turn: TurnId(String::from("tu_1")),
+                    },
+                },
+            }
+        );
+    }
+
+    #[test]
     fn user_input_is_a_question_answered_by_question_id() {
         let (shape, event) = match parse_line(USER_INPUT).unwrap() {
             Inbound::Approval { shape, event, .. } => Some((shape, event)),
             Inbound::Event(_)
             | Inbound::Response { .. }
             | Inbound::Resolved { .. }
-            | Inbound::Unsupported { .. } => None,
+            | Inbound::Unsupported { .. }
+            | Inbound::Declined { .. } => None,
         }
         .unwrap();
         assert_eq!(

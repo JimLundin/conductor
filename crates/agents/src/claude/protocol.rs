@@ -282,22 +282,22 @@ struct Grant {
     update: Update,
 }
 
-/// An entry of `permission_suggestions`. Rules are suggested for
-/// `localSettings`, which would outlive the session, so a grant keeps only
-/// their rules, verbatim, and sends them for `session`.
+/// An entry of `permission_suggestions` that allows calls by rule. Rules
+/// are suggested for `localSettings`, which would outlive the session, so a
+/// grant keeps only their rules, verbatim, and sends them for `session`.
+/// Any other entry fails this parse and is skipped: a `setMode`, which
+/// would allow every edit and change the mode behind the host's back, a
+/// rule that denies or asks, and `addDirectories`.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Suggestion {
     AddRules { rules: Value, behavior: Behavior },
-    SetMode { mode: String },
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum Behavior {
     Allow,
-    Deny,
-    Ask,
 }
 
 /// A permission rule, read only to name it.
@@ -317,10 +317,6 @@ enum Update {
         behavior: String,
         destination: String,
     },
-    SetMode {
-        mode: String,
-        destination: String,
-    },
 }
 
 /// `AskUserQuestion`'s input, as far as we read it.
@@ -338,7 +334,8 @@ struct Asked {
     multi_select: Option<bool>,
 }
 
-const ASK_USER_QUESTION: &str = "AskUserQuestion";
+/// The tool Claude asks the user questions with.
+pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
 
 impl Rule {
     /// The rule as the CLI writes it in settings: `Bash(git status)`.
@@ -350,8 +347,8 @@ impl Rule {
     }
 }
 
-/// The session grant the CLI's suggestions offer: its allow rules, or else
-/// the mode it suggests. Suggestions of other kinds are skipped.
+/// The session grant the CLI's suggestions offer: their allow rules, if
+/// any.
 fn grant(suggestions: Option<Value>) -> Option<Grant> {
     let suggestions = suggestions
         .and_then(|value| serde_json::from_value::<Vec<Value>>(value).ok())
@@ -360,24 +357,18 @@ fn grant(suggestions: Option<Value>) -> Option<Grant> {
         .filter_map(|value| serde_json::from_value::<Suggestion>(value).ok())
         .collect::<Vec<Suggestion>>();
     let rules = suggestions
-        .iter()
+        .into_iter()
         .filter_map(|suggestion| match suggestion {
             Suggestion::AddRules {
                 rules,
                 behavior: Behavior::Allow,
-            } => serde_json::from_value::<Vec<Value>>(rules.clone()).ok(),
-            Suggestion::AddRules { .. } | Suggestion::SetMode { .. } => None,
+            } => serde_json::from_value::<Vec<Value>>(rules).ok(),
         })
         .flatten()
         .collect::<Vec<Value>>();
-    let mode = suggestions
-        .into_iter()
-        .find_map(|suggestion| match suggestion {
-            Suggestion::SetMode { mode } => Some(mode),
-            Suggestion::AddRules { .. } => None,
-        });
-    match (rules.first(), mode) {
-        (Some(_), _) => Some(Grant {
+    Some(rules)
+        .filter(|rules| !rules.is_empty())
+        .map(|rules| Grant {
             label: rules
                 .iter()
                 .filter_map(|rule| serde_json::from_value::<Rule>(rule.clone()).ok())
@@ -389,16 +380,7 @@ fn grant(suggestions: Option<Value>) -> Option<Grant> {
                 behavior: String::from("allow"),
                 destination: String::from("session"),
             },
-        }),
-        (None, Some(mode)) => Some(Grant {
-            label: format!("{mode} mode"),
-            update: Update::SetMode {
-                mode,
-                destination: String::from("session"),
-            },
-        }),
-        (None, None) => None,
-    }
+        })
 }
 
 fn questions(input: &Value) -> serde_json::Result<Vec<Asked>> {
@@ -931,23 +913,20 @@ mod tests {
     }
 
     #[test]
-    fn without_a_rule_the_session_grant_is_the_suggested_mode() {
+    fn a_suggested_mode_is_no_session_grant() {
         let (event, response) = answered(WRITE, PermissionDecision::AllowForSession);
         assert_eq!(
-            event,
-            ClaudeEvent::PermissionRequested {
-                id: PermissionRequestId(String::from("r1")),
-                tool_name: String::from("Write"),
-                detail: ToolDetail::Path(String::from("/tmp/a.txt")),
-                tool_use_id: String::from("toolu_2"),
-                for_session: Some(String::from("acceptEdits mode")),
-            }
-        );
-        assert_eq!(
-            response.get("updatedPermissions"),
-            Some(&json(
-                r#"[{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]"#
-            ))
+            (event, response.get("updatedPermissions")),
+            (
+                ClaudeEvent::PermissionRequested {
+                    id: PermissionRequestId(String::from("r1")),
+                    tool_name: String::from("Write"),
+                    detail: ToolDetail::Path(String::from("/tmp/a.txt")),
+                    tool_use_id: String::from("toolu_2"),
+                    for_session: None,
+                },
+                Some(&json("[]")),
+            )
         );
     }
 

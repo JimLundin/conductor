@@ -96,7 +96,16 @@ From the 2026-11-12 `s1` run, steps 7 to 9, recorded in
   entries, with `"destination": "session"`: no file was written, the same
   command ran again without a request, and a different command still
   asked. (Step 8 and probe.) With no rule suggested (Write in `default`
-  mode), it sends the suggested `setMode` for the session.
+  mode), nothing is offered for the session: the suggested `setMode
+  acceptEdits` would allow every edit for the rest of the session and
+  change the mode without the host knowing (owner ruling, review of round
+  A).
+- Two questions with the same text never reach us. The CLI refuses the
+  tool call itself with a `tool_result` error, `InputValidationError`:
+  "Question texts must be unique, option labels must be unique within each
+  question", and no `can_use_tool` is sent. So answers keyed by question
+  text can't collide. (Step 10 and a probe, 2026-11-12. Step 10 is not in
+  the committed recording, which holds steps 7 to 9.)
 
 ## Interrupt
 

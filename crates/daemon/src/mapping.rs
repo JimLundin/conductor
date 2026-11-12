@@ -2,7 +2,7 @@
 //! session applies out. Request ids and the turn belong to the session.
 
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, Role, ToolDetail,
+    ASK_USER_QUESTION, AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, Role, ToolDetail,
 };
 use agents::codex::{
     self, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk, ThreadEvent,
@@ -152,8 +152,6 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
     }
 }
 
-const ASK_USER_QUESTION: &str = "AskUserQuestion";
-
 fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
     match (name.as_str(), detail) {
         ("Write", ToolDetail::Path(path)) => one_file(path, Change::Write),
@@ -182,6 +180,10 @@ pub(crate) fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision
         Reply::Answer(answers) => PermissionDecision::Answer(answers),
     }
 }
+
+/// Why a Codex question went unasked. Every answer is stored and sent to
+/// every client, so none can be kept secret.
+const SECRET_DECLINED: &str = "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.";
 
 pub(crate) fn codex_steps(event: CodexEvent) -> Vec<Step> {
     match event {
@@ -223,6 +225,9 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             Vec::from([approval_step(NativeRequest(id.0), ToolCallId(item), kind)])
         }
         ThreadEvent::ApprovalCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
+        ThreadEvent::SecretQuestionDeclined { .. } => Vec::from([Step::Emit(EventKind::Error {
+            message: String::from(SECRET_DECLINED),
+        })]),
         ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(match outcome {
             codex::TurnOutcome::Completed => TurnOutcome::Completed,
             codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
@@ -274,8 +279,8 @@ fn codex_outcome(status: &str) -> ToolOutcome {
 
 /// A server request: a question, or an approval with the tool it asks
 /// about, Codex's reason, and what `acceptForSession` allows. Codex takes
-/// `acceptForSession` for every kind of approval, though
-/// `availableDecisions` omits it (PROTOCOL.md).
+/// `acceptForSession` for a command, though `availableDecisions` omits it;
+/// `s2` step 8 checks that it still does (PROTOCOL.md).
 fn approval_step(native: NativeRequest, call: ToolCallId, kind: ApprovalKind) -> Step {
     match kind {
         ApprovalKind::Command {
@@ -298,7 +303,8 @@ fn approval_step(native: NativeRequest, call: ToolCallId, kind: ApprovalKind) ->
             call,
             tool: ToolKind::FileChange { files: Vec::new() },
             reason,
-            for_session: Some(String::from("changes to these files")),
+            // No run has recorded a file change approval yet (PROTOCOL.md).
+            for_session: None,
         },
         ApprovalKind::Permissions { reason, asks } => {
             let detail = asks
@@ -666,6 +672,14 @@ mod tests {
                     reason: None,
                     for_session: Some(String::from("Bash(touch t1.txt)")),
                 }]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::SecretQuestionDeclined { turn: turn() }),
+                want: Vec::from([Step::Emit(EventKind::Error {
+                    message: String::from(
+                        "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.",
+                    ),
+                })]),
             },
             Case {
                 got: on_thread(ThreadEvent::TurnCompleted {

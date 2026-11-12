@@ -456,6 +456,14 @@ impl Actor {
                 }
                 self.emit(event).await;
             }
+            Inbound::Declined { rpc_id, event } => {
+                tracing::info!("declined a question that asks for a secret answer");
+                let message = String::from("conductor does not take secret answers");
+                if let Err(e) = self.write(Outbound::Reject { rpc_id, message }).await {
+                    tracing::error!("declining a secret question: {e}");
+                }
+                self.emit(event).await;
+            }
         }
     }
 

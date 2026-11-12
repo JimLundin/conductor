@@ -126,6 +126,10 @@ impl Turn {
     fn record(&mut self, event: ThreadEvent) {
         match event {
             ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {}
+            ThreadEvent::SecretQuestionDeclined { .. } => {
+                self.approvals
+                    .push(String::from("secret question declined"));
+            }
             ThreadEvent::AgentDelta { text, .. } => self.streamed.push_str(&text),
             ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
             ThreadEvent::AgentMessage { text, .. } => {
@@ -156,7 +160,8 @@ fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
         | ThreadEvent::AgentDelta { turn, .. }
         | ThreadEvent::AgentMessage { turn, .. }
         | ThreadEvent::Item { turn, .. }
-        | ThreadEvent::ApprovalRequested { turn, .. } => Some(turn),
+        | ThreadEvent::ApprovalRequested { turn, .. }
+        | ThreadEvent::SecretQuestionDeclined { turn } => Some(turn),
         ThreadEvent::Started | ThreadEvent::ApprovalCancelled { .. } | ThreadEvent::Unknown(_) => {
             None
         }
@@ -279,7 +284,8 @@ impl Run {
             | ThreadEvent::Unknown(_)
             | ThreadEvent::AgentMessage { .. }
             | ThreadEvent::Item { .. }
-            | ThreadEvent::ApprovalCancelled { .. } => {}
+            | ThreadEvent::ApprovalCancelled { .. }
+            | ThreadEvent::SecretQuestionDeclined { .. } => {}
             ThreadEvent::TurnStarted { .. } => self.cue(thread, Cue::Start).await?,
             ThreadEvent::AgentDelta { .. } => self.cue(thread, Cue::Delta).await?,
             ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
