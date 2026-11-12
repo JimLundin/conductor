@@ -1,6 +1,6 @@
-//! The host's event log. One task owns it and assigns every event its seq;
-//! [`Log`] handles talk to it over a channel, so nothing is shared behind a
-//! lock.
+//! The host's event log. One task owns it and assigns every stored event its
+//! seq; [`Log`] handles talk to it over a channel, so nothing is shared
+//! behind a lock.
 
 use std::convert::Infallible;
 
@@ -100,6 +100,17 @@ impl LogActor {
 
     fn on(&mut self, msg: LogMsg) {
         match msg {
+            // Live only, so it takes no seq (see `EventKind::AssistantDelta`).
+            LogMsg::Append {
+                session,
+                kind: EventKind::AssistantDelta { text },
+            } => {
+                let _ = self.live.send(Event {
+                    seq: self.head(),
+                    session,
+                    kind: EventKind::AssistantDelta { text },
+                });
+            }
             LogMsg::Append { session, kind } => {
                 let event = Event {
                     seq: self.head().next(),
@@ -149,6 +160,12 @@ mod tests {
         }
     }
 
+    fn message(text: &str) -> EventKind {
+        EventKind::AssistantMessage {
+            text: String::from(text),
+        }
+    }
+
     fn providers() -> Providers {
         Providers {
             claude: Availability::Available,
@@ -159,21 +176,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_starts_after_the_cursor_and_welcome_reports_the_head() {
+    async fn deltas_go_live_with_the_last_seq_and_are_never_replayed() {
         let log = Log::spawn(String::from("test"), Epoch(5), providers());
+        let mut live = log.subscribe(HostSeq(0)).await.unwrap().live;
         log.append(SessionId(1), EventKind::SessionReady)
             .await
             .unwrap();
         log.append(SessionId(1), delta("a")).await.unwrap();
-        log.append(SessionId(1), delta("b")).await.unwrap();
+        log.append(SessionId(1), message("a")).await.unwrap();
         assert_eq!(
             log.welcome().await.unwrap(),
             Welcome {
                 host: String::from("test"),
                 epoch: Epoch(5),
-                head_seq: HostSeq(3),
+                head_seq: HostSeq(2),
                 providers: providers(),
             }
+        );
+        let seen = Vec::from([
+            live.recv().await.unwrap(),
+            live.recv().await.unwrap(),
+            live.recv().await.unwrap(),
+        ]);
+        assert_eq!(
+            seen.into_iter()
+                .map(|event| (event.seq, event.kind))
+                .collect::<Vec<(HostSeq, EventKind)>>(),
+            [
+                (HostSeq(1), EventKind::SessionReady),
+                (HostSeq(1), delta("a")),
+                (HostSeq(2), message("a")),
+            ]
         );
         let replay = log.subscribe(HostSeq(1)).await.unwrap().replay;
         assert_eq!(
@@ -181,7 +214,7 @@ mod tests {
                 .into_iter()
                 .map(|event| (event.seq, event.kind))
                 .collect::<Vec<(HostSeq, EventKind)>>(),
-            [(HostSeq(2), delta("a")), (HostSeq(3), delta("b"))]
+            [(HostSeq(2), message("a"))]
         );
     }
 }

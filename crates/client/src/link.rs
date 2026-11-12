@@ -23,8 +23,8 @@ use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::sleep;
 use n0_future::{StreamExt, join_all, task};
 use proto::{
-    AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch,
-    Event, Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
+    AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch, Event, EventKind,
+    Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -75,17 +75,8 @@ pub enum PathKind {
     Direct,
     /// iroh, through a relay.
     Relayed,
-    /// A WebRTC data channel, with the selected candidate pair if the
-    /// browser reported it.
-    WebRtc(Option<CandidatePair>),
-}
-
-/// Host/host is the same LAN; srflx or prflx on either end means the path
-/// crosses a NAT.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CandidatePair {
-    pub local: CandidateType,
-    pub remote: CandidateType,
+    /// A WebRTC data channel.
+    WebRtc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,7 +347,7 @@ impl Carrier {
     fn path(&self, iroh: PathKind) -> PathKind {
         match self {
             Carrier::Iroh => iroh,
-            Carrier::WebRtc(session) => PathKind::WebRtc(session.pair()),
+            Carrier::WebRtc(_) => PathKind::WebRtc,
         }
     }
 }
@@ -720,18 +711,25 @@ impl Link {
 
     async fn apply(&mut self, event: Event, epoch: Epoch, live_at: HostSeq) -> Result<(), Lost> {
         let after = self.cursor_seq();
-        match after.0.checked_add(1).map(|next| event.seq.0.cmp(&next)) {
-            Some(Ordering::Less) => Ok(()),
-            Some(Ordering::Equal) => {
+        let order = after.0.checked_add(1).map(|next| event.seq.0.cmp(&next));
+        match (order, &event.kind) {
+            // A delta repeats the seq of the stored event before it, which
+            // the stream delivered first (`EventKind::AssistantDelta`).
+            (Some(Ordering::Less), EventKind::AssistantDelta { .. }) => {
+                Ok(self.outbox.emit(Update::Event(event)).await?)
+            }
+            (Some(Ordering::Less), _) => Ok(()),
+            (Some(Ordering::Equal), EventKind::AssistantDelta { .. })
+            | (Some(Ordering::Greater) | None, _) => Err(Lost::Gap {
+                after: after.0,
+                got: event.seq.0,
+            }),
+            (Some(Ordering::Equal), _) => {
                 let seq = event.seq;
                 self.cursor = Some(Cursor { epoch, seq });
                 self.outbox.emit(Update::Event(event)).await?;
                 Ok(self.catch_up(seq, live_at).await?)
             }
-            Some(Ordering::Greater) | None => Err(Lost::Gap {
-                after: after.0,
-                got: event.seq.0,
-            }),
         }
     }
 

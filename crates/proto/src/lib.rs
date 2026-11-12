@@ -32,7 +32,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/3";
+pub const ALPN: &[u8] = b"conductor/4";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -96,61 +96,6 @@ pub enum Signal {
     /// Both ways, trickled as each side learns its addresses. The text is an
     /// SDP `candidate:` attribute value.
     Candidate { candidate: String },
-    /// Client to host, so the host log records what the browser chose.
-    Selected {
-        local: CandidateType,
-        remote: CandidateType,
-    },
-    /// Client to host, so the host log records why an upgrade failed.
-    Failed { reason: String },
-}
-
-/// How an ICE candidate's address was found (RFC 8445 §5.1.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum CandidateType {
-    /// An interface address.
-    Host,
-    /// The public address a STUN server saw.
-    Srflx,
-    /// An address the peer saw our checks come from.
-    Prflx,
-    /// A TURN allocation. Conductor configures no TURN servers.
-    Relay,
-}
-
-impl CandidateType {
-    /// Reads the `typ` field of an SDP `candidate:` attribute value.
-    pub fn of_candidate(candidate: &str) -> Option<CandidateType> {
-        let words = candidate.split_ascii_whitespace();
-        words
-            .clone()
-            .zip(words.skip(1))
-            .find_map(|(key, value)| match key {
-                "typ" => Some(value),
-                _ => None,
-            })
-            .and_then(CandidateType::parse)
-    }
-
-    /// Parses the names browsers use in `RTCIceCandidateStats.candidateType`.
-    pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "host" => Some(Self::Host),
-            "srflx" => Some(Self::Srflx),
-            "prflx" => Some(Self::Prflx),
-            "relay" => Some(Self::Relay),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Host => "host",
-            Self::Srflx => "srflx",
-            Self::Prflx => "prflx",
-            Self::Relay => "relay",
-        }
-    }
 }
 
 /// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`
@@ -200,8 +145,9 @@ impl Providers {
     }
 }
 
-/// Replays every event after `after_seq`, then streams live ones. A
-/// subscription from another epoch is refused by closing the stream.
+/// Replays every stored event after `after_seq`, then streams live ones,
+/// deltas included. A subscription from another epoch is refused by closing
+/// the stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Subscribe {
     pub epoch: Epoch,
@@ -312,7 +258,8 @@ impl Rejection {
     }
 }
 
-/// Every event names its session.
+/// Every event names its session. A stored event has a seq of its own; an
+/// `AssistantDelta` repeats the last one's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub seq: HostSeq,
@@ -336,6 +283,12 @@ pub enum EventKind {
         text: String,
         by: ClientName,
     },
+    /// A fragment of the assistant message being streamed. Live only: the
+    /// host stores none, so a subscription never replays one, and the
+    /// `AssistantMessage` that follows replaces them. It carries the seq of
+    /// the stored event before it, which may be another session's, so a
+    /// client that has applied that seq takes it and one that hasn't sees a
+    /// gap.
     AssistantDelta {
         text: String,
     },

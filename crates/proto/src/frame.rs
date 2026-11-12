@@ -121,10 +121,9 @@ impl FrameBuffer {
 mod tests {
     use super::{FrameBuffer, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode};
     use crate::{
-        AuthToken, Availability, CandidateType, ClientName, Command, CommandBody, CommandId,
-        CommandResult, Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open,
-        Providers, Rejection, RequestId, Resolution, RtcOffer, SessionId, Signal, Subscribe,
-        TurnOutcome, Welcome,
+        AuthToken, Availability, ClientName, Command, CommandBody, CommandId, CommandResult,
+        Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers, Rejection,
+        RequestId, Resolution, RtcOffer, SessionId, Signal, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -298,20 +297,12 @@ mod tests {
             frame(b"\x03\x03v=0")
         );
         assert_eq!(
-            encode(&Signal::Selected {
-                local: CandidateType::Srflx,
-                remote: CandidateType::Prflx,
+            encode(&Signal::Candidate {
+                candidate: String::from("c")
             })
             .unwrap(),
-            frame(b"\x02\x01\x02")
+            frame(b"\x01\x01c")
         );
-        assert_eq!(
-            CandidateType::of_candidate(
-                "candidate:1 1 udp 1686052607 203.0.113.9 51000 typ srflx raddr 0.0.0.0 rport 0"
-            ),
-            Some(CandidateType::Srflx)
-        );
-        assert_eq!(CandidateType::of_candidate("candidate:1 1 udp 1"), None);
     }
 
     #[test]

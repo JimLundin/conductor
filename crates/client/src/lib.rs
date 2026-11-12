@@ -10,7 +10,6 @@ mod upgrade;
 mod wire;
 
 pub use link::{
-    CandidatePair, Cursor, HostLink, LinkOptions, LinkState, PathKind, SendError, Status, Target,
-    Update,
+    Cursor, HostLink, LinkOptions, LinkState, PathKind, SendError, Status, Target, Update,
 };
 pub use platform::Network;

@@ -183,7 +183,7 @@ async fn events_through(updates: &mut mpsc::Receiver<Update>, last: HostSeq) -> 
     }
 }
 
-/// Appends one Claude session's creation, or its deltas, to the log.
+/// Appends events of one Claude session to the log.
 async fn append(log: &Log, kinds: Vec<EventKind>) -> Result<(), Stopped> {
     for kind in kinds {
         log.append(SessionId(1), kind).await?;
@@ -213,9 +213,9 @@ fn fold(events: Vec<Event>) -> HostView {
     events.into_iter().fold(HostView::empty(), HostView::apply)
 }
 
-/// The view of session 1 after `created()` and deltas that join into `text`,
-/// the last at `activity`.
-fn streaming(text: &str, activity: u64) -> HostView {
+/// The view of session 1 after `created()` and the reply `text` at
+/// `activity`.
+fn replied(text: &str, activity: u64) -> HostView {
     HostView {
         sessions: BTreeMap::from([(
             SessionId(1),
@@ -223,10 +223,7 @@ fn streaming(text: &str, activity: u64) -> HostView {
                 provider: Provider::Claude,
                 directory: HostPath(String::from("/work")),
                 status: SessionStatus::Starting,
-                items: Vec::from([Item::Reply {
-                    text: String::from(text),
-                    state: ReplyState::Streaming,
-                }]),
+                items: Vec::from([done(text)]),
                 activity: HostSeq(activity),
             },
         )]),
@@ -320,20 +317,19 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created(), delta("Hel"), delta("lo")]))
+    append(&fx.log, Vec::from([created(), reply("Hel"), reply("lo")]))
         .await
         .unwrap();
     let before = events_through(&mut updates, HostSeq(3)).await;
 
-    append(&fx.log, Vec::from([delta(" wor"), delta("ld")]))
+    append(&fx.log, Vec::from([reply(" wor"), reply("ld")]))
         .await
         .unwrap();
     link.reconnect().await;
-    append(&fx.log, Vec::from([delta("!")])).await.unwrap();
+    append(&fx.log, Vec::from([reply("!")])).await.unwrap();
     let after = events_through(&mut updates, HostSeq(6)).await;
     let seen = before.into_iter().chain(after).collect::<Vec<Event>>();
     assert_eq!(seqs(&seen), [1, 2, 3, 4, 5, 6].map(HostSeq));
-    assert_eq!(fold(seen), streaming("Hello world!", 6));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -343,14 +339,14 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     let fx = host().await;
     let (first, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created(), delta("Hel")]))
+    append(&fx.log, Vec::from([created(), reply("Hel")]))
         .await
         .unwrap();
-    let seen = events_through(&mut updates, HostSeq(2)).await;
+    events_through(&mut updates, HostSeq(2)).await;
     first.stop().await.unwrap();
     drop(updates);
 
-    append(&fx.log, Vec::from([delta("lo")])).await.unwrap();
+    append(&fx.log, Vec::from([reply("Hello")])).await.unwrap();
     let cursor = Cursor {
         epoch: Epoch(11),
         seq: HostSeq(2),
@@ -358,9 +354,39 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     let (second, mut updates) = link(fx.target.clone(), Some(cursor)).await;
     let rest = events_through(&mut updates, HostSeq(3)).await;
     assert_eq!(seqs(&rest), [HostSeq(3)]);
+    second.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message() {
+    let fx = host().await;
+    let (first, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    append(&fx.log, Vec::from([created()])).await.unwrap();
+    let seen = events_through(&mut updates, HostSeq(1)).await;
+    append(
+        &fx.log,
+        Vec::from([delta("Hel"), delta("lo"), reply("Hello")]),
+    )
+    .await
+    .unwrap();
+    let live = events_through(&mut updates, HostSeq(2)).await;
+    assert_eq!(seqs(&live), [1, 1, 2].map(HostSeq));
+    assert_eq!(of(1, &live), [delta("Hel"), delta("lo"), reply("Hello")]);
+    first.stop().await.unwrap();
+    drop(updates);
+
+    let cursor = Cursor {
+        epoch: Epoch(11),
+        seq: HostSeq(1),
+    };
+    let (second, mut updates) = link(fx.target.clone(), Some(cursor)).await;
+    let rest = events_through(&mut updates, HostSeq(2)).await;
+    assert_eq!(of(1, &rest), [reply("Hello")]);
     assert_eq!(
-        fold(seen.into_iter().chain(rest).collect()),
-        streaming("Hello", 3)
+        fold(seen.iter().chain(&live).cloned().collect()),
+        fold(seen.into_iter().chain(rest).collect())
     );
     second.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
@@ -369,7 +395,7 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
 #[tokio::test]
 async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
     let fx = host().await;
-    append(&fx.log, Vec::from([created(), delta("Hi")]))
+    append(&fx.log, Vec::from([created(), delta("H"), reply("Hi")]))
         .await
         .unwrap();
     let stale = Cursor {
@@ -395,7 +421,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
             Update::Status(_) | Update::Reset(_) => None,
         })
         .collect::<Vec<Event>>();
-    assert_eq!(fold(replayed), streaming("Hi", 2));
+    assert_eq!(fold(replayed), replied("Hi", 2));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -1474,9 +1500,7 @@ fn host_ports(signaling: &Signaling) -> Vec<u16> {
             .collect::<BTreeSet<u16>>()
             .into_iter()
             .collect(),
-        Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. }) | None => {
-            Vec::new()
-        }
+        Some(Signal::Candidate { .. }) | None => Vec::new(),
     }
 }
 
@@ -1582,9 +1606,7 @@ fn host_addrs(signaling: &Signaling) -> Vec<SocketAddr> {
             .filter_map(|line| Candidate::from_sdp_string(line).ok())
             .map(|candidate| candidate.addr())
             .collect(),
-        Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. }) | None => {
-            Vec::new()
-        }
+        Some(Signal::Candidate { .. }) | None => Vec::new(),
     }
 }
 
@@ -1681,8 +1703,7 @@ impl SrflxBrowser {
         } = offering;
         let sdp = match &signaling.answer {
             Some(Signal::Answer { sdp }) => Some(sdp),
-            Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. })
-            | None => None,
+            Some(Signal::Candidate { .. }) | None => None,
         };
         let answer = SdpAnswer::from_sdp_string(sdp.unwrap()).unwrap();
         rtc.sdp_api().accept_answer(pending, answer).unwrap();

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use iroh::endpoint::{RecvStream, SendStream};
-use proto::{CandidateType, FrameBuffer, Reassembly, Remainder, RtcOffer, Signal};
+use proto::{FrameBuffer, Reassembly, Remainder, RtcOffer, Signal};
 use str0m::change::SdpOffer;
 use str0m::channel::ChannelId;
 use str0m::net::{DatagramRecv, Protocol, Receive, Transmit};
@@ -872,31 +872,21 @@ impl Driver {
     fn signal(&mut self, signal: Signal) {
         match signal {
             Signal::Candidate { candidate } => self.remote_candidate(&candidate),
-            Signal::Selected { local, remote } => tracing::info!(
-                client = self.client,
-                browser_side = local.as_str(),
-                host_side = remote.as_str(),
-                "webrtc selected candidate pair, as the browser reports it"
-            ),
-            Signal::Failed { reason } => {
-                tracing::warn!(client = self.client, reason, "webrtc client gave up");
-            }
             Signal::Answer { .. } => {}
         }
     }
 
     fn remote_candidate(&mut self, candidate: &str) {
         let text = candidate.strip_prefix("a=").unwrap_or(candidate);
-        let kind = CandidateType::of_candidate(text);
         match Candidate::from_sdp_string(text) {
             Ok(parsed) => {
-                tracing::info!(client = self.client, kind = ?kind, addr = %parsed.addr(), "webrtc remote candidate");
+                tracing::info!(client = self.client, addr = %parsed.addr(), "webrtc remote candidate");
                 self.rtc.add_remote_candidate(parsed);
             }
             // Browsers hide interface addresses behind mDNS names. Their
             // checks still arrive and str0m learns them as prflx.
             Err(err) => {
-                tracing::info!(client = self.client, kind = ?kind, %err, candidate = text, "webrtc remote candidate skipped");
+                tracing::info!(client = self.client, %err, candidate = text, "webrtc remote candidate skipped");
             }
         }
     }

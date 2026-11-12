@@ -6,7 +6,6 @@ use iroh::{Endpoint, RelayMode};
 
 use proto::ClientName;
 
-use crate::CandidatePair;
 use crate::wire::WireError;
 
 /// n0's relays and DNS lookup.
@@ -30,10 +29,6 @@ pub fn client_name() -> ClientName {
 pub(crate) enum Session {}
 
 impl Session {
-    pub(crate) fn pair(&self) -> Option<CandidatePair> {
-        None
-    }
-
     pub(crate) async fn closed(&self) {
         std::future::pending().await
     }

@@ -168,18 +168,18 @@ impl HostView {
                 items: Vec::new(),
                 activity: event.seq,
             }),
-            (Some(view), kind) => Some(view.apply(kind)),
+            // A delta repeats the seq of the event before it, which may be
+            // another session's, so it is not this session's activity.
+            (Some(view), EventKind::AssistantDelta { text }) => {
+                Some(view.reply(text, ReplyState::Streaming))
+            }
+            (Some(view), kind) => Some(SessionView {
+                activity: event.seq,
+                ..view.apply(kind)
+            }),
             (None, _) => None,
         };
-        sessions.extend(session.map(|view| {
-            (
-                event.session,
-                SessionView {
-                    activity: event.seq,
-                    ..view
-                },
-            )
-        }));
+        sessions.extend(session.map(|view| (event.session, view)));
         HostView { sessions }
     }
 
@@ -321,7 +321,7 @@ impl SessionView {
     }
 
     /// A delta joins the reply that is still streaming; the final text
-    /// replaces it, so replayed deltas never show twice.
+    /// replaces it, so a client that missed the deltas shows the same reply.
     fn reply(self, text: String, state: ReplyState) -> SessionView {
         let mut items = self.items;
         let open = match items.pop() {
@@ -667,7 +667,7 @@ mod tests {
                             },
                             Item::TurnCompleted(TurnOutcome::Completed),
                         ]),
-                        activity: HostSeq(15),
+                        activity: HostSeq(13),
                     },
                 ),
                 (
@@ -677,23 +677,31 @@ mod tests {
                         directory: HostPath(text("/b")),
                         status: SessionStatus::Closed(CloseReason::Exited { status: text("1") }),
                         items: Vec::from([Item::Error(text("odd"))]),
-                        activity: HostSeq(17),
+                        activity: HostSeq(15),
                     },
                 ),
             ])
         );
     }
 
+    /// Numbers the events as the host does: a delta repeats the last seq.
     fn fold(events: Vec<(u64, EventKind)>) -> HostView {
-        events
-            .into_iter()
-            .enumerate()
-            .map(|(index, (session, kind))| Event {
-                seq: HostSeq(u64::try_from(index).unwrap()),
-                session: SessionId(session),
-                kind,
-            })
-            .fold(HostView::empty(), HostView::apply)
+        let (view, _) = events.into_iter().fold(
+            (HostView::empty(), HostSeq(0)),
+            |(view, last), (session, kind)| {
+                let seq = match kind {
+                    EventKind::AssistantDelta { .. } => last,
+                    _ => last.next(),
+                };
+                let event = Event {
+                    seq,
+                    session: SessionId(session),
+                    kind,
+                };
+                (view.apply(event), seq)
+            },
+        );
+        view
     }
 
     fn opened(request: u64) -> EventKind {
@@ -810,12 +818,12 @@ mod tests {
             (1, created("/a")),
             (2, created("/b")),
             (3, created("/a")),
-            (1, EventKind::SessionReady),
-            (2, delta("x")),
+            (2, EventKind::SessionReady),
+            (1, delta("x")),
         ]));
         assert_eq!(
             view.recent(),
-            Vec::from([SessionId(2), SessionId(1), SessionId(3)])
+            Vec::from([SessionId(2), SessionId(3), SessionId(1)])
         );
         assert_eq!(
             view.directories(),
