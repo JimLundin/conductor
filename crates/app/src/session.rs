@@ -25,6 +25,9 @@ pub(crate) fn SessionPane(
 ) -> Element {
     let controls = session.controls();
     let working = session.working();
+    // Continue takes the button away; the composer that replaces it takes
+    // the focus once the agent is ready again.
+    let mut continued = use_signal(bool::default);
     let provider = label(session.provider);
     let status = session.status.word();
     let runs = runs_with(&session);
@@ -92,7 +95,10 @@ pub(crate) fn SessionPane(
                             Resume::Offered => rsx! {
                                 button {
                                     class: "continue",
-                                    onclick: move |_| run_command(link, notice, CommandBody::Continue { session: id }),
+                                    onclick: move |_| {
+                                        continued.set(true);
+                                        run_command(link, notice, CommandBody::Continue { session: id });
+                                    },
                                     "Continue"
                                 }
                             },
@@ -104,6 +110,7 @@ pub(crate) fn SessionPane(
                     Composer {
                         composer: controls.composer,
                         provider: provider.clone(),
+                        focus: continued,
                         on_send: move |text| run_command(link, notice, CommandBody::SendMessage { session: id, text }),
                     }
                 },
@@ -149,12 +156,13 @@ fn TranscriptItem(
             p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
         },
         // Collapsed: the summary is the "Thinking…" line while it streams.
+        // The live region is a span, so the summary stays a disclosure.
         Item::Reasoning {
             text,
             state: ReplyState::Streaming,
         } => rsx! {
             details { class: "reasoning", "data-state": "streaming",
-                summary { role: "status", "Thinking…" }
+                summary { span { role: "status", "Thinking…" } }
                 p { class: "reasoning-text", "{text}" }
             }
         },
@@ -453,6 +461,7 @@ fn Reason(reason: Option<String>) -> Element {
 fn Composer(
     composer: host_view::Composer,
     provider: String,
+    focus: Signal<bool>,
     on_send: EventHandler<String>,
 ) -> Element {
     let mut draft = use_signal(String::new);
@@ -476,6 +485,7 @@ fn Composer(
                 value: "{draft}",
                 oninput: move |event| draft.set(event.value()),
                 onkeydown: move |event| send_on_enter(event, draft, composer, on_send),
+                onmounted: move |event| take_focus(event, focus),
             }
             button {
                 r#type: "submit",
@@ -484,6 +494,15 @@ fn Composer(
                 disabled: !matches!(composer, host_view::Composer::Open),
             }
         }
+    }
+}
+
+fn take_focus(event: MountedEvent, mut focus: Signal<bool>) {
+    if let Some(event) = focus().then_some(event) {
+        focus.set(false);
+        spawn(async move {
+            let _ = event.set_focus(true).await;
+        });
     }
 }
 

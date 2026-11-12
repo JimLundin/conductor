@@ -333,18 +333,28 @@ if (scenario === 'turn') {
   await closed.getByRole('button', { name: 'Continue' }).tap();
   log('tapped Continue');
   await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
+  await page.waitForFunction(() => document.activeElement?.matches('.composer textarea'), null, { timeout: 5_000 }).catch(() => {});
+  check(
+    await page.evaluate(() => document.activeElement?.matches('.composer textarea') ?? false),
+    'focus moved to the composer once the session was ready again, not the page',
+  );
   check((await text('.continued')) === 'Continued after: The session has ended (signal: 9 (SIGKILL)).', 'the transcript keeps the close and the continue');
   await send('how many sheep?');
   await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
   check((await text('.reply')) === '18 | 18', 'the continued session answered');
   check((await text('.user .bubble')) === 'sheep? | count | how many sheep?', 'every message shows once');
 
-  // fixtures/e2e/claude-reasoning.jsonl, paced: summarized thinking.
+  // fixtures/e2e/claude-reasoning.jsonl, paced: summarized thinking. The
+  // CLI sends it only with betas on, which the owner's gateway refuses.
   await startSession('Claude Code', `${dir}/reasoning`);
   await send('sheep?');
   const live = pane.locator('details.reasoning[data-state="streaming"]');
   await live.waitFor({ timeout: 20_000 });
   check((await live.locator('summary').innerText()) === 'Thinking…', 'reasoning streams under "Thinking…"');
+  check(
+    (await live.locator('summary').getAttribute('role')) === null && (await live.locator('summary [role="status"]').count()) === 1,
+    'the summary stays a disclosure and a span inside it announces the stream',
+  );
   check((await pane.locator('.working').count()) === 0, 'the streaming reasoning stands in for the working line');
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
   const done = pane.locator('details.reasoning[data-state="done"]');
