@@ -149,11 +149,21 @@ fn TranscriptItem(
             p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
         },
         // Collapsed: the summary is the "Thinking…" line while it streams.
-        Item::Reasoning { text, state } => rsx! {
-            details { class: "reasoning", "data-state": match state { ReplyState::Done => "done", ReplyState::Streaming => "streaming" },
-                summary { role: match state { ReplyState::Done => "", ReplyState::Streaming => "status" },
-                    match state { ReplyState::Done => "Thinking", ReplyState::Streaming => "Thinking…" }
-                }
+        Item::Reasoning {
+            text,
+            state: ReplyState::Streaming,
+        } => rsx! {
+            details { class: "reasoning", "data-state": "streaming",
+                summary { role: "status", "Thinking…" }
+                p { class: "reasoning-text", "{text}" }
+            }
+        },
+        Item::Reasoning {
+            text,
+            state: ReplyState::Done,
+        } => rsx! {
+            details { class: "reasoning", "data-state": "done",
+                summary { "Thinking" }
                 p { class: "reasoning-text", "{text}" }
             }
         },

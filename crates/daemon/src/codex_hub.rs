@@ -1,14 +1,12 @@
 //! The host's one `codex app-server`, shared by every Codex session. The hub
 //! alone reads the server's events and routes each thread's to its session.
 //!
-//! The server starts with the first thread a session asks for. When it
-//! exits, the hub sends the exit to every Codex session, which logs
-//! `SessionClosed` and ends, and forgets the server. The next thread start
-//! runs a new one, so a crash costs the sessions that were open, not the
-//! host's Codex.
-//!
-//! A session continued after such an exit resumes its thread on the next
-//! server (`thread/resume`).
+//! The server starts when the host asks for its models, at start, or with
+//! the first thread a session asks for. When it exits, the hub sends the
+//! exit to every Codex session, which logs `SessionClosed`, and forgets the
+//! server. The next thread start runs a new one, so a crash costs the
+//! sessions their agent, not the host its Codex: a session continued after
+//! it resumes its thread on the new server (`thread/resume`).
 //!
 //! A new credential stops the server the same way. Its key is in the
 //! server's environment, which is fixed at start, so the next thread runs a

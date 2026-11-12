@@ -1,8 +1,8 @@
 # Codex app-server: observed behaviour
 
 These facts come from `s2` runs against codex-cli 0.166.0 with model
-`gpt-6-luna` and reasoning effort `low`, on 2026-11-10, and steps 7 to 9 on
-2026-11-12. Steps refer to the
+`gpt-6-luna` and reasoning effort `low`, on 2026-11-10, steps 7 to 9 on
+2026-11-12, and steps 10 to 12 later that day with effort `high`. Steps refer to the
 `s2` checklist. The committed recordings are in `fixtures/codex/`. "Probe"
 means a hand-written JSON-RPC session run before `s2` existed; its output is
 not committed. Where this file disagrees with the JSON Schema or architecture
@@ -124,6 +124,33 @@ From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
   (the field is from the schema).
 - An `agentMessage` item carries a `questions` field, `null` in every run.
 
+## Model, effort and reasoning
+
+From the 2026-11-12 `s2` run, steps 10 to 12, in
+`fixtures/codex/server4-chosen-killed.jsonl` and `server5-resumed.jsonl`,
+and probes the same day in a private `CODEX_HOME` with the owner's model
+provider.
+
+- A `model/list` row has `id`, `displayName`, `description`, `hidden`,
+  `isDefault`, `defaultReasoningEffort` and `supportedReasoningEfforts`
+  (`[{reasoningEffort, description}]`). Through the owner's provider it
+  listed nine models, `gpt-6.1-sol` as the default; every one takes `low`
+  to `xhigh`, most also `max` and `ultra`. (Every run, probe.)
+- The `thread/start` and `thread/resume` responses name the `model` and
+  `reasoningEffort` the thread runs with: `gpt-6-luna` and `high` for a
+  start with that model and `model_reasoning_effort: "high"`. (Step 10.)
+- A reasoning item arrives as `item/started` with an empty `summary`, then
+  `item/reasoning/summaryTextDelta` notifications (`itemId`, `delta`,
+  `summaryIndex`), then `item/completed` with `summary`, a list of parts,
+  and `content: []`. The deltas of different parts carry no separator. The
+  adapter joins the parts with a blank line. (Step 11: 89 deltas, one part
+  of 420 characters.)
+- With a custom model provider the summary stays empty unless the thread's
+  config sets `model_reasoning_summary`; `auto`, `concise` and `detailed`
+  each gave a summary. Every thread gets `auto`. The raw `content` was empty
+  in every run. (Probes, step 11.)
+- Changing the effort per turn is not used. Not probed.
+
 ## Interrupt
 
 - `turn/interrupt` needs `threadId` and `turnId`. Codex answers `{}` and then
@@ -173,5 +200,10 @@ From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
 - `thread/resume` in a new process returns the same thread id. It sends no
   `thread/started`, but does send `thread/goal/cleared`. The model remembered
   earlier turns and answered `a.txt`. (Step 5.)
+- The same holds after `kill -9` of the app-server in the middle of a turn:
+  the server reports `Exited` with `signal: 9 (SIGKILL)`, and `thread/resume`
+  in a new process with the same model and effort answered a question
+  about the turn before the kill. It also sent a `deprecationNotice` about
+  full-history hydration. (Step 12.)
 - Closing stdin ends the process with exit status 0. (Steps 4 and 6.)
 - stderr was empty in the probe. The actor logs it at `debug`.

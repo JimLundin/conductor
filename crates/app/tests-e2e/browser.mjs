@@ -17,6 +17,10 @@
 //   questions A Claude question in <dir>/question answered by tapping an
 //             option, and a command in <dir>/for-session allowed for the
 //             session, which then runs again without asking.
+//   continue  A Claude session in <dir>/killed started with a model and
+//             an effort picked in the form, its CLI killed mid-turn and
+//             continued; and one in <dir>/reasoning whose reasoning streams
+//             under "Thinking…" and folds into a "Thinking" disclosure.
 //   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
 //             (the CLI hangs up) and <dir>/notes (never sent to), shot at
 //             1280x800 and 390x844, light and dark.
@@ -298,6 +302,60 @@ if (scenario === 'turn') {
   check(
     (await pane.locator('.tool').evaluateAll((tools) => tools.map((t) => t.dataset.state))).join(' ') === 'succeeded succeeded',
     'both calls ran',
+  );
+  await page.screenshot({ path: out });
+} else if (scenario === 'continue') {
+  // fixtures/e2e/claude-killed.jsonl, then claude-resumed.jsonl when the
+  // session continues. The host's model list is the same recording's.
+  await back();
+  await page.getByRole('button', { name: 'New session' }).click();
+  await page.locator('.segment', { hasText: 'Claude Code' }).click();
+  const model = page.locator('select[name="model"]');
+  const effort = page.locator('select[name="effort"]');
+  const options = async (select) => (await select.locator('option').allInnerTexts()).join(', ');
+  check((await options(model)) === 'Default (Opus), Opus, Fable, Sonnet, Haiku', 'the model picker lists the CLI\'s models, the default first');
+  await model.selectOption({ label: 'Sonnet' });
+  check((await options(effort)) === 'Default, low, medium, high, xhigh, max', 'the effort picker lists the model\'s efforts');
+  await effort.selectOption({ label: 'high' });
+  await page.screenshot({ path: out.replace(/\.png$/, '-picker.png') });
+  await page.locator('input[name="directory"]').fill(`${dir}/killed`);
+  await page.getByRole('button', { name: 'Start session' }).click();
+  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
+  check((await text('.runs-with')) === 'sonnet, high effort', 'the header shows the model and effort');
+  await send('sheep?');
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await send('count');
+  const closed = pane.locator('.closed-note');
+  await closed.waitFor({ timeout: 20_000 });
+  check((await closed.locator('p').innerText()) === 'The session has ended (signal: 9 (SIGKILL)).', 'the killed CLI closes the session');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: out.replace(/\.png$/, '-closed.png') });
+  await closed.getByRole('button', { name: 'Continue' }).tap();
+  log('tapped Continue');
+  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
+  check((await text('.continued')) === 'Continued after: The session has ended (signal: 9 (SIGKILL)).', 'the transcript keeps the close and the continue');
+  await send('how many sheep?');
+  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
+  check((await text('.reply')) === '18 | 18', 'the continued session answered');
+  check((await text('.user .bubble')) === 'sheep? | count | how many sheep?', 'every message shows once');
+
+  // fixtures/e2e/claude-reasoning.jsonl, paced: summarized thinking.
+  await startSession('Claude Code', `${dir}/reasoning`);
+  await send('sheep?');
+  const live = pane.locator('details.reasoning[data-state="streaming"]');
+  await live.waitFor({ timeout: 20_000 });
+  check((await live.locator('summary').innerText()) === 'Thinking…', 'reasoning streams under "Thinking…"');
+  check((await pane.locator('.working').count()) === 0, 'the streaming reasoning stands in for the working line');
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  const done = pane.locator('details.reasoning[data-state="done"]');
+  check((await done.count()) === 1, 'one Thinking disclosure for the turn');
+  check((await done.locator('summary').innerText()) === 'Thinking', 'it reads "Thinking" once finished');
+  check(!(await done.evaluate((d) => d.open)), 'it starts collapsed');
+  await done.locator('summary').tap();
+  check(await done.evaluate((d) => d.open), 'a tap expands it');
+  check(
+    (await done.locator('.reasoning-text').innerText()).trim() === '"All but 9 run away" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.',
+    'it shows the reasoning text',
   );
   await page.screenshot({ path: out });
 } else if (scenario === 'credentials') {

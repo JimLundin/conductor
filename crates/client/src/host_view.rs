@@ -593,8 +593,8 @@ mod tests {
     };
 
     use super::{
-        Approval, Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView,
-        ToolState, Working,
+        Approval, Attention, HostView, Item, ReplyState, RequestState, Resume, SessionStatus,
+        SessionView, ToolState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -609,6 +609,10 @@ mod tests {
             model: None,
             effort: None,
         }
+    }
+
+    fn reasoned(piece: &str) -> EventKind {
+        EventKind::ReasoningDelta { text: text(piece) }
     }
 
     fn delta(text: &str) -> EventKind {
@@ -946,6 +950,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reasoning_streams_into_one_item_that_its_text_replaces_and_a_close_is_kept() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (1, reasoned("Look")),
+            (1, reasoned("ing")),
+            (
+                1,
+                EventKind::Reasoning {
+                    text: text("Looking."),
+                },
+            ),
+            (1, reasoned("Again")),
+            (1, delta("Hi")),
+            (
+                1,
+                EventKind::SessionClosed {
+                    reason: CloseReason::Exited { status: text("9") },
+                },
+            ),
+            (1, EventKind::SessionReady),
+        ]));
+        assert_eq!(
+            view.sessions.get(&SessionId(1)).map(|session| (
+                session.items.clone(),
+                session.status.clone(),
+                session.controls().resume
+            )),
+            Some((
+                Vec::from([
+                    Item::Reasoning {
+                        text: text("Looking."),
+                        state: ReplyState::Done,
+                    },
+                    Item::Reasoning {
+                        text: text("Again"),
+                        state: ReplyState::Done,
+                    },
+                    Item::Reply {
+                        text: text("Hi"),
+                        state: ReplyState::Done,
+                    },
+                    Item::Continued(CloseReason::Exited { status: text("9") }),
+                ]),
+                SessionStatus::Idle,
+                Resume::Hidden,
+            ))
+        );
+    }
+
     /// The events after a session starts, and whether it then shows that
     /// the agent is working.
     struct WorkingCase {
@@ -987,6 +1042,10 @@ mod tests {
                     },
                 ]),
                 working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), EventKind::ReasoningDelta { text: text("Hm") }]),
+                working: Working::Hidden,
             },
             WorkingCase {
                 events: Vec::from([user.clone(), started("toolu_1")]),

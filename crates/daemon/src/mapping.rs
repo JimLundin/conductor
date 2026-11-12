@@ -74,9 +74,7 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
         ClaudeEvent::StreamDelta { text } => {
             Vec::from([Step::Emit(EventKind::AssistantDelta { text })])
         }
-        ClaudeEvent::ThinkingDelta { text } => {
-            Vec::from([Step::Emit(EventKind::ReasoningDelta { text })])
-        }
+        ClaudeEvent::ThinkingDelta { text } => reasoning_delta(text).into_iter().collect(),
         ClaudeEvent::PermissionRequested {
             id,
             tool_name,
@@ -166,6 +164,14 @@ fn reasoning(text: String) -> Option<Step> {
         .map(|text| Step::Emit(EventKind::Reasoning { text }))
 }
 
+/// A piece of reasoning as it streams. Claude streams one empty piece for
+/// a block with no text, which would show reasoning that never comes.
+fn reasoning_delta(text: String) -> Option<Step> {
+    Some(text)
+        .filter(|text| !text.is_empty())
+        .map(|text| Step::Emit(EventKind::ReasoningDelta { text }))
+}
+
 fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
     match (name.as_str(), detail) {
         ("Write", ToolDetail::Path(path)) => one_file(path, Change::Write),
@@ -222,9 +228,7 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         ThreadEvent::AgentMessage { text, .. } => {
             Vec::from([Step::Emit(EventKind::AssistantMessage { text })])
         }
-        ThreadEvent::ReasoningDelta { text, .. } => {
-            Vec::from([Step::Emit(EventKind::ReasoningDelta { text })])
-        }
+        ThreadEvent::ReasoningDelta { text, .. } => reasoning_delta(text).into_iter().collect(),
         ThreadEvent::Reasoning { text, .. } => reasoning(text).into_iter().collect(),
         ThreadEvent::Item {
             phase: ItemPhase::Started,
@@ -480,6 +484,12 @@ mod tests {
                 want: Vec::from([Step::Emit(EventKind::ReasoningDelta {
                     text: String::from("hm"),
                 })]),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::ThinkingDelta {
+                    text: String::new(),
+                }),
+                want: Vec::new(),
             },
             Case {
                 got: on_thread(ThreadEvent::ReasoningDelta {

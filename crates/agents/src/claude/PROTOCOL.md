@@ -3,8 +3,11 @@
 These facts come from `s1` runs against Claude Code 2.1.316 with model `haiku`, on
 2026-11-10 and 2026-11-11. Steps refer to the `s1` checklist. The committed
 recordings in `fixtures/claude/` are one 2026-11-11 run with
-`--include-partial-messages`, steps 1 to 6 including 3c and 3d, and
-`session3-questions.jsonl` from a 2026-11-12 run, steps 7 to 9. The 2026-11-10
+`--include-partial-messages`, steps 1 to 6 including 3c and 3d,
+`session3-questions.jsonl` from a 2026-11-12 run, steps 7 to 9, and
+`session4-chosen-killed.jsonl` and `session5-resumed.jsonl` from a later
+2026-11-12 run, steps 11 to 13. `probe-thinking.jsonl` is a probe, not an
+`s1` run (see Reasoning). The 2026-11-10
 recordings they replaced are in git history. Where this file disagrees with the
 Python SDK source, trust this file and re-check it when the CLI version changes.
 
@@ -107,6 +110,56 @@ From the 2026-11-12 `s1` run, steps 7 to 9, recorded in
   text can't collide. (Step 10 and a probe, 2026-11-12. Step 10 is not in
   the committed recording, which holds steps 7 to 9.)
 
+## Model and effort
+
+From the 2026-11-12 `s1` run, steps 11 to 13, and probes the same day.
+
+- `--help` lists `--model <model>` and `--effort <level>` with `low`,
+  `medium`, `high`, `xhigh` and `max`.
+- The `initialize` response lists `models`: rows with `value` (what
+  `--model` takes), `resolvedModel`, `displayName`, `description` and
+  `supportedEffortLevels`. 2.1.316 listed `default`, `opus`,
+  `claude-fable-5[1m]`, `sonnet` and `haiku`, each with all five efforts.
+  The `default` row is not a model of its own: its `resolvedModel` is the
+  same as `opus`'s. The host reads the default from it. (Every session.)
+- `system/init` reports `model` (`claude-sonnet-5-5`) but no effort. The
+  `get_settings` control request answers `applied.model` and
+  `applied.effort`: `claude-sonnet-5-5` and `high` for `--model sonnet
+  --effort high`. (Step 11.)
+- The request body carried `output_config: {effort: "high"}` for
+  `--effort high`. (Probe, through a logging proxy.)
+- Changing the effort mid-session is not used. `apply_flag_settings` and
+  `system/per_turn_effort_changed` exist in the binary; neither was probed.
+
+## Reasoning
+
+- A response that thinks streams `content_block_start` with a `thinking`
+  block, `thinking_delta`s, one `signature_delta` and `content_block_stop`,
+  and the assistant message has a `thinking` block before the text. The
+  CLI also prints `system/thinking_tokens` frames, which the adapter leaves
+  `Unknown`. (Step 12, probe.)
+- Through the owner's gateway the thinking text is always empty: one
+  `thinking_delta` with `""` and a block with `""` and a signature. The
+  request body has `thinking: {type: "adaptive"}` with no `display`, and the
+  API's default for these models then omits the text (a direct API probe
+  without `display` returned `""` too). (Step 12: one block, text `""`.)
+- The CLI puts `display` in the request only when experimental betas are
+  on, that is with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` unset. The
+  owner's shell sets it because the gateway refuses the `context_management`
+  field the betas add. Neither `showThinkingSummaries: true` in settings nor
+  `set_max_thinking_tokens` with `thinking_display` changed the request
+  while betas were off. (Probes.)
+- With betas on, the hidden flag `--thinking-display summarized` puts
+  `display: "summarized"` in the request; without it the CLI sent
+  `"updates"`. Through a proxy that removed `context_management` on the way
+  to the gateway, the CLI printed 15 `thinking_delta`s that join to exactly
+  the block's 132 characters of summarized text. That run is
+  `fixtures/claude/probe-thinking.jsonl`. (Probe.)
+- The adapter passes `--thinking-display summarized` always and reports
+  each delta as `ThinkingDelta`. The host shows a block only when it has
+  text, so a gateway that omits it shows nothing. The text is the API's
+  summary, a few sentences, not the raw thinking.
+
 ## Interrupt
 
 - The CLI acknowledges `interrupt` with
@@ -150,6 +203,14 @@ From the 2026-11-12 `s1` run, steps 7 to 9, recorded in
 
 - `--resume <session_id>` in a new process keeps the same `session_id` in `init`
   and `result`. The resumed model remembers earlier turns. (Step 4.)
+- The same holds after `kill -9` of the CLI in the middle of a turn: the
+  session reports `Exited` with `signal: 9 (SIGKILL)`, and `--resume` in a
+  new process with the same `--model` and `--effort` answered a question
+  about the turn before the kill. (Step 13.)
+- With a private `CLAUDE_CONFIG_DIR`, the transcript is in
+  `<home>/projects/<cwd with / as ->/<session_id>.jsonl`, and `--resume`
+  found it from another working directory, and with another `--model` and
+  `--effort`. (Probe.)
 - `set_permission_mode` is acknowledged with `{"mode": "acceptEdits"}` and
   followed by a `system/status` frame. (Step 5.)
 - Closing stdin ends the process. It exited 0 when the last turn succeeded and

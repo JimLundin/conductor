@@ -110,7 +110,10 @@ async fn main() -> anyhow::Result<()> {
                         home: homes.claude.clone(),
                         credential: None,
                     };
-                    // The CLI lists its models as a session would see them.
+                    // The CLI lists its models as a session would see them,
+                    // started in a directory of its own.
+                    let probe = data_dir.join("probe");
+                    std::fs::create_dir_all(&probe)?;
                     let listed = claude_models(
                         ClaudeLaunch {
                             credential: match &stored {
@@ -119,15 +122,17 @@ async fn main() -> anyhow::Result<()> {
                             },
                             ..launch.clone()
                         },
-                        data_dir.clone(),
+                        probe,
                     );
-                    launcher(
-                        agents::claude::cli(&claude_path, &homes.claude),
-                        Launch::Claude(launch),
-                        own_sign_in(origin, status).await,
-                        (listed.await, claude_model),
-                    )
-                    .await
+                    match runs(agents::claude::cli(&claude_path, &homes.claude)).await {
+                        Ok(cli) => ready(
+                            cli,
+                            Launch::Claude(launch),
+                            own_sign_in(origin, status).await,
+                            (listed.await, claude_model),
+                        ),
+                        Err(reason) => unavailable(reason),
+                    }
                 }
                 Err(reason) => unavailable(reason),
             };
@@ -147,14 +152,17 @@ async fn main() -> anyhow::Result<()> {
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
-                    let listed = hub.models().await.map_err(|err| err.to_string());
-                    launcher(
-                        version,
-                        Launch::Codex(CodexLaunch { hub }),
-                        own_sign_in(origin, status).await,
-                        (listed, codex_model),
-                    )
-                    .await
+                    let lister = hub.clone();
+                    let listed = lister.models();
+                    match runs(version).await {
+                        Ok(cli) => ready(
+                            cli,
+                            Launch::Codex(CodexLaunch { hub }),
+                            own_sign_in(origin, status).await,
+                            (listed.await.map_err(|err| err.to_string()), codex_model),
+                        ),
+                        Err(reason) => unavailable(reason),
+                    }
                 }
                 Err(reason) => unavailable(reason),
             };
@@ -278,13 +286,27 @@ async fn host(
     Ok(router)
 }
 
-/// A provider's CLI is ready when `<cli> --version` runs and succeeds. It
-/// offers the models it `listed`, with `default` (`--claude-model`,
-/// `--codex-model`) first as the one a session gets when it names none. A
-/// CLI that could not list them, for instance because it is not signed in
-/// yet, offers only the default.
-async fn launcher(
-    mut cli: tokio::process::Command,
+/// The CLI's path and version, when `<cli> --version` runs and succeeds.
+async fn runs(mut cli: tokio::process::Command) -> Result<(String, String), String> {
+    let path = cli.as_std().get_program().display().to_string();
+    match cli.arg("--version").output().await {
+        Ok(output) => match output.status.code() {
+            Some(0) => Ok((
+                path,
+                String::from(String::from_utf8_lossy(&output.stdout).trim()),
+            )),
+            status => Err(format!("{path} --version exited with {status:?}")),
+        },
+        Err(err) => Err(format!("{path} does not run: {err}")),
+    }
+}
+
+/// A CLI that runs offers the models it `listed`, with `default`
+/// (`--claude-model`, `--codex-model`) first as the one a session gets when
+/// it names none. A CLI that could not list them, for instance because it
+/// is not signed in yet, offers only the default.
+fn ready(
+    cli: (String, String),
     launch: Launch,
     own: OwnSignIn,
     models: (Result<Models, String>, Option<String>),
@@ -298,21 +320,12 @@ async fn launcher(
         default: default.map(ModelId).or(listed.default),
         ..listed
     };
-    let path = cli.as_std().get_program().display().to_string();
-    match cli.arg("--version").output().await {
-        Ok(output) => match output.status.code() {
-            Some(0) => {
-                let version = String::from_utf8_lossy(&output.stdout);
-                tracing::info!(%path, version = %version.trim(), ?own, models = models.choices.len(), "ready");
-                Launcher::Ready {
-                    launch,
-                    own,
-                    models,
-                }
-            }
-            status => unavailable(format!("{path} --version exited with {status:?}")),
-        },
-        Err(err) => unavailable(format!("{path} does not run: {err}")),
+    let (path, version) = cli;
+    tracing::info!(%path, %version, ?own, models = models.choices.len(), "ready");
+    Launcher::Ready {
+        launch,
+        own,
+        models,
     }
 }
 

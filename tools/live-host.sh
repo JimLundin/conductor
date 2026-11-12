@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The live hosted check: a real `conductord host` running the real Claude CLI
-# (model haiku) or Codex CLI (model gpt-6-luna), driven over iroh by three
-# runs of the `headless` example. It costs a few cents of API use, so it is
+# (model haiku) or Codex CLI (model gpt-6-luna), driven over iroh by five
+# runs of the `headless` example. The last kills the host's CLI between two
+# turns and continues the session. It costs a few cents of API use, so it is
 # not part of tools/check.sh.
 #
 #   tools/live-host.sh [--provider claude|codex] [--register] [--data-dir DIR] [log-dir]
@@ -124,11 +125,31 @@ case $provider$sandboxed:$leak:$leak_counts in
   *) leak=fail ;;
 esac
 
+# Continue: a turn, then the host's CLI killed as a crash would, then the
+# session continued and asked what the first turn said. Every CLI the host
+# runs dies, so the sessions of the turns above close too.
+continue_out=$logs/continue.out
+"$target"/debug/examples/headless "$ticket" --provider "$provider" --directory "$scratch" \
+  --timeout-secs 300 --prompt "My codeword is quince. Reply with just the word ok, and use no tools." \
+  --then-continue "What is my codeword? Answer with just the word, and use no tools." >"$continue_out" &
+continue_pid=$!
+for _ in $(seq 480); do
+  grep -q 'waiting for the agent to exit' "$continue_out" && break
+  kill -0 $continue_pid 2>/dev/null || break
+  sleep 0.5
+done
+pkill -9 -f "^$data_dir/cli/$provider/" || true
+wait $continue_pid || true
+continued=fail
+grep -q 'continue after .* -> Accepted' "$continue_out" &&
+  grep -v '(history)' "$continue_out" | grep -qi 'AssistantMessage { text: "quince' &&
+  grep -q 'turn completed$' "$continue_out" && continued=pass
+
 file=missing
 [ -f "$scratch/a.txt" ] && file="present:$(tr -d '\n' <"$scratch/a.txt")"
 case "$file" in present:hello) ;; *) approve=fail ;; esac
 interrupt=direct
 grep -q 'holding the interrupt until the turn starts' "$logs/host.log" && interrupt=held
 grep -q 'holding the interrupt' "$logs/host.log" && ! grep -q 'sending the held interrupt' "$logs/host.log" && at_send=fail
-echo "RESULT provider=$provider register=$register approve=$approve first-delta=$delta at-send=$at_send leak=$leak leak-counts=${leak_counts// /,} a.txt=$file interrupt-at-send=$interrupt logs=$logs"
-case $approve$delta$at_send:$leak in passpasspass:pass | passpasspass:unprotected) ;; *) exit 1 ;; esac
+echo "RESULT provider=$provider register=$register approve=$approve first-delta=$delta at-send=$at_send continue=$continued leak=$leak leak-counts=${leak_counts// /,} a.txt=$file interrupt-at-send=$interrupt logs=$logs"
+case $approve$delta$at_send$continued:$leak in passpasspasspass:pass | passpasspasspass:unprotected) ;; *) exit 1 ;; esac

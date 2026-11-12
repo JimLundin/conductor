@@ -2261,3 +2261,405 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() {
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
+
+fn start_with(provider: Provider, directory: &Path, model: &str, effort: Effort) -> CommandBody {
+    CommandBody::StartSession {
+        provider,
+        directory: HostPath(directory.display().to_string()),
+        model: Some(ModelId(String::from(model))),
+        effort: Some(effort),
+    }
+}
+
+fn continued() -> CommandBody {
+    CommandBody::Continue {
+        session: SessionId(1),
+    }
+}
+
+/// The arguments of each run of the Claude stand-in in `dir`.
+fn argv(dir: &Path) -> Vec<Vec<String>> {
+    read(&dir.join("argv.txt"))
+        .split("run\n")
+        .filter(|run| !run.is_empty())
+        .map(|run| run.lines().map(String::from).collect())
+        .collect()
+}
+
+/// The value after `flag` in one run's arguments.
+fn flag(run: &[String], flag: &str) -> Option<String> {
+    run.iter()
+        .position(|arg| arg == flag)
+        .and_then(|at| run.get(at.saturating_add(1)))
+        .cloned()
+}
+
+/// The params of each request named `method` the stand-in in `dir` read in
+/// `log`.
+fn requests(dir: &Path, log: &str, method: &str) -> Vec<serde_json::Value> {
+    read(&dir.join(log))
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|request| request.get("method").and_then(|m| m.as_str()) == Some(method))
+        .filter_map(|request| request.get("params").cloned())
+        .collect()
+}
+
+fn created_with(provider: Provider, directory: &Path, model: &str, effort: Effort) -> EventKind {
+    EventKind::SessionCreated {
+        provider,
+        directory: HostPath(directory.display().to_string()),
+        by: test_client(),
+        model: Some(ModelId(String::from(model))),
+        effort: Some(effort),
+    }
+}
+
+/// A model the host doesn't list, or an effort its model doesn't take, is
+/// refused; a chosen one is logged and reaches the CLI.
+#[tokio::test]
+async fn start_session_takes_only_a_model_and_effort_the_host_offers() {
+    let fx = host().await;
+    let dir = scratch("chosen", "claude-approve.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    assert_eq!(
+        [
+            send(
+                &link,
+                start_with(Provider::Claude, &dir, "huge", Effort::Low)
+            )
+            .await,
+            send(
+                &link,
+                start_with(Provider::Claude, &dir, "small", Effort::High)
+            )
+            .await,
+            send(
+                &link,
+                start_with(Provider::Claude, &dir, "small", Effort::Low)
+            )
+            .await,
+        ],
+        [
+            CommandResult::Rejected(Rejection::NotOffered {
+                reason: String::from("this host doesn't offer the model huge"),
+            }),
+            CommandResult::Rejected(Rejection::NotOffered {
+                reason: String::from("Small doesn't take the effort high"),
+            }),
+            CommandResult::Started {
+                session: SessionId(1)
+            },
+        ]
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Ready).await,
+        [
+            created_with(Provider::Claude, &dir, "small", Effort::Low),
+            EventKind::SessionReady,
+        ]
+    );
+    let runs = argv(&dir);
+    assert_eq!(
+        runs.iter()
+            .map(|run| (flag(run, "--model"), flag(run, "--effort")))
+            .collect::<Vec<(Option<String>, Option<String>)>>(),
+        [(Some(String::from("small")), Some(String::from("low")))]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+const THOUGHT: &str = "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n";
+
+/// Reasoning streams to live clients and is stored once finished, so a
+/// client that catches up later sees the finished text without deltas.
+#[tokio::test]
+async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
+    let fx = host().await;
+    let dir = scratch("reasoning", "claude-reasoning.jsonl");
+    let (phone, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&phone, start(Provider::Claude, &dir)).await;
+    let _ = send(&phone, message("sheep?")).await;
+    let live = kinds_until(&mut updates, Until::TurnEnd).await;
+    let streamed = live
+        .iter()
+        .filter_map(|kind| match kind {
+            EventKind::ReasoningDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    let reasoning = EventKind::Reasoning {
+        text: String::from(THOUGHT),
+    };
+    let stored = Vec::from([
+        opening(Provider::Claude, &dir),
+        Vec::from([
+            user("sheep?"),
+            reasoning,
+            reply("18"),
+            turn_end(TurnOutcome::Completed),
+        ]),
+    ])
+    .concat();
+    assert_eq!(
+        (
+            streamed,
+            live.into_iter()
+                .filter(|kind| !matches!(
+                    kind,
+                    EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                ))
+                .collect::<Vec<EventKind>>()
+        ),
+        (String::from(THOUGHT), stored.clone())
+    );
+    let (late, mut late_updates) = link(fx.target.clone(), None).await;
+    let caught_up = until_live(&mut late_updates)
+        .await
+        .into_iter()
+        .filter_map(|update| match update {
+            Update::Event(event) => Some(event),
+            Update::Status(_) | Update::Reset(_) => None,
+        })
+        .collect::<Vec<Event>>();
+    assert_eq!(
+        caught_up
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<Vec<EventKind>>(),
+        stored
+    );
+    assert_eq!(
+        items(&fold(caught_up), 1)
+            .into_iter()
+            .filter(|item| matches!(item, Item::Reasoning { .. }))
+            .collect::<Vec<Item>>(),
+        [Item::Reasoning {
+            text: String::from(THOUGHT),
+            state: ReplyState::Done,
+        }]
+    );
+    late.stop().await.unwrap();
+    phone.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// A Claude CLI killed mid-turn closes the session; `Continue` starts it
+/// again with `--resume` on the same conversation, model and effort, and
+/// the next turn runs.
+#[tokio::test]
+async fn a_killed_claude_session_continues_its_conversation() {
+    let fx = host().await;
+    let dir = scratch("killed", "claude-killed.jsonl");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/claude-resumed.jsonl"),
+        dir.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    assert_eq!(
+        send(&link, continued()).await,
+        CommandResult::Rejected(Rejection::UnknownSession)
+    );
+    let _ = send(
+        &link,
+        start_with(Provider::Claude, &dir, "small", Effort::Low),
+    )
+    .await;
+    let _ = send(&link, message("sheep?")).await;
+    let first = events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        send(&link, continued()).await,
+        CommandResult::Rejected(Rejection::SessionOpen)
+    );
+    let _ = send(&link, message("count")).await;
+    let killed = events_until(&mut updates, Until::Closed).await;
+    assert_eq!(
+        killed
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<Vec<EventKind>>(),
+        [
+            user("count"),
+            EventKind::SessionClosed {
+                reason: CloseReason::Exited {
+                    status: String::from("signal: 9 (SIGKILL)"),
+                },
+            },
+        ]
+    );
+    assert_eq!(
+        send(&link, message("hello?")).await,
+        CommandResult::Rejected(Rejection::SessionClosed)
+    );
+    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    let ready = events_until(&mut updates, Until::Ready).await;
+    let _ = send(&link, message("how many sheep?")).await;
+    let after = events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        after
+            .iter()
+            .map(|event| event.kind.clone())
+            .filter(|kind| !matches!(kind, EventKind::AssistantDelta { .. }))
+            .collect::<Vec<EventKind>>(),
+        [
+            user("how many sheep?"),
+            reply("18"),
+            turn_end(TurnOutcome::Completed),
+        ]
+    );
+    let runs = argv(&dir);
+    assert_eq!(
+        runs.iter()
+            .map(|run| (
+                flag(run, "--model"),
+                flag(run, "--effort"),
+                run.iter().find(|arg| arg.starts_with("--resume=")).cloned()
+            ))
+            .collect::<Vec<(Option<String>, Option<String>, Option<String>)>>(),
+        [
+            (Some(String::from("small")), Some(String::from("low")), None),
+            (
+                Some(String::from("small")),
+                Some(String::from("low")),
+                runs.first()
+                    .and_then(|run| flag(run, "--session-id"))
+                    .map(|id| format!("--resume={id}"))
+            ),
+        ]
+    );
+    let view = fold(Vec::from([first, killed, ready, after]).concat());
+    assert_eq!(
+        items(&view, 1)
+            .into_iter()
+            .filter(|item| matches!(item, Item::Continued(_)))
+            .collect::<Vec<Item>>(),
+        [Item::Continued(CloseReason::Exited {
+            status: String::from("signal: 9 (SIGKILL)"),
+        })]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// The thread, model and effort a `thread/start` or `thread/resume` names.
+fn thread_settings(
+    params: &serde_json::Value,
+) -> (
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+) {
+    (
+        params.get("threadId").cloned(),
+        params.get("model").cloned(),
+        params.pointer("/config/model_reasoning_effort").cloned(),
+    )
+}
+
+const COUNT: &str = "Count from 1 to 300, one number per line.";
+const PRIME: &str = "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It’s important to verify my information carefully, though!";
+
+/// The app-server killed mid-turn closes the Codex session; `Continue`
+/// starts a new server and resumes the thread on it with the session's
+/// model and effort.
+#[tokio::test]
+async fn a_killed_codex_server_continues_the_thread() {
+    let (fx, server) = codex_host("codex-killed.jsonl").await;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/codex-resumed.jsonl"),
+        server.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(
+        &link,
+        start_with(Provider::Codex, &server, "small", Effort::Low),
+    )
+    .await;
+    let _ = send(&link, message("prime?")).await;
+    let first = kinds_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        first
+            .into_iter()
+            .filter(|kind| !matches!(
+                kind,
+                EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+            ))
+            .collect::<Vec<EventKind>>(),
+        [
+            created_with(Provider::Codex, &server, "small", Effort::Low),
+            EventKind::SessionReady,
+            user("prime?"),
+            EventKind::Reasoning {
+                text: String::from(PRIME),
+            },
+            reply("Yes."),
+            turn_end(TurnOutcome::Completed),
+        ]
+    );
+    let _ = send(&link, message(COUNT)).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Closed).await,
+        [
+            user(COUNT),
+            // It dies before it answers `turn/start`.
+            turn_end(TurnOutcome::Failed {
+                message: String::from("the codex app-server has exited"),
+            }),
+            EventKind::SessionClosed {
+                reason: CloseReason::Exited {
+                    status: String::from("signal: 9 (SIGKILL)"),
+                },
+            },
+        ]
+    );
+    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::Ready).await,
+        [EventKind::SessionReady]
+    );
+    let _ = send(&link, message("codeword?")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd)
+            .await
+            .into_iter()
+            .filter(|kind| !matches!(
+                kind,
+                EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+            ))
+            .collect::<Vec<EventKind>>(),
+        [
+            user("codeword?"),
+            reply("quince"),
+            turn_end(TurnOutcome::Completed),
+        ]
+    );
+    let started = requests(&server, "stdin.jsonl", "thread/start");
+    let resumed = requests(&server, "stdin.2.jsonl", "thread/resume");
+    assert_eq!(
+        (
+            started.iter().map(thread_settings).collect::<Vec<_>>(),
+            resumed.iter().map(thread_settings).collect::<Vec<_>>(),
+        ),
+        (
+            Vec::from([(
+                None,
+                Some(serde_json::json!("small")),
+                Some(serde_json::json!("low"))
+            )]),
+            Vec::from([(
+                Some(serde_json::json!("01a1d192-4ae3-7691-9a42-41f8302fa397")),
+                Some(serde_json::json!("small")),
+                Some(serde_json::json!("low"))
+            )]),
+        )
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}

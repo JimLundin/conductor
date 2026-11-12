@@ -25,6 +25,10 @@ import pathlib
 HERE = pathlib.Path(__file__).parent
 SOURCE = HERE.parent / "codex" / "server1-u5.jsonl"
 QUESTIONS = HERE.parent / "codex" / "server3-questions.jsonl"
+CHOSEN = HERE.parent / "codex" / "server4-chosen-killed.jsonl"
+RESUMED = HERE.parent / "codex" / "server5-resumed.jsonl"
+# The turn `s2` step 12 killed the app-server in; the e2e test sends it.
+COUNT = "Count from 1 to 300, one number per line."
 
 # `s2`'s turns on its first thread, by step: 1 approve, 2 decline, 3
 # interrupt at start, pong, 3c interrupt mid-stream, pong, 3d interrupt at
@@ -126,20 +130,34 @@ def thread_of(start):
     return json.loads(start[0])["result"]["thread"]["id"]
 
 
-def split(source):
-    """The head, the thread starts and the turns of one `s2` process."""
+def split(source, listed=False):
+    """The head, the thread starts and the turns of one `s2` process. The
+    head keeps the `model/list` answer only if `listed`: `conductord`
+    asks for it as it starts, the daemon tests' hosts never do."""
     before, parts = segments(source.read_text().splitlines())
-    # The hub asks for no model list, so only the `initialize` answer stays.
-    head = [line for line in before if "userAgent" in line or "result" not in json.loads(line)]
+    head = [
+        line
+        for line in before
+        if "userAgent" in line or (listed and '"data":' in line) or "result" not in json.loads(line)
+    ]
     threads = [p for p in parts if "thread" in json.loads(p[0])["result"]]
     turns = [p for p in parts if "turn" in json.loads(p[0])["result"]]
     return head, threads, turns
 
 
 head, threads, turns = split(SOURCE)
+listed_head, _, _ = split(SOURCE, listed=True)
 first, second = threads[0], threads[1]
 q_head, q_threads, q_turns = split(QUESTIONS)
 q_first = q_threads[0]
+# `s2`'s fourth process: 11 a turn that reasons, then the turn it killed;
+# its fifth: 12 the thread resumed.
+c_head, c_threads, c_turns = split(CHOSEN)
+r_head, r_threads, r_turns = split(RESUMED)
+killed = [
+    wait({"method": "turn/start", "params": {"input": [{"type": "text", "text": COUNT}]}}),
+    json.dumps({"fake": "exit"}),
+]
 a, b = thread_of(first), thread_of(second)
 
 approve_asked, approve_rest = until_asked(turns[APPROVE])
@@ -147,6 +165,14 @@ decline_asked, decline_rest = until_asked(on_thread(turns[DECLINE], a, b))
 
 RECORDINGS = {
     "codex-two-threads.jsonl": head
+    + first
+    + second
+    + approve_asked
+    + decline_asked
+    + answered(approve_rest, "accept")
+    + answered(decline_rest, "decline"),
+    # The same for the browser test's `conductord`, which lists the models.
+    "codex-two-threads-listed.jsonl": listed_head
     + first
     + second
     + approve_asked
@@ -166,6 +192,9 @@ RECORDINGS = {
     + answered(q_turns[FOR_SESSION], "acceptForSession")
     + q_turns[AGAIN],
     "codex-question-withdraw.jsonl": q_head + q_first + withdrawn(q_turns[QUESTION_WITHDRAWN]),
+    # The stand-in dies on the next turn, as an app-server killed mid-turn.
+    "codex-killed.jsonl": c_head + c_threads[0] + c_turns[0] + killed,
+    "codex-resumed.jsonl": r_head + r_threads[0] + r_turns[0],
 }
 
 for name, lines in RECORDINGS.items():

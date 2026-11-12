@@ -17,6 +17,12 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
 - `{"fake": "hang_up", "after": 1}`, anywhere in the recording, closes stdin
   once that many lines are read, so the session's next write fails. The
   process stays up 1 s after the recording ends, so the failure isn't an exit.
+- `{"fake": "exit"}` kills the process with SIGKILL, as a crash would.
+
+Each start in the same directory is a new run. Run 1 plays `stdout.jsonl`
+and logs `stdin.jsonl`; run n after it plays `stdout.n.jsonl`, or
+`stdout.jsonl` again if there is none, and logs `stdin.n.jsonl`, so a test
+can restart a CLI and have it resume.
 
 Markers are never printed. Once stdin closes, nothing waits.
 
@@ -29,9 +35,15 @@ maybe a real credential, so it is written as `<inherited>`.
 
 import json
 import os
+import signal
 import sys
 import threading
 import time
+
+run = int(open("runs.txt").read()) + 1 if os.path.exists("runs.txt") else 1
+with open("runs.txt", "w") as runs:
+    runs.write(str(run))
+suffix = "" if run == 1 else f".{run}"
 
 with open("env.txt", "w") as env:
     for name in sorted(n for n in sys.argv[1:] if n in os.environ):
@@ -42,7 +54,8 @@ if "CODEX_HOME" in os.environ and os.path.exists(config):
     with open(config) as source, open("codex-config.toml", "w") as copy:
         copy.write(source.read())
 
-recording = open("stdout.jsonl").read().splitlines()
+played = f"stdout{suffix}.jsonl" if os.path.exists(f"stdout{suffix}.jsonl") else "stdout.jsonl"
+recording = open(played).read().splitlines()
 hang_up = next((m["after"] for m in map(json.loads, recording) if m.get("fake") == "hang_up"), None)
 received = []
 closed = False
@@ -51,7 +64,7 @@ changed = threading.Condition()
 
 def read_stdin():
     global closed
-    with open("stdin.jsonl", "w") as log:
+    with open(f"stdin{suffix}.jsonl", "w") as log:
         for line in sys.stdin:
             log.write(line)
             log.flush()
@@ -108,6 +121,8 @@ for line in recording:
         continue
     if msg.get("fake") == "hang_up":
         continue
+    if msg.get("fake") == "exit":
+        os.kill(os.getpid(), signal.SIGKILL)
     if msg.get("fake") == "pace":
         pace = msg["ms"] / 1000
         continue

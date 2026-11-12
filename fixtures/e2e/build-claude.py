@@ -23,12 +23,17 @@ import re
 HERE = pathlib.Path(__file__).parent
 SESSION1 = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
 SESSION3 = HERE.parent / "claude" / "session3-questions.jsonl"
+PROBE = HERE.parent / "claude" / "probe-thinking.jsonl"
+SESSION4 = HERE.parent / "claude" / "session4-chosen-killed.jsonl"
+SESSION5 = HERE.parent / "claude" / "session5-resumed.jsonl"
 
 # The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt at
 # start, pong, 3c interrupt mid-stream, pong, 3d interrupt at send, pong,
 # 3b interrupt with a permission open. Session 3: 7 a question, 8 a command
 # approved for the session, the same command again with no request, 9 a
-# question withdrawn by an interrupt.
+# question withdrawn by an interrupt. The probe: one turn with summarized
+# thinking. Session 4: 12 a turn that reasons (its thinking empty, through
+# the owner's gateway); session 5: 13 the same session resumed.
 RECORDINGS = {
     "claude-approve.jsonl": (SESSION1, [0]),
     "claude-deny-interrupt.jsonl": (SESSION1, [1, 4, 5]),
@@ -38,7 +43,14 @@ RECORDINGS = {
     "claude-question.jsonl": (SESSION3, [0]),
     "claude-for-session.jsonl": (SESSION3, [1, 2]),
     "claude-question-withdraw.jsonl": (SESSION3, [3]),
+    "claude-reasoning.jsonl": (PROBE, [0]),
+    "claude-killed.jsonl": (SESSION4, [0]),
+    "claude-resumed.jsonl": (SESSION5, [0]),
 }
+
+# After its turns, the stand-in reads the next message and dies, as a CLI
+# killed mid-turn does.
+KILLED = {"claude-killed.jsonl"}
 
 # The turn starts only once the test has sent its interrupt, so the session
 # must hold it until `init` (docs/architecture.md §5.1).
@@ -88,5 +100,6 @@ for name, (source, picked) in RECORDINGS.items():
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
     hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
     turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN)]
-    out = hang_up + gated(lines[0], False, False) + turn
+    killed = [wait({"type": "user"}), json.dumps({"fake": "exit"})] if name in KILLED else []
+    out = hang_up + gated(lines[0], False, False) + turn + killed
     (HERE / name).write_text("\n".join(out) + "\n")

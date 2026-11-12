@@ -5,7 +5,8 @@
 # (crates/agents/tests/fake-*.sh) through n0's relays. Each scenario gets its
 # own host: a Claude turn with approval in both engines (turn), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
-# approval for the session (questions, WebKit), and the screenshots of the
+# approval for the session (questions, WebKit), a picked model, a killed
+# CLI continued and the Thinking disclosure (continue), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt and docs/p1/screens/*-{running,closed,idle}.png.
 set -euo pipefail
@@ -52,7 +53,10 @@ held() { paced | awk '{print} /"text_delta"/ && ++n == 3 {print "{\"fake\": \"re
 start_host() {
   local name=$1
   shift
-  mkdir -p "$scratch/$name"
+  # The host lists Claude's models from the CLI's initialize answer, which
+  # the fake plays in the data dir's probe directory.
+  mkdir -p "$scratch/$name/probe"
+  head -2 "$recordings/claude-killed.jsonl" >"$scratch/$name/probe/stdout.jsonl"
   "$target"/debug/conductord host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" \
     --claude-path "$fakes/fake-claude.sh" --codex-path "${codex:-$scratch/no-codex}" "$@" \
@@ -116,7 +120,7 @@ set +e
   echo
   expect turn 6 'serve: command client="iPhone"' 'both turns'"'"' commands reached the host'
 
-  session "$scratch/codex" codex-two-threads.jsonl
+  session "$scratch/codex" codex-two-threads-listed.jsonl
   mkdir "$scratch/codex/first" "$scratch/codex/second"
   codex=$fakes/fake-codex.sh start_host codex
   echo
@@ -141,6 +145,20 @@ set +e
   expect questions 7 'serve: command client="iPhone"' 'both starts, three messages, the answer and the approval reached the host'
   expect questions 1 'body: Answer {' 'one answer reached the host'
   expect questions 1 'decision: ApproveForSession' 'one approval for the session reached the host'
+
+  session "$scratch/continue/killed" claude-killed.jsonl
+  cp "$recordings/claude-resumed.jsonl" "$scratch/continue/killed/stdout.2.jsonl"
+  session "$scratch/continue/reasoning" claude-reasoning.jsonl paced
+  start_host continue-host
+  echo
+  echo "## Model and effort, continue, Thinking, chromium"
+  run chromium continue "$scratch/continue.png" "$scratch/continue"
+  echo
+  echo "## Continue, host log"
+  host_log continue-host
+  echo
+  expect continue-host 1 'body: Continue {' 'one Continue reached the host'
+  expect continue-host 1 'model: Some(ModelId("sonnet")), effort: Some(High)' 'the picked model and effort reached the host'
 
   start_host credentials
   echo
