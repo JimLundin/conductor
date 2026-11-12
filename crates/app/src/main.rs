@@ -260,24 +260,16 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
     });
     let state = format!("{:?}", status.state);
     let (path_attr, path) = match status.path {
-        PathKind::Direct => ("Direct", "Direct".to_string()),
-        PathKind::Relayed => ("Relayed", "Relayed".to_string()),
-        PathKind::WebRtc(Some(pair)) => (
-            "WebRtc",
-            format!("WebRTC {}/{}", pair.local.as_str(), pair.remote.as_str()),
-        ),
-        PathKind::WebRtc(None) => ("WebRtc", "WebRTC".to_string()),
-        PathKind::Unknown => ("Unknown", "path unknown".to_string()),
-    };
-    let candidates = match status.path {
-        PathKind::WebRtc(Some(pair)) => format!("{}/{}", pair.local.as_str(), pair.remote.as_str()),
-        _ => String::new(),
+        PathKind::Direct => ("Direct", "Direct"),
+        PathKind::Relayed => ("Relayed", "Relayed"),
+        PathKind::WebRtc => ("WebRtc", "WebRTC"),
+        PathKind::Unknown => ("Unknown", "path unknown"),
     };
     let upgrade_error = status.upgrade_error.unwrap_or_default();
     let host = status.host.unwrap_or_else(|| "host".into());
     rsx! {
         header { class: "status", "data-state": "{state}", "data-path": "{path_attr}",
-            "data-candidates": "{candidates}", "data-upgrade-error": "{upgrade_error}",
+            "data-upgrade-error": "{upgrade_error}",
             span { class: "dot" }
             span { class: "host", "{host}" }
             span { class: "state", "{state}" }

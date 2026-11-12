@@ -20,8 +20,8 @@ use js_sys::{Reflect, Uint8Array};
 use n0_future::boxed::BoxStream;
 use n0_future::time::{Instant, sleep};
 use n0_future::{StreamExt, task};
-use proto::{CandidateType, FrameBuffer, Open, Reassembly, Remainder, RtcOffer, Signal};
-use tokio::sync::{mpsc, oneshot, watch};
+use proto::{FrameBuffer, Open, Reassembly, Remainder, RtcOffer, Signal};
+use tokio::sync::{mpsc, watch};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -31,7 +31,6 @@ use web_sys::{
     RtcPeerConnectionIceEvent, RtcPeerConnectionState, RtcSdpType, RtcSessionDescriptionInit,
 };
 
-use crate::CandidatePair;
 use crate::wire::{RecvHalf, SendHalf, WireError};
 
 /// ICE, DTLS and SCTP must be up within this, or the upgrade fails and the
@@ -55,7 +54,6 @@ pub(crate) struct Session {
 struct Inner {
     pc: RtcPeerConnection,
     peer: watch::Receiver<Peer>,
-    pair: Option<CandidatePair>,
     /// Open for as long as the connection is usable; it carries nothing.
     liveness: Channel,
     /// Dropping the last sender stops the signaling actor.
@@ -66,7 +64,7 @@ struct Inner {
 
 impl std::fmt::Debug for Inner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Session").field("pair", &self.pair).finish()
+        f.debug_struct("Session").finish_non_exhaustive()
     }
 }
 
@@ -79,11 +77,6 @@ impl Drop for Inner {
 }
 
 impl Session {
-    /// The selected candidate pair, if the browser's `getStats` named it.
-    pub(crate) fn pair(&self) -> Option<CandidatePair> {
-        self.inner.pair
-    }
-
     /// Resolves when the connection fails, the host ends it, or the host
     /// closes every channel.
     pub(crate) async fn closed(&self) {
@@ -114,7 +107,7 @@ impl Session {
 }
 
 /// Offers a WebRTC connection over `conn` and waits until a data channel
-/// is open. On failure the reason is also reported to the host for its log.
+/// is open.
 pub(crate) async fn negotiate(
     conn: Connection,
     stun_servers: Vec<String>,
@@ -160,8 +153,6 @@ pub(crate) async fn negotiate(
         pc: pc.clone(),
         messages,
         peer: peer_tx,
-        gathered: Vec::new(),
-        remote: Vec::new(),
         host: Host::Up {
             send,
             incoming: signals(RecvHalf::Iroh(recv)),
@@ -178,14 +169,11 @@ pub(crate) async fn negotiate(
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     match outcome {
         Ok(()) => {
-            let pair = selected_pair(&pc).await;
-            tracing::info!(elapsed_ms, ?pair, "webrtc data channel open");
-            let _ = inbox.send(Message::Opened(pair));
+            tracing::info!(elapsed_ms, "webrtc data channel open");
             Ok(Session {
                 inner: Rc::new(Inner {
                     pc,
                     peer,
-                    pair,
                     liveness,
                     _signaling: inbox,
                     _on_state: on_state,
@@ -194,15 +182,13 @@ pub(crate) async fn negotiate(
             })
         }
         Err(why) => {
-            let (reply, reason) = oneshot::channel();
-            let _ = inbox.send(Message::Failed {
-                why,
-                elapsed_ms,
-                reply,
-            });
-            let reason = reason
-                .await
-                .unwrap_or_else(|_| String::from("the signaling actor stopped"));
+            let reason = format!(
+                "{why} after {elapsed_ms} ms: ice {:?}, connection {:?}, gathering {:?}",
+                pc.ice_connection_state(),
+                pc.connection_state(),
+                pc.ice_gathering_state(),
+            );
+            tracing::warn!(reason, "webrtc upgrade failed");
             pc.close();
             Err(reason)
         }
@@ -221,18 +207,10 @@ fn peer_connection(stun_servers: &[String]) -> Result<RtcPeerConnection, String>
     RtcPeerConnection::new_with_configuration(&config).map_err(js)
 }
 
-/// What the browser's callbacks and [`negotiate`] tell the signaling actor.
+/// What the browser's callbacks tell the signaling actor.
 enum Message {
     State(RtcPeerConnectionState),
     Candidate(RtcPeerConnectionIceEvent),
-    /// The data channel opened, over this pair if the browser named it.
-    Opened(Option<CandidatePair>),
-    /// The upgrade failed for `why`. The reply is the reason in full.
-    Failed {
-        why: String,
-        elapsed_ms: u64,
-        reply: oneshot::Sender<String>,
-    },
 }
 
 /// The signaling stream's state.
@@ -254,15 +232,12 @@ enum Input {
 #[derive(Debug)]
 struct Stopped {}
 
-/// Carries candidates and reports both ways until the host closes the
-/// stream, which ends the connection, or the session is dropped. It keeps
-/// what both sides gathered, for the reason of a failed upgrade.
+/// Carries candidates both ways until the host closes the stream, which
+/// ends the connection, or the session is dropped.
 struct Signaling {
     pc: RtcPeerConnection,
     messages: mpsc::UnboundedReceiver<Message>,
     peer: watch::Sender<Peer>,
-    gathered: Vec<CandidateType>,
-    remote: Vec<Option<CandidateType>>,
     host: Host,
 }
 
@@ -302,32 +277,6 @@ impl Signaling {
         match message {
             Message::State(state) => self.on_state(state),
             Message::Candidate(event) => self.on_candidate(event).await,
-            Message::Opened(Some(pair)) => {
-                let selected = Signal::Selected {
-                    local: pair.local,
-                    remote: pair.remote,
-                };
-                self.send(selected).await;
-            }
-            Message::Opened(None) => {}
-            Message::Failed {
-                why,
-                elapsed_ms,
-                reply,
-            } => {
-                let reason = format!(
-                    "{why} after {elapsed_ms} ms: ice {:?}, connection {:?}, gathering {:?}; \
-                     browser gathered {:?}; host sent {:?}",
-                    self.pc.ice_connection_state(),
-                    self.pc.connection_state(),
-                    self.pc.ice_gathering_state(),
-                    self.gathered,
-                    self.remote,
-                );
-                tracing::warn!(reason, "webrtc upgrade failed");
-                let _ = reply.send(reason.clone());
-                self.send(Signal::Failed { reason }).await;
-            }
         }
     }
 
@@ -361,9 +310,6 @@ impl Signaling {
             .map(|candidate| candidate.candidate())
             .filter(|text| !text.is_empty());
         if let Some(text) = text {
-            let kind = CandidateType::of_candidate(&text);
-            tracing::info!(?kind, "webrtc local candidate");
-            self.gathered.extend(kind);
             self.send(Signal::Candidate { candidate: text }).await;
         }
     }
@@ -402,21 +348,9 @@ impl Signaling {
                 JsFuture::from(self.pc.set_remote_description(&description))
                     .await
                     .map_err(js)?;
-                self.remote.extend(
-                    sdp.lines()
-                        .filter_map(|line| line.strip_prefix("a="))
-                        .filter_map(|attribute| {
-                            attribute
-                                .strip_prefix("candidate:")
-                                .map(|_| CandidateType::of_candidate(attribute))
-                        }),
-                );
                 Ok(())
             }
             Signal::Candidate { candidate } => {
-                let kind = CandidateType::of_candidate(&candidate);
-                tracing::info!(?kind, "webrtc remote candidate");
-                self.remote.push(kind);
                 let init = RtcIceCandidateInit::new(&candidate);
                 init.set_sdp_m_line_index(Some(0));
                 JsFuture::from(
@@ -427,7 +361,6 @@ impl Signaling {
                 .map_err(js)?;
                 Ok(())
             }
-            Signal::Selected { .. } | Signal::Failed { .. } => Ok(()),
         }
     }
 }
@@ -437,75 +370,6 @@ fn signals(recv: RecvHalf) -> BoxStream<Result<Option<Signal>, WireError>> {
         let (recv, signal) = recv.read::<Signal>().await;
         Some((signal, recv))
     }))
-}
-
-/// Reads the selected candidate pair from `getStats`: the transport's
-/// `selectedCandidatePairId` where the browser sets it, else the last
-/// selected, or nominated and succeeded, pair.
-async fn selected_pair(pc: &RtcPeerConnection) -> Option<CandidatePair> {
-    let report = JsFuture::from(pc.get_stats())
-        .await
-        .ok()?
-        .unchecked_into::<js_sys::Map>();
-    let stats = report
-        .values()
-        .into_iter()
-        .filter_map(Result::ok)
-        .collect::<Vec<JsValue>>();
-    let selected = stats
-        .iter()
-        .find_map(|stat| match text(stat, "type").as_deref() {
-            Some("transport") => text(stat, "selectedCandidatePairId"),
-            _ => None,
-        });
-    let nominated = stats
-        .iter()
-        .rev()
-        .find(|stat| {
-            matches!(
-                (
-                    text(stat, "type").as_deref(),
-                    flag(stat, "selected"),
-                    flag(stat, "nominated"),
-                    text(stat, "state").as_deref(),
-                ),
-                (Some("candidate-pair"), Some(Flag::True), _, _)
-                    | (
-                        Some("candidate-pair"),
-                        _,
-                        Some(Flag::True),
-                        Some("succeeded")
-                    )
-            )
-        })
-        .and_then(|stat| text(stat, "id"));
-    let pair = report.get(&JsValue::from(selected.or(nominated)?));
-    Some(CandidatePair {
-        local: candidate_type(&report, &pair, "localCandidateId")?,
-        remote: candidate_type(&report, &pair, "remoteCandidateId")?,
-    })
-}
-
-/// A JS field whose value is `true`.
-enum Flag {
-    True,
-}
-
-fn candidate_type(report: &js_sys::Map, pair: &JsValue, id_field: &str) -> Option<CandidateType> {
-    let candidate = report.get(&JsValue::from(text(pair, id_field)?));
-    CandidateType::parse(&text(&candidate, "candidateType")?)
-}
-
-fn field(value: &JsValue, name: &str) -> Option<JsValue> {
-    Reflect::get(value, &JsValue::from(name)).ok()
-}
-
-fn text(value: &JsValue, name: &str) -> Option<String> {
-    field(value, name)?.as_string()
-}
-
-fn flag(value: &JsValue, name: &str) -> Option<Flag> {
-    field(value, name)?.as_bool()?.then_some(Flag::True)
 }
 
 fn js(err: JsValue) -> String {

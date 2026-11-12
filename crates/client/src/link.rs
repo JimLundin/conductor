@@ -23,8 +23,8 @@ use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::sleep;
 use n0_future::{StreamExt, join_all, task};
 use proto::{
-    AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch,
-    Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
+    AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch, Event, EventKind,
+    Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -75,17 +75,8 @@ pub enum PathKind {
     Direct,
     /// iroh, through a relay.
     Relayed,
-    /// A WebRTC data channel, with the selected candidate pair if the
-    /// browser reported it.
-    WebRtc(Option<CandidatePair>),
-}
-
-/// Host/host is the same LAN; srflx or prflx on either end means the path
-/// crosses a NAT.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CandidatePair {
-    pub local: CandidateType,
-    pub remote: CandidateType,
+    /// A WebRTC data channel.
+    WebRtc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,7 +347,7 @@ impl Carrier {
     fn path(&self, iroh: PathKind) -> PathKind {
         match self {
             Carrier::Iroh => iroh,
-            Carrier::WebRtc(session) => PathKind::WebRtc(session.pair()),
+            Carrier::WebRtc(_) => PathKind::WebRtc,
         }
     }
 }

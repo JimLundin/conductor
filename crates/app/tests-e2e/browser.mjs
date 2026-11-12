@@ -180,7 +180,6 @@ if (scenario === 'upgrade') {
   await waitPath('WebRtc', UPGRADE_WITHIN_MS);
   log(`WebRtc ${await upgradeMs()}ms after Live on the relay (page clock)`);
   log(`status line: "${await statusLine()}"`);
-  log(`selected candidate pair (local/remote): ${await status.getAttribute('data-candidates')}`);
 
   await turn({
     beforeApprove: async () => {
@@ -329,8 +328,8 @@ if (scenario === 'upgrade') {
         await openRow(title, shot);
         await shot.waitForTimeout(450);
         const file = `${out}/${device}-${scheme}-${state}.png`;
-        // The candidate pair differs from run to run, so it is left out of
-        // the shot; display: none, since a hidden span keeps its width.
+        // The path differs from run to run, so it is left out of the shot;
+        // display: none, since a hidden span keeps its width.
         await shot.screenshot({ path: file, style: '.status .path { display: none; }' });
         log(`screenshot ${file}`);
       }

@@ -1500,9 +1500,7 @@ fn host_ports(signaling: &Signaling) -> Vec<u16> {
             .collect::<BTreeSet<u16>>()
             .into_iter()
             .collect(),
-        Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. }) | None => {
-            Vec::new()
-        }
+        Some(Signal::Candidate { .. }) | None => Vec::new(),
     }
 }
 
@@ -1608,9 +1606,7 @@ fn host_addrs(signaling: &Signaling) -> Vec<SocketAddr> {
             .filter_map(|line| Candidate::from_sdp_string(line).ok())
             .map(|candidate| candidate.addr())
             .collect(),
-        Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. }) | None => {
-            Vec::new()
-        }
+        Some(Signal::Candidate { .. }) | None => Vec::new(),
     }
 }
 
@@ -1707,8 +1703,7 @@ impl SrflxBrowser {
         } = offering;
         let sdp = match &signaling.answer {
             Some(Signal::Answer { sdp }) => Some(sdp),
-            Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. })
-            | None => None,
+            Some(Signal::Candidate { .. }) | None => None,
         };
         let answer = SdpAnswer::from_sdp_string(sdp.unwrap()).unwrap();
         rtc.sdp_api().accept_answer(pending, answer).unwrap();

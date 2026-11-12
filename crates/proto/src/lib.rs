@@ -96,61 +96,6 @@ pub enum Signal {
     /// Both ways, trickled as each side learns its addresses. The text is an
     /// SDP `candidate:` attribute value.
     Candidate { candidate: String },
-    /// Client to host, so the host log records what the browser chose.
-    Selected {
-        local: CandidateType,
-        remote: CandidateType,
-    },
-    /// Client to host, so the host log records why an upgrade failed.
-    Failed { reason: String },
-}
-
-/// How an ICE candidate's address was found (RFC 8445 §5.1.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum CandidateType {
-    /// An interface address.
-    Host,
-    /// The public address a STUN server saw.
-    Srflx,
-    /// An address the peer saw our checks come from.
-    Prflx,
-    /// A TURN allocation. Conductor configures no TURN servers.
-    Relay,
-}
-
-impl CandidateType {
-    /// Reads the `typ` field of an SDP `candidate:` attribute value.
-    pub fn of_candidate(candidate: &str) -> Option<CandidateType> {
-        let words = candidate.split_ascii_whitespace();
-        words
-            .clone()
-            .zip(words.skip(1))
-            .find_map(|(key, value)| match key {
-                "typ" => Some(value),
-                _ => None,
-            })
-            .and_then(CandidateType::parse)
-    }
-
-    /// Parses the names browsers use in `RTCIceCandidateStats.candidateType`.
-    pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "host" => Some(Self::Host),
-            "srflx" => Some(Self::Srflx),
-            "prflx" => Some(Self::Prflx),
-            "relay" => Some(Self::Relay),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Host => "host",
-            Self::Srflx => "srflx",
-            Self::Prflx => "prflx",
-            Self::Relay => "relay",
-        }
-    }
 }
 
 /// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`
