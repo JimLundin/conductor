@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Records a pinned CLI version (docs/architecture.md §6.2).
+
+    tools/pin claude <version>
+    tools/pin codex <version>
+
+Verifies every platform's build with upstream's own checks, then writes the
+provider's section of pins.toml and the compiled form of the whole file,
+crates/agents/src/pins.rs. Claude: manifest.json.sig against Anthropic's
+release key, then each binary against the manifest. Codex: each release
+asset against GitHub's published digest, and the Linux cosign bundles when
+cosign is installed.
+"""
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import tomllib
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PINS = ROOT / "pins.toml"
+PINS_RS = ROOT / "crates/agents/src/pins.rs"
+
+CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
+CLAUDE_KEY = "https://downloads.claude.ai/keys/claude-code.asc"
+CLAUDE_FINGERPRINT = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+
+CODEX_RELEASE = "https://api.github.com/repos/openai/codex/releases/tags/rust-v{}"
+CODEX_TRIPLES = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+CODEX_ISSUER = "https://token.actions.githubusercontent.com"
+CODEX_IDENTITY = "https://github.com/openai/codex/.github/workflows/rust-release.yml@refs/tags/rust-v{}"
+
+
+def fail(message):
+    sys.exit(f"tools/pin: {message}")
+
+
+def fetch(url, to=None):
+    """Returns the body, or streams it to `to` and returns its SHA-256."""
+    request = urllib.request.Request(url, headers={"User-Agent": "conductor-tools-pin"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        if to is None:
+            return response.read()
+        digest = hashlib.sha256()
+        with open(to, "wb") as out:
+            while chunk := response.read(1 << 20):
+                digest.update(chunk)
+                out.write(chunk)
+        return digest.hexdigest()
+
+
+def pin_claude(version, work):
+    if shutil.which("gpg") is None:
+        fail("gpg is not installed; it is needed to verify manifest.json.sig")
+    home = work / "gnupg"
+    home.mkdir(mode=0o700)
+    gpg = ["gpg", "--homedir", str(home), "--batch", "--status-fd", "1"]
+    key = work / "claude-code.asc"
+    key.write_bytes(fetch(CLAUDE_KEY))
+    imported = subprocess.run(gpg + ["--import", str(key)], capture_output=True, text=True)
+    if f"IMPORT_OK 1 {CLAUDE_FINGERPRINT}" not in imported.stdout:
+        fail(f"{CLAUDE_KEY} is not the key {CLAUDE_FINGERPRINT}:\n{imported.stdout}{imported.stderr}")
+    manifest = work / "manifest.json"
+    signature = work / "manifest.json.sig"
+    manifest.write_bytes(fetch(f"{CLAUDE_BASE}/{version}/manifest.json"))
+    signature.write_bytes(fetch(f"{CLAUDE_BASE}/{version}/manifest.json.sig"))
+    verified = subprocess.run(gpg + ["--verify", str(signature), str(manifest)], capture_output=True, text=True)
+    valid = [line.split() for line in verified.stdout.splitlines() if line.startswith("[GNUPG:] VALIDSIG ")]
+    if verified.returncode != 0 or not any(fields[-1] == CLAUDE_FINGERPRINT for fields in valid):
+        fail(f"manifest.json.sig is not a good signature by {CLAUDE_FINGERPRINT}:\n{verified.stdout}{verified.stderr}")
+    print(f"claude {version}: manifest.json.sig is a good signature by {CLAUDE_FINGERPRINT}")
+    listed = json.loads(manifest.read_text())
+    if listed["version"] != version:
+        fail(f"the manifest is for {listed['version']}, not {version}")
+    hashes = {}
+    for platform, entry in listed["platforms"].items():
+        url = f"{CLAUDE_BASE}/{version}/{platform}/{entry['binary']}"
+        part = work / "binary"
+        found = fetch(url, part)
+        size = part.stat().st_size
+        part.unlink()
+        if found != entry["checksum"] or size != entry["size"]:
+            fail(f"{url}: SHA-256 {found} and {size} bytes, the manifest says {entry['checksum']} and {entry['size']}")
+        print(f"  {platform}: {found} matches the manifest")
+        hashes[platform] = found
+    return {
+        "version": version,
+        "verified": f"manifest.json.sig is a good signature by {CLAUDE_FINGERPRINT}; every binary matches the manifest",
+        "sha256": hashes,
+    }
+
+
+def codex_asset(triple):
+    return f"codex-{triple}.exe.tar.gz" if "windows" in triple else f"codex-{triple}.tar.gz"
+
+
+def codex_member(triple):
+    return f"codex-{triple}.exe" if "windows" in triple else f"codex-{triple}"
+
+
+def pin_codex(version, work):
+    release = json.loads(fetch(CODEX_RELEASE.format(version)))
+    assets = {asset["name"]: asset for asset in release["assets"]}
+    cosign = shutil.which("cosign")
+    if cosign is None:
+        print("cosign is not installed: the Linux cosign bundles are skipped")
+    hashes = {}
+    for triple in CODEX_TRIPLES:
+        name = codex_asset(triple)
+        if name not in assets:
+            fail(f"rust-v{version} has no asset {name}")
+        published = assets[name].get("digest") or ""
+        if not published.startswith("sha256:"):
+            fail(f"GitHub publishes no SHA-256 digest for {name}")
+        archive = work / name
+        found = fetch(assets[name]["browser_download_url"], archive)
+        if found != published.removeprefix("sha256:"):
+            fail(f"{name}: SHA-256 {found}, GitHub publishes {published}")
+        member = codex_member(triple)
+        with tarfile.open(archive) as tar:
+            if tar.getnames() != [member]:
+                fail(f"{name} holds {tar.getnames()}, not [{member!r}]")
+            if cosign is not None and "linux" in triple:
+                tar.extract(member, work, filter="data")
+        print(f"  {triple}: {found} matches GitHub's digest; holds {member}")
+        if cosign is not None and "linux" in triple:
+            bundle = work / f"codex-{triple}.sigstore"
+            bundle.write_bytes(fetch(assets[bundle.name]["browser_download_url"]))
+            checked = subprocess.run(
+                [cosign, "verify-blob", "--bundle", str(bundle),
+                 "--certificate-identity", CODEX_IDENTITY.format(version),
+                 "--certificate-oidc-issuer", CODEX_ISSUER, str(work / member)],
+                capture_output=True, text=True)
+            if checked.returncode != 0:
+                fail(f"cosign rejects {member}:\n{checked.stderr}")
+            print(f"  {triple}: cosign verifies {member}")
+            (work / member).unlink()
+        archive.unlink()
+        hashes[triple] = found
+    bundles = "the Linux cosign bundles verify" if cosign else "the Linux cosign bundles were skipped: cosign was not installed"
+    return {
+        "version": version,
+        "verified": f"every asset matches GitHub's published SHA-256 digest; {bundles}",
+        "sha256": hashes,
+    }
+
+
+def toml_section(name, pin):
+    lines = [f"[{name}]", f'version = "{pin["version"]}"', f'verified = "{pin["verified"]}"', "", f"[{name}.sha256]"]
+    lines += [f'"{key}" = "{value}"' for key, value in pin["sha256"].items()]
+    return "\n".join(lines) + "\n"
+
+
+def rust_fn(name, what, pin):
+    arms = "".join(f'        "{key}" => Some(String::from("{value}")),\n' for key, value in pin["sha256"].items())
+    return (
+        f'pub(crate) const {name.upper()}_VERSION: &str = "{pin["version"]}";\n\n'
+        f"/// The SHA-256 of the {what}.\n"
+        f"pub(crate) fn {name}_sha256(platform: &str) -> Option<String> {{\n"
+        f"    match platform {{\n{arms}        _ => None,\n    }}\n}}\n"
+    )
+
+
+def write(pins):
+    PINS.write_text(
+        "# The CLIs conductord installs, written by tools/pin (docs/architecture.md §6.2).\n"
+        "# Claude's hashes are of each binary, keyed by its manifest platform; Codex's\n"
+        "# are of each release asset, codex-<triple>.tar.gz (.exe.tar.gz on Windows).\n\n"
+        + "\n".join(toml_section(name, pins[name]) for name in ("claude", "codex") if name in pins))
+    if "claude" not in pins or "codex" not in pins:
+        print(f"wrote {PINS.relative_to(ROOT)}; {PINS_RS.relative_to(ROOT)} waits for both providers' pins")
+        return
+    PINS_RS.write_text(
+        "//! The pinned CLIs, written by `tools/pin` with `pins.toml`. Edit neither by\n"
+        "//! hand: run `tools/pin` again.\n\n"
+        + rust_fn("claude", "`claude` binary for a platform named as in Claude's manifest", pins["claude"]) + "\n"
+        + rust_fn("codex", "`codex-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
+    subprocess.run(["rustfmt", "--edition", "2024", str(PINS_RS)], check=True)
+    print(f"wrote {PINS.relative_to(ROOT)} and {PINS_RS.relative_to(ROOT)}")
+
+
+def main():
+    if len(sys.argv) != 3 or sys.argv[1] not in ("claude", "codex"):
+        fail("usage: tools/pin claude|codex <version>")
+    provider, version = sys.argv[1], sys.argv[2]
+    pins = tomllib.loads(PINS.read_text()) if PINS.exists() else {}
+    scratch = ROOT / "target"
+    scratch.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch, prefix="pin-") as work:
+        pinned = (pin_claude if provider == "claude" else pin_codex)(version, Path(work))
+    pins[provider] = pinned
+    write(pins)
+
+
+main()
