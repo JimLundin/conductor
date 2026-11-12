@@ -184,7 +184,7 @@ let ((stdin, stdout), stderr) = child
 
 ### A3. Match guards become nested matches
 
-Covers `expr.match.guard`, and `macro.unreachable` outside tests. Match on the guarded value inside the arm. An `unreachable!` arm means the match was split in two. Join it back into one match. Since version 7, a guard of one comparison or one `matches!` is allowed, with an unguarded arm for the same pattern after it (proposal 0040). The nested match stays the form for a guard against a literal or a variant.
+Covers `expr.match.guard`, and `macro.unreachable` outside tests. Match on the guarded value inside the arm. An `unreachable!` arm means the match was split in two. Join it back into one match. Since version 7, a guard of one comparison or one `matches!` on a value the arm's pattern bound is allowed, with an unguarded arm for the same pattern after it (proposal 0040). A guard against a literal, a variant or a constant is not: write the value in the pattern, or match on it in a nested match.
 
 Before, `crates/agents/src/claude/protocol.rs`:
 
@@ -205,7 +205,7 @@ Before, `crates/client/src/transcript.rs` handles `TranscriptDelta` in an `if le
 
 ### A4. Comparisons become `cmp` and literal patterns
 
-Covers `expr.binary.eq`, `ne`, `lt`, `le`, `gt` and `ge`. Compare with a literal by matching on it (`examples.md` §4). Order two values with `cmp` and match the `Ordering` (§3). Equality of two runtime values with no `Ord` was `.eq(..)` with `.then_some(..)`. Since version 7 it is a match guard (proposal 0040), and the lift is flagged.
+Covers `expr.binary.eq`, `ne`, `lt`, `le`, `gt` and `ge`. Compare with a literal by matching on it (`examples.md` §4). Order two values with `cmp` and match the `Ordering` (§3). Equality is never written with `cmp`: two runtime values are compared in a match guard (0040), and several at once as one guard over a tuple. Equality of two runtime values with no `Ord` was `.eq(..)` with `.then_some(..)`. Since version 7 it is a match guard (proposal 0040), and the lift is flagged.
 
 Before, `crates/client/src/link.rs` `apply`:
 

@@ -68,10 +68,20 @@ doesn't expand macros, so a reviewer still checks these:
   struct's own type (the tool accepts any method call), and 0028 a `fold` or
   `map(..).sum()` used only to count (the tool flags
   `filter_map(..).count()`), and 0041's `stream::iter(..).then(..)` used
-  only for effects (the tool flags a `try_collect` into `()`; a `collect`
-  into `Vec<Result<(), E>>` that is then checked for errors passes).
+  only for effects (the tool flags `for_each`, `try_for_each` and a
+  `try_collect` from `stream::iter` without a non-`()` list type; a
+  `collect` into `Vec<Result<(), E>>` that is then checked for errors
+  passes).
   0040's fallback arm is matched by pattern structure, so a fallback split
-  across several arms is flagged even when it is exhaustive.
+  across several arms is flagged even when it is exhaustive. 0040's guard
+  can't be typed either: `Some(v) if v.is_empty() == w.is_empty()` compares
+  two library booleans and passes, because `v` is bound. A lift whose
+  result is bound first and matched later (`let due = opt.filter(..);`
+  then `match due`) passes, and so does `match a.cmp(&b)` with only
+  `Ordering::Equal` and a catch-all, which is an equality written as an
+  ordering. 0041's `try_collect` needs the list's type in its turbofish to
+  be told from effects, and a stream bound to a name is followed only
+  within one fn.
 - **Which trait a method belongs to.** 0038 matches a method call by
   name, and only in a file that imports a listed operator trait. A
   library prelude that re-exports one through a glob hides it, and in a

@@ -544,9 +544,17 @@ ignores guards. `Some(hello).filter(|hello| hello.token == token)` and
 combines library booleans, as `submits` does, stays, since a guard can't
 hold `&&`.
 
-**Note:** an arm that needs two comparisons can't take a guard. Order or
-compare both with `cmp` in the scrutinee's tuple and match
-`Ordering::Equal`, as `crates/agents/src/bin/s1.rs` does.
+The guard tests a value the arm's pattern bound. A guard that compares
+with a literal, a variant or a constant is a pattern: `Some(Seq(0))`, not
+`Some(seq) if seq == Seq(0)`. `matches!` in a guard takes a call on a
+bound value, as `matches!(item.kind(), Kind::Write)`, since a pattern
+can't call a method. A `filter` of one comparison on an existing `Option`
+whose result is matched at once is a guard as well.
+
+When an arm needs several equalities, bind a tuple of each side in the
+scrutinee and compare it in one guard, as `crates/agents/src/bin/s1.rs`
+does with `seen if seen == (&expected, &t.text)`. Equality is never `cmp`
+against `Ordering::Equal`; `cmp` is for ordering (§3).
 
 ## 26. Awaited effects in order are a `for`
 
@@ -559,14 +567,17 @@ pub async fn replay(log: &Log, session: SessionId, kinds: Vec<EventKind>) -> Res
 }
 ```
 
-A loop whose body only performs side effects is a `for`, and its body
-holds only awaited calls with `?` (proposal 0041). It produces no value:
-building or selecting values inside a `for` is a violation, and stays the
-adapters' job (§8). Inside an actor, the body calls a `&mut self`
+A loop whose body only performs side effects is a `for` (proposal 0041).
+Its body holds only calls: `f(item);`, `f(item)?;`, `x.m(item).await?;`,
+or `let _ = f(item);` to discard a `#[must_use]` result (§19). An `.await`
+is always followed by `?`. It produces no value: building or selecting
+values inside a `for`, in a call's arguments or in its iterator
+expression, is a violation, and stays the adapters' job (§8). Inside an actor, the body calls a `&mut self`
 method, as in `self.step(step).await?;` in
-`crates/daemon/src/session.rs`. `stream::iter(..).then(..).try_collect()` into `()` is
-no longer the form for running effects in order. It stays for building a
-list from awaited steps.
+`crates/daemon/src/session.rs`. `for_each`, `try_for_each` and
+`stream::iter(..).then(..).try_collect()` into `()` are no longer the
+form for running effects. A `then` chain stays for building a list from
+awaited steps, with the list's type in `try_collect`'s turbofish.
 
 ## Still outside the subset
 
