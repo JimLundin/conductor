@@ -89,7 +89,7 @@ enum Turn {
 enum Pending {
     Open {
         native: NativeRequest,
-        call: Option<ToolCallId>,
+        call: ToolCallId,
     },
     Resolved(Resolution),
 }
@@ -312,7 +312,7 @@ impl SessionActor {
                 native: NativeRequest::Claude(id),
                 call,
             }) => {
-                if let (Decision::Deny, Some(call)) = (decision, call) {
+                if let Decision::Deny = decision {
                     self.declined.insert(call);
                 }
                 let resolution = Resolution::Decided {
@@ -370,20 +370,20 @@ impl SessionActor {
     async fn step(&mut self, step: Step) -> Result<(), Stopped> {
         match step {
             Step::Emit(kind) => self.emit(kind).await,
-            Step::Open {
-                native,
-                call,
-                tool,
-                detail,
-            } => {
+            Step::Open { native, call, tool } => {
                 let request = self.last_request.next();
                 self.last_request = request;
-                self.requests
-                    .insert(request, Pending::Open { native, call });
+                self.requests.insert(
+                    request,
+                    Pending::Open {
+                        native,
+                        call: call.clone(),
+                    },
+                );
                 self.emit(EventKind::RequestOpened {
                     request,
+                    call,
                     tool,
-                    detail,
                 })
                 .await
             }

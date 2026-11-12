@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use daemon::log::Log;
-use daemon::registry::{Availability, Providers, Registry};
+use daemon::registry::{Launcher, Launchers, Registry};
 use daemon::rtc::{Blackhole, RtcOptions};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, Launch};
@@ -115,7 +115,7 @@ async fn host(
     web_url: String,
     name: String,
     rtc: Option<Arc<RtcOptions>>,
-    claude: Availability,
+    claude: Launcher,
 ) -> anyhow::Result<Router> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
@@ -131,12 +131,14 @@ async fn host(
         .cloned()
         .context("online, but no home relay")?;
     let token = daemon::random_token();
-    let log = Log::spawn(name, daemon::random_epoch());
-    let codex =
-        Availability::Unavailable(String::from("this host does not run Codex sessions yet"));
+    let launchers = Launchers {
+        claude,
+        codex: Launcher::Unavailable(String::from("this host does not run Codex sessions yet")),
+    };
+    let log = Log::spawn(name, daemon::random_epoch(), launchers.providers());
     let conductor = Conductor {
         log: log.clone(),
-        registry: Registry::spawn(log, Providers { claude, codex }),
+        registry: Registry::spawn(log, launchers),
         token,
         rtc,
     };
@@ -153,7 +155,7 @@ async fn host(
 }
 
 /// Claude is available when `claude --version` runs and succeeds.
-async fn claude(launch: ClaudeLaunch) -> Availability {
+async fn claude(launch: ClaudeLaunch) -> Launcher {
     let ran = tokio::process::Command::new(&launch.claude_path)
         .arg("--version")
         .output()
@@ -164,11 +166,11 @@ async fn claude(launch: ClaudeLaunch) -> Availability {
             Some(0) => {
                 let version = String::from_utf8_lossy(&output.stdout);
                 tracing::info!(%path, version = %version.trim(), "claude is available");
-                Availability::Ready(Launch::Claude(launch))
+                Launcher::Ready(Launch::Claude(launch))
             }
-            status => Availability::Unavailable(format!("{path} --version exited with {status:?}")),
+            status => Launcher::Unavailable(format!("{path} --version exited with {status:?}")),
         },
-        Err(err) => Availability::Unavailable(format!("{path} does not run: {err}")),
+        Err(err) => Launcher::Unavailable(format!("{path} does not run: {err}")),
     }
 }
 

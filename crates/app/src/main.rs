@@ -1,22 +1,23 @@
-//! The Conductor UI. One host: the status line, then each session's
-//! transcript with its request cards and a message box. `dx serve --platform
-//! web` runs it in a browser.
+//! The Conductor UI for one host: the session list, a form to start a
+//! session, and each session's transcript. On a phone one screen shows at a
+//! time; on a wide window the list is a sidebar. `dx serve --platform web`
+//! runs it in a browser.
 
 // rsx! expands each "{text}" node to format!, which clippy flags.
 #![allow(clippy::useless_format)]
 
+mod session;
+mod sessions;
 mod ticket;
 
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use client::host_view::{self, HostView, Item, ReplyState, RequestState, SessionView, ToolState};
+use client::host_view::HostView;
 use client::{HostLink, LinkOptions, LinkState, PathKind, SendError, Status, Target, Update};
 use dioxus::prelude::*;
-use proto::{
-    CommandBody, CommandResult, Decision, Provider, RequestId, Resolution, SessionId, Ticket,
-    ToolKind, ToolOutcome, TurnOutcome,
-};
+use proto::{CommandBody, CommandResult, SessionId, Ticket};
+use ticket::Opening;
 use tokio::sync::mpsc;
 
 const CSS: Asset = asset!("/assets/main.css");
@@ -25,31 +26,46 @@ fn main() {
     dioxus::launch(App);
 }
 
+/// What fills the detail pane, and on a phone the whole window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Screen {
+    Sessions,
+    NewSession,
+    Session(SessionId),
+}
+
+/// Where commands go.
+#[derive(Clone)]
+pub(crate) enum Link {
+    Waiting,
+    Live(Rc<HostLink>),
+}
+
 #[component]
 fn App() -> Element {
     let initial = use_hook(ticket::initial);
-    let mut paired = use_signal(|| initial.as_ref().ok().cloned().flatten());
+    let mut opening = use_signal(|| initial.as_ref().ok().cloned().unwrap_or(Opening::Unpaired));
     let first_error = initial
         .err()
         .map(|error| format!("That join link is not valid: {error}"));
     rsx! {
         document::Stylesheet { href: CSS }
-        match paired() {
-            Some(ticket) => rsx! {
+        match opening() {
+            Opening::Host(ticket) => rsx! {
                 Host {
                     ticket,
                     on_change_host: move |()| {
                         ticket::forget();
-                        paired.set(None);
+                        opening.set(Opening::Unpaired);
                     },
                 }
             },
-            None => rsx! {
+            Opening::Unpaired => rsx! {
                 Pair {
                     error: first_error,
                     on_pair: move |ticket: Ticket| {
                         ticket::save(&ticket);
-                        paired.set(Some(ticket));
+                        opening.set(Opening::Host(ticket));
                     },
                 }
             },
@@ -85,31 +101,89 @@ fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
                 }
                 button { r#type: "submit", disabled: text().trim().is_empty(), "Connect" }
             }
-            if let Some(message) = error() {
-                p { class: "error", "{message}" }
+            match error() {
+                Some(message) => rsx! { p { class: "error", "{message}" } },
+                None => rsx! {},
             }
         }
     }
 }
 
+/// The screens over one host's view.
 #[component]
 fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     let status = use_signal(|| None::<Status>);
     let view = use_signal(HostView::empty);
-    let link = use_signal(|| None::<Rc<HostLink>>);
-    let notice = use_signal(|| None::<String>);
+    let link = use_signal(|| Link::Waiting);
     use_future(move || run_link(ticket.clone(), status, view, link));
+    let mut screen = use_signal(|| Screen::Sessions);
+    let notice = use_signal(|| None::<String>);
+    let session = match screen() {
+        Screen::Session(id) => view.read().sessions.get(&id).cloned(),
+        Screen::Sessions | Screen::NewSession => None,
+    };
+    // A session the host no longer reports (after a reset) falls back to the
+    // list, which on a phone is the only way out of the detail pane.
+    let shown = match (screen(), &session) {
+        (Screen::NewSession, _) | (Screen::Session(_), Some(_)) => "detail",
+        (Screen::Sessions, _) | (Screen::Session(_), None) => "list",
+    };
     rsx! {
-        div { class: "app",
+        div { class: "app", "data-screen": shown,
             StatusLine { status: status(), on_change_host }
-            main { class: "transcript",
-                for (id, session) in view.read().sessions.iter() {
-                    SessionPane { key: "{id.0}", id: *id, session: session.clone(), link, notice }
+            div { class: "panes",
+                sessions::SessionList { view, screen: screen(), on_select: move |next| screen.set(next) }
+                main { class: "detail",
+                    match (screen(), session) {
+                        (Screen::NewSession, _) => rsx! {
+                            sessions::NewSession {
+                                view,
+                                providers: status().and_then(|status| status.providers),
+                                link,
+                                on_back: move |()| screen.set(Screen::Sessions),
+                                on_started: move |id| screen.set(Screen::Session(id)),
+                            }
+                        },
+                        (Screen::Session(id), Some(session)) => rsx! {
+                            session::SessionPane {
+                                key: "{id.0}",
+                                id,
+                                session,
+                                link,
+                                notice,
+                                on_back: move |()| screen.set(Screen::Sessions),
+                            }
+                        },
+                        (Screen::Sessions | Screen::Session(_), _) => rsx! {
+                            div { class: "placeholder",
+                                p { "Choose a session, or start a new one." }
+                            }
+                        },
+                    }
                 }
             }
-            if let Some(notice) = notice() {
-                p { class: "notice", "{notice}" }
+        }
+    }
+}
+
+/// A screen's title bar. The back button shows only on a phone, where the
+/// list is a screen of its own.
+#[component]
+pub(crate) fn PaneHeader(
+    title: String,
+    subtitle: String,
+    on_back: EventHandler<()>,
+    children: Element,
+) -> Element {
+    rsx! {
+        header { class: "pane-head",
+            button { class: "back", "aria-label": "Sessions", onclick: move |_| on_back(()),
             }
+            div { class: "pane-title",
+                h2 { "{title}" }
+                p { "{subtitle}" }
+            }
+            {children}
         }
     }
 }
@@ -118,12 +192,12 @@ async fn run_link(
     ticket: Ticket,
     status: Signal<Option<Status>>,
     view: Signal<HostView>,
-    mut link: Signal<Option<Rc<HostLink>>>,
+    mut link: Signal<Link>,
 ) {
     let options = LinkOptions::new(ticket::client_name());
     match HostLink::spawn(Target::of_ticket(&ticket), options).await {
         Ok((handle, updates)) => {
-            link.set(Some(Rc::new(handle)));
+            link.set(Link::Live(Rc::new(handle)));
             let Err(err) = follow(updates, status, view).await;
             tracing::warn!(%err, "the link ended");
         }
@@ -152,23 +226,26 @@ async fn follow(
     }
 }
 
-fn run_command(
-    link: Signal<Option<Rc<HostLink>>>,
+pub(crate) async fn send(link: Link, body: CommandBody) -> Result<CommandResult, String> {
+    match link {
+        Link::Live(link) => link.send(body).await.map_err(|err| err.to_string()),
+        Link::Waiting => Err(String::from("Not connected to the host yet.")),
+    }
+}
+
+/// Sends a command whose only answer worth showing is a refusal.
+pub(crate) fn run_command(
+    link: Signal<Link>,
     mut notice: Signal<Option<String>>,
     body: CommandBody,
 ) {
-    match link() {
-        Some(link) => {
-            spawn(async move {
-                notice.set(match link.send(body).await {
-                    Ok(CommandResult::Accepted | CommandResult::Started { .. }) => None,
-                    Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
-                    Err(err) => Some(err.to_string()),
-                });
-            });
-        }
-        None => notice.set(Some(String::from("Not connected yet."))),
-    }
+    spawn(async move {
+        notice.set(match send(link(), body).await {
+            Ok(CommandResult::Accepted | CommandResult::Started { .. }) => None,
+            Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
+            Err(err) => Some(err),
+        });
+    });
 }
 
 #[component]
@@ -177,6 +254,7 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
         state: LinkState::Disconnected,
         path: PathKind::Unknown,
         host: None,
+        providers: None,
         error: None,
         upgrade_error: None,
     });
@@ -205,125 +283,9 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
             span { class: "state", "{state}" }
             span { class: "path", "{path}" }
             button { class: "change-host", onclick: move |_| on_change_host.call(()), "Change host" }
-            if let Some(error) = status.error {
-                span { class: "error", "{error}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn SessionPane(
-    id: SessionId,
-    session: SessionView,
-    link: Signal<Option<Rc<HostLink>>>,
-    notice: Signal<Option<String>>,
-) -> Element {
-    let composer = session.controls().composer;
-    let provider = match session.provider {
-        Provider::Claude => "Claude Code",
-        Provider::Codex => "Codex",
-    };
-    rsx! {
-        section { class: "session-pane",
-            h2 { class: "session-title", "{provider} in {session.directory.0}" }
-            div { class: "items",
-                for (i, item) in session.items.into_iter().enumerate() {
-                    TranscriptItem { key: "{i}", item, on_decide: move |(request, decision)| {
-                        run_command(link, notice, CommandBody::Resolve { session: id, request, decision })
-                    } }
-                }
-            }
-            Composer { composer, on_send: move |text| run_command(link, notice, CommandBody::SendMessage { session: id, text }) }
-        }
-    }
-}
-
-#[component]
-fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) -> Element {
-    match item {
-        Item::User { text, by } => rsx! { p { class: "user", "{by.0}: {text}" } },
-        Item::Reply { text, state } => rsx! {
-            p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
-        },
-        Item::Tool { tool, state, .. } => {
-            let state = match state {
-                ToolState::Running => "running",
-                ToolState::Finished(outcome) => match outcome {
-                    ToolOutcome::Succeeded => "succeeded",
-                    ToolOutcome::Failed => "failed",
-                    ToolOutcome::Declined => "declined",
-                },
-            };
-            let tool = match tool {
-                ToolKind::Command { command } => command,
-                ToolKind::FileChange { paths } => paths.join(", "),
-                ToolKind::Other { name, detail } => format!("{name} {detail}"),
-            };
-            rsx! { p { class: "tool", "data-state": state, "{tool}" } }
-        }
-        Item::Request {
-            request,
-            tool,
-            detail,
-            state,
-        } => rsx! {
-            section { class: "request", "data-open": matches!(state, RequestState::Open),
-                p { class: "request-title", "{tool} wants to run" }
-                pre { "{detail}" }
-                match &state {
-                    RequestState::Open => rsx! {
-                        div { class: "actions",
-                            button { class: "approve", onclick: move |_| on_decide((request, Decision::Approve)), "Approve" }
-                            button { class: "deny", onclick: move |_| on_decide((request, Decision::Deny)), "Deny" }
-                        }
-                    },
-                    RequestState::Resolved(Resolution::Decided { decision, by }) => rsx! {
-                        p { class: "resolved",
-                            {match decision { Decision::Approve => "Approved", Decision::Deny => "Denied" }}
-                            " by {by.0}"
-                        }
-                    },
-                    RequestState::Resolved(Resolution::Withdrawn) => rsx! { p { class: "resolved", "Withdrawn" } },
-                }
-            }
-        },
-        Item::TurnCompleted(outcome) => {
-            let (attr, text) = match outcome {
-                TurnOutcome::Completed => ("completed", String::from("Turn finished")),
-                TurnOutcome::Interrupted => ("interrupted", String::from("Interrupted")),
-                TurnOutcome::Failed { message } => ("failed", format!("Failed: {message}")),
-            };
-            rsx! { p { class: "turn-end", "data-outcome": attr, "{text}" } }
-        }
-        Item::Error(message) => rsx! { p { class: "error", "{message}" } },
-    }
-}
-
-#[component]
-fn Composer(composer: host_view::Composer, on_send: EventHandler<String>) -> Element {
-    let mut draft = use_signal(String::new);
-    rsx! {
-        form { class: "composer",
-            onsubmit: move |evt: FormEvent| {
-                evt.prevent_default();
-                let text = draft().trim().to_string();
-                if !text.is_empty() {
-                    on_send(text);
-                    draft.set(String::new());
-                }
-            },
-            div { class: "row",
-                input {
-                    r#type: "text",
-                    name: "prompt",
-                    placeholder: "Message the agent",
-                    autocomplete: "off",
-                    enterkeyhint: "send",
-                    value: "{draft}",
-                    oninput: move |evt| draft.set(evt.value()),
-                }
-                button { r#type: "submit", disabled: !matches!(composer, host_view::Composer::Open), "Send" }
+            match status.error {
+                Some(error) => rsx! { span { class: "error", "{error}" } },
+                None => rsx! {},
             }
         }
     }

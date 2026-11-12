@@ -1,10 +1,11 @@
 //! A host's sessions folded from its events: what the UI renders. No UI
 //! types, so it is unit-testable and shared by every client target.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use proto::{
-    ClientName, CloseReason, Event, EventKind, HostPath, Provider, RequestId, Resolution,
+    ClientName, CloseReason, Event, EventKind, HostPath, HostSeq, Provider, RequestId, Resolution,
     SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 
@@ -19,6 +20,8 @@ pub struct SessionView {
     pub directory: HostPath,
     pub status: SessionStatus,
     pub items: Vec<Item>,
+    /// The last event that touched this session.
+    pub activity: HostSeq,
 }
 
 /// Derived from the events, never sent.
@@ -40,16 +43,12 @@ pub enum Item {
         text: String,
         state: ReplyState,
     },
+    /// A tool call, with the approval it asked for, if any.
     Tool {
         call: ToolCallId,
         tool: ToolKind,
         state: ToolState,
-    },
-    Request {
-        request: RequestId,
-        tool: String,
-        detail: String,
-        state: RequestState,
+        approval: Approval,
     },
     TurnCompleted(TurnOutcome),
     Error(String),
@@ -66,6 +65,17 @@ pub enum ReplyState {
 pub enum ToolState {
     Running,
     Finished(ToolOutcome),
+    /// The turn or the session ended before the call finished.
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Approval {
+    NotAsked,
+    Asked {
+        request: RequestId,
+        state: RequestState,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,11 +84,27 @@ pub enum RequestState {
     Resolved(Resolution),
 }
 
-/// An in-place change to an earlier item. Resolving a request and finishing
-/// a tool call are the same shape, so they are one `map` over the items.
+/// An in-place change to an earlier tool call. Asking, resolving and
+/// finishing are the same shape, so they are one `map` over the items.
 enum Change {
+    Ask(ToolCallId, RequestId),
     Resolve(RequestId, Resolution),
     Finish(ToolCallId, ToolOutcome),
+    /// The host ended the turn or the session: nothing still running will
+    /// finish, and nothing still open will be answered.
+    End,
+}
+
+impl SessionStatus {
+    /// The status in one word, for the UI's text and its `data-status`.
+    pub fn word(&self) -> String {
+        String::from(match self {
+            SessionStatus::Starting => "starting",
+            SessionStatus::Idle => "idle",
+            SessionStatus::Running => "running",
+            SessionStatus::Closed(_) => "closed",
+        })
+    }
 }
 
 /// What the UI offers for a session, decided here so markup only shows it.
@@ -99,6 +125,13 @@ pub enum Composer {
 pub enum Interrupt {
     Offered,
     Hidden,
+}
+
+/// Whether a session waits on a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attention {
+    Quiet,
+    Requests(usize),
 }
 
 impl HostView {
@@ -124,12 +157,46 @@ impl HostView {
                 directory,
                 status: SessionStatus::Starting,
                 items: Vec::new(),
+                activity: event.seq,
             }),
             (Some(view), kind) => Some(view.apply(kind)),
             (None, _) => None,
         };
-        sessions.extend(session.map(|view| (event.session, view)));
+        sessions.extend(session.map(|view| {
+            (
+                event.session,
+                SessionView {
+                    activity: event.seq,
+                    ..view
+                },
+            )
+        }));
         HostView { sessions }
+    }
+
+    /// The sessions' ids, the most recently active first.
+    pub fn recent(&self) -> Vec<SessionId> {
+        self.sessions
+            .iter()
+            .map(|(id, view)| (Reverse(view.activity), id))
+            .collect::<BTreeMap<Reverse<HostSeq>, &SessionId>>()
+            .into_values()
+            .copied()
+            .collect()
+    }
+
+    /// Each directory a session ran in, once, the most recent first: the
+    /// suggestions for a new session.
+    pub fn directories(&self) -> Vec<HostPath> {
+        self.recent()
+            .iter()
+            .filter_map(|id| self.sessions.get(id))
+            .fold(Vec::new(), |known, view| {
+                match known.iter().find(|path| path.0 == view.directory.0) {
+                    Some(_) => known,
+                    None => known.into_iter().chain([view.directory.clone()]).collect(),
+                }
+            })
     }
 }
 
@@ -147,11 +214,36 @@ impl SessionView {
         }
     }
 
+    pub fn attention(&self) -> Attention {
+        let open = self
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    Item::Tool {
+                        approval: Approval::Asked {
+                            state: RequestState::Open,
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+            .count();
+        match open {
+            0 => Attention::Quiet,
+            open => Attention::Requests(open),
+        }
+    }
+
     fn apply(self, kind: EventKind) -> SessionView {
         match kind {
             EventKind::SessionCreated { .. } => self,
             EventKind::SessionReady => self.status(SessionStatus::Idle),
-            EventKind::SessionClosed { reason } => self.status(SessionStatus::Closed(reason)),
+            EventKind::SessionClosed { reason } => self
+                .change(Change::End)
+                .status(SessionStatus::Closed(reason)),
             EventKind::UserMessage { text, by } => self
                 .status(SessionStatus::Running)
                 .push(Item::User { text, by }),
@@ -164,6 +256,7 @@ impl SessionView {
                 call,
                 tool,
                 state: ToolState::Running,
+                approval: Approval::NotAsked,
             }),
             EventKind::ToolCall {
                 call,
@@ -171,19 +264,15 @@ impl SessionView {
             } => self.change(Change::Finish(call, outcome)),
             EventKind::RequestOpened {
                 request,
+                call,
                 tool,
-                detail,
-            } => self.push(Item::Request {
-                request,
-                tool,
-                detail,
-                state: RequestState::Open,
-            }),
+            } => self.ask(call, request, tool),
             EventKind::RequestResolved {
                 request,
                 resolution,
             } => self.change(Change::Resolve(request, resolution)),
             EventKind::TurnCompleted { outcome } => self
+                .change(Change::End)
                 .status(SessionStatus::Idle)
                 .push(Item::TurnCompleted(outcome)),
             EventKind::Error { message } => self.push(Item::Error(message)),
@@ -231,6 +320,28 @@ impl SessionView {
         SessionView { items, ..self }
     }
 
+    /// A request joins its tool call's card. A request for a call this view
+    /// never saw started gets a card of its own.
+    fn ask(self, call: ToolCallId, request: RequestId, tool: ToolKind) -> SessionView {
+        match self
+            .items
+            .iter()
+            .filter_map(Item::call)
+            .find(|seen| seen.0 == call.0)
+        {
+            Some(_) => self.change(Change::Ask(call, request)),
+            None => self.push(Item::Tool {
+                call,
+                tool,
+                state: ToolState::Running,
+                approval: Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                },
+            }),
+        }
+    }
+
     fn change(self, change: Change) -> SessionView {
         SessionView {
             items: self
@@ -244,34 +355,76 @@ impl SessionView {
 }
 
 impl Item {
+    fn call(&self) -> Option<&ToolCallId> {
+        match self {
+            Item::Tool { call, .. } => Some(call),
+            Item::User { .. } | Item::Reply { .. } | Item::TurnCompleted(_) | Item::Error(_) => {
+                None
+            }
+        }
+    }
+
     fn changed(self, change: &Change) -> Item {
-        match (self, change) {
-            (
-                Item::Request {
-                    request,
-                    tool,
-                    detail,
-                    state,
-                },
-                Change::Resolve(id, resolution),
-            ) => Item::Request {
-                state: match request.eq(id).then_some(resolution) {
-                    Some(resolution) => RequestState::Resolved(resolution.clone()),
-                    None => state,
-                },
-                request,
+        match self {
+            Item::Tool {
+                call,
                 tool,
-                detail,
-            },
-            (Item::Tool { call, tool, state }, Change::Finish(id, outcome)) => Item::Tool {
-                state: match call.eq(id).then_some(outcome).copied() {
-                    Some(outcome) => ToolState::Finished(outcome),
-                    None => state,
-                },
+                state,
+                approval,
+            } => Item::Tool {
+                state: state.changed(&call, change),
+                approval: approval.changed(&call, change),
                 call,
                 tool,
             },
-            (item, _) => item,
+            item => item,
+        }
+    }
+}
+
+impl ToolState {
+    fn changed(self, call: &ToolCallId, change: &Change) -> ToolState {
+        match (self, change) {
+            (state, Change::Finish(id, outcome)) => match call.eq(id).then_some(outcome).copied() {
+                Some(outcome) => ToolState::Finished(outcome),
+                None => state,
+            },
+            (ToolState::Running, Change::End) => ToolState::Stopped,
+            (state, Change::Ask(_, _) | Change::Resolve(_, _) | Change::End) => state,
+        }
+    }
+}
+
+impl Approval {
+    fn changed(self, call: &ToolCallId, change: &Change) -> Approval {
+        match (self, change) {
+            (approval, Change::Ask(id, request)) => match call.eq(id).then_some(request).copied() {
+                Some(request) => Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                },
+                None => approval,
+            },
+            (Approval::Asked { request, state }, Change::Resolve(id, resolution)) => {
+                Approval::Asked {
+                    state: match request.eq(id).then_some(resolution) {
+                        Some(resolution) => RequestState::Resolved(resolution.clone()),
+                        None => state,
+                    },
+                    request,
+                }
+            }
+            (
+                Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                },
+                Change::End,
+            ) => Approval::Asked {
+                request,
+                state: RequestState::Resolved(Resolution::Withdrawn),
+            },
+            (approval, Change::Resolve(_, _) | Change::Finish(_, _) | Change::End) => approval,
         }
     }
 }
@@ -286,7 +439,10 @@ mod tests {
         TurnOutcome,
     };
 
-    use super::{HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState};
+    use super::{
+        Approval, Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView,
+        ToolState,
+    };
 
     fn text(text: &str) -> String {
         String::from(text)
@@ -344,16 +500,20 @@ mod tests {
                 1,
                 EventKind::RequestOpened {
                     request: RequestId(1),
-                    tool: text("Bash"),
-                    detail: text("ls"),
+                    call: call.clone(),
+                    tool: ToolKind::Command {
+                        command: text("ls"),
+                    },
                 },
             ),
             (
                 1,
                 EventKind::RequestOpened {
                     request: RequestId(2),
-                    tool: text("Bash"),
-                    detail: text("rm"),
+                    call: ToolCallId(text("toolu_2")),
+                    tool: ToolKind::Command {
+                        command: text("rm"),
+                    },
                 },
             ),
             (
@@ -403,15 +563,7 @@ mod tests {
             ),
             (3, EventKind::SessionReady),
         ]);
-        let view = events
-            .into_iter()
-            .enumerate()
-            .map(|(index, (session, kind))| Event {
-                seq: HostSeq(u64::try_from(index).unwrap()),
-                session: SessionId(session),
-                kind,
-            })
-            .fold(HostView::empty(), HostView::apply);
+        let view = fold(events);
         assert_eq!(
             view.sessions,
             BTreeMap::from([
@@ -436,21 +588,24 @@ mod tests {
                                     command: text("ls"),
                                 },
                                 state: ToolState::Finished(ToolOutcome::Succeeded),
+                                approval: Approval::Asked {
+                                    request: RequestId(1),
+                                    state: RequestState::Resolved(Resolution::Decided {
+                                        decision: Decision::Approve,
+                                        by: ClientName(text("phone")),
+                                    }),
+                                },
                             },
-                            Item::Request {
-                                request: RequestId(1),
-                                tool: text("Bash"),
-                                detail: text("ls"),
-                                state: RequestState::Resolved(Resolution::Decided {
-                                    decision: Decision::Approve,
-                                    by: ClientName(text("phone")),
-                                }),
-                            },
-                            Item::Request {
-                                request: RequestId(2),
-                                tool: text("Bash"),
-                                detail: text("rm"),
-                                state: RequestState::Resolved(Resolution::Withdrawn),
+                            Item::Tool {
+                                call: ToolCallId(text("toolu_2")),
+                                tool: ToolKind::Command {
+                                    command: text("rm"),
+                                },
+                                state: ToolState::Stopped,
+                                approval: Approval::Asked {
+                                    request: RequestId(2),
+                                    state: RequestState::Resolved(Resolution::Withdrawn),
+                                },
                             },
                             Item::Reply {
                                 text: text("Done"),
@@ -458,6 +613,7 @@ mod tests {
                             },
                             Item::TurnCompleted(TurnOutcome::Completed),
                         ]),
+                        activity: HostSeq(15),
                     },
                 ),
                 (
@@ -467,9 +623,172 @@ mod tests {
                         directory: HostPath(text("/b")),
                         status: SessionStatus::Closed(CloseReason::Exited { status: text("1") }),
                         items: Vec::from([Item::Error(text("odd"))]),
+                        activity: HostSeq(17),
                     },
                 ),
             ])
+        );
+    }
+
+    fn fold(events: Vec<(u64, EventKind)>) -> HostView {
+        events
+            .into_iter()
+            .enumerate()
+            .map(|(index, (session, kind))| Event {
+                seq: HostSeq(u64::try_from(index).unwrap()),
+                session: SessionId(session),
+                kind,
+            })
+            .fold(HostView::empty(), HostView::apply)
+    }
+
+    fn opened(request: u64) -> EventKind {
+        EventKind::RequestOpened {
+            request: RequestId(request),
+            call: ToolCallId(format!("toolu_{request}")),
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
+        }
+    }
+
+    fn started(call: &str) -> EventKind {
+        EventKind::ToolCall {
+            call: ToolCallId(text(call)),
+            phase: ToolPhase::Started {
+                tool: ToolKind::Command {
+                    command: text("ls"),
+                },
+            },
+        }
+    }
+
+    fn asked(call: &str, request: u64, state: ToolState, approval: RequestState) -> Item {
+        Item::Tool {
+            call: ToolCallId(text(call)),
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
+            state,
+            approval: Approval::Asked {
+                request: RequestId(request),
+                state: approval,
+            },
+        }
+    }
+
+    #[test]
+    fn the_end_of_a_turn_or_session_stops_its_tools_and_withdraws_its_requests() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, started("toolu_1")),
+            (1, opened(1)),
+            (1, started("toolu_2")),
+            (
+                1,
+                EventKind::ToolCall {
+                    call: ToolCallId(text("toolu_2")),
+                    phase: ToolPhase::Finished {
+                        outcome: ToolOutcome::Succeeded,
+                    },
+                },
+            ),
+            (
+                1,
+                EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Interrupted,
+                },
+            ),
+            (2, created("/b")),
+            (2, opened(3)),
+            (
+                2,
+                EventKind::SessionClosed {
+                    reason: CloseReason::Exited { status: text("1") },
+                },
+            ),
+        ]));
+        assert_eq!(
+            view.sessions
+                .values()
+                .map(|session| session.items.clone())
+                .collect::<Vec<Vec<Item>>>(),
+            Vec::from([
+                Vec::from([
+                    asked(
+                        "toolu_1",
+                        1,
+                        ToolState::Stopped,
+                        RequestState::Resolved(Resolution::Withdrawn)
+                    ),
+                    Item::Tool {
+                        call: ToolCallId(text("toolu_2")),
+                        tool: ToolKind::Command {
+                            command: text("ls"),
+                        },
+                        state: ToolState::Finished(ToolOutcome::Succeeded),
+                        approval: Approval::NotAsked,
+                    },
+                    Item::TurnCompleted(TurnOutcome::Interrupted),
+                ]),
+                Vec::from([asked(
+                    "toolu_3",
+                    3,
+                    ToolState::Stopped,
+                    RequestState::Resolved(Resolution::Withdrawn)
+                )]),
+            ])
+        );
+        assert_eq!(
+            view.sessions
+                .values()
+                .map(SessionView::attention)
+                .collect::<Vec<Attention>>(),
+            Vec::from([Attention::Quiet, Attention::Quiet])
+        );
+    }
+
+    #[test]
+    fn the_list_puts_the_latest_activity_first_and_suggests_each_directory_once() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (2, created("/b")),
+            (3, created("/a")),
+            (1, EventKind::SessionReady),
+            (2, delta("x")),
+        ]));
+        assert_eq!(
+            view.recent(),
+            Vec::from([SessionId(2), SessionId(1), SessionId(3)])
+        );
+        assert_eq!(
+            view.directories(),
+            Vec::from([HostPath(text("/b")), HostPath(text("/a"))])
+        );
+    }
+
+    #[test]
+    fn attention_counts_the_open_requests() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, opened(1)),
+            (1, opened(2)),
+            (1, opened(3)),
+            (
+                1,
+                EventKind::RequestResolved {
+                    request: RequestId(2),
+                    resolution: Resolution::Withdrawn,
+                },
+            ),
+            (2, created("/b")),
+        ]));
+        assert_eq!(
+            view.sessions
+                .values()
+                .map(SessionView::attention)
+                .collect::<Vec<Attention>>(),
+            Vec::from([Attention::Requests(2), Attention::Quiet])
         );
     }
 }

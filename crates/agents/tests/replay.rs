@@ -320,7 +320,7 @@ async fn approve_deny_interrupt_recording() {
             // 1: approve a Write. Only text streams; tool input stays Unknown.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/a.txt\") for Some(\"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\")",
+            "permission Write Path(\"/tmp/s1-scratch/a.txt\") for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
             "user: tool_result error=false",
             "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
@@ -328,7 +328,7 @@ async fn approve_deny_interrupt_recording() {
             // 2: deny a Write.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/b.txt\") for Some(\"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\")",
+            "permission Write Path(\"/tmp/s1-scratch/b.txt\") for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
             "user: tool_result error=true",
             "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
             "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",
@@ -363,7 +363,7 @@ async fn approve_deny_interrupt_recording() {
             // 3b: interrupt with a permission request open; the CLI withdraws it.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/d.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/d.txt\") for Some(\"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq\")",
+            "permission Write Path(\"/tmp/s1-scratch/d.txt\") for \"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq\"",
             "permission_cancelled",
             "user: tool_result error=true",
             "user: text \"[Request interrupted by user for tool use]\"",
@@ -581,7 +581,7 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
         [
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/a.txt\") for Some(\"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\")",
+            "permission Write Path(\"/tmp/s1-scratch/a.txt\") for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
             "user: tool_result error=false",
             "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
@@ -632,7 +632,7 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
         [
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/b.txt\") for Some(\"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\")",
+            "permission Write Path(\"/tmp/s1-scratch/b.txt\") for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
             "user: tool_result error=true",
             "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
             "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",

@@ -2,6 +2,13 @@
 
 use proto::{ClientName, Ticket, TicketError};
 
+/// What the app opens on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    Host(Ticket),
+    Unpaired,
+}
+
 /// Accepts what a person pastes: the whole join link, or the bare ticket.
 pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
     let text = text.trim();
@@ -60,7 +67,7 @@ pub fn forget() {
 pub fn forget() {}
 
 #[cfg(target_family = "wasm")]
-pub fn initial() -> Result<Option<Ticket>, TicketError> {
+pub fn initial() -> Result<Opening, TicketError> {
     let window = web_sys::window().expect("running in a browser window");
     let hash = window.location().hash().unwrap_or_default();
     match hash.strip_prefix("#join=") {
@@ -75,19 +82,23 @@ pub fn initial() -> Result<Option<Ticket>, TicketError> {
                     Some(&path),
                 );
             }
-            Ok(Some(ticket))
+            Ok(Opening::Host(ticket))
         }
-        None => storage::get().map(|text| Ticket::parse(&text)).transpose(),
+        None => opening(storage::get()),
     }
 }
 
 /// Natively: the `CONDUCTOR_TICKET` environment variable.
 #[cfg(not(target_family = "wasm"))]
-pub fn initial() -> Result<Option<Ticket>, TicketError> {
-    std::env::var("CONDUCTOR_TICKET")
-        .ok()
-        .map(|text| Ticket::parse(&text))
-        .transpose()
+pub fn initial() -> Result<Opening, TicketError> {
+    opening(std::env::var("CONDUCTOR_TICKET").ok())
+}
+
+fn opening(saved: Option<String>) -> Result<Opening, TicketError> {
+    match saved {
+        Some(text) => Ticket::parse(&text).map(Opening::Host),
+        None => Ok(Opening::Unpaired),
+    }
 }
 
 /// Shown as "by" on what this client does.

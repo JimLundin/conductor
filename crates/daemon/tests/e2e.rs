@@ -14,16 +14,16 @@ use client::host_view::{HostView, Item, ReplyState, SessionStatus, SessionView};
 use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Status, Target, Update};
 use daemon::Stopped;
 use daemon::log::Log;
-use daemon::registry::{Availability, Providers, Registry};
+use daemon::registry::{Launcher, Launchers, Registry};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    AuthToken, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch, Event,
-    EventKind, HostPath, HostSeq, Provider, Rejection, RequestId, Resolution, SessionId,
-    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    AuthToken, Availability, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch,
+    Event, EventKind, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
+    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -53,13 +53,15 @@ fn fake_claude() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fixture {
-    let log = Log::spawn(String::from("test-host"), Epoch(11));
-    let claude = Availability::Ready(Launch::Claude(ClaudeLaunch {
-        claude_path,
-        model: None,
-    }));
-    let codex = Availability::Unavailable(String::from(UNAVAILABLE));
-    let registry = Registry::spawn(log.clone(), Providers { claude, codex });
+    let launchers = Launchers {
+        claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
+            claude_path,
+            model: None,
+        })),
+        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+    };
+    let log = Log::spawn(String::from("test-host"), Epoch(11), launchers.providers());
+    let registry = Registry::spawn(log.clone(), launchers);
     let endpoint = endpoint().await;
     let target = Target {
         addr: endpoint.addr(),
@@ -168,8 +170,9 @@ fn fold(events: Vec<Event>) -> HostView {
     events.into_iter().fold(HostView::empty(), HostView::apply)
 }
 
-/// The view of session 1 after `created()` and deltas that join into `text`.
-fn streaming(text: &str) -> HostView {
+/// The view of session 1 after `created()` and deltas that join into `text`,
+/// the last at `activity`.
+fn streaming(text: &str, activity: u64) -> HostView {
     HostView {
         sessions: BTreeMap::from([(
             SessionId(1),
@@ -181,6 +184,7 @@ fn streaming(text: &str) -> HostView {
                     text: String::from(text),
                     state: ReplyState::Streaming,
                 }]),
+                activity: HostSeq(activity),
             },
         )]),
     }
@@ -216,6 +220,15 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
         ]
     );
     assert_eq!(link.status().host, Some(String::from("test-host")));
+    assert_eq!(
+        link.status().providers,
+        Some(Providers {
+            claude: Availability::Available,
+            codex: Availability::Unavailable {
+                reason: String::from(UNAVAILABLE),
+            },
+        })
+    );
     assert_eq!(link.status().path, PathKind::Direct);
 
     let cases = Vec::from([
@@ -277,7 +290,7 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
     let after = events_through(&mut updates, HostSeq(6)).await;
     let seen = before.into_iter().chain(after).collect::<Vec<Event>>();
     assert_eq!(seqs(&seen), [1, 2, 3, 4, 5, 6].map(HostSeq));
-    assert_eq!(fold(seen), streaming("Hello world!"));
+    assert_eq!(fold(seen), streaming("Hello world!", 6));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -304,7 +317,7 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     assert_eq!(seqs(&rest), [HostSeq(3)]);
     assert_eq!(
         fold(seen.into_iter().chain(rest).collect()),
-        streaming("Hello")
+        streaming("Hello", 3)
     );
     second.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
@@ -339,7 +352,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
             Update::Status(_) | Update::Reset(_) => None,
         })
         .collect::<Vec<Event>>();
-    assert_eq!(fold(replayed), streaming("Hi"));
+    assert_eq!(fold(replayed), streaming("Hi", 2));
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
@@ -467,8 +480,10 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
         },
         EventKind::RequestOpened {
             request: RequestId(1),
-            tool: String::from("Write"),
-            detail: String::from(path),
+            call: ToolCallId(String::from(call)),
+            tool: ToolKind::FileChange {
+                paths: Vec::from([String::from(path)]),
+            },
         },
     ])
 }

@@ -1,4 +1,4 @@
-//! Serves `conductor/1` on accepted iroh connections, and on the data
+//! Serves the protocol (`proto::ALPN`) on accepted iroh connections, and on the data
 //! channels of WebRTC connections negotiated over them (architecture §5.4).
 
 use std::sync::Arc;

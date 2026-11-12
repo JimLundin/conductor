@@ -121,9 +121,10 @@ impl FrameBuffer {
 mod tests {
     use super::{FrameBuffer, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode};
     use crate::{
-        AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult,
-        Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Rejection, RequestId,
-        Resolution, RtcOffer, SessionId, Signal, Subscribe, TurnOutcome, Welcome,
+        AuthToken, Availability, CandidateType, ClientName, Command, CommandBody, CommandId,
+        CommandResult, Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open,
+        Providers, Rejection, RequestId, Resolution, RtcOffer, SessionId, Signal, Subscribe,
+        TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -197,9 +198,15 @@ mod tests {
                 host: String::from("desk"),
                 epoch: Epoch(1),
                 head_seq: HostSeq(0),
+                providers: Providers {
+                    claude: Availability::Available,
+                    codex: Availability::Unavailable {
+                        reason: String::from("no"),
+                    },
+                },
             }))
             .unwrap(),
-            frame(b"\x00\x04desk\x01\x00")
+            frame(b"\x00\x04desk\x01\x00\x00\x01\x02no")
         );
         assert_eq!(
             encode(&Event {

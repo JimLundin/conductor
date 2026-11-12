@@ -1220,8 +1220,17 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   and `Availability` move to `proto`; the host fills them from its registry,
   and the New Session screen shows them before the user tries. ALPN bump.
 - **`RequestOpened` is typed and carries the tool call id**:
-  `RequestOpened { request, call, tool: ToolKind, details }`, so the app joins
-  an approval to its tool card. Same ALPN bump as `Welcome`.
+  `RequestOpened { request, call: ToolCallId, tool: ToolKind }`, so the app
+  joins an approval to its tool card. Same ALPN bump as `Welcome`
+  (`conductor/2`). Two follow-up decisions, approved while unit 6 built it:
+  - **No separate `details` field.** `ToolKind` already is the per-kind typed
+    payload, made by the same `tool_kind` mapping as `ToolCall`. When the app
+    needs a Write's content or an Edit's diff, it goes into `ToolKind`'s
+    variants, so `ToolCall` carries it too.
+  - **`call` is required.** `agents` refuses a `can_use_tool` without a
+    `tool_use_id` with the control error it sends for an unknown subtype.
+    The tool is then refused, so `s1`'s approve step fails if the CLI ever
+    drops the id (`claude/PROTOCOL.md`).
 - **The client ends leftover state when the host says the turn or the CLI
   ended.** On `TurnCompleted` or `SessionClosed`, the `HostView` fold turns a
   `Running` tool into `Stopped` and an `Open` request into

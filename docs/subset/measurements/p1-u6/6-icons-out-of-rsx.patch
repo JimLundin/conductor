@@ -1,0 +1,38 @@
+From a9367f83ce6c6971bcfb9a6aeaa636e9c8dc6e7c Mon Sep 17 00:00:00 2001
+From: s <s@s>
+Date: Wed, 11 Nov 2026 21:33:24 +0100
+Subject: [PATCH] icons
+
+---
+ crates/app/src/main.rs    | 3 ---
+ crates/app/src/session.rs | 3 ---
+ 2 files changed, 6 deletions(-)
+
+diff --git a/crates/app/src/main.rs b/crates/app/src/main.rs
+index ba1bf8e..f0706b3 100644
+--- a/crates/app/src/main.rs
++++ b/crates/app/src/main.rs
+@@ -178,9 +178,6 @@ pub(crate) fn PaneHeader(
+     rsx! {
+         header { class: "pane-head",
+             button { class: "back", "aria-label": "Sessions", onclick: move |_| on_back(()),
+-                svg { view_box: "0 0 12 20", width: "12", height: "20", "aria-hidden": "true",
+-                    path { d: "M10 2 2 10l8 8", fill: "none", stroke: "currentColor", stroke_width: "2.4", stroke_linecap: "round", stroke_linejoin: "round" }
+-                }
+             }
+             div { class: "pane-title",
+                 h2 { "{title}" }
+diff --git a/crates/app/src/session.rs b/crates/app/src/session.rs
+index d90e095..ab13416 100644
+--- a/crates/app/src/session.rs
++++ b/crates/app/src/session.rs
+@@ -207,9 +207,6 @@ fn Composer(
+                 class: "send",
+                 "aria-label": "Send",
+                 disabled: !matches!(composer, host_view::Composer::Open),
+-                svg { view_box: "0 0 20 20", width: "20", height: "20", "aria-hidden": "true",
+-                    path { d: "M10 16V4M4.5 9.5 10 4l5.5 5.5", fill: "none", stroke: "currentColor", stroke_width: "2.2", stroke_linecap: "round", stroke_linejoin: "round" }
+-                }
+             }
+         }
+     }
