@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::Home;
 use agents::claude::{
     AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Outcome, PermissionDecision,
     PermissionMode, PermissionRequestId, Role, SettingSource, VersionPolicy,
@@ -51,6 +52,7 @@ fn fake_claude(name: &str, stdout: &Path) -> FakeClaude {
 fn options(claude: &FakeClaude) -> ClaudeOptions {
     ClaudeOptions {
         claude_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-claude.sh"),
+        home: Home::User,
         cwd: claude.dir.clone(),
         model: None,
         permission_mode: PermissionMode::Default,

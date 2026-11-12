@@ -11,17 +11,21 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::Home;
 use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
     Error, Item, Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
 };
+use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const CODEX: &str = "/home/jim/.local/bin/codex";
+/// Where the pinned CLIs are installed for the live checks. They run with the
+/// user's own homes, so the user's existing logins.
+const LIVE_DATA: &str = "/tmp/conductor-live";
 const SCRATCH: &str = "/tmp/s2-scratch";
 const TURN_TIMEOUT: Duration = Duration::from_secs(240);
 
@@ -406,9 +410,10 @@ async fn until_withdrawn(events: &mut mpsc::Receiver<CodexEvent>) -> Option<Appr
     }
 }
 
-async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
+async fn spawn(codex: &Path, stdout_log: Option<PathBuf>) -> Result<Live> {
     let (server, events) = CodexServer::spawn(ServerOptions {
-        codex_path: PathBuf::from(CODEX),
+        codex_path: PathBuf::from(codex),
+        home: Home::User,
         cwd: PathBuf::from(SCRATCH),
         stdout_log,
     })
@@ -422,7 +427,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
     let fixtures = fixtures.as_deref();
 
-    let live = spawn(log_path(fixtures, "server1")).await?;
+    let codex = install(Cli::Codex, Path::new(LIVE_DATA)).await?;
+    let live = spawn(&codex, log_path(fixtures, "server1")).await?;
     let models = live.server.list_models().await?;
     let model = models
         .iter()
@@ -606,7 +612,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )?;
 
     let status = both.live.server.shutdown().await?;
-    let live = spawn(log_path(fixtures, "server2-resume")).await?;
+    let live = spawn(&codex, log_path(fixtures, "server2-resume")).await?;
     let resumed = live
         .server
         .resume_thread(a.id.clone(), thread_opts.clone())

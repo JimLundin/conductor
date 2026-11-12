@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::Home;
 use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision, Item,
     Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
@@ -277,6 +278,7 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 async fn spawn(name: &str) -> Recorder {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        home: Home::User,
         cwd: fake_codex_dir(&fixture(name)),
         stdout_log: None,
     })

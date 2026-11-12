@@ -2,8 +2,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use agents::codex::ServerOptions;
+use agents::install::{Cli, install};
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
@@ -18,7 +19,7 @@ use qrcode::render::unicode::Dense1x2;
 
 #[derive(Parser)]
 #[command(name = "conductord", about = "The Conductor host daemon")]
-struct Cli {
+struct Args {
     #[command(subcommand)]
     command: Cmd,
 }
@@ -27,6 +28,25 @@ struct Cli {
 enum Cmd {
     /// Serve this host's sessions over iroh and print a join ticket.
     Host(HostArgs),
+    /// Sign a provider's CLI in on this terminal, into the host's private
+    /// home for it. Until the app can sign in (docs/roadmap.md).
+    Login(LoginArgs),
+}
+
+#[derive(Parser)]
+struct LoginArgs {
+    provider: LoginProvider,
+    /// The host's data dir, as given to `conductord host`.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LoginProvider {
+    /// `claude auth login --claudeai`: a Claude subscription.
+    Claude,
+    /// `codex login --device-auth`: ChatGPT, by device code.
+    Codex,
 }
 
 #[derive(Parser)]
@@ -40,16 +60,19 @@ struct HostArgs {
     /// The web app's URL; the printed join link is this plus `#join=<ticket>`.
     #[arg(long, default_value = "http://localhost:8080/conductor/")]
     web_url: String,
-    /// The Claude Code CLI. A host where it doesn't run offers no Claude
-    /// sessions.
-    #[arg(long, default_value = "claude")]
-    claude_path: PathBuf,
+    /// A Claude Code CLI to run instead of the pinned one the host installs,
+    /// for tests and development. A host where it doesn't run offers no
+    /// Claude sessions.
+    #[arg(long)]
+    claude_path: Option<PathBuf>,
     /// The model for Claude sessions, such as `haiku`. Defaults to the CLI's.
     #[arg(long)]
     claude_model: Option<String>,
-    /// The Codex CLI. A host where it doesn't run offers no Codex sessions.
-    #[arg(long, default_value = "codex")]
-    codex_path: PathBuf,
+    /// A Codex CLI to run instead of the pinned one the host installs, for
+    /// tests and development. A host where it doesn't run offers no Codex
+    /// sessions.
+    #[arg(long)]
+    codex_path: Option<PathBuf>,
     /// The model for Codex sessions, such as `gpt-6-luna`. Defaults to the
     /// app-server's.
     #[arg(long)]
@@ -65,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    match Cli::parse().command {
+    match Args::parse().command {
         Cmd::Host(HostArgs {
             data_dir,
             name,
@@ -75,42 +98,89 @@ async fn main() -> anyhow::Result<()> {
             codex_path,
             codex_model,
         }) => {
-            let data_dir = match data_dir {
-                Some(dir) => dir,
-                None => directories::ProjectDirs::from("", "", "conductor")
-                    .context("no home directory to put the data dir in")?
-                    .data_dir()
-                    .to_path_buf(),
+            let data_dir = data_dir_or_default(data_dir)?;
+            let homes = daemon::homes(&data_dir)?;
+            let claude = match cli_path(Cli::Claude, claude_path, &data_dir).await {
+                Ok(claude_path) => {
+                    launcher(
+                        &claude_path.clone(),
+                        Launch::Claude(ClaudeLaunch {
+                            claude_path,
+                            home: homes.claude,
+                            model: claude_model,
+                        }),
+                    )
+                    .await
+                }
+                Err(reason) => unavailable(reason),
             };
-            let claude = launcher(
-                &claude_path.clone(),
-                Launch::Claude(ClaudeLaunch {
-                    claude_path,
-                    model: claude_model,
-                }),
-            )
-            .await;
-            // The app-server's own working directory is the data dir; each
-            // thread runs in its session's directory.
-            let hub = CodexHub::spawn(ServerOptions {
-                codex_path: codex_path.clone(),
-                cwd: data_dir.clone(),
-                stdout_log: None,
-            });
-            let codex = launcher(
-                &codex_path,
-                Launch::Codex(CodexLaunch {
-                    hub,
-                    model: codex_model,
-                }),
-            )
-            .await;
+            let codex = match cli_path(Cli::Codex, codex_path, &data_dir).await {
+                Ok(codex_path) => {
+                    // The app-server's own working directory is the data dir;
+                    // each thread runs in its session's directory.
+                    let hub = CodexHub::spawn(ServerOptions {
+                        codex_path: codex_path.clone(),
+                        home: homes.codex,
+                        cwd: data_dir.clone(),
+                        stdout_log: None,
+                    });
+                    launcher(
+                        &codex_path,
+                        Launch::Codex(CodexLaunch {
+                            hub,
+                            model: codex_model,
+                        }),
+                    )
+                    .await
+                }
+                Err(reason) => unavailable(reason),
+            };
             let launchers = Launchers { claude, codex };
             let router = host(data_dir, web_url, name, launchers).await?;
             tokio::signal::ctrl_c().await?;
             router.shutdown().await?;
             Ok(())
         }
+        Cmd::Login(LoginArgs { provider, data_dir }) => {
+            let data_dir = data_dir_or_default(data_dir)?;
+            let homes = daemon::homes(&data_dir)?;
+            let mut login = match provider {
+                LoginProvider::Claude => {
+                    agents::claude::login(&install(Cli::Claude, &data_dir).await?, &homes.claude)
+                }
+                LoginProvider::Codex => {
+                    agents::codex::login(&install(Cli::Codex, &data_dir).await?, &homes.codex)
+                }
+            };
+            let status = login.status().await?;
+            match status.code() {
+                Some(0) => Ok(()),
+                _ => Err(anyhow::Error::msg(format!(
+                    "the sign-in exited with {status}"
+                ))),
+            }
+        }
+    }
+}
+
+fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    match data_dir {
+        Some(dir) => Ok(dir),
+        None => Ok(directories::ProjectDirs::from("", "", "conductor")
+            .context("no home directory to put the data dir in")?
+            .data_dir()
+            .to_path_buf()),
+    }
+}
+
+/// The CLI to run: the one given, or else the pinned one, installed into the
+/// data dir if it isn't there yet.
+async fn cli_path(cli: Cli, given: Option<PathBuf>, data_dir: &Path) -> Result<PathBuf, String> {
+    match given {
+        Some(path) => Ok(path),
+        None => install(cli, data_dir)
+            .await
+            .map_err(|err| format!("installing the pinned {}: {err}", cli.name())),
     }
 }
 
@@ -165,10 +235,15 @@ async fn launcher(cli: &Path, launch: Launch) -> Launcher {
                 tracing::info!(%path, version = %version.trim(), "available");
                 Launcher::Ready(launch)
             }
-            status => Launcher::Unavailable(format!("{path} --version exited with {status:?}")),
+            status => unavailable(format!("{path} --version exited with {status:?}")),
         },
-        Err(err) => Launcher::Unavailable(format!("{path} does not run: {err}")),
+        Err(err) => unavailable(format!("{path} does not run: {err}")),
     }
+}
+
+fn unavailable(reason: String) -> Launcher {
+    tracing::warn!("unavailable: {reason}");
+    Launcher::Unavailable(reason)
 }
 
 /// Prints the ticket, the join link and its QR code, and writes the code as

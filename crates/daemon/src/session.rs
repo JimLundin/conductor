@@ -5,6 +5,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
 use std::path::PathBuf;
 
+use agents::Home;
 use agents::claude::{
     ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode, PermissionRequestId, SettingSource,
     VersionPolicy,
@@ -27,6 +28,7 @@ use crate::mapping::{self, NativeRequest, NativeTurn, Step};
 #[derive(Debug, Clone)]
 pub struct ClaudeLaunch {
     pub claude_path: PathBuf,
+    pub home: Home,
     /// `None` leaves the CLI's default model.
     pub model: Option<String>,
 }
@@ -201,15 +203,24 @@ async fn run(
 
 async fn start(directory: HostPath, launch: Launch) -> Result<Agent, AgentError> {
     match launch {
-        Launch::Claude(ClaudeLaunch { claude_path, model }) => {
+        Launch::Claude(ClaudeLaunch {
+            claude_path,
+            home,
+            model,
+        }) => {
             let (session, events) = ClaudeSession::spawn(ClaudeOptions {
                 claude_path,
+                home,
                 cwd: PathBuf::from(directory.0),
                 model,
                 permission_mode: PermissionMode::Default,
                 resume: None,
-                // As in `s1`: the user's own hooks and plugins stay out.
-                setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
+                // The user level is the host's private home (§6.2).
+                setting_sources: Some(Vec::from([
+                    SettingSource::User,
+                    SettingSource::Project,
+                    SettingSource::Local,
+                ])),
                 stdout_log: None,
                 versions: VersionPolicy::AllowUntested,
             })

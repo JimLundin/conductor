@@ -7,13 +7,13 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::Exit;
+use crate::{Exit, Home};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
@@ -29,6 +29,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
     pub codex_path: PathBuf,
+    pub home: Home,
     /// The app-server's own working directory; each thread sets its `cwd`.
     pub cwd: PathBuf,
     /// Append every raw stdout line to this file.
@@ -235,8 +236,25 @@ async fn ask<T>(
     answer.await.map_err(|_| Error::Exited)
 }
 
+/// `codex` with its home.
+fn cli(codex_path: &Path, home: &Home) -> Command {
+    let mut cmd = Command::new(codex_path);
+    if let Home::Private(dir) = home {
+        cmd.env("CODEX_HOME", dir);
+    }
+    cmd
+}
+
+/// The ChatGPT sign-in by device code, `codex login --device-auth`, into
+/// `home`. It stores the credential there itself.
+pub fn login(codex_path: &Path, home: &Home) -> Command {
+    let mut cmd = cli(codex_path, home);
+    cmd.args(["login", "--device-auth"]);
+    cmd
+}
+
 pub(crate) fn command(opts: &ServerOptions) -> Command {
-    let mut cmd = Command::new(&opts.codex_path);
+    let mut cmd = cli(&opts.codex_path, &opts.home);
     cmd.args(["app-server", "--listen", "stdio://"])
         .current_dir(&opts.cwd)
         .stdin(Stdio::piped())
@@ -551,8 +569,8 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::{
-        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Open, Process, RequestId,
-        ServerOptions, ThreadId, command,
+        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Home, Open, Process,
+        RequestId, ServerOptions, ThreadId, command,
     };
 
     #[tokio::test]
@@ -595,6 +613,7 @@ mod tests {
     fn app_server_argv() {
         let cmd = command(&ServerOptions {
             codex_path: "/opt/codex".into(),
+            home: Home::User,
             cwd: "/tmp".into(),
             stdout_log: None,
         });

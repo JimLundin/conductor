@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use agents::Home;
 use agents::codex::ServerOptions;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
@@ -66,6 +67,7 @@ async fn host_with(claude_path: PathBuf) -> Fixture {
     host_of(Launchers {
         claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
             claude_path,
+            home: Home::User,
             model: None,
         })),
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
@@ -79,6 +81,7 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
     let server = scratch(recording, recording);
     let hub = CodexHub::spawn(ServerOptions {
         codex_path: fake_codex(),
+        home: Home::User,
         cwd: server.clone(),
         stdout_log: None,
     });

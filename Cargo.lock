@@ -42,11 +42,16 @@ name = "agents"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "data-encoding",
  "n0-future",
+ "reqwest 0.13.5",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
  "uuid",

@@ -5,13 +5,13 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::Exit;
+use crate::{Exit, Home};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
@@ -53,6 +53,7 @@ pub enum VersionPolicy {
 #[derive(Debug, Clone)]
 pub struct ClaudeOptions {
     pub claude_path: PathBuf,
+    pub home: Home,
     pub cwd: PathBuf,
     pub model: Option<String>,
     pub permission_mode: PermissionMode,
@@ -256,8 +257,30 @@ const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
+/// `claude` with what every run of it gets: its home, and its own updates
+/// off, since the host installs the version it runs.
+fn cli(claude_path: &Path, home: &Home) -> Command {
+    let mut cmd = Command::new(claude_path);
+    cmd.env("DISABLE_UPDATES", "1");
+    if let Home::Private(dir) = home {
+        cmd.env("CLAUDE_CONFIG_DIR", dir);
+    }
+    for var in PARENT_SESSION_VARS {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
+/// The subscription sign-in, `claude auth login --claudeai`, into `home`. It
+/// stores the credential there itself.
+pub fn login(claude_path: &Path, home: &Home) -> Command {
+    let mut cmd = cli(claude_path, home);
+    cmd.args(["auth", "login", "--claudeai"]);
+    cmd
+}
+
 pub(crate) fn command(opts: &ClaudeOptions) -> Command {
-    let mut cmd = Command::new(&opts.claude_path);
+    let mut cmd = cli(&opts.claude_path, &opts.home);
     cmd.args([
         "--print",
         "--verbose",
@@ -298,9 +321,6 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
             uuid::Uuid::new_v4().to_string(),
         ]),
     });
-    for var in PARENT_SESSION_VARS {
-        cmd.env_remove(var);
-    }
     cmd.current_dir(&opts.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -574,14 +594,16 @@ impl Actor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{ClaudeOptions, PermissionMode, SessionId, SettingSource, VersionPolicy, command};
+    use crate::Home;
 
     #[test]
     fn resumed_session_argv() {
         let cmd = command(&ClaudeOptions {
             claude_path: "/opt/claude".into(),
+            home: Home::Private(PathBuf::from("/srv/conductor/home/claude")),
             cwd: "/tmp".into(),
             model: Some(String::from("haiku")),
             permission_mode: PermissionMode::Default,
@@ -618,14 +640,26 @@ mod tests {
                 "stdio",
             ]
         );
-        let removed = std
+        let env = std
             .get_envs()
             .filter_map(|(key, value)| match (key.to_str(), value) {
-                (Some("CLAUDECODE"), None) => Some("CLAUDECODE"),
-                (Some("CLAUDE_CODE_SESSION_ID"), None) => Some("CLAUDE_CODE_SESSION_ID"),
+                (Some("CLAUDECODE"), None) => Some((key, None)),
+                (Some("CLAUDE_CODE_SESSION_ID"), None) => Some((key, None)),
+                (Some("CLAUDE_CONFIG_DIR" | "DISABLE_UPDATES"), Some(value)) => {
+                    Some((key, value.to_str()))
+                }
                 _ => None,
             })
-            .collect::<Vec<&str>>();
-        assert_eq!(removed, ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID"]);
+            .map(|(key, value)| (key.to_str().unwrap(), value))
+            .collect::<Vec<(&str, Option<&str>)>>();
+        assert_eq!(
+            env,
+            [
+                ("CLAUDECODE", None),
+                ("CLAUDE_CODE_SESSION_ID", None),
+                ("CLAUDE_CONFIG_DIR", Some("/srv/conductor/home/claude")),
+                ("DISABLE_UPDATES", Some("1")),
+            ]
+        );
     }
 }

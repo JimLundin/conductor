@@ -8,16 +8,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::Home;
 use agents::claude::{
     AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, Outcome,
     PermissionDecision, PermissionMode, PermissionRequestId, Role, SessionId, SettingSource,
     VersionPolicy,
 };
+use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
-const CLAUDE: &str = "/home/jim/.local/bin/claude";
+/// Where the pinned CLIs are installed for the live checks. They run with the
+/// user's own homes, so the user's existing logins.
+const LIVE_DATA: &str = "/tmp/conductor-live";
 const SCRATCH: &str = "/tmp/s1-scratch";
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -249,9 +253,10 @@ impl Turn {
     }
 }
 
-fn options(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
+fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
     ClaudeOptions {
-        claude_path: PathBuf::from(CLAUDE),
+        claude_path: PathBuf::from(claude),
+        home: Home::User,
         cwd: PathBuf::from(SCRATCH),
         model: Some(String::from("haiku")),
         permission_mode: PermissionMode::Default,
@@ -263,8 +268,12 @@ fn options(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOpti
     }
 }
 
-async fn spawn(resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> Result<Live> {
-    let (session, events) = ClaudeSession::spawn(options(resume, stdout_log)).await?;
+async fn spawn(
+    claude: &Path,
+    resume: Option<SessionId>,
+    stdout_log: Option<PathBuf>,
+) -> Result<Live> {
+    let (session, events) = ClaudeSession::spawn(options(claude, resume, stdout_log)).await?;
     Ok(Live { session, events })
 }
 
@@ -335,8 +344,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let scratch = Path::new(SCRATCH);
     fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
     let fixtures = fixtures.as_deref();
+    let claude = install(Cli::Claude, Path::new(LIVE_DATA)).await?;
 
-    let live = spawn(None, log_path(fixtures, "session1")).await?;
+    let live = spawn(&claude, None, log_path(fixtures, "session1")).await?;
     let t = Turn::start(
         live,
         "Use the Write tool to create the file a.txt in the current directory with the content `hello from s1`. Do nothing else.",
@@ -446,6 +456,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
 
     let status = t.live.session.shutdown().await?;
     let live = spawn(
+        &claude,
         Some(session_id.clone()),
         log_path(fixtures, "session2-resume"),
     )

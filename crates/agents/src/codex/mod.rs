@@ -10,4 +10,4 @@ pub use protocol::{
     ItemPhase, ModelInfo, PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId,
     TurnOutcome,
 };
-pub use server::{CodexServer, CodexThread, Error, ServerOptions};
+pub use server::{CodexServer, CodexThread, Error, ServerOptions, login};

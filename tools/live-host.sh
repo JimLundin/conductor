@@ -4,17 +4,26 @@
 # runs of the `headless` example. It costs a few cents of API use, so it is
 # not part of tools/check.sh.
 #
-#   tools/live-host.sh [--provider claude|codex] [log-dir]
+#   tools/live-host.sh [--provider claude|codex] [--data-dir DIR] [log-dir]
+#
+# The host runs the pinned CLIs in its private homes, so it needs a sign-in
+# there: run `conductord login claude|codex --data-dir DIR` once and pass the
+# same --data-dir, which is kept. Without --data-dir, a temp dir is used and
+# removed.
 #
 # Prints one RESULT line. Exits non-zero on a failed check. Each run's output
 # and the host's own log are kept in log-dir (default: a temp dir).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 provider=claude
-if [ "${1:-}" = --provider ]; then
-  provider=$2
-  shift 2
-fi
+data_dir=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --provider) provider=$2; shift 2 ;;
+    --data-dir) data_dir=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
 case $provider in
   claude) create="Use the Write tool to create a.txt in the current directory containing exactly the word hello. Then say done." ;;
   # Codex writes in the workspace without asking, so the prompt asks it to
@@ -32,12 +41,17 @@ logs=${1:-$(mktemp -d)}
 mkdir -p "$logs"
 rm -rf "$scratch"
 mkdir -p "$scratch"
-data_dir=$(mktemp -d)
+cleanup=
+if [ -z "$data_dir" ]; then
+  data_dir=$(mktemp -d)
+  cleanup=$data_dir
+fi
 "$target"/debug/conductord host --data-dir "$data_dir" --claude-model haiku --codex-model gpt-6-luna \
   >"$logs/host.out" 2>"$logs/host.log" &
 host_pid=$!
-trap 'kill $host_pid 2>/dev/null || true; rm -rf "$data_dir"' EXIT
-for _ in $(seq 120); do
+trap 'kill $host_pid 2>/dev/null || true; [ -z "$cleanup" ] || rm -rf "$cleanup"' EXIT
+# The first start in a data dir downloads the pinned CLIs.
+for _ in $(seq 600); do
   grep -q '^ticket:' "$logs/host.out" && break
   kill -0 $host_pid 2>/dev/null || { cat "$logs/host.log"; exit 1; }
   sleep 0.5
