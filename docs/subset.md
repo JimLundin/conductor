@@ -46,7 +46,7 @@ is rejected, however much code it saves.
      would need `&'static str`, which the subset excludes, and the `match`
      measured about half the size (`docs/subset/reviews/p1-u2.md`);
    - one `match` that maps a variant to its data, used by every call site,
-     as in `fn label(kind: Kind) -> &'static str { match kind { .. } }`;
+     as in `fn label(kind: Kind) -> String { match kind { .. } }`;
    - enum variants that carry their data, as in `Exit::Code(i32)` rather
      than one variant per code;
    - test cases as a table with one assertion over them, once a group has

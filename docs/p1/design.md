@@ -1185,6 +1185,12 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   text. The browser's offline cache, a later item, uses the browser's own
   storage with the same postcard bytes. Durability is a later slice, not
   slice 1.
+- **Storage models: serde-derived types plus typed table consts** (option C,
+  decided 2026-11-12). A stored value is a plain struct or enum deriving
+  `Serialize` and `Deserialize`, encoded with postcard. Each table is one
+  `const` of type `redb::TableDefinition<K, V>`, with `K` and `V` our own
+  types, declared in the `store` module. No hand-written codecs and no derive
+  macro of our own.
 
 ## 11. Changes from the unit 2 review (2026-11-11)
 
