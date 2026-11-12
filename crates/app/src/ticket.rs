@@ -1,6 +1,6 @@
 //! Where the host ticket comes from on each target.
 
-use proto::{ClientName, Ticket, TicketError};
+use proto::{Ticket, TicketError};
 
 /// What the app opens on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,17 +99,6 @@ fn opening(saved: Option<String>) -> Result<Opening, TicketError> {
         Some(text) => Ticket::parse(&text).map(Opening::Host),
         None => Ok(Opening::Unpaired),
     }
-}
-
-/// Shown as "by" on what this client does.
-#[cfg(target_family = "wasm")]
-pub fn client_name() -> ClientName {
-    ClientName(String::from("browser"))
-}
-
-#[cfg(not(target_family = "wasm"))]
-pub fn client_name() -> ClientName {
-    ClientName(String::from("desktop"))
 }
 
 #[cfg(test)]

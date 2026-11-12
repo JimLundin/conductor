@@ -194,7 +194,7 @@ async fn run_link(
     view: Signal<HostView>,
     mut link: Signal<Link>,
 ) {
-    let options = LinkOptions::new(ticket::client_name());
+    let options = LinkOptions::new(client::platform::client_name());
     match HostLink::spawn(Target::of_ticket(&ticket), options).await {
         Ok((handle, updates)) => {
             link.set(Link::Live(Rc::new(handle)));

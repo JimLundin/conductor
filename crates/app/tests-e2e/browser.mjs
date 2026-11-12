@@ -40,11 +40,15 @@ const check = (ok, what) => {
 const engine = process.env.ENGINE ?? 'chromium';
 const browser = await { chromium, webkit }[engine].launch();
 log(`engine: ${engine} ${browser.version()}, scenario: ${scenario}`);
+// An iPhone's user agent, so the app names itself "iPhone" in Hello.
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 3,
   isMobile: true,
   hasTouch: true,
+  userAgent: IPHONE_UA,
 });
 // Records every status change with the page's own clock, so upgrade timings
 // don't depend on how often Playwright polls.
@@ -154,7 +158,7 @@ const turn = async ({ during = async () => {}, beforeApprove = async () => {} } 
   check((await text('.tool .tool-detail')) === WRITTEN, 'one tool card, for the written file');
   check((await text('.tool .tool-name')) === 'Write', 'the card names the change a Write');
   check((await pane.locator('.tool').getAttribute('data-state')) === 'succeeded', 'the tool succeeded');
-  check((await text('.request .resolved')) === 'Approved by browser', 'the approval resolved once, by this browser');
+  check((await text('.request .resolved')) === 'Approved by iPhone', 'the approval resolved once, by this device');
   check((await text('.reply')) === REPLY, 'the streamed reply is every delta exactly once');
   check((await text('.turn-end')) === 'Turn finished', 'exactly one "Turn finished"');
 };
@@ -268,13 +272,13 @@ if (scenario === 'upgrade') {
   await openRow('first');
   await pane.locator('.request[data-open="true"] button.approve').click();
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
-  check((await text('.request .resolved')) === 'Approved by browser', 'the first request was approved by this browser');
+  check((await text('.request .resolved')) === 'Approved by iPhone', 'the first request was approved by this device');
   check((await pane.locator('.tool').getAttribute('data-state')) === 'succeeded', 'the approved command succeeded');
   check((await text('.reply')).endsWith('Created [a.txt](/tmp/s2-scratch/a.txt).'), 'the first turn ended with its own answer');
   await openRow('second');
   await pane.locator('.request[data-open="true"] button.deny').click();
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
-  check((await text('.request .resolved')) === 'Denied by browser', 'the second request was denied by this browser');
+  check((await text('.request .resolved')) === 'Denied by iPhone', 'the second request was denied by this device');
   check((await text('.reply')) === 'The request was declined.', 'the second turn ended with its own answer');
   await page.screenshot({ path: out });
 } else if (scenario === 'screens') {

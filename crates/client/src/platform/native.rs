@@ -2,6 +2,8 @@ use iroh::endpoint::{BindError, Connection, presets};
 use iroh::{Endpoint, RelayMode};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
 
+use proto::ClientName;
+
 use crate::CandidatePair;
 use crate::wire::WireError;
 
@@ -13,6 +15,12 @@ pub(crate) async fn public_endpoint() -> Result<Endpoint, BindError> {
         .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
+}
+
+/// The desktop app's name in `Hello`. The headless example and the tests
+/// give their own.
+pub fn client_name() -> ClientName {
+    ClientName(String::from("desktop"))
 }
 
 /// Native clients hole-punch with iroh and never upgrade, so a native build
