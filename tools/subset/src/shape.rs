@@ -89,9 +89,7 @@ impl Lists<'_> {
 
     /// Whether a method called on a range iterates it.
     fn iterates(&self, method: &str) -> bool {
-        method == "into_iter"
-            || self.takes_closure(method)
-            || self.adapters.iter().any(|m| m == method)
+        self.takes_closure(method) || self.adapters.iter().any(|m| m == method)
     }
 }
 
@@ -276,6 +274,8 @@ struct FnCtx {
     some_bindings: BTreeSet<String>,
     /// Names bound to a stream that starts at `stream::iter`.
     stream_bindings: BTreeSet<String>,
+    /// Names bound to a `const` table or a chain over one (proposal 0042).
+    table_bindings: HashMap<String, Expr>,
 }
 
 /// The rules of proposals 0038 and 0039 at one kind of position.
@@ -455,6 +455,16 @@ impl Checker<'_> {
         self.types.insert(std::ptr::from_ref(ty), slot);
     }
 
+    /// A `const` table of tuples with a `&str` in them, whose row is a
+    /// named struct under proposal 0042.
+    fn check_tuple_rows(&mut self, ty: &Type) {
+        if let Some(row @ Type::Tuple(_)) = table::element(ty)
+            && table::holds_str(row)
+        {
+            self.flag(row.span(), &rules::STR_TUPLE_ROW);
+        }
+    }
+
     fn in_library_impl(&self) -> bool {
         self.impls
             .last()
@@ -491,6 +501,7 @@ impl Checker<'_> {
             params: param_types(sig),
             some_bindings: bound_to(block, |init, _| some_call(init)),
             stream_bindings: bound_to(block, stream_root),
+            table_bindings: self.tables.bindings(block),
         });
         if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
             self.check_receiver(r);
@@ -900,7 +911,7 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             .iter()
             .any(|a| derives(a, "Parser") || derives(a, "clap::Parser"));
         let crate_visible = is_pub_crate(&i.vis);
-        let row = self.tables.is_row(&i.ident.to_string());
+        let row = self.tables.is_row(i);
         for field in &i.fields {
             if clap {
                 self.set_type(&field.ty, Slot::ClapField);
@@ -923,12 +934,14 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     }
 
     fn visit_item_const(&mut self, i: &'ast syn::ItemConst) {
+        self.check_tuple_rows(&i.ty);
         self.set_type(&i.ty, Slot::ConstType);
         self.set_expr(&i.expr, Slot::ConstInit);
         visit::visit_item_const(self, i);
     }
 
     fn visit_impl_item_const(&mut self, i: &'ast syn::ImplItemConst) {
+        self.check_tuple_rows(&i.ty);
         self.set_type(&i.ty, Slot::ConstType);
         self.set_expr(&i.expr, Slot::ConstInit);
         visit::visit_impl_item_const(self, i);
@@ -1195,12 +1208,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 if drop && !named {
                     self.flag(e.func.span(), &rules::DROP_DISCARD);
                 }
-                if callee.path.len() >= 2
-                    && callee.last() == "new"
+                let range_fn = callee.path.len() >= 2
                     && RANGE_TYPES.contains(&callee.path[callee.path.len() - 2].as_str())
-                    && !callee.ours
-                    && !self.range_sources.contains(&std::ptr::from_ref(expr))
-                {
+                    && !self.range_sources.contains(&std::ptr::from_ref(expr));
+                let bound = BOUNDS.contains(&callee.last());
+                if (range_fn || bound) && !callee.ours {
                     self.flag(e.func.span(), &rules::RANGE_CALL);
                 }
                 for arg in &e.args {
@@ -1256,19 +1268,34 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 {
                     self.flag(e.method.span(), &rules::STREAM_EFFECTS);
                 }
-                if self.lists.iterates(&e.method.to_string()) {
+                // `into_iter` on a range returns the range itself, so it
+                // iterates only when its own result is iterated.
+                let into_iter_iterated = e.method == "into_iter"
+                    && self.range_sources.contains(&std::ptr::from_ref(expr));
+                if self.lists.iterates(&e.method.to_string())
+                    || into_iter_iterated
+                    || e.method == "contains"
+                {
                     self.range_sources
                         .insert(std::ptr::from_ref(unparen(&e.receiver)));
+                }
+                if e.method == "split_at" || e.method == "split_at_mut" {
+                    self.flag(e.method.span(), &rules::SPLIT_AT);
                 }
                 if e.method == "zip" || e.method == "chain" {
                     for arg in &e.args {
                         self.range_sources.insert(std::ptr::from_ref(unparen(arg)));
                     }
                 }
-                if LOOKUPS.contains(&e.method.to_string().as_str())
-                    && let (Some(keys), Some(Expr::Closure(c))) =
-                        (self.tables.scanned(&e.receiver), e.args.first())
-                    && keyed(c, keys)
+                let bindings = self
+                    .fns
+                    .last()
+                    .map(|f| f.table_bindings.clone())
+                    .unwrap_or_default();
+                if (self.lists.predicate(&e.method.to_string()) || e.method == "rposition")
+                    && let (Some(scan), Some(Expr::Closure(c))) =
+                        (self.tables.scanned(&e.receiver, &bindings), e.args.first())
+                    && table::keyed(c, &scan)
                 {
                     self.flag(e.method.span(), &rules::KEYED_TABLE);
                 }
@@ -1359,14 +1386,11 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             Expr::Tuple(e) if e.elems.is_empty() && !library_value(&slot) => {
                 self.flag(e.span(), &rules::UNIT_VALUE);
             }
-            Expr::Tuple(e) if e.elems.len() == 2 && e.elems.iter().all(bound) => {
-                self.flag(e.span(), &rules::RANGE_BOUNDS);
-            }
             Expr::Path(e)
                 if e.path
                     .segments
                     .last()
-                    .is_some_and(|s| s.ident == "RangeFull")
+                    .is_some_and(|s| s.ident == "RangeFull" || s.ident == "Unbounded")
                     && !self.facts.is_ours(&e.path) =>
             {
                 self.flag(e.span(), &rules::RANGE_PATH);
@@ -1383,9 +1407,10 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 self.set_expr(&e.expr, slot.clone());
             }
             Expr::Array(e) => {
-                if e.elems
-                    .iter()
-                    .any(|row| matches!(row, Expr::Tuple(t) if t.elems.len() > 2))
+                if e.elems.len() >= 2
+                    && e.elems
+                        .iter()
+                        .any(|row| matches!(row, Expr::Tuple(_)) && leaves(row) > 2)
                 {
                     self.flag(e.span(), &rules::TUPLE_TABLE);
                 }
@@ -1613,7 +1638,6 @@ fn comparison(body: &Expr) -> bool {
     }
 }
 
-/// Methods that compare by name, as `a.eq(&b)` (proposal 0040).
 /// The std range types, whose construction by name is a range expression.
 const RANGE_TYPES: &[&str] = &[
     "Range",
@@ -1623,8 +1647,8 @@ const RANGE_TYPES: &[&str] = &[
     "RangeToInclusive",
     "RangeFull",
 ];
-/// The methods that find a row of a table by a predicate.
-const LOOKUPS: &[&str] = &["find", "rfind", "position", "rposition", "filter"];
+/// The variants of `std::ops::Bound`, whose construction builds a range.
+const BOUNDS: &[&str] = &["Included", "Excluded", "Unbounded"];
 
 fn unparen(expr: &Expr) -> &Expr {
     match expr {
@@ -1633,87 +1657,16 @@ fn unparen(expr: &Expr) -> &Expr {
     }
 }
 
-/// `Bound::Included(x)`, `Bound::Excluded(x)` or `Bound::Unbounded`.
-fn bound(expr: &Expr) -> bool {
-    let last = |path: &syn::Path| path.segments.last().map(|s| s.ident.to_string());
+/// The fields of a row, counted through nested tuples: `(a, (b, c))` has
+/// three.
+fn leaves(expr: &Expr) -> usize {
     match expr {
-        Expr::Call(c) => {
-            matches!(&*c.func, Expr::Path(p) if last(&p.path).is_some_and(|n| n == "Included" || n == "Excluded"))
-        }
-        Expr::Path(p) => last(&p.path).is_some_and(|n| n == "Unbounded"),
-        _ => false,
+        Expr::Tuple(t) => t.elems.iter().map(leaves).sum(),
+        _ => 1,
     }
 }
 
-/// Whether a scan's closure tests one of the row's string fields for
-/// equality, as in `|row| row.name == name` or `|(name, _)| *name == key`.
-fn keyed(closure: &syn::ExprClosure, keys: &BTreeSet<String>) -> bool {
-    let row = match closure.inputs.first() {
-        Some(pat) => Row::of(pat, keys),
-        None => return false,
-    };
-    match unparen(&closure.body) {
-        Expr::Binary(e) if matches!(e.op, syn::BinOp::Eq(_)) => {
-            row.key(&e.left, keys) || row.key(&e.right, keys)
-        }
-        Expr::MethodCall(e) if e.method == "eq" => {
-            row.key(&e.receiver, keys) || e.args.iter().any(|a| row.key(a, keys))
-        }
-        _ => false,
-    }
-}
-
-/// How a scan's closure binds the row.
-enum Row {
-    /// The whole row, by name.
-    Whole(String),
-    /// A tuple row's string fields, by the names bound to them.
-    Parts(BTreeSet<String>),
-}
-
-impl Row {
-    fn of(pat: &syn::Pat, keys: &BTreeSet<String>) -> Row {
-        match pat {
-            syn::Pat::Ident(p) => Row::Whole(p.ident.to_string()),
-            syn::Pat::Reference(p) => Row::of(&p.pat, keys),
-            syn::Pat::Type(p) => Row::of(&p.pat, keys),
-            syn::Pat::Tuple(t) => Row::Parts(
-                t.elems
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| keys.contains(&i.to_string()))
-                    .filter_map(|(_, p)| match p {
-                        syn::Pat::Ident(p) => Some(p.ident.to_string()),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
-            _ => Row::Parts(BTreeSet::new()),
-        }
-    }
-
-    fn key(&self, expr: &Expr, keys: &BTreeSet<String>) -> bool {
-        match (self, expr) {
-            (_, Expr::Paren(e)) => self.key(&e.expr, keys),
-            (_, Expr::Reference(e)) => self.key(&e.expr, keys),
-            (_, Expr::Unary(e)) if matches!(e.op, syn::UnOp::Deref(_)) => self.key(&e.expr, keys),
-            (Row::Whole(name), Expr::Field(f)) => {
-                let field = match &f.member {
-                    syn::Member::Named(i) => i.to_string(),
-                    syn::Member::Unnamed(i) => i.index.to_string(),
-                };
-                keys.contains(&field)
-                    && matches!(unparen(&f.base), Expr::Path(p) if p.path.is_ident(name))
-            }
-            (Row::Parts(names), Expr::Path(p)) => p
-                .path
-                .get_ident()
-                .is_some_and(|i| names.contains(&i.to_string())),
-            _ => false,
-        }
-    }
-}
-
+/// Methods that compare by name, as `a.eq(&b)` (proposal 0040).
 const COMPARE_METHODS: &[&str] = &["eq", "ne", "lt", "le", "gt", "ge"];
 /// `Ordering`'s tests, as in `a.cmp(&b).is_eq()`.
 const ORDERING_TESTS: &[&str] = &["is_eq", "is_ne", "is_lt", "is_le", "is_gt", "is_ge"];

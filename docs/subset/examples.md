@@ -619,9 +619,14 @@ the input against a field, may have `&'static str` fields (proposal 0042).
 The row struct is built only inside the `const`, and the order of the rows
 is the rule: here the first marker the user agent contains wins. A lookup
 keyed by a string is a `match`, as in `os_name`.
-`DEVICES.iter().find(|row| row.name == name)` is flagged, and so is
-`&'static str` anywhere else: in a signature, in a struct that isn't a
-table's row, or in a tuple row.
+A predicate that compares a row's string for equality with a value, such
+as `DEVICES.iter().find(|row| row.name == name)`, is flagged in any
+spelling (`&&`, `!(.. != ..)`, `.eq`, `any`, `enumerate`), and so is
+`&'static str` anywhere but a row struct's field: in a signature or in a
+struct that isn't only a table's row. A row struct is built only as an
+element of its table. A `const` table of tuples holding a `&str`, with the
+lifetime spelled or left out, as in `const PAIRS: &[(&str, Kind)]`, is
+flagged too: its row is a named struct.
 
 ## 28. Counting through numbers is `RangeInclusive::new`
 
@@ -634,12 +639,14 @@ pub fn candidates(first: u16, last: u16) -> Vec<u16> {
 ```
 
 `first..=last` is `expr.range`, which stays out. A range built by name
-stands only where it is iterated at once: as a `for`'s iterator, the
-receiver of an iterator method, or the argument of `zip` or `chain`.
+stands only where it is used at once: as a `for`'s iterator, the receiver
+of an iterator method, the receiver of `contains` (a membership test), or
+the argument of `zip` or `chain`.
 `bytes.get(RangeInclusive::new(1, 2))` is indexing by range under another
-name and is flagged, as are `Range { start, end }`, `RangeFull` and a pair
-of `Bound`s. Split bytes with `split_at_checked` (§A7 of the bootstrap
-review).
+name and is flagged, as are `RangeInclusive::new(1, 2).into_iter()` in the
+same place, `Range::default()`, `Range { start, end }`, `RangeFull` and
+any `Bound`. Split bytes with `split_at_checked` (§A7 of the bootstrap
+review); `split_at` panics and is flagged.
 
 ## Still outside the subset
 

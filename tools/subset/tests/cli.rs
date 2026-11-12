@@ -2328,7 +2328,7 @@ impl SessionActor {
 
 #[test]
 fn a_range_built_by_name_only_feeds_an_iterator() {
-    const RULE: &str = "a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review)";
+    const RULE: &str = "a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)";
     assert_eq!(
         rule_case(
             "range-by-name",
@@ -2390,7 +2390,8 @@ fn spelled(bytes: &[u8]) -> Head {
              crates/daemon/src/a_fail.rs:8:26: expr.call: {RULE}\n\
              crates/daemon/src/a_fail.rs:12:26: expr.struct: {RULE}\n\
              crates/daemon/src/a_fail.rs:16:26: expr.path: {RULE}\n\
-             crates/daemon/src/a_fail.rs:20:26: expr.tuple: {RULE}\n\
+             crates/daemon/src/a_fail.rs:20:27: expr.call: {RULE}\n\
+             crates/daemon/src/a_fail.rs:20:47: expr.call: {RULE}\n\
              crates/daemon/src/a_fail.rs:24:17: expr.call: {RULE}\n\
              crates/daemon/src/a_fail.rs:29:27: expr.range: range expression\n"
         )
@@ -2400,7 +2401,8 @@ fn spelled(bytes: &[u8]) -> Head {
 #[test]
 fn a_static_str_is_a_field_of_a_scanned_const_tables_row() {
     const STATIC: &str = "`&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)";
-    const KEYED: &str = "a `const` table searched for the row whose string field equals a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)";
+    const KEYED: &str = "a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)";
+    const TUPLE_ROW: &str = "a `const` table whose rows hold a `&str` has a named row struct with `&'static str` fields, not a tuple row (proposal 0042, v8 review)";
     assert_eq!(
         rule_case(
             "static-str",
@@ -2463,6 +2465,7 @@ fn kind(name: &str) -> Option<usize> {
             "crates/client/src/a_fail.rs:2:14: type.lifetime.static_str: {STATIC}\n\
              crates/client/src/a_fail.rs:3:12: type.lifetime.static_str: {STATIC}\n\
              crates/client/src/a_fail.rs:9:12: type.lifetime.static_str: {STATIC}\n\
+             crates/client/src/a_fail.rs:12:16: type.tuple: {TUPLE_ROW}\n\
              crates/client/src/a_fail.rs:12:18: type.lifetime.static_str: {STATIC}\n\
              crates/client/src/a_fail.rs:18:26: type.lifetime.static_str: {STATIC}\n\
              crates/client/src/a_fail.rs:25:20: expr.method_call: {KEYED}\n\
@@ -2509,6 +2512,235 @@ mod tests {
 }
 "#,
         ),
-        "crates/client/src/a_fail.rs:5:31: expr.tuple: a table whose rows have more than two fields is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)\n"
+        "crates/client/src/a_fail.rs:5:31: expr.tuple: a table of two or more rows with more than two fields each, counted through nested tuples, is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)\n"
+    );
+}
+
+#[test]
+fn a_row_struct_is_built_only_in_its_tables_literal() {
+    assert_eq!(
+        rule_case(
+            "row-only",
+            "crates/client/src/a.rs",
+            r#"mod table {
+    struct Row {
+        marker: &'static str,
+    }
+
+    const DEVICES: &[Row] = &[Row { marker: "a" }, Row { marker: "b" }];
+}
+"#,
+            r#"struct Config {
+    host: &'static str,
+    path: &'static str,
+}
+
+const UNUSED: &[Config] = &[];
+const CONFIG: Config = Config {
+    host: "example.com",
+    path: "/api",
+};
+
+struct Mine {
+    marker: &'static str,
+}
+
+const MINES: &[Mine] = &[];
+
+fn mine() -> Mine {
+    const MINE: Mine = Mine { marker: "local" };
+    MINE
+}
+
+mod table {
+    struct Row {
+        marker: &'static str,
+    }
+
+    const DEVICES: &[Row] = &[Row { marker: "a" }];
+}
+
+mod elsewhere {
+    struct Row {
+        label: &'static str,
+    }
+}
+"#,
+        ),
+        "crates/client/src/a_fail.rs:2:12: type.lifetime.static_str: `&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)\ncrates/client/src/a_fail.rs:3:12: type.lifetime.static_str: `&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)\ncrates/client/src/a_fail.rs:13:14: type.lifetime.static_str: `&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)\ncrates/client/src/a_fail.rs:33:17: type.lifetime.static_str: `&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)\n"
+    );
+}
+
+#[test]
+fn a_keyed_lookup_is_caught_however_it_is_spelled() {
+    assert_eq!(
+        rule_case(
+            "keyed-spelled",
+            "crates/client/src/a.rs",
+            r#"struct Row {
+    marker: &'static str,
+    name: &'static str,
+}
+
+const DEVICES: &[Row] = &[Row { marker: "a", name: "A" }, Row { marker: "b", name: "B" }];
+
+fn scan(user_agent: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| user_agent.contains(row.marker))
+}
+
+fn prefix(user_agent: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| user_agent.starts_with(row.marker))
+}
+
+fn suffix(user_agent: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| user_agent.ends_with(row.marker))
+}
+"#,
+            r#"struct Row {
+    marker: &'static str,
+    name: &'static str,
+}
+
+const DEVICES: &[Row] = &[Row { marker: "a", name: "A" }, Row { marker: "b", name: "B" }];
+
+const NAMES: &[&str] = &["a", "b"];
+
+fn both(name: &str, kind: Kind) -> Option<&Row> {
+    DEVICES.iter().find(|row| row.name == name && row.kind == kind)
+}
+
+fn any(name: &str) -> Has {
+    Has::from(DEVICES.iter().any(|row| row.name == name))
+}
+
+fn numbered(name: &str) -> Option<(usize, &Row)> {
+    DEVICES.iter().enumerate().find(|(_, row)| row.name == name)
+}
+
+fn destructured(name: &str) -> Option<&Row> {
+    DEVICES.iter().find(|Row { name: n, .. }| n.eq(&name))
+}
+
+fn block(name: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| { row.name == name })
+}
+
+fn negated(name: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| !(row.name != name))
+}
+
+fn path(name: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| PartialEq::eq(row.name, name))
+}
+
+fn ordering(name: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| row.name.cmp(name).is_eq())
+}
+
+fn bound(name: &str) -> Option<&Row> {
+    let rows = DEVICES;
+    rows.iter().find(|row| row.name == name)
+}
+
+fn bare(name: &str) -> Option<usize> {
+    NAMES.iter().position(|n| n == &name)
+}
+
+fn bare_find(name: &str) -> Option<&&str> {
+    NAMES.iter().find(|n| n.eq(&&name))
+}
+"#,
+        ),
+        "crates/client/src/a_fail.rs:11:20: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:15:30: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:19:32: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:23:20: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:27:20: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:31:20: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:35:20: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:39:20: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:44:17: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:48:18: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\ncrates/client/src/a_fail.rs:52:18: expr.method_call: a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)\n"
+    );
+}
+
+#[test]
+fn a_range_by_name_has_no_way_round_the_rule() {
+    assert_eq!(
+        rule_case(
+            "range-holes",
+            "crates/daemon/src/a.rs",
+            r#"use std::ops::RangeInclusive;
+
+fn inside(first: u16, last: u16, port: u16) -> Inside {
+    Inside::from(RangeInclusive::new(first, last).contains(&port))
+}
+
+fn listed(first: u16, last: u16) -> Vec<u16> {
+    RangeInclusive::new(first, last).into_iter().collect()
+}
+
+fn head(bytes: &[u8]) -> Head {
+    Head::read(bytes.split_at_checked(2))
+}
+"#,
+            r#"use std::ops::{Bound, Range, RangeFull, RangeInclusive};
+
+fn iterated(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(RangeInclusive::new(1, 2).into_iter()))
+}
+
+fn bounds(bytes: &[u8]) -> Head {
+    let low = Bound::Included(1);
+    let high = Bound::Excluded(3);
+    Head::read(bytes.get((low, high)))
+}
+
+fn open(bytes: &[u8]) -> Head {
+    let high = Bound::Unbounded;
+    Head::read(bytes.get((Bound::Included(1), high)))
+}
+
+fn full(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(RangeFull::default()))
+}
+
+fn typed(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(Range::<usize>::default()))
+}
+
+fn split(bytes: &[u8]) -> Head {
+    Head::read(bytes.split_at(2))
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:4:26: expr.call: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:8:15: expr.call: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:9:16: expr.call: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:14:16: expr.path: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:15:27: expr.call: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:19:26: expr.call: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:23:26: expr.call: a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)\ncrates/daemon/src/a_fail.rs:27:22: expr.method_call: `split_at` panics past the end; split bytes with `split_at_checked` and match the `Option` (bootstrap review §A7)\n"
+    );
+}
+
+#[test]
+fn a_tuple_table_counts_leaf_fields_and_two_rows() {
+    assert_eq!(
+        rule_case(
+            "tuple-leaves",
+            "crates/client/src/a.rs",
+            r#"fn send(client: &Client) {
+    client.send_all([(String::from("a"), 1, Kind::A)]);
+}
+
+fn pairs() -> Vec<Pair> {
+    Vec::from([(String::from("a"), Kind::A), (String::from("b"), Kind::B)])
+        .into_iter()
+        .map(Pair::from)
+        .collect()
+}
+"#,
+            r#"#[cfg(test)]
+mod tests {
+    #[test]
+    fn names() {
+        let cases = Vec::from([
+            (String::from("a"), (Touch::None, String::from("A"))),
+            (String::from("b"), (Touch::Screen, String::from("B"))),
+        ]);
+        assert_eq!(cases.len(), 2);
+    }
+}
+
+const PAIRS: &[(&str, Kind)] = &[("a", Kind::A), ("b", Kind::B)];
+"#,
+        ),
+        "crates/client/src/a_fail.rs:5:31: expr.tuple: a table of two or more rows with more than two fields each, counted through nested tuples, is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)\ncrates/client/src/a_fail.rs:13:16: type.tuple: a `const` table whose rows hold a `&str` has a named row struct with `&'static str` fields, not a tuple row (proposal 0042, v8 review)\n"
     );
 }

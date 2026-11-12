@@ -182,16 +182,23 @@ pub const STATIC_STR: Rule = rule(
 );
 pub const KEYED_TABLE: Rule = rule(
     "expr.method_call",
-    "a `const` table searched for the row whose string field equals a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)",
+    "a predicate on a `const` table that compares a row's string for equality with a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)",
 );
-const RANGE_BY_NAME: &str = "a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review)";
+const RANGE_BY_NAME: &str = "a range built by name (`RangeInclusive::new`, any other associated fn of a range type, `Range { .. }`, `RangeFull`, a `Bound`) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or of `contains`, or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports and v8 reviews)";
 pub const RANGE_CALL: Rule = rule("expr.call", RANGE_BY_NAME);
 pub const RANGE_STRUCT: Rule = rule("expr.struct", RANGE_BY_NAME);
 pub const RANGE_PATH: Rule = rule("expr.path", RANGE_BY_NAME);
-pub const RANGE_BOUNDS: Rule = rule("expr.tuple", RANGE_BY_NAME);
+pub const SPLIT_AT: Rule = rule(
+    "expr.method_call",
+    "`split_at` panics past the end; split bytes with `split_at_checked` and match the `Option` (bootstrap review §A7)",
+);
+pub const STR_TUPLE_ROW: Rule = rule(
+    "type.tuple",
+    "a `const` table whose rows hold a `&str` has a named row struct with `&'static str` fields, not a tuple row (proposal 0042, v8 review)",
+);
 pub const TUPLE_TABLE: Rule = rule(
     "expr.tuple",
-    "a table whose rows have more than two fields is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)",
+    "a table of two or more rows with more than two fields each, counted through nested tuples, is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)",
 );
 pub const THISERROR_HOST: Rule = rule(
     "attr.derive",
@@ -354,7 +361,8 @@ pub const RULES: &[&Rule] = &[
     &RANGE_CALL,
     &RANGE_STRUCT,
     &RANGE_PATH,
-    &RANGE_BOUNDS,
+    &SPLIT_AT,
+    &STR_TUPLE_ROW,
     &TUPLE_TABLE,
     &THISERROR_HOST,
     &ORD_HOST,
