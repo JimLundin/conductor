@@ -32,10 +32,13 @@ Each item ends in something to try. The fleet design is
    and `~/.codex` are untouched. Built on `managed-cli`; the *Try* waits for
    the owner's sign-in (`conductord login`, then `tools/live-host.sh
    --data-dir`).
-2. **A wider session model** (§3): questions to the user, reasoning text,
-   approve-for-session, per-session model and effort, resume. Resume runs
-   against the private homes from item 1. *Try:* restart a session's CLI
-   and continue it.
+2. **A wider session model** (§3). Built in round A, on
+   `session-questions`: questions to the user (Claude's `AskUserQuestion`,
+   Codex's `requestUserInput`) as a question card with options and typed
+   text, and approve-for-session as a third button that names what it
+   allows. Next: reasoning text, per-session model and effort, resume.
+   Resume runs against the private homes from item 1. *Try:* restart a
+   session's CLI and continue it.
 3. **Sign in from the app** (§6.3), on one host. Built first, on
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the

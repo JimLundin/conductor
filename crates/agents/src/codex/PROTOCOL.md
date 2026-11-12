@@ -1,7 +1,8 @@
 # Codex app-server: observed behaviour
 
 These facts come from `s2` runs against codex-cli 0.166.0 with model
-`gpt-6-luna` and reasoning effort `low`, on 2026-11-10. Steps refer to the
+`gpt-6-luna` and reasoning effort `low`, on 2026-11-10, and steps 7 to 9 on
+2026-11-12. Steps refer to the
 `s2` checklist. The committed recordings are in `fixtures/codex/`. "Probe"
 means a hand-written JSON-RPC session run before `s2` existed; its output is
 not committed. Where this file disagrees with the JSON Schema or architecture
@@ -83,6 +84,37 @@ not committed. Where this file disagrees with the JSON Schema or architecture
   `serverRequest/resolved` for the request, so `ApprovalCancelled` arrives
   after `TurnCompleted`. The command item never completes. Answering the
   request afterwards fails with `UnknownApproval`. (Step 3b, 2026-11-12.)
+
+## Questions and approval for the session
+
+From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
+`fixtures/codex/server3-questions.jsonl`, the pinned source
+(`rust-v0.166.0`) and probes the same day.
+
+- The model has `request_user_input` only in plan mode, unless the feature
+  `default_mode_request_user_input` is on (`codex-rs/tools`
+  `request_user_input_available_modes`). Codex marks it under development,
+  and each thread with it on gets a `warning` notification saying so.
+  We turn it on in every thread's `config`.
+- A question arrives as the server request `item/tool/requestUserInput`
+  with `threadId`, `turnId`, `itemId` (the call id), `questions: [{"id",
+  "header", "question", "isOther", "isSecret", "options": [{"label",
+  "description"}]}]`, `isBlocking` and `autoResolutionMs`. Codex sets
+  `isOther` on every question and requires options. It has no multiple
+  choice. No `item/started` names the call. (Step 7.)
+- The answer is the RPC result `{"answers": {"<question id>": {"answers":
+  ["Blue"]}}}`, after which Codex sends `serverRequest/resolved` and the
+  model goes on. It is not a new user message, as an earlier note claimed:
+  `isBlocking` was `false` in default mode and Codex still waited for the
+  result (`thread/status/changed` with `waitingOnUserInput`). (Step 7.)
+- Interrupt with a question open: as with an approval, the turn completes
+  `interrupted` and only then `serverRequest/resolved` withdraws it.
+  Answering afterwards fails with `UnknownApproval`. (Step 9.)
+- `acceptForSession` on a command approval is taken, though
+  `availableDecisions` lists only `accept`, `acceptWithExecpolicyAmendment`
+  and `cancel`. The same command (`touch t1.txt`) then ran in the next turn
+  with no request, and a different one still asked. (Step 8 and probe.)
+- An `agentMessage` item carries a `questions` field, `null` in every run.
 
 ## Interrupt
 

@@ -57,13 +57,28 @@ model (`crates/daemon/src/mapping.rs`). The app only ever sees that model,
 so one UI and one set of commands work for both agents.
 
 - **Commands:** `StartSession { provider, directory }`, `SendMessage`,
-  `Interrupt`, `Resolve { request, Approve | Deny }`. Each command gets one
-  `CommandResult`.
+  `Interrupt`, `Resolve { request, Approve | ApproveForSession | Deny }`,
+  `Answer { request, answers }`. Each command gets one `CommandResult`. A
+  reply that doesn't fit its request (a decision for a question, the wrong
+  number of answers, `ApproveForSession` where none is offered) is
+  refused as `WrongReply`.
 - **Events:** a session is created, becomes ready, closes; a user message; the
   assistant's text, streamed as deltas and then as the finished message; tool
   calls (`Command`, `FileChange`, `Other`) started and finished; approval
   requests opened and resolved (first decision wins, and a late one is told
-  who decided); a turn completes, is interrupted or fails.
+  who decided); questions asked and answered; a turn completes, is
+  interrupted or fails.
+- **Requests:** an approval and a question are both requests: one
+  `RequestId` space per session, first reply wins, and the agent's
+  withdrawal, the end of the turn or the end of the session withdraws one
+  still open. `RequestOpened` carries `for_session`, what
+  `ApproveForSession` would allow in the agent's words (Claude's rule
+  `Bash(git status)`, Codex's command), or nothing if it offers none.
+  `QuestionAsked { request, questions }` carries each question's header,
+  text, options (label and description) and whether one or many may be
+  chosen. Every question also takes typed text, which both agents accept.
+  `Answer` carries one answer per question, in order: the chosen labels,
+  then any typed text. It resolves as `Answered { answers, by }`.
 - **Durable and live:** every event except the streaming deltas is durable:
   it takes the next `HostSeq` and is replayed on catch-up. Deltas go only to
   subscribers that are live, because the finished message replaces them. A
@@ -75,9 +90,20 @@ What both providers have belongs in the model. What only one has goes in
 typed per-provider options instead of being forced into it: Claude's
 permission modes, Codex's sandbox. Raw provider JSON never reaches the UI.
 
-Next in the model (`docs/roadmap.md`): questions to the user (Claude's
-`AskUserQuestion`, Codex's `requestUserInput`), reasoning text, "approve for
-this session", per-session model and effort, resume, plans.
+How each agent carries these, from the `s1` and `s2` recordings:
+
+| | Claude Code 2.1.316 | Codex 0.166 |
+|---|---|---|
+| Question | `can_use_tool` for `AskUserQuestion`; the questions are in `input` | `item/tool/requestUserInput`, with question ids; needs the `default_mode_request_user_input` feature outside plan mode |
+| Answer | `allow` with `updatedInput` = the input plus `answers`, question text to answer, labels joined with ", " | RPC result `{answers: {<id>: {answers: [...]}}}` |
+| Withdrawn | `control_cancel_request` | `serverRequest/resolved` after the interrupted turn ends |
+| For the session | `allow` with `updatedPermissions`: the suggested `addRules` (or else `setMode`), destination `session` | `acceptForSession`, taken though `availableDecisions` omits it |
+
+The `AskUserQuestion` tool call is not shown as a tool call; its question
+card is.
+
+Next in the model (`docs/roadmap.md`): reasoning text, per-session model
+and effort, resume, plans.
 
 ## 4. Transport
 
@@ -171,9 +197,13 @@ with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
   Codex's own option values, since a label is not always a valid reply.
 - Sessions use Paseo's preset: `on-request` approvals with a
   `workspace-write` sandbox.
-- Traps (from T3 Code's provider notes): Codex's asynchronous questions are
-  answered with a new user message, not an RPC response; `/goal` can start
-  follow-up turns on its own.
+- Traps (from T3 Code's provider notes): `/goal` can start follow-up turns
+  on its own. Their other note, that questions are answered with a new
+  user message, does not hold for 0.166's `requestUserInput`, which takes
+  an RPC result even when `isBlocking` is `false` (Codex `PROTOCOL.md`).
+- Every thread starts with the `default_mode_request_user_input` feature
+  on, so the model can ask questions outside plan mode. Codex marks it
+  under development and sends a `warning` for it.
 
 **Verification:** replay tests feed recorded stdio from `fixtures/` through
 the parsers and assert the exact events. `cargo run --bin s1` and `s2` drive

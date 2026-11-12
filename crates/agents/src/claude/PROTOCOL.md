@@ -3,7 +3,8 @@
 These facts come from `s1` runs against Claude Code 2.1.316 with model `haiku`, on
 2026-11-10 and 2026-11-11. Steps refer to the `s1` checklist. The committed
 recordings in `fixtures/claude/` are one 2026-11-11 run with
-`--include-partial-messages`, steps 1 to 6 including 3c and 3d. The 2026-11-10
+`--include-partial-messages`, steps 1 to 6 including 3c and 3d, and
+`session3-questions.jsonl` from a 2026-11-12 run, steps 7 to 9. The 2026-11-10
 recordings they replaced are in git history. Where this file disagrees with the
 Python SDK source, trust this file and re-check it when the CLI version changes.
 
@@ -62,6 +63,40 @@ From the 2026-11-11 `s1` runs with `--include-partial-messages`.
   Write instead.)
 - After `set_permission_mode` to `acceptEdits`, Write runs with no permission
   request. (Step 5.)
+
+## Questions and approval for the session
+
+From the 2026-11-12 `s1` run, steps 7 to 9, recorded in
+`fixtures/claude/session3-questions.jsonl`, and hand probes the same day.
+
+- `AskUserQuestion` reaches us as a `can_use_tool` request like any tool,
+  with `"requires_user_interaction": true` and no `permission_suggestions`.
+  Its `input` is `{"questions": [{"question", "header", "options":
+  [{"label", "description"}], "multiSelect"}]}`. The assistant message
+  before it has the same input as a `tool_use` block. (Step 7.)
+- The answer is `allow` with `updatedInput` set to the input plus
+  `"answers": {"<question text>": "<answer>"}`. The CLI then prints a
+  `tool_result` "Your questions have been answered: "Which color do you
+  prefer?"="Blue"" and the model goes on with it. (Step 7.) A multi-select
+  answer is the labels joined with ", ", as the CLI's own prompt joins
+  them; a value that is no label is taken as typed text. A question left
+  out of `answers` is left out of the result. (Probes.)
+- Interrupt with a question open: `control_cancel_request` for it, then the
+  rejected `tool_result`, `[Request interrupted by user for tool use]` and
+  `result` with `terminal_reason: "aborted_tools"`, as for a permission.
+  Answering afterwards fails. (Step 9.)
+- A Bash request's `permission_suggestions` was `[{"type": "addRules",
+  "rules": [{"toolName": "Bash", "ruleContent": "touch t1.txt"}],
+  "behavior": "allow", "destination": "localSettings"}, {"type":
+  "addDirectories", ...}, {"type": "setMode", "mode": "acceptEdits",
+  "destination": "session"}]`. (Step 8.)
+- Echoing every suggestion verbatim as `updatedPermissions` wrote
+  `.claude/settings.local.json` with the rule, and switched the session to
+  `acceptEdits`. (Probe.) So approve-for-session sends only the `addRules`
+  entries, with `"destination": "session"`: no file was written, the same
+  command ran again without a request, and a different command still
+  asked. (Step 8 and probe.) With no rule suggested (Write in `default`
+  mode), it sends the suggested `setMode` for the session.
 
 ## Interrupt
 
