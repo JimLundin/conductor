@@ -128,7 +128,7 @@ mod tests {
         let text = ticket().to_text();
         assert_eq!(Ticket::parse("not base64!"), Err(TicketError::Encoding));
         assert_eq!(
-            Ticket::parse(text.split_at(20).0),
+            Ticket::parse(text.split_at_checked(20).map_or("", |(head, _)| head)),
             Err(TicketError::Truncated)
         );
         let bytes = BASE64URL_NOPAD.decode(text.as_bytes()).unwrap();
