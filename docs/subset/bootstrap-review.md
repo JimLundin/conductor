@@ -184,7 +184,7 @@ let ((stdin, stdout), stderr) = child
 
 ### A3. Match guards become nested matches
 
-Covers `expr.match.guard`, and `macro.unreachable` outside tests. Match on the guarded value inside the arm. An `unreachable!` arm means the match was split in two. Join it back into one match.
+Covers `expr.match.guard`, and `macro.unreachable` outside tests. Match on the guarded value inside the arm. An `unreachable!` arm means the match was split in two. Join it back into one match. Since version 7, a guard of one comparison or one `matches!` is allowed, with an unguarded arm for the same pattern after it (proposal 0040). The nested match stays the form for a guard against a literal or a variant.
 
 Before, `crates/agents/src/claude/protocol.rs`:
 
@@ -205,7 +205,7 @@ Before, `crates/client/src/transcript.rs` handles `TranscriptDelta` in an `if le
 
 ### A4. Comparisons become `cmp` and literal patterns
 
-Covers `expr.binary.eq`, `ne`, `lt`, `le`, `gt` and `ge`. Compare with a literal by matching on it (`examples.md` §4). Order two values with `cmp` and match the `Ordering` (§3). Equality of two runtime values with no `Ord` uses `.eq(..)` with `.then_some(..)`, and is logged as std-bool friction.
+Covers `expr.binary.eq`, `ne`, `lt`, `le`, `gt` and `ge`. Compare with a literal by matching on it (`examples.md` §4). Order two values with `cmp` and match the `Ordering` (§3). Equality of two runtime values with no `Ord` was `.eq(..)` with `.then_some(..)`. Since version 7 it is a match guard (proposal 0040), and the lift is flagged.
 
 Before, `crates/client/src/link.rs` `apply`:
 
@@ -249,7 +249,7 @@ half.saturating_add(jitter)
 
 ### A6. Loops become adapters or the 0007 shape
 
-Covers `expr.for`, `expr.while`, `expr.while_let` and `expr.continue`. A loop over a collection becomes an iterator adapter. `continue` becomes a `filter_map` arm that returns `None`. A loop that waits on a channel becomes the 0007 shape. A `for` with `.await` in its body either batches the work into one write, or becomes a stream adapter whose closure body is an async block (0006(b)).
+Covers `expr.for`, `expr.while`, `expr.while_let` and `expr.continue`. A loop over a collection becomes an iterator adapter. `continue` becomes a `filter_map` arm that returns `None`. A loop that waits on a channel becomes the 0007 shape. A `for` with `.await` in its body either batches the work into one write, or becomes a stream adapter whose closure body is an async block (0006(b)). Since version 7, a `for` whose body only runs awaited calls with `?` stays a `for`, and is the form for running effects in order (proposal 0041).
 
 Before, `crates/agents/src/claude/session.rs` `stop`:
 

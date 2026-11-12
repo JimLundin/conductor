@@ -1,8 +1,8 @@
 # Where the subset gives ground
 
 The thesis is that **every state is a named enum variant and every decision is
-a `match`**, protected by seven qualities (`docs/subset.md`). Version 6 accepts
-32 proposals, two of which (0038, 0039) only narrow the checker. Most keep all
+a `match`**, protected by seven qualities (`docs/subset.md`). Version 7 accepts
+34 proposals, two of which (0038, 0039) only narrow the checker. Most keep all
 the qualities. The ones below don't, or they bend
 the thesis at its edges. Each is confined by its rule, and this page is the
 list to revisit first when one of them starts to spread.
@@ -23,7 +23,8 @@ list to revisit first when one of them starts to spread.
 - **Branching outside `match`.** 0016 `cfg` is a compile-time branch. It is kept visible by being item-level and paired. 0006 `.await` and 0007 `loop` add suspension and repetition outside iterator adapters, both needed for actors and I/O.
 - **A second branching form.** 0027 allows `if let` for "act only on this case", because clippy's `single_match` rejects the `match` with an empty arm and no lint is switched off (0025 revised). It is confined to one branch: with an `else`, an `else if` or a let-chain it is a `match` again, so every two-way decision is still a `match`.
 - **`bool` comes back inside predicates.** 0028 and 0037 let a closure passed straight to a method in `predicate_adapters` (`filter`, `find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`, `retain` and tokio's `wait_for`) return a boolean expression: `matches!`, a comparison, `&&`, `||` or `!`. This is the one place a decision is written as a `bool` rather than a `match`. It is confined to the closure body, the adapter is the branch, and the `bool` never becomes a binding, field, parameter or return type of ours. `true` and `false` stay out of it.
-- **Iteration outside adapters.** The actor `loop` (0007) is the one loop. Every other loop is still an adapter.
+- **A guard on a match arm.** 0040 lets an arm carry a guard of one comparison or one `matches!`, because a pattern can't name a runtime value and equality of two runtime values had no `match` form. The guard is the 0028 boolean moved onto the arm it selects. It holds no `&&`, `||` or `!`, and a later arm with no guard must cover the same pattern, so the otherwise case is still a written-out arm. It replaces the `Some(x).filter(..)` and `a.eq(b).then_some(..)` lifts of one comparison. A lift that combines library booleans stays.
+- **Iteration outside adapters.** The actor `loop` (0007) and, since 0041, a `for` whose body only runs awaited calls with `?` are the two loops. A `for` produces no value: building or selecting values in one is a violation, and every other loop is still an adapter.
 
 ## Enforcement is partly by review
 
@@ -66,7 +67,11 @@ doesn't expand macros, so a reviewer still checks these:
   the helper's shape), 0036 a struct update's method-call base returning the
   struct's own type (the tool accepts any method call), and 0028 a `fold` or
   `map(..).sum()` used only to count (the tool flags
-  `filter_map(..).count()`).
+  `filter_map(..).count()`), and 0041's `stream::iter(..).then(..)` used
+  only for effects (the tool flags a `try_collect` into `()`; a `collect`
+  into `Vec<Result<(), E>>` that is then checked for errors passes).
+  0040's fallback arm is matched by pattern structure, so a fallback split
+  across several arms is flagged even when it is exhaustive.
 - **Which trait a method belongs to.** 0038 matches a method call by
   name, and only in a file that imports a listed operator trait. A
   library prelude that re-exports one through a glob hides it, and in a

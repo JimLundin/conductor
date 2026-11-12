@@ -1,67 +1,8 @@
-# The rewrite to-do list: `subset report` on crates/ under subset.toml version 6.
+# The rewrite to-do list: `subset report` on crates/ under subset.toml version 7.
 # Regenerate with `cargo run -q -p subset -- report`, then restore this header.
 #
-# Total: 144 violations of 43 ids in 7 files.
-# Per crate (version 5 -> 6, both on main at 7ea697b): agents 0 -> 0, app 19 -> 19,
-# client 0 -> 0, daemon 125 -> 125, proto 0 -> 0. Version 6's new checks find
-# nothing in today's crates.
-# Top 15 ids:
-#     15  expr.return
-#     11  expr.method_call
-#     11  pat.type
-#      9  expr.if
-#      7  expr.binary.eq
-#      7  macro.println
-#      6  expr.loop
-#      6  type.bool
-#      5  expr.closure
-#      4  expr.assign
-#      4  item.use.rename
-#      4  stmt.let.else
-#      3  attr.cfg
-#      3  expr.async
-#      3  expr.binary.add_assign
-
-expr.return 15 in 5 files: crates/app/src/main.rs:108:21 crates/app/src/main.rs:154:9 crates/app/src/ticket.rs:58:9 crates/daemon/src/host.rs:192:21 crates/daemon/src/host.rs:200:21
-expr.method_call 11 in 4 files: crates/app/src/ticket.rs:24:50 crates/app/src/ticket.rs:37:34 crates/app/src/ticket.rs:56:18 crates/daemon/src/host.rs:131:48 crates/daemon/src/host.rs:141:63
-pat.type 11 in 5 files: crates/app/src/main.rs:127:26 crates/daemon/src/host.rs:224:15 crates/daemon/src/host.rs:317:17 crates/daemon/src/host.rs:328:17 crates/daemon/src/host.rs:394:17
-expr.if 9 in 3 files: crates/daemon/src/host.rs:147:21 crates/daemon/src/host.rs:191:17 crates/daemon/src/host.rs:248:5 crates/daemon/src/server.rs:110:9 crates/daemon/src/server.rs:191:9
-expr.binary.eq 7 in 4 files: crates/daemon/src/host.rs:147:29 crates/daemon/src/lib.rs:28:32 crates/daemon/src/server.rs:92:53 crates/daemon/tests/e2e.rs:145:16 crates/daemon/tests/e2e.rs:216:66
-macro.println 7 in 1 file: crates/daemon/src/main.rs:139:5 crates/daemon/src/main.rs:140:5 crates/daemon/src/main.rs:141:5 crates/daemon/src/main.rs:143:5 crates/daemon/src/main.rs:145:5
-expr.loop 6 in 3 files: crates/daemon/src/host.rs:278:9 crates/daemon/src/server.rs:67:9 crates/daemon/src/server.rs:211:13 crates/daemon/tests/e2e.rs:80:5 crates/daemon/tests/e2e.rs:221:5
-type.bool 6 in 4 files: crates/app/src/main.rs:247:19 crates/daemon/src/host.rs:119:19 crates/daemon/src/main.rs:45:20 crates/daemon/src/main.rs:48:29 crates/daemon/tests/e2e.rs:94:37
-expr.closure 5 in 3 files: crates/app/src/main.rs:127:16 crates/daemon/src/host.rs:337:23 crates/daemon/tests/e2e.rs:216:56 crates/daemon/tests/e2e.rs:260:55 crates/daemon/tests/e2e.rs:284:40
-expr.assign 4 in 3 files: crates/app/src/main.rs:120:28 crates/daemon/src/host.rs:205:31 crates/daemon/src/server.rs:208:22 crates/daemon/src/server.rs:230:22
-item.use.rename 4 in 2 files: crates/daemon/src/lib.rs:12:21 crates/daemon/src/lib.rs:40:24 crates/daemon/src/lib.rs:41:43 crates/daemon/src/main.rs:5:21
-stmt.let.else 4 in 3 files: crates/app/src/main.rs:152:5 crates/daemon/src/host.rs:199:17 crates/daemon/src/server.rs:61:9 crates/daemon/src/server.rs:161:9
-attr.cfg 3 in 1 file: crates/app/src/ticket.rs:7:1 crates/app/src/ticket.rs:75:1 crates/app/src/ticket.rs:77:1
-expr.async 3 in 3 files: crates/app/src/main.rs:98:9 crates/daemon/src/host.rs:224:39 crates/daemon/src/server.rs:203:47
-expr.binary.add_assign 3 in 2 files: crates/daemon/src/host.rs:158:39 crates/daemon/src/server.rs:207:22 crates/daemon/src/server.rs:229:22
-expr.for 3 in 2 files: crates/daemon/src/host.rs:226:9 crates/daemon/src/host.rs:299:9 crates/daemon/src/server.rs:205:13
-expr.lit.bool 3 in 1 file: crates/daemon/src/host.rs:79:27 crates/daemon/src/host.rs:148:45 crates/daemon/src/host.rs:194:37
-expr.while_let 3 in 3 files: crates/app/src/main.rs:112:13 crates/daemon/src/host.rs:128:9 crates/daemon/src/server.rs:175:9
-macro.assert 3 in 3 files: crates/app/src/ticket.rs:91:9 crates/daemon/src/lib.rs:73:9 crates/daemon/tests/e2e.rs:245:5
-type.infer 3 in 2 files: crates/daemon/src/main.rs:179:21 crates/daemon/tests/e2e.rs:155:21 crates/daemon/tests/e2e.rs:181:19
-attr.error 2 in 1 file: crates/daemon/src/server.rs:52:5 crates/daemon/src/server.rs:54:5
-expr.binary.sub 2 in 2 files: crates/daemon/src/host.rs:393:50 crates/daemon/tests/e2e.rs:181:44
-expr.break 2 in 1 file: crates/daemon/tests/e2e.rs:232:21 crates/daemon/tests/e2e.rs:316:17
-expr.match.guard 2 in 2 files: crates/daemon/src/lib.rs:28:18 crates/daemon/src/server.rs:92:38
-expr.range 2 in 2 files: crates/daemon/src/host.rs:299:19 crates/daemon/tests/e2e.rs:181:47
-expr.unary.deref 2 in 2 files: crates/app/src/main.rs:120:25 crates/daemon/src/host.rs:205:25
-item.use.glob 2 in 2 files: crates/daemon/src/host.rs:255:16 crates/daemon/src/lib.rs:63:16
-macro.panic 2 in 1 file: crates/daemon/tests/e2e.rs:164:33 crates/daemon/tests/e2e.rs:224:37
-attr.derive 1 in 1 file: crates/daemon/src/host.rs:26:1
-expr.binary.add 1 in 1 file: crates/daemon/src/host.rs:180:40
-expr.binary.le 1 in 1 file: crates/daemon/src/server.rs:225:30
-expr.binary.ne 1 in 1 file: crates/daemon/src/server.rs:191:28
-expr.closure.adapter 1 in 1 file: crates/app/src/main.rs:119:65
-expr.continue 1 in 1 file: crates/daemon/src/server.rs:226:21
-expr.index 1 in 1 file: crates/daemon/tests/e2e.rs:181:30
-expr.unary.not 1 in 1 file: crates/daemon/src/main.rs:83:24
-generics.const_param 1 in 1 file: crates/daemon/src/lib.rs:55:15
-item.fn.receiver.mut 1 in 1 file: crates/daemon/src/host.rs:127:18
-item.struct.unit 1 in 1 file: crates/daemon/src/host.rs:28:5
-macro.matches 1 in 1 file: crates/daemon/tests/e2e.rs:82:20
-stmt.let.mut 1 in 1 file: crates/daemon/src/server.rs:204:13
-type.impl_trait.arg 1 in 1 file: crates/daemon/tests/e2e.rs:94:15
-type.lifetime 1 in 1 file: crates/daemon/src/server.rs:33:24
+# Total: 3 violations of 1 id in 2 files, all warnings under
+# `replaced_form_warnings`: the `a.eq(b).then_some(..)` lifts that proposal
+# 0040's guard replaces, left for the client round. crates/daemon and
+# crates/agents are clean.
+expr.method_call 3 in 2 files: crates/client/src/host_view.rs:258:45 crates/client/src/host_view.rs:267:42 crates/client/src/link.rs:786:54

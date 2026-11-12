@@ -68,7 +68,8 @@ The ids are those used in `subset.toml`.
 | Building values | `expr.call`, `expr.method_call`, `expr.field`, `expr.struct`, `expr.path`, `expr.lit`, `expr.reference`, `expr.block`, `expr.paren` | |
 | Errors | `expr.try`, plus `Result` / `Option` through the core | `?` is the only early exit. |
 | Iteration | `expr.closure.adapter` | Collections are processed only with iterator adapters (`map`, `filter_map`, `try_fold`, `collect`, and so on). The closure must be an argument of an iterator, `Option` or `Result` method, or of a library or helper method that stands where one would (`with_context`, a stream's `then`, 0026's `ask`). `closure_methods` and `predicate_adapters` in `subset.toml` list them, and the checker rejects a closure passed to any other method. |
-| Predicates | `macro.matches`, `expr.binary.{eq,ne,lt,le,gt,ge,and,or}`, `expr.unary.not` | Proposals 0028 and 0037. A closure passed straight to a method in `predicate_adapters` in `subset.toml` (`filter`, `find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`, `retain`, and tokio's `wait_for`) may have a boolean expression as its body: `matches!`, a comparison, `&&`, `\|\|`, `!`. Nowhere else, and never a `true`/`false` literal. Counting is `filter(\|x\| matches!(x, ..)).count()`. |
+| Predicates | `macro.matches`, `expr.binary.{eq,ne,lt,le,gt,ge,and,or}`, `expr.unary.not` | Proposals 0028 and 0037. A closure passed straight to a method in `predicate_adapters` in `subset.toml` (`filter`, `find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`, `retain`, and tokio's `wait_for`) may have a boolean expression as its body: `matches!`, a comparison, `&&`, `\|\|`, `!`. The other place is a match guard (0040). Nowhere else, and never a `true`/`false` literal. Counting is `filter(\|x\| matches!(x, ..)).count()`. |
+| Guards | `expr.match.guard` | Proposal 0040. A match arm may have a guard that is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `\|\|` or `!`, when the arm depends on a bound value being equal to, or ordered against, another runtime value. A later arm with no guard covers the same pattern, so the otherwise case is written out. The guard is the one form for choosing an arm by comparing two runtime values: `Some(x).filter(\|x\| ..)` and `a.eq(b).then_some(..)` with one comparison are violations. A `filter` or `then_some` that combines library booleans with `&&`, `\|\|` or `!` stays, since a guard can't hold it. |
 | Bindings | `stmt.let` | Immutable, with a pattern. |
 | Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
 | Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
@@ -95,6 +96,7 @@ The ids are those used in `subset.toml`.
 | Library boundary | `type.unit`, `expr.unit`, `type.bool`, `expr.lit.bool`, `expr.reference.mut`, `type.reference.mut` | Proposal 0023. Where a library API demands `()`, `bool` or `&mut`, the shape is allowed in a type argument, call argument or field value of something we don't define, and only there. It never becomes a field, a variant payload, a parameter or a return type of our own items. |
 | Ordered newtypes | `attr.derive` of `PartialOrd`, `Ord` | Proposal 0024. Only on a newtype whose order means something, such as `HostSeq`. Callers compare with `a.cmp(&b)` and match the `Ordering`, never through `.0`. |
 | Request helper | `type.impl_trait.arg`, `generics.type_param`, `expr.closure` | Proposal 0026. Each actor handle may have one private `ask<T>` helper taking `build: impl FnOnce(oneshot::Sender<T>) -> Msg`, and every request/reply round trip goes through it. Nothing else takes an `impl Trait` argument. |
+| Effects in order | `expr.for` | Proposal 0041. A loop whose body only performs side effects is `for item in list { .. }`, and its body holds only awaited calls with `?`: `f(item).await?;` or `x.method(item).await?;`. It produces no value. Building or selecting values in a `for` is a violation; that stays the adapters' job (`map`, `filter`, `fold`, `try_fold`). `stream::iter(..).then(..)` is no longer the form for running awaited effects in order. It stays for building a list from awaited steps. |
 | One-case branch | `expr.if_let.single` | Proposal 0027. `if let Pattern = expr { … }` with no `else`, no `else if` and no `&&` let-chain, the one form for "act only on this case". Anything with an alternative branch is a `match`. To act when a value is present and ignore it, name its pattern with the fields elided, `if let Some(Open { .. }) = ..`: clippy's `redundant_pattern_matching` rejects `Some(_)`, and `Some(..)` is `pat.rest`. |
 | Discarding | `stmt.let` with `_` | Proposal 0025, revised. `let _ = value;` is the one way to discard a value. `drop(..)` only releases a resource early, `drop` passed as a function (`.map(drop)`) is a discard and not allowed, and `.ok()` is never a discard. No lint is switched off. |
 | Build-time constants | `macro.allowed` for `env` | Proposal 0022. `env!` only for `CARGO_PKG_VERSION`, `CARGO_PKG_NAME` and `CARGO_MANIFEST_DIR`. |
@@ -110,7 +112,8 @@ Don't work around it.
 ## Not in the core
 
 Everything else, for example `if`, `if let` with an `else` or a let-chain,
-`while`, `for`, `return`, `continue`, `break` outside a drive loop,
+`while`, a `for` that builds or selects values, a guard with `&&`, `||` or
+`!`, `return`, `continue`, `break` outside a drive loop,
 operators (`+`, `as`, indexing, ranges, and the boolean operators outside a
 predicate closure), compound assignment (`+=`), `let … else`, trait
 definitions, generic types, and unlisted macros. The operators also stay
@@ -142,7 +145,7 @@ live in `[weights]` in `subset.toml`, where the owner tunes them.
 |---|---|---|
 | encouraged | 0.5 | Type definitions (structs, newtypes, enums, the types in their fields), `match` with its arms and patterns, iterator adapter calls, `?`. |
 | neutral | 1.0 | The rest of the core: calls, paths, literals, `let`, field access, `pub`, references, slices. An allowed id missing from the map is neutral. |
-| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields, also inside std containers. |
+| tolerated | 2.0 | Accepted compromises: `async` and `.await`, the single `if let` (0027), a match guard (0040), the effects `for` (0041), `let _ =` (0025), predicate closures' boolean expressions (0028), `ask` (0026), generics, lifetimes, trait impls, `cfg` pairs, tuples, the 0023 shapes, primitives in our signatures and fields, also inside std containers. |
 | costly | 3.0 | Mutation and its kin: `mut`, `&mut self`, assignment (0008), the actor `loop` (0007), `dyn` (0017), `rsx!` (0018), untyped data. |
 | outside | 5.0 | Any violation of the current subset, whatever its id, so code not yet rewritten scores badly. |
 | boundary | 1.0 | Any construct whose shape a library fixes (below). |
@@ -218,7 +221,12 @@ container as a primitive. Version 6 accepts 0038 (no fallible operator
 trait by name) and 0039 (no consuming reader) as checker changes that add
 no construct, and checks 0008's rule that a `mut` binding holds a value of
 our own type only as loop state or a listed endpoint. The rewrite works
-from `docs/subset/rewrite-report.txt`, the report under version 6.
+from `docs/subset/rewrite-report.txt`, now the report under version 7.
+Version 7 accepts 0040 (a match guard of one comparison, which replaces
+the single-comparison lifts) and 0041 (a `for` of awaited calls, which
+replaces `stream::iter(..).then(..)` for effects), both as amended by the
+owner. Until the client round rewrites `crates/client` and `crates/app`,
+the replaced forms there are warnings (`replaced_form_warnings`).
 
 ## Growing the subset
 
