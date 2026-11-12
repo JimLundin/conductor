@@ -13,7 +13,7 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
   can hold the recording at a point and prove nothing was sent before.
 - `{"fake": "hang_up", "after": 1}`, anywhere in the recording, closes stdin
   once that many lines are read, so the session's next write fails. The
-  process stays up 10 s after the recording ends, so the failure isn't an exit.
+  process stays up 1 s after the recording ends, so the failure isn't an exit.
 
 Markers are never printed. Once stdin closes, nothing waits.
 """
@@ -95,4 +95,4 @@ for line in recording:
     sys.stdout.flush()
 reader.join()
 if hang_up is not None:
-    time.sleep(10)
+    time.sleep(1)

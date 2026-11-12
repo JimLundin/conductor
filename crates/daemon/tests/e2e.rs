@@ -718,6 +718,18 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
         send(&link, interrupt()).await,
         CommandResult::Rejected(Rejection::NoTurnRunning)
     );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Closed).await,
+        [EventKind::SessionClosed {
+            reason: CloseReason::Exited {
+                status: String::from("exit status: 0"),
+            },
+        }]
+    );
+    assert_eq!(
+        send(&link, message("hi")).await,
+        CommandResult::Rejected(Rejection::SessionClosed)
+    );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
