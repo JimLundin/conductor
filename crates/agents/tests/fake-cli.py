@@ -6,7 +6,10 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
 - A JSON-RPC response waits for our request with its id, and a
   `serverRequest/resolved` for our answer to that request, as Codex does.
 - `{"fake": "await", "match": {...}}` waits for the next stdin line whose JSON
-  has those keys and values.
+  has those keys and values. A nested object matches when the line's value
+  there has its keys and values in turn, so `{"result": {}}` is any result.
+  An `await` right before a `serverRequest/resolved` replaces its wait for
+  our answer: Codex also resolves requests it withdrew, which nobody answers.
 - `{"fake": "pace", "ms": 30}` sleeps that long before each later line.
 - `{"fake": "release", "file": "go"}` waits until that file exists in the
   working directory. Later awaits match only lines read after it, so a test
@@ -57,8 +60,14 @@ def sent(id, is_request):
     return any(m.get("id") == id and ("method" in m) == is_request for m in received)
 
 
+def has(want, got):
+    if isinstance(want, dict):
+        return isinstance(got, dict) and all(k in got and has(v, got[k]) for k, v in want.items())
+    return want == got
+
+
 def find(want, start):
-    hits = (i for i in range(start, len(received)) if all(received[i].get(k) == v for k, v in want.items()))
+    hits = (i for i in range(start, len(received)) if has(want, received[i]))
     return next(hits, None)
 
 
@@ -66,6 +75,7 @@ reader = threading.Thread(target=read_stdin)
 reader.start()
 matched = 0
 pace = 0
+awaited = False
 for line in recording:
     line += "\n"
     msg = json.loads(line)
@@ -73,6 +83,7 @@ for line in recording:
         wait_until(lambda: find(msg["match"], matched) is not None)
         hit = find(msg["match"], matched)
         matched = len(received) if hit is None else hit + 1
+        awaited = True
         continue
     if msg.get("fake") == "release":
         while not (closed or os.path.exists(msg["file"])):
@@ -87,9 +98,9 @@ for line in recording:
         continue
     if "id" in msg and "method" not in msg:
         wait_until(lambda: sent(msg["id"], is_request=True))
-    elif msg.get("method") == "serverRequest/resolved":
-        # Codex also resolves requests it withdrew, which nobody answers.
-        wait_until(lambda: sent(msg["params"]["requestId"], is_request=False), timeout=5)
+    elif msg.get("method") == "serverRequest/resolved" and not awaited:
+        wait_until(lambda: sent(msg["params"]["requestId"], is_request=False))
+    awaited = False
     time.sleep(pace)
     sys.stdout.write(line)
     sys.stdout.flush()

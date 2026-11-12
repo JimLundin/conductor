@@ -27,6 +27,8 @@ pub enum Cue {
     Start,
     /// On the first streamed delta, while the model is producing text.
     Delta,
+    /// When the CLI asks for approval, leaving the request unanswered.
+    Approval,
 }
 #[derive(Clone, Copy)]
 pub enum Verdict {
