@@ -8,15 +8,24 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
 - `{"fake": "await", "match": {...}}` waits for the next stdin line whose JSON
   has those keys and values.
 - `{"fake": "pace", "ms": 30}` sleeps that long before each later line.
+- `{"fake": "release", "file": "go"}` waits until that file exists in the
+  working directory. Later awaits match only lines read after it, so a test
+  can hold the recording at a point and prove nothing was sent before.
+- `{"fake": "hang_up", "after": 1}`, anywhere in the recording, closes stdin
+  once that many lines are read, so the session's next write fails. The
+  process stays up 1 s after the recording ends, so the failure isn't an exit.
 
 Markers are never printed. Once stdin closes, nothing waits.
 """
 
 import json
+import os
 import sys
 import threading
 import time
 
+recording = open("stdout.jsonl").read().splitlines()
+hang_up = next((m["after"] for m in map(json.loads, recording) if m.get("fake") == "hang_up"), None)
 received = []
 closed = False
 changed = threading.Condition()
@@ -31,6 +40,9 @@ def read_stdin():
             with changed:
                 received.append(json.loads(line))
                 changed.notify_all()
+            if len(received) == hang_up:
+                os.close(0)
+                break
     with changed:
         closed = True
         changed.notify_all()
@@ -54,12 +66,21 @@ reader = threading.Thread(target=read_stdin)
 reader.start()
 matched = 0
 pace = 0
-for line in open("stdout.jsonl"):
+for line in recording:
+    line += "\n"
     msg = json.loads(line)
     if msg.get("fake") == "await":
         wait_until(lambda: find(msg["match"], matched) is not None)
         hit = find(msg["match"], matched)
         matched = len(received) if hit is None else hit + 1
+        continue
+    if msg.get("fake") == "release":
+        while not (closed or os.path.exists(msg["file"])):
+            time.sleep(0.01)
+        with changed:
+            matched = len(received)
+        continue
+    if msg.get("fake") == "hang_up":
         continue
     if msg.get("fake") == "pace":
         pace = msg["ms"] / 1000
@@ -73,3 +94,5 @@ for line in open("stdout.jsonl"):
     sys.stdout.write(line)
     sys.stdout.flush()
 reader.join()
+if hang_up is not None:
+    time.sleep(1)
