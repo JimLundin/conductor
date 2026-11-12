@@ -379,13 +379,13 @@ conductor/
 │   │   ├── Dioxus.toml           # [S3] base_path = "conductor" for GitHub Pages
 │   │   ├── index.html            # [S3] page template: viewport, manifest, Home Screen tags
 │   │   ├── public/               # [S3] manifest.json + icons, copied to the site root
-│   │   └── tests-e2e/            # [S3] Playwright script, the one handwritten JS for tests
+│   │   └── tests-e2e/            # Playwright browser e2e (browser.mjs), the one handwritten JS for tests
 │   └── fake-agent/               # test bin that speaks Claude stream-json & Codex JSON-RPC
 ├── vendor/codex-schema/          # pinned subset of codex app-server JSON Schema (see §7.2)
 ├── fixtures/                     # recorded real claude/codex stdio sessions for replay tests
 ├── web/                          # static extras for the domain: sw.js (P3)
 ├── deploy/                       # systemd unit, launchd plist, Task Scheduler XML, WSL notes
-├── tools/                        # [S3] check.sh (the commit gate), s3-native.sh, s3-browser.sh
+├── tools/                        # check.sh (the commit gate), e2e-browser.sh (P1 unit 7), s3-native.sh [S3]
 └── docs/
 ```
 
