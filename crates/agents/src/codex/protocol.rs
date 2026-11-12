@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use proto::{Answer, Question, QuestionOption, Selection};
+use proto::{Answer, Effort, ModelChoice, ModelId, Models, Question, QuestionOption, Selection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -82,16 +82,10 @@ pub enum Sandbox {
 pub struct ThreadOptions {
     pub cwd: PathBuf,
     pub model: Option<String>,
-    /// Passed as the `model_reasoning_effort` config override, such as `low`.
-    pub effort: Option<String>,
+    /// Passed as the `model_reasoning_effort` config override.
+    pub effort: Option<Effort>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox: Sandbox,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelInfo {
-    pub id: String,
-    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +178,17 @@ pub enum ThreadEvent {
     },
     /// A finished agent message, not a delta.
     AgentMessage {
+        turn: TurnId,
+        text: String,
+    },
+    /// A piece of a reasoning summary as it streams; `Reasoning` follows.
+    ReasoningDelta {
+        turn: TurnId,
+        text: String,
+    },
+    /// A finished reasoning item: its summary parts, joined. Empty when the
+    /// model gave none.
+    Reasoning {
         turn: TurnId,
         text: String,
     },
@@ -375,6 +380,14 @@ enum Notification {
         turn_id: String,
         delta: String,
     },
+    #[serde(rename = "item/reasoning/summaryTextDelta")]
+    ReasoningSummaryTextDelta {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        delta: String,
+    },
     #[serde(rename = "serverRequest/resolved")]
     ServerRequestResolved {
         #[serde(rename = "threadId")]
@@ -432,6 +445,9 @@ struct TurnError {
 enum ThreadItem {
     AgentMessage {
         text: String,
+    },
+    Reasoning {
+        summary: Vec<String>,
     },
     CommandExecution {
         id: String,
@@ -791,6 +807,17 @@ fn notification(raw: Value) -> Inbound {
                 text: delta,
             },
         ),
+        Ok(Notification::ReasoningSummaryTextDelta {
+            thread_id,
+            turn_id,
+            delta,
+        }) => on_thread(
+            thread_id,
+            ThreadEvent::ReasoningDelta {
+                turn: TurnId(turn_id),
+                text: delta,
+            },
+        ),
         Ok(Notification::ServerRequestResolved {
             thread_id,
             request_id,
@@ -802,7 +829,7 @@ fn notification(raw: Value) -> Inbound {
             None => Inbound::Event(thread_unknown(raw)),
         },
         Ok(Notification::ItemStarted {
-            item: ThreadItem::AgentMessage { .. },
+            item: ThreadItem::AgentMessage { .. } | ThreadItem::Reasoning { .. },
             ..
         })
         | Err(_) => Inbound::Event(thread_unknown(raw)),
@@ -825,6 +852,10 @@ fn item_event(thread: String, turn: String, phase: ItemPhase, item: ThreadItem) 
         thread,
         match item {
             ThreadItem::AgentMessage { text } => ThreadEvent::AgentMessage { turn, text },
+            ThreadItem::Reasoning { summary } => ThreadEvent::Reasoning {
+                turn,
+                text: summary.join("\n\n"),
+            },
             ThreadItem::CommandExecution {
                 id,
                 command,
@@ -917,20 +948,25 @@ struct ThreadParams {
     config: Value,
 }
 
-/// The `config` overrides of every thread: the reasoning effort, if set,
-/// and the feature that lets the model ask the user questions outside plan
-/// mode, which Codex 0.166 marks under development.
-fn thread_config(effort: Option<String>) -> Value {
+/// The `config` overrides of every thread: the reasoning effort, if set;
+/// reasoning summaries, which a custom model provider gets none of by
+/// default (PROTOCOL.md); and the feature that lets the model ask the user
+/// questions outside plan mode, which Codex 0.166 marks under development.
+fn thread_config(effort: Option<Effort>) -> Value {
     let features = serde_json::Map::from_iter([(
         String::from("default_mode_request_user_input"),
         Value::Bool(true),
     )]);
     Value::Object(
         std::iter::once((String::from("features"), Value::Object(features)))
+            .chain([(
+                String::from("model_reasoning_summary"),
+                Value::String(String::from("auto")),
+            )])
             .chain(effort.map(|effort| {
                 (
                     String::from("model_reasoning_effort"),
-                    Value::String(effort),
+                    Value::String(String::from(effort.wire())),
                 )
             }))
             .collect(),
@@ -1002,7 +1038,7 @@ fn thread_params(thread_id: Option<String>, opts: &ThreadOptions) -> serde_json:
         sandbox: opts.sandbox,
         cwd: opts.cwd.display().to_string(),
         model: opts.model.clone(),
-        config: thread_config(opts.effort.clone()),
+        config: thread_config(opts.effort),
     })?;
     Ok(match params {
         Value::Object(fields) => Value::Object(
@@ -1021,26 +1057,64 @@ struct ModelList {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Model {
     id: String,
+    display_name: String,
     description: String,
-}
-
-pub(crate) fn models(result: Value) -> serde_json::Result<Vec<ModelInfo>> {
-    let list = serde_json::from_value::<ModelList>(result)?;
-    Ok(list
-        .data
-        .into_iter()
-        .map(|m| ModelInfo {
-            id: m.id,
-            description: m.description,
-        })
-        .collect())
+    hidden: Option<bool>,
+    is_default: Option<bool>,
+    supported_reasoning_efforts: Vec<SupportedEffort>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportedEffort {
+    reasoning_effort: String,
+}
+
+/// The models `model/list` offers, without the hidden ones.
+pub(crate) fn models(result: Value) -> serde_json::Result<Models> {
+    let list = serde_json::from_value::<ModelList>(result)?;
+    let shown = list
+        .data
+        .into_iter()
+        .filter(|m| m.hidden != Some(true))
+        .collect::<Vec<Model>>();
+    Ok(Models {
+        default: shown
+            .iter()
+            .find(|m| m.is_default == Some(true))
+            .map(|m| ModelId(m.id.clone())),
+        choices: shown
+            .into_iter()
+            .map(|m| ModelChoice {
+                id: ModelId(m.id),
+                name: m.display_name,
+                description: m.description,
+                efforts: m
+                    .supported_reasoning_efforts
+                    .iter()
+                    .filter_map(|e| Effort::parse(&e.reasoning_effort))
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ThreadResponse {
     thread: Id,
+    model: String,
+    reasoning_effort: Option<String>,
+}
+
+/// What `thread/start` and `thread/resume` say the thread runs with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSettings {
+    pub model: String,
+    pub effort: Option<Effort>,
 }
 
 #[derive(Deserialize)]
@@ -1054,10 +1128,17 @@ struct InitializeResponse {
     user_agent: String,
 }
 
-pub(crate) fn thread_id(result: Value) -> serde_json::Result<ThreadId> {
-    // `thread/start` and `thread/resume` both answer `{thread: {id, ..}, ..}`.
+/// `thread/start` and `thread/resume` both answer `{thread: {id, ..},
+/// model, reasoningEffort, ..}`.
+pub(crate) fn thread_started(result: Value) -> serde_json::Result<(ThreadId, ThreadSettings)> {
     let r = serde_json::from_value::<ThreadResponse>(result)?;
-    Ok(ThreadId(r.thread.id))
+    Ok((
+        ThreadId(r.thread.id),
+        ThreadSettings {
+            model: r.model,
+            effort: r.reasoning_effort.as_deref().and_then(Effort::parse),
+        },
+    ))
 }
 
 pub(crate) fn turn_id(result: Value) -> serde_json::Result<TurnId> {
@@ -1256,7 +1337,7 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use proto::{Answer, Question, QuestionOption, Selection};
+    use proto::{Answer, Effort, Question, QuestionOption, Selection};
     use serde_json::Value;
 
     use super::{
@@ -1281,7 +1362,7 @@ mod tests {
         ThreadOptions {
             cwd: "/tmp/s2-scratch".into(),
             model: Some(String::from("gpt-6-luna")),
-            effort: Some(String::from("low")),
+            effort: Some(Effort::Low),
             approval_policy: ApprovalPolicy::OnRequest,
             sandbox: Sandbox::ReadOnly,
         }
@@ -1312,7 +1393,7 @@ mod tests {
                 r#"{"id": 7, "method": "thread/start", "params": {
                 "approvalPolicy": "on-request", "sandbox": "read-only", "cwd": "/tmp/s2-scratch",
                 "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low",
-                "features": {"default_mode_request_user_input": true}}}}"#
+                "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true}}}}"#
             )
         );
         assert_eq!(
@@ -1322,7 +1403,7 @@ mod tests {
                 "threadId": "th_1", "approvalPolicy": "on-request", "sandbox": "read-only",
                 "cwd": "/tmp/s2-scratch", "model": "gpt-6-luna",
                 "config": {"model_reasoning_effort": "low",
-                "features": {"default_mode_request_user_input": true}}}}"#
+                "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true}}}}"#
             )
         );
     }

@@ -53,9 +53,9 @@ mod tests {
     use super::{HEADER_LEN, body_len, decode, encode};
     use crate::{
         Auth, AuthToken, Availability, ClientName, CodexCredential, Command, CommandBody,
-        CommandId, CommandResult, Credential, Decision, Epoch, Event, EventKind, Hello, HelloReply,
-        HostSeq, Open, Providers, Rejection, RequestId, Resolution, SessionId, Subscribe,
-        TurnOutcome, Welcome,
+        CommandId, CommandResult, Credential, Decision, Effort, Epoch, Event, EventKind, Hello,
+        HelloReply, HostSeq, ModelChoice, ModelId, Models, Open, Providers, Rejection, RequestId,
+        Resolution, SessionId, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -100,7 +100,7 @@ mod tests {
         });
         assert_eq!(
             encode(&open).unwrap(),
-            frame(b"\x02\x01\x05\x01\x00\x01n\x01u\x01k\x01m")
+            frame(b"\x02\x01\x06\x01\x00\x01n\x01u\x01k\x01m")
         );
         assert_eq!(
             format!("{open:?}"),
@@ -141,6 +141,15 @@ mod tests {
                         auth: Auth::Gateway {
                             base_url: String::from("u"),
                         },
+                        models: Models {
+                            choices: Vec::from([ModelChoice {
+                                id: ModelId(String::from("h")),
+                                name: String::from("H"),
+                                description: String::from("d"),
+                                efforts: Vec::from([Effort::High]),
+                            }]),
+                            default: Some(ModelId(String::from("h"))),
+                        },
                     },
                     codex: Availability::Unavailable {
                         reason: String::from("no"),
@@ -148,7 +157,9 @@ mod tests {
                 },
             }))
             .unwrap(),
-            frame(b"\x00\x04desk\x01\x00\x00\x00\x01u\x01\x02no")
+            frame(
+                b"\x00\x04desk\x01\x00\x00\x00\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x02no"
+            )
         );
         assert_eq!(
             encode(&Event {
@@ -163,7 +174,7 @@ mod tests {
                 },
             })
             .unwrap(),
-            frame(b"\x03\x01\x09\x02\x00\x00\x05phone")
+            frame(b"\x03\x01\x0b\x02\x00\x00\x05phone")
         );
         assert_eq!(
             encode(&Event {
@@ -176,7 +187,7 @@ mod tests {
                 },
             })
             .unwrap(),
-            frame(b"\x04\x01\x0a\x02\x04boom")
+            frame(b"\x04\x01\x0c\x02\x04boom")
         );
         assert_eq!(
             encode(&CommandResult::Rejected(Rejection::ProviderUnavailable {

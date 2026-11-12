@@ -8,7 +8,7 @@ mod server;
 
 pub use protocol::{
     ApprovalId, ApprovalKind, ApprovalPolicy, ChangeKind, CodexEvent, Decision, FileChange, Item,
-    ItemPhase, ModelInfo, PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId,
-    TurnOutcome,
+    ItemPhase, PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings,
+    TurnId, TurnOutcome,
 };
 pub use server::{CodexServer, CodexThread, Error, ServerOptions, cli, login, login_status};

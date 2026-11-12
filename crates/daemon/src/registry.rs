@@ -1,20 +1,21 @@
-//! The registry: the one place a `StartSession` is checked and a session is
-//! found by its id.
+//! The registry: the one place a `StartSession` and a `Continue` are
+//! checked and a session is found by its id.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 
 use agents::claude::Sandbox;
 use proto::{
-    Auth, Availability, ClaudeCredential, ClientName, CommandResult, Credential, Credentials,
-    EventKind, HostPath, Provider, Providers, Rejection, SessionId,
+    Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandResult, Credential,
+    Credentials, Effort, EventKind, HostPath, ModelId, Models, Provider, Providers, Rejection,
+    SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session};
+use crate::session::{Choice, ClaudeLaunch, CodexLaunch, Launch, Session};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -26,8 +27,12 @@ pub struct Launchers {
 #[derive(Debug, Clone)]
 pub enum Launcher {
     /// The CLI runs, and signs in as `own` says when the host stores no
-    /// credential for it.
-    Ready { launch: Launch, own: OwnSignIn },
+    /// credential for it. `models` is what it offered when the host started.
+    Ready {
+        launch: Launch,
+        own: OwnSignIn,
+        models: Models,
+    },
     /// The host can't run this provider's sessions, for this reason.
     Unavailable(String),
 }
@@ -71,8 +76,14 @@ enum RegistryMsg {
     Start {
         provider: Provider,
         directory: HostPath,
+        model: Option<ModelId>,
+        effort: Option<Effort>,
         by: ClientName,
         reply: oneshot::Sender<CommandResult>,
+    },
+    Continue {
+        session: SessionId,
+        reply: oneshot::Sender<Result<(Session, Launch), Rejection>>,
     },
     Find {
         session: SessionId,
@@ -96,7 +107,7 @@ struct RegistryActor {
     launchers: Launchers,
     store: Store,
     stored: Stored,
-    sessions: BTreeMap<SessionId, Session>,
+    sessions: BTreeMap<SessionId, (Provider, Session)>,
     last: SessionId,
 }
 
@@ -126,15 +137,30 @@ impl Registry {
         &self,
         provider: Provider,
         directory: HostPath,
+        choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
+        let (model, effort) = choice;
         self.ask(|reply| RegistryMsg::Start {
             provider,
             directory,
+            model,
+            effort,
             by,
             reply,
         })
         .await
+    }
+
+    /// The session and how its provider runs now, for a `Continue`. The
+    /// session starts its agent itself, so a slow start never blocks the
+    /// registry.
+    pub async fn relaunch(
+        &self,
+        session: SessionId,
+    ) -> Result<Result<(Session, Launch), Rejection>, Stopped> {
+        self.ask(|reply| RegistryMsg::Continue { session, reply })
+            .await
     }
 
     pub async fn find(&self, session: SessionId) -> Result<Option<Session>, Stopped> {
@@ -187,14 +213,30 @@ impl RegistryActor {
             RegistryMsg::Start {
                 provider,
                 directory,
+                model,
+                effort,
                 by,
                 reply,
             } => {
-                let result = self.start(provider, directory, by).await?;
+                let result = self.start(provider, directory, (model, effort), by).await?;
                 let _ = reply.send(result);
             }
+            RegistryMsg::Continue { session, reply } => {
+                let relaunch = match self.sessions.get(&session) {
+                    None => Err(Rejection::UnknownSession),
+                    Some((provider, handle)) => self
+                        .ready(provider.to_owned())
+                        .map(|(launch, _)| (handle.clone(), launch))
+                        .map_err(|reason| Rejection::ProviderUnavailable { reason }),
+                };
+                let _ = reply.send(relaunch);
+            }
             RegistryMsg::Find { session, reply } => {
-                let _ = reply.send(self.sessions.get(&session).cloned());
+                let found = self
+                    .sessions
+                    .get(&session)
+                    .map(|(_, handle)| handle.clone());
+                let _ = reply.send(found);
             }
             RegistryMsg::Providers { reply } => {
                 let _ = reply.send(self.providers());
@@ -263,7 +305,7 @@ impl RegistryActor {
                 if let (
                     Provider::Codex,
                     Launcher::Ready {
-                        launch: Launch::Codex(CodexLaunch { hub, .. }),
+                        launch: Launch::Codex(CodexLaunch { hub }),
                         ..
                     },
                 ) = (provider, self.launchers.of(provider))
@@ -285,8 +327,34 @@ impl RegistryActor {
 
     fn availability(&self, provider: Provider) -> Availability {
         match self.ready(provider) {
-            Ok((_, auth)) => Availability::Available { auth },
+            Ok((_, auth)) => Availability::Available {
+                auth,
+                models: self.models(provider),
+            },
             Err(reason) => Availability::Unavailable { reason },
+        }
+    }
+
+    /// What the CLI offered when the host started. A Codex provider
+    /// credential names the model its gateway serves, so that model is the
+    /// default.
+    fn models(&self, provider: Provider) -> Models {
+        let listed = match self.launchers.of(provider) {
+            Launcher::Ready { models, .. } => models.clone(),
+            Launcher::Unavailable(_) => Models::none(),
+        };
+        match (provider, &self.stored) {
+            (
+                Provider::Codex,
+                Stored::Opened(Credentials {
+                    codex: Some(CodexCredential::Provider { model, .. }),
+                    ..
+                }),
+            ) => Models {
+                default: Some(ModelId(model.clone())),
+                ..listed
+            },
+            (_, _) => listed,
         }
     }
 
@@ -298,7 +366,7 @@ impl RegistryActor {
         match (self.launchers.of(provider), &self.stored) {
             (Launcher::Unavailable(reason), _)
             | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => Err(reason.clone()),
-            (Launcher::Ready { launch, own }, Stored::Opened(credentials)) => {
+            (Launcher::Ready { launch, own, .. }, Stored::Opened(credentials)) => {
                 let launch = match launch.clone() {
                     Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
                         credential: credentials.claude.clone(),
@@ -318,29 +386,73 @@ impl RegistryActor {
         &mut self,
         provider: Provider,
         directory: HostPath,
+        asked: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         // `read_dir` fails for a missing path and for a file alike.
         let ready = self.ready(provider).map(|(launch, _)| launch);
-        match (std::fs::read_dir(&directory.0), ready) {
-            (Err(_), _) => Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)),
-            (Ok(_), Err(reason)) => Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
-                reason,
-            })),
-            (Ok(_), Ok(launch)) => {
+        let (model, effort) = asked;
+        match (
+            std::fs::read_dir(&directory.0),
+            ready,
+            choose(&self.models(provider), model, effort),
+        ) {
+            (Err(_), _, _) => Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)),
+            (Ok(_), Err(reason), _) => {
+                Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
+                    reason,
+                }))
+            }
+            (Ok(_), Ok(_), Err(reason)) => {
+                Ok(CommandResult::Rejected(Rejection::NotOffered { reason }))
+            }
+            (Ok(_), Ok(launch), Ok(choice)) => {
                 let id = self.last.next();
                 self.last = id;
                 let created = EventKind::SessionCreated {
                     provider,
                     directory: directory.clone(),
                     by,
+                    model: choice.model.clone(),
+                    effort: choice.effort,
                 };
                 self.log.append(id, created).await?;
-                let session = Session::spawn(id, directory, launch, self.log.clone());
-                self.sessions.insert(id, session);
+                let session = Session::spawn(id, directory, choice, launch, self.log.clone());
+                self.sessions.insert(id, (provider, session));
                 Ok(CommandResult::Started { session: id })
             }
         }
+    }
+}
+
+/// The model and effort a session asked for, checked against what the
+/// provider offers. No model is the default. An effort must be one the
+/// model lists, unless the host knows nothing of the model (a default from
+/// `--claude-model` or a Codex credential that the CLI didn't list).
+fn choose(
+    models: &Models,
+    model: Option<ModelId>,
+    effort: Option<Effort>,
+) -> Result<Choice, String> {
+    let model = match model {
+        Some(model) => models
+            .find(&model)
+            .map(|choice| Some(choice.id.clone()))
+            .ok_or_else(|| format!("this host doesn't offer the model {}", model.0)),
+        None => Ok(models.default.clone()),
+    }?;
+    let listed = model.as_ref().and_then(|model| models.find(model));
+    match (effort, listed) {
+        (Some(effort), Some(choice)) => choice
+            .efforts
+            .iter()
+            .find(|offered| offered == &&effort)
+            .map(|_| Choice {
+                model: model.clone(),
+                effort: Some(effort),
+            })
+            .ok_or_else(|| format!("{} doesn't take the effort {}", choice.name, effort.wire())),
+        (effort, _) => Ok(Choice { model, effort }),
     }
 }
 

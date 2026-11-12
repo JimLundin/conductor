@@ -162,7 +162,20 @@ impl Conductor {
             CommandBody::StartSession {
                 provider,
                 directory,
-            } => self.registry.start(provider, directory, client).await,
+                model,
+                effort,
+            } => {
+                self.registry
+                    .start(provider, directory, (model, effort), client)
+                    .await
+            }
+            CommandBody::Continue { session } => match self.registry.relaunch(session).await? {
+                Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+                Ok((handle, launch)) => Ok(handle
+                    .order(Order::Start(launch))
+                    .await
+                    .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
+            },
             CommandBody::SendMessage { session, text } => {
                 self.order(session, Order::Send { text, by: client }).await
             }

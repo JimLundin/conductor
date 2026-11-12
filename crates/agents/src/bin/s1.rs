@@ -1,6 +1,7 @@
 //! S1 live checklist: drives the real `claude` CLI through approve, deny,
-//! interrupt, resume, set_permission_mode, questions and approval for the
-//! session, printing PASS/FAIL per step.
+//! interrupt, resume, set_permission_mode, questions, approval for the
+//! session, a chosen model and effort, reasoning, and a killed CLI resumed,
+//! printing PASS/FAIL per step.
 //!
 //! Usage: s1 [FIXTURE_DIR]
 //! Writes raw CLI stdout per step to FIXTURE_DIR/<step>.jsonl when given.
@@ -18,7 +19,7 @@ use agents::claude::{
 use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
-use proto::{Answer, Question};
+use proto::{Answer, Effort, Question};
 use tokio::sync::mpsc;
 
 /// Where the pinned CLIs are installed for the live checks, under this
@@ -72,6 +73,8 @@ enum Plan {
     /// Leave the first permission request or question open and interrupt;
     /// deny any later one.
     InterruptOnPermission,
+    /// Kill the CLI at the cue; the turn ends when it exits.
+    Kill(Cue),
 }
 
 /// Whether a turn has reached its `result`.
@@ -107,6 +110,12 @@ struct Turn {
     text: String,
     /// The text of every `StreamDelta`, joined.
     streamed: String,
+    /// The text of each thinking block.
+    thinking: Vec<String>,
+    /// The text of every `ThinkingDelta`, joined.
+    thought: String,
+    /// How the CLI exited, under `Plan::Kill`.
+    exited: Option<String>,
     finished: Option<Finished>,
     session_id: Option<SessionId>,
     /// What `interrupt()` returned, once the plan called it.
@@ -128,6 +137,9 @@ impl Turn {
             cancelled_permissions: 0,
             text: String::new(),
             streamed: String::new(),
+            thinking: Vec::new(),
+            thought: String::new(),
+            exited: None,
             finished: None,
             session_id: None,
             interrupted: None,
@@ -171,6 +183,10 @@ impl Turn {
             ClaudeEvent::StreamDelta { text } => {
                 self.streamed.push_str(&text);
                 self.cue(Cue::Delta).await;
+                Ok(Progress::Playing)
+            }
+            ClaudeEvent::ThinkingDelta { text } => {
+                self.thought.push_str(&text);
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message {
@@ -241,10 +257,15 @@ impl Turn {
                 self.session_id.get_or_insert(session_id);
                 Ok(Progress::Done)
             }
-            ClaudeEvent::Exited { status } => Err(anyhow::Error::msg(format!(
-                "claude exited mid-turn: {}",
-                status.describe()
-            ))),
+            ClaudeEvent::Exited { status } => match self.plan {
+                Plan::Kill(_) => {
+                    self.exited = Some(status.describe());
+                    Ok(Progress::Done)
+                }
+                Plan::Answer(_) | Plan::Interrupt(_) | Plan::InterruptOnPermission => Err(
+                    anyhow::Error::msg(format!("claude exited mid-turn: {}", status.describe())),
+                ),
+            },
         }
     }
 
@@ -256,11 +277,23 @@ impl Turn {
             | (Plan::Interrupt(Cue::Delta), Cue::Delta, None) => {
                 self.interrupted = Some(self.live.session.interrupt().await);
             }
+            (Plan::Kill(Cue::Delta), Cue::Delta, None) => {
+                self.interrupted = Some(Ok(()));
+                kill(self.live.session.pid());
+            }
             _ => {}
         }
     }
 
     fn on_reply(&mut self, content: Vec<Block>) {
+        self.thinking
+            .extend(content.iter().filter_map(|block| match block {
+                Block::Thinking(text) => Some(text.clone()),
+                Block::Text(_)
+                | Block::ToolUse { .. }
+                | Block::ToolResult { .. }
+                | Block::Other(_) => None,
+            }));
         let text = content
             .into_iter()
             .filter_map(|block| match block {
@@ -287,7 +320,7 @@ impl Turn {
                 self.interrupted = Some(self.live.session.interrupt().await);
                 Ok(())
             }
-            (Plan::InterruptOnPermission, Some(_)) | (Plan::Interrupt(_), _) => {
+            (Plan::InterruptOnPermission, Some(_)) | (Plan::Interrupt(_) | Plan::Kill(_), _) => {
                 let decision = PermissionDecision::Deny {
                     message: String::from("not expected after an interrupt"),
                     then: AfterDeny::Continue,
@@ -330,6 +363,7 @@ fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>
         credential: None,
         cwd: PathBuf::from(SCRATCH),
         model: Some(String::from("haiku")),
+        effort: None,
         permission_mode: PermissionMode::Default,
         resume,
         // Keep the user's own hooks and plugins out of the spike.
@@ -346,6 +380,117 @@ async fn spawn(
 ) -> Result<Live> {
     let (session, events) = ClaudeSession::spawn(options(claude, resume, stdout_log)).await?;
     Ok(Live { session, events })
+}
+
+/// Kills the process as a crash would, without closing its stdin.
+fn kill(pid: Option<u32>) {
+    let killed = pid.map(|pid| {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+    });
+    tracing::info!(?pid, ?killed, "killed claude");
+}
+
+/// The model and effort steps 11 to 13 choose, other than s1's default.
+const CHOSEN_MODEL: &str = "sonnet";
+const CHOSEN_EFFORT: Effort = Effort::High;
+/// The model `get_settings` reports for [`CHOSEN_MODEL`].
+const CHOSEN_RESOLVED: &str = "claude-sonnet-5-5";
+
+fn chosen(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
+    ClaudeOptions {
+        model: Some(String::from(CHOSEN_MODEL)),
+        effort: Some(CHOSEN_EFFORT),
+        ..options(claude, resume, stdout_log)
+    }
+}
+
+/// Steps 11 to 13, in a fourth session started with a chosen model and
+/// effort: the CLI reports them, a turn reasons, and the CLI killed in the
+/// middle of a turn is resumed in a new process that remembers the first
+/// turn.
+async fn chosen_and_killed(
+    claude: &Path,
+    fixtures: Option<&Path>,
+) -> Result<(Verdict, Verdict, Verdict)> {
+    let log = log_path(fixtures, "session4-chosen-killed");
+    let (session, events) = ClaudeSession::spawn(chosen(claude, None, log)).await?;
+    let applied = session.applied().await;
+    let model = report(
+        "11 chosen model and effort",
+        match applied
+            .as_ref()
+            .map(|applied| (applied.model.as_str(), applied.effort.as_deref()))
+        {
+            Ok((CHOSEN_RESOLVED, Some("high"))) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!("applied={applied:?}"),
+    )?;
+    let t = Turn::start(
+        Live { session, events },
+        "A farmer has 17 sheep. All but 9 run away. He then buys twice as many as remain, and sells a third of the total. How many sheep does he have? Answer with just the number.",
+        Plan::Answer(Policy::Deny(String::from("no tools"))),
+    )
+    .await?;
+    let reasoning = report(
+        "12 reasoning",
+        match (t.thinking.concat(), t.thinking.first(), t.result()) {
+            (joined, Some(_), Some(("success", Outcome::Succeeded))) if joined == t.thought => {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "thinking blocks={} text={:?} streamed={:?} reply={:?}",
+            t.thinking.len(),
+            t.thinking,
+            t.thought,
+            t.text
+        ),
+    )?;
+    let session_id = t.session_id.clone().context("no session id in step 12")?;
+    let killed = Turn::start(
+        t.live,
+        "Count from 1 to 200, one number per line.",
+        Plan::Kill(Cue::Delta),
+    )
+    .await?;
+    let (session, events) = ClaudeSession::spawn(chosen(
+        claude,
+        Some(session_id.clone()),
+        log_path(fixtures, "session5-resumed"),
+    ))
+    .await?;
+    let t = Turn::start(
+        Live { session, events },
+        "How many sheep did the farmer end up with in my puzzle earlier in this conversation? Answer with just the number.",
+        Plan::Answer(Policy::Deny(String::from("no tools"))),
+    )
+    .await?;
+    let resumed = report(
+        "13 killed and resumed",
+        match (&killed.exited, t.text.find("18"), t.result(), &t.session_id) {
+            (Some(_), Some(_), Some(("success", Outcome::Succeeded)), Some(id))
+                if id == &session_id =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "killed after {:?} exit={:?}; resumed {} -> session_id={:?} reply={:?}",
+            killed.streamed.lines().last(),
+            killed.exited,
+            session_id.0,
+            t.session_id.as_ref().map(|id| &id.0),
+            t.text
+        ),
+    )?;
+    let status = t.live.session.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((model, reasoning, resumed))
 }
 
 /// What an interrupt at a cue does to the turn.
@@ -765,6 +910,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let (question, for_session, withdrawn, duplicate) =
         questions(&claude, scratch, fixtures).await?;
+    let (chosen, reasoning, resumed) = chosen_and_killed(&claude, fixtures).await?;
     let failed = Vec::from([
         approve,
         deny,
@@ -779,6 +925,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         for_session,
         withdrawn,
         duplicate,
+        chosen,
+        reasoning,
+        resumed,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

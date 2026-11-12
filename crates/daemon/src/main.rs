@@ -10,11 +10,11 @@ use daemon::credentials::{Store, Stored};
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
-use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
+use daemon::session::{ClaudeLaunch, CodexLaunch, Launch, claude_models};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::Ticket;
+use proto::{ModelId, Models, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 
@@ -105,15 +105,27 @@ async fn main() -> anyhow::Result<()> {
             let claude = match cli_path(Cli::Claude, claude_path, &data_dir).await {
                 Ok((claude_path, origin)) => {
                     let status = agents::claude::auth_status(&claude_path, &homes.claude);
+                    let launch = ClaudeLaunch {
+                        claude_path: claude_path.clone(),
+                        home: homes.claude.clone(),
+                        credential: None,
+                    };
+                    // The CLI lists its models as a session would see them.
+                    let listed = claude_models(
+                        ClaudeLaunch {
+                            credential: match &stored {
+                                Stored::Opened(credentials) => credentials.claude.clone(),
+                                Stored::Unreadable(_) => None,
+                            },
+                            ..launch.clone()
+                        },
+                        data_dir.clone(),
+                    );
                     launcher(
                         agents::claude::cli(&claude_path, &homes.claude),
-                        Launch::Claude(ClaudeLaunch {
-                            claude_path,
-                            home: homes.claude,
-                            credential: None,
-                            model: claude_model,
-                        }),
+                        Launch::Claude(launch),
                         own_sign_in(origin, status).await,
+                        (listed.await, claude_model),
                     )
                     .await
                 }
@@ -135,13 +147,12 @@ async fn main() -> anyhow::Result<()> {
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
+                    let listed = hub.models().await.map_err(|err| err.to_string());
                     launcher(
                         version,
-                        Launch::Codex(CodexLaunch {
-                            hub,
-                            model: codex_model,
-                        }),
+                        Launch::Codex(CodexLaunch { hub }),
                         own_sign_in(origin, status).await,
+                        (listed, codex_model),
                     )
                     .await
                 }
@@ -267,15 +278,37 @@ async fn host(
     Ok(router)
 }
 
-/// A provider's CLI is ready when `<cli> --version` runs and succeeds.
-async fn launcher(mut cli: tokio::process::Command, launch: Launch, own: OwnSignIn) -> Launcher {
+/// A provider's CLI is ready when `<cli> --version` runs and succeeds. It
+/// offers the models it `listed`, with `default` (`--claude-model`,
+/// `--codex-model`) first as the one a session gets when it names none. A
+/// CLI that could not list them, for instance because it is not signed in
+/// yet, offers only the default.
+async fn launcher(
+    mut cli: tokio::process::Command,
+    launch: Launch,
+    own: OwnSignIn,
+    models: (Result<Models, String>, Option<String>),
+) -> Launcher {
+    let (listed, default) = models;
+    let listed = listed.unwrap_or_else(|reason| {
+        tracing::warn!(%reason, "the CLI listed no models");
+        Models::none()
+    });
+    let models = Models {
+        default: default.map(ModelId).or(listed.default),
+        ..listed
+    };
     let path = cli.as_std().get_program().display().to_string();
     match cli.arg("--version").output().await {
         Ok(output) => match output.status.code() {
             Some(0) => {
                 let version = String::from_utf8_lossy(&output.stdout);
-                tracing::info!(%path, version = %version.trim(), ?own, "ready");
-                Launcher::Ready { launch, own }
+                tracing::info!(%path, version = %version.trim(), ?own, models = models.choices.len(), "ready");
+                Launcher::Ready {
+                    launch,
+                    own,
+                    models,
+                }
             }
             status => unavailable(format!("{path} --version exited with {status:?}")),
         },

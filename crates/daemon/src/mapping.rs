@@ -57,7 +57,8 @@ pub(crate) enum Step {
     TurnEnded(TurnOutcome),
     /// The session runs the turn, and sends an interrupt it held.
     TurnStarted(NativeTurn),
-    /// The agent process is gone: the session logs this and ends.
+    /// The agent process is gone: the session logs this and waits for a
+    /// `Continue`.
     Closed(CloseReason),
 }
 
@@ -72,6 +73,9 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             .collect(),
         ClaudeEvent::StreamDelta { text } => {
             Vec::from([Step::Emit(EventKind::AssistantDelta { text })])
+        }
+        ClaudeEvent::ThinkingDelta { text } => {
+            Vec::from([Step::Emit(EventKind::ReasoningDelta { text })])
         }
         ClaudeEvent::PermissionRequested {
             id,
@@ -123,6 +127,7 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
         (Role::Assistant, Block::Text(text)) => {
             Some(Step::Emit(EventKind::AssistantMessage { text }))
         }
+        (Role::Assistant, Block::Thinking(text)) => reasoning(text),
         (Role::Assistant, Block::ToolUse { id, name, detail }) => match name.as_str() {
             ASK_USER_QUESTION => None,
             name => Some(Step::Emit(EventKind::ToolCall {
@@ -148,8 +153,17 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
         }),
         (Role::User, Block::Text(_) | Block::ToolUse { .. })
         | (Role::Assistant, Block::ToolResult { .. })
-        | (_, Block::Thinking(_) | Block::Other(_)) => None,
+        | (Role::User, Block::Thinking(_))
+        | (_, Block::Other(_)) => None,
     }
+}
+
+/// A finished stretch of reasoning. Without its text (Claude's signature
+/// alone, a Codex item with no summary) there is nothing to show.
+fn reasoning(text: String) -> Option<Step> {
+    Some(text)
+        .filter(|text| !text.is_empty())
+        .map(|text| Step::Emit(EventKind::Reasoning { text }))
 }
 
 fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
@@ -208,6 +222,10 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         ThreadEvent::AgentMessage { text, .. } => {
             Vec::from([Step::Emit(EventKind::AssistantMessage { text })])
         }
+        ThreadEvent::ReasoningDelta { text, .. } => {
+            Vec::from([Step::Emit(EventKind::ReasoningDelta { text })])
+        }
+        ThreadEvent::Reasoning { text, .. } => reasoning(text).into_iter().collect(),
         ThreadEvent::Item {
             phase: ItemPhase::Started,
             item,
@@ -456,10 +474,45 @@ mod tests {
     fn each_provider_event_maps_to_its_steps() {
         let cases = Vec::from([
             Case {
+                got: claude_steps(ClaudeEvent::ThinkingDelta {
+                    text: String::from("hm"),
+                }),
+                want: Vec::from([Step::Emit(EventKind::ReasoningDelta {
+                    text: String::from("hm"),
+                })]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ReasoningDelta {
+                    turn: turn(),
+                    text: String::from("**Plan**"),
+                }),
+                want: Vec::from([Step::Emit(EventKind::ReasoningDelta {
+                    text: String::from("**Plan**"),
+                })]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::Reasoning {
+                    turn: turn(),
+                    text: String::from("**Plan**\n\nList it."),
+                }),
+                want: Vec::from([Step::Emit(EventKind::Reasoning {
+                    text: String::from("**Plan**\n\nList it."),
+                })]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::Reasoning {
+                    turn: turn(),
+                    text: String::new(),
+                }),
+                want: Vec::new(),
+            },
+            Case {
                 got: claude_steps(ClaudeEvent::Message {
                     role: Role::Assistant,
                     content: Vec::from([
                         Block::Thinking(String::from("hmm")),
+                        // Claude's signature alone, without the text.
+                        Block::Thinking(String::new()),
                         tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
                         tool_use("Bash", ToolDetail::Command(String::from("ls"))),
                         tool_use("Write", ToolDetail::Path(String::from("c.txt"))),
@@ -467,6 +520,9 @@ mod tests {
                     ]),
                 }),
                 want: Vec::from([
+                    Step::Emit(EventKind::Reasoning {
+                        text: String::from("hmm"),
+                    }),
                     started(
                         "toolu_1",
                         ToolKind::Other {

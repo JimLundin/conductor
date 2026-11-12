@@ -112,6 +112,16 @@ impl LogActor {
                     kind: EventKind::AssistantDelta { text },
                 });
             }
+            LogMsg::Append {
+                session,
+                kind: EventKind::ReasoningDelta { text },
+            } => {
+                let _ = self.live.send(Event {
+                    seq: self.head(),
+                    session,
+                    kind: EventKind::ReasoningDelta { text },
+                });
+            }
             LogMsg::Append { session, kind } => {
                 let event = Event {
                     seq: self.head().next(),
@@ -151,7 +161,9 @@ impl LogActor {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Auth, Availability, Epoch, EventKind, HostSeq, Providers, SessionId, Welcome};
+    use proto::{
+        Auth, Availability, Epoch, EventKind, HostSeq, Models, Providers, SessionId, Welcome,
+    };
 
     use super::Log;
 
@@ -171,6 +183,7 @@ mod tests {
         Providers {
             claude: Availability::Available {
                 auth: Auth::SignedIn,
+                models: Models::none(),
             },
             codex: Availability::Unavailable {
                 reason: String::from("no codex"),

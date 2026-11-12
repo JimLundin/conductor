@@ -1,5 +1,9 @@
 //! One session's actor: it owns the agent, the turn and the open requests, so
 //! a slow agent call stalls only its own session.
+//!
+//! The actor outlives its agent. When the agent's process exits, the
+//! session is closed and keeps its conversation's id, and `Continue` starts
+//! the agent again on it with the provider's resume.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
@@ -11,12 +15,12 @@ use agents::claude::{
     VersionPolicy,
 };
 use agents::codex::{
-    ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadOptions, TurnId,
+    ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadId, ThreadOptions, TurnId,
 };
 use proto::{
-    Answer, ClaudeCredential, ClientName, CloseReason, CommandResult, Decision, EventKind,
-    HostPath, Rejection, RequestId, Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    Answer, ClaudeCredential, ClientName, CloseReason, CommandResult, Decision, Effort, EventKind,
+    HostPath, ModelId, Models, Rejection, RequestId, Resolution, SessionId, ToolCallId,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -33,16 +37,20 @@ pub struct ClaudeLaunch {
     /// The stored credential, which the registry puts in when it starts a
     /// session.
     pub credential: Option<ClaudeCredential>,
-    /// `None` leaves the CLI's default model.
-    pub model: Option<String>,
 }
 
 /// How the host runs Codex: threads on the hub's shared app-server.
 #[derive(Debug, Clone)]
 pub struct CodexLaunch {
     pub hub: CodexHub,
-    /// `None` leaves the app-server's default model.
-    pub model: Option<String>,
+}
+
+/// The model and effort a session runs with, chosen when it starts. `None`
+/// leaves the CLI's default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub model: Option<ModelId>,
+    pub effort: Option<Effort>,
 }
 
 /// What a session task needs to start its agent.
@@ -71,6 +79,9 @@ pub enum Order {
         reply: Reply,
         by: ClientName,
     },
+    /// Starts the agent with this launch, resuming the conversation if the
+    /// session has one: when the session starts, and on `Continue`.
+    Start(Launch),
 }
 
 /// A reply to an open request: a decision for an approval, answers for a
@@ -87,7 +98,7 @@ struct SessionMsg {
     reply: oneshot::Sender<CommandResult>,
 }
 
-/// The agent, once started, and where its events arrive.
+/// The agent, and where its events arrive.
 enum Agent {
     Claude {
         session: ClaudeSession,
@@ -97,7 +108,14 @@ enum Agent {
         thread: CodexThread,
         events: mpsc::Receiver<Routed>,
     },
+    /// No agent runs: it exited, the host stopped it, or it never started.
+    Down,
 }
+
+/// A provider's conversation by its id: Claude's session, Codex's thread.
+/// Read like [`NativeRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Conversation(String);
 
 /// An agent call that failed.
 #[derive(Debug, thiserror::Error)]
@@ -108,6 +126,8 @@ enum AgentError {
     Codex(#[from] agents::codex::Error),
     #[error("{0}")]
     Hub(#[from] HubError),
+    #[error("the agent is not running")]
+    Down,
 }
 
 /// An interrupt that arrived before the agent began the turn. Sent then, it
@@ -147,7 +167,12 @@ enum Asked {
 
 struct SessionActor {
     id: SessionId,
+    directory: HostPath,
+    choice: Choice,
     agent: Agent,
+    /// The conversation `Continue` resumes, once a turn has started in it.
+    /// Before that the CLI has written no history to resume.
+    conversation: Option<Conversation>,
     log: Log,
     turn: Turn,
     requests: HashMap<RequestId, Pending>,
@@ -171,9 +196,33 @@ enum Input {
 impl Session {
     /// Starts the session's task, which starts the agent in `directory` and
     /// logs `SessionReady` or `SessionClosed`.
-    pub fn spawn(id: SessionId, directory: HostPath, launch: Launch, log: Log) -> Session {
+    pub fn spawn(
+        id: SessionId,
+        directory: HostPath,
+        choice: Choice,
+        launch: Launch,
+        log: Log,
+    ) -> Session {
         let (inbox, messages) = mpsc::channel(16);
-        tokio::spawn(run(id, directory, launch, log, messages));
+        let actor = SessionActor {
+            id,
+            directory,
+            choice,
+            agent: Agent::Down,
+            conversation: None,
+            log,
+            turn: Turn::Idle,
+            requests: HashMap::new(),
+            last_request: RequestId(0),
+            declined: HashSet::new(),
+        };
+        // The first order starts the agent, so the actor's loop does it all.
+        let (reply, _) = oneshot::channel();
+        let _ = inbox.try_send(SessionMsg {
+            order: Order::Start(launch),
+            reply,
+        });
+        tokio::spawn(actor.run(messages));
         Session { inbox }
     }
 
@@ -219,53 +268,27 @@ fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
     }
 }
 
-async fn run(
-    id: SessionId,
-    directory: HostPath,
+async fn start(
+    directory: &HostPath,
+    choice: &Choice,
+    conversation: Option<Conversation>,
     launch: Launch,
-    log: Log,
-    inbox: mpsc::Receiver<SessionMsg>,
-) -> Result<Infallible, Stopped> {
-    match start(directory, launch).await {
-        Ok(agent) => {
-            log.append(id, EventKind::SessionReady).await?;
-            let actor = SessionActor {
-                id,
-                agent,
-                log,
-                turn: Turn::Idle,
-                requests: HashMap::new(),
-                last_request: RequestId(0),
-                declined: HashSet::new(),
-            };
-            actor.run(inbox).await
-        }
-        Err(err) => {
-            let reason = CloseReason::FailedToStart {
-                message: err.to_string(),
-            };
-            log.append(id, EventKind::SessionClosed { reason }).await?;
-            Err(Stopped {})
-        }
-    }
-}
-
-async fn start(directory: HostPath, launch: Launch) -> Result<Agent, AgentError> {
+) -> Result<Agent, AgentError> {
     match launch {
         Launch::Claude(ClaudeLaunch {
             claude_path,
             home,
             credential,
-            model,
         }) => {
             let (session, events) = ClaudeSession::spawn(ClaudeOptions {
                 claude_path,
                 home,
                 credential,
-                cwd: PathBuf::from(directory.0),
-                model,
+                cwd: PathBuf::from(&directory.0),
+                model: choice.model.clone().map(|model| model.0),
+                effort: choice.effort,
                 permission_mode: PermissionMode::Default,
-                resume: None,
+                resume: conversation.map(|conversation| agents::claude::SessionId(conversation.0)),
                 // The user level is the host's private home (§6.2).
                 setting_sources: Some(Vec::from([
                     SettingSource::User,
@@ -279,19 +302,45 @@ async fn start(directory: HostPath, launch: Launch) -> Result<Agent, AgentError>
             Ok(Agent::Claude { session, events })
         }
         // Paseo's preset: Codex asks before leaving the workspace.
-        Launch::Codex(CodexLaunch { hub, model }) => {
+        Launch::Codex(CodexLaunch { hub }) => {
             let (thread, events) = hub
-                .start_thread(ThreadOptions {
-                    cwd: PathBuf::from(directory.0),
-                    model,
-                    effort: None,
-                    approval_policy: ApprovalPolicy::OnRequest,
-                    sandbox: Sandbox::WorkspaceWrite,
-                })
+                .start_thread(
+                    ThreadOptions {
+                        cwd: PathBuf::from(&directory.0),
+                        model: choice.model.clone().map(|model| model.0),
+                        effort: choice.effort,
+                        approval_policy: ApprovalPolicy::OnRequest,
+                        sandbox: Sandbox::WorkspaceWrite,
+                    },
+                    conversation.map(|conversation| ThreadId(conversation.0)),
+                )
                 .await?;
             Ok(Agent::Codex { thread, events })
         }
     }
+}
+
+/// What a Claude session offers, from its `initialize` response: the CLI
+/// is started in `directory` and stopped again.
+pub async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Models, String> {
+    let (session, _events) = ClaudeSession::spawn(ClaudeOptions {
+        claude_path: launch.claude_path,
+        home: launch.home,
+        credential: launch.credential,
+        cwd: directory,
+        model: None,
+        effort: None,
+        permission_mode: PermissionMode::Default,
+        resume: None,
+        setting_sources: None,
+        stdout_log: None,
+        versions: VersionPolicy::AllowUntested,
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let models = session.models().clone();
+    let _ = session.shutdown().await;
+    Ok(models)
 }
 
 impl Pending {
@@ -318,6 +367,16 @@ impl Agent {
                         Routed::Stopped { reason } => Input::Stopped(reason),
                     })
             }
+            // With no agent, the session only takes orders.
+            Agent::Down => std::future::pending().await,
+        }
+    }
+
+    fn conversation(&self) -> Option<Conversation> {
+        match self {
+            Agent::Claude { session, .. } => Some(Conversation(session.id().0.clone())),
+            Agent::Codex { thread, .. } => Some(Conversation(thread.id.0.clone())),
+            Agent::Down => None,
         }
     }
 }
@@ -356,9 +415,33 @@ impl SessionActor {
         }
     }
 
+    /// Starts the agent, resuming the conversation if it has one, and logs
+    /// whether it runs.
+    async fn start(&mut self, launch: Launch) -> Result<(), Stopped> {
+        let resume = self.conversation.clone();
+        match start(&self.directory, &self.choice, resume, launch).await {
+            Ok(agent) => {
+                self.agent = agent;
+                self.emit(EventKind::SessionReady).await
+            }
+            Err(err) => {
+                let reason = CloseReason::FailedToStart {
+                    message: err.to_string(),
+                };
+                self.emit(EventKind::SessionClosed { reason }).await
+            }
+        }
+    }
+
     async fn order(&mut self, order: Order) -> Result<CommandResult, Stopped> {
-        match (order, &self.turn) {
-            (Order::Send { text, by }, Turn::Idle) => {
+        match (order, &self.turn, &self.agent) {
+            (Order::Start(launch), _, Agent::Down) => {
+                self.start(launch).await?;
+                Ok(CommandResult::Accepted)
+            }
+            (Order::Start(_), _, _) => Ok(CommandResult::Rejected(Rejection::SessionOpen)),
+            (_, _, Agent::Down) => Ok(CommandResult::Rejected(Rejection::SessionClosed)),
+            (Order::Send { text, by }, Turn::Idle, _) => {
                 self.emit(EventKind::UserMessage {
                     text: text.clone(),
                     by,
@@ -377,11 +460,13 @@ impl SessionActor {
                 }
                 Ok(CommandResult::Accepted)
             }
-            (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_)) => {
+            (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
                 Ok(CommandResult::Rejected(Rejection::TurnInProgress))
             }
-            (Order::Interrupt, Turn::Idle) => Ok(CommandResult::Rejected(Rejection::NoTurnRunning)),
-            (Order::Interrupt, Turn::Starting(_)) => {
+            (Order::Interrupt, Turn::Idle, _) => {
+                Ok(CommandResult::Rejected(Rejection::NoTurnRunning))
+            }
+            (Order::Interrupt, Turn::Starting(_), _) => {
                 tracing::info!(
                     session = self.id.0,
                     "holding the interrupt until the turn starts"
@@ -389,12 +474,12 @@ impl SessionActor {
                 self.turn = Turn::Starting(Held::Interrupt);
                 Ok(CommandResult::Accepted)
             }
-            (Order::Interrupt, Turn::Running(native)) => {
+            (Order::Interrupt, Turn::Running(native), _) => {
                 let sent = self.interrupt(native).await;
                 self.note(sent).await?;
                 Ok(CommandResult::Accepted)
             }
-            (Order::Reply { request, reply, by }, _) => self.reply(request, reply, by).await,
+            (Order::Reply { request, reply, by }, _, _) => self.reply(request, reply, by).await,
         }
     }
 
@@ -455,6 +540,7 @@ impl SessionActor {
                 let _ = thread.send_turn(text).await?;
                 Ok(())
             }
+            Agent::Down => Err(AgentError::Down),
         }
     }
 
@@ -462,6 +548,7 @@ impl SessionActor {
         match &self.agent {
             Agent::Claude { session, .. } => Ok(session.interrupt().await?),
             Agent::Codex { thread, .. } => Ok(thread.interrupt(TurnId(turn.0.clone())).await?),
+            Agent::Down => Err(AgentError::Down),
         }
     }
 
@@ -481,6 +568,7 @@ impl SessionActor {
             Agent::Codex { thread, .. } => Ok(thread
                 .respond(ApprovalId(native.0), mapping::codex_answer(reply))
                 .await?),
+            Agent::Down => Err(AgentError::Down),
         }
     }
 
@@ -498,7 +586,7 @@ impl SessionActor {
         }
     }
 
-    /// Applies the steps in order, until one ends the session.
+    /// Applies the steps in order.
     async fn apply(&mut self, steps: Vec<Step>) -> Result<(), Stopped> {
         for step in steps {
             self.step(step).await?;
@@ -570,6 +658,7 @@ impl SessionActor {
                 Ok(())
             }
             Step::TurnStarted(native) => {
+                self.conversation = self.agent.conversation();
                 let before = std::mem::replace(&mut self.turn, Turn::Running(native.clone()));
                 match before {
                     Turn::Starting(Held::Interrupt) => {
@@ -583,9 +672,20 @@ impl SessionActor {
                     Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => Ok(()),
                 }
             }
+            // Nothing the gone agent asked can be answered, and a turn it
+            // ran is over; clients mark both when they see the close.
             Step::Closed(reason) => {
-                self.emit(EventKind::SessionClosed { reason }).await?;
-                Err(Stopped {})
+                self.agent = Agent::Down;
+                self.turn = Turn::Idle;
+                self.declined.clear();
+                self.requests = std::mem::take(&mut self.requests)
+                    .into_iter()
+                    .map(|(request, pending)| match pending {
+                        Pending::Open { .. } => (request, Pending::Resolved(Resolution::Withdrawn)),
+                        resolved => (request, resolved),
+                    })
+                    .collect();
+                self.emit(EventKind::SessionClosed { reason }).await
             }
         }
     }

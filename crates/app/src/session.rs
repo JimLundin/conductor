@@ -2,7 +2,7 @@
 
 use client::answers::Draft;
 use client::host_view::{
-    self, Approval, Interrupt, Item, ReplyState, RequestState, SessionStatus, SessionView,
+    self, Approval, Interrupt, Item, ReplyState, RequestState, Resume, SessionStatus, SessionView,
     ToolState, Working,
 };
 use client::new_session::label;
@@ -27,6 +27,7 @@ pub(crate) fn SessionPane(
     let working = session.working();
     let provider = label(session.provider);
     let status = session.status.word();
+    let runs = runs_with(&session);
     let empty = match (&session.status, session.items.first()) {
         (_, Some(_)) => None,
         (SessionStatus::Starting, None) => Some(format!("Starting {provider}…")),
@@ -41,6 +42,7 @@ pub(crate) fn SessionPane(
         section { class: "pane session-pane", "data-status": "{status}",
             PaneHeader { title: "{short(&session.directory)}", subtitle: "{session.directory.0}", on_back,
                 span { class: "pill", "data-status": "{status}", "{provider}, {status}" }
+                span { class: "runs-with", "{runs}" }
                 match controls.interrupt {
                     Interrupt::Offered => rsx! {
                         button {
@@ -83,7 +85,21 @@ pub(crate) fn SessionPane(
                 }
             }
             match session.status {
-                SessionStatus::Closed(reason) => rsx! { p { class: "closed-note", "{closed(&reason)}" } },
+                SessionStatus::Closed(reason) => rsx! {
+                    div { class: "closed-note",
+                        p { "{closed(&reason)}" }
+                        match controls.resume {
+                            Resume::Offered => rsx! {
+                                button {
+                                    class: "continue",
+                                    onclick: move |_| run_command(link, notice, CommandBody::Continue { session: id }),
+                                    "Continue"
+                                }
+                            },
+                            Resume::Hidden => rsx! {},
+                        }
+                    }
+                },
                 SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Running => rsx! {
                     Composer {
                         composer: controls.composer,
@@ -93,6 +109,18 @@ pub(crate) fn SessionPane(
                 },
             }
         }
+    }
+}
+
+/// The model and effort in the header, as the session started them.
+fn runs_with(session: &SessionView) -> String {
+    let model = session
+        .model
+        .as_ref()
+        .map_or_else(|| String::from("default model"), |model| model.0.clone());
+    match session.effort {
+        Some(effort) => format!("{model}, {} effort", effort.wire()),
+        None => model,
     }
 }
 
@@ -119,6 +147,18 @@ fn TranscriptItem(
         },
         Item::Reply { text, state } => rsx! {
             p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
+        },
+        // Collapsed: the summary is the "Thinking…" line while it streams.
+        Item::Reasoning { text, state } => rsx! {
+            details { class: "reasoning", "data-state": match state { ReplyState::Done => "done", ReplyState::Streaming => "streaming" },
+                summary { role: match state { ReplyState::Done => "", ReplyState::Streaming => "status" },
+                    match state { ReplyState::Done => "Thinking", ReplyState::Streaming => "Thinking…" }
+                }
+                p { class: "reasoning-text", "{text}" }
+            }
+        },
+        Item::Continued(reason) => rsx! {
+            p { class: "continued", "Continued after: {closed(&reason)}" }
         },
         Item::Tool {
             tool,

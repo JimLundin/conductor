@@ -5,6 +5,10 @@
 //!
 //! `--register env` first sets the provider's credential on the host from
 //! this process's environment (`Register`).
+//!
+//! `--then-continue PROMPT` waits after the turn for the session to close,
+//! as when something kills its CLI, then continues the session and sends
+//! `PROMPT` as a second turn.
 
 use std::cmp::Ordering;
 use std::io::Write;
@@ -44,6 +48,21 @@ struct Args {
     timeout_secs: u64,
     #[arg(long, value_enum, default_value_t = Register::Keep)]
     register: Register,
+    /// After the turn, wait for the session to close, continue it and send
+    /// this.
+    #[arg(long)]
+    then_continue: Option<String>,
+}
+
+/// Where a run with `--then-continue` is.
+#[derive(Debug, Clone, Copy)]
+enum Stage {
+    FirstTurn,
+    /// Waiting for the session to close.
+    Open,
+    /// `Continue` sent; waiting for `SessionReady`.
+    Continuing,
+    SecondTurn,
 }
 
 /// Whether to set the provider's credential on the host before the session.
@@ -116,6 +135,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
         reconnect_after: args.reconnect_after,
         interrupt: args.interrupt,
         register: args.register,
+        then_continue: args.then_continue,
+        stage: Stage::FirstTurn,
         link,
         updates,
         ours: None,
@@ -184,6 +205,8 @@ struct Session {
     reconnect_after: Option<usize>,
     interrupt: When,
     register: Register,
+    then_continue: Option<String>,
+    stage: Stage,
     link: HostLink,
     updates: mpsc::Receiver<Update>,
     ours: Option<Ours>,
@@ -301,6 +324,7 @@ impl Session {
                     CommandResult::Providers(providers) => match providers.of(self.provider) {
                         Availability::Available {
                             auth: Auth::Gateway { .. },
+                            ..
                         } => Ok("gateway"),
                         Availability::Available { .. } | Availability::Unavailable { .. } => {
                             Err(anyhow::Error::msg("the host does not report the gateway"))
@@ -325,6 +349,8 @@ impl Session {
             .send(CommandBody::StartSession {
                 provider: self.provider,
                 directory: self.directory.clone(),
+                model: None,
+                effort: None,
             })
             .await?;
         self.log(format!("start {:?} -> {result:?}", self.directory.0))?;
@@ -415,17 +441,56 @@ impl Session {
                 self.log(format!("answer {request:?} {answers:?} -> {result:?}"))?;
                 Ok(Flow::Next)
             }
-            EventKind::TurnCompleted { .. } => {
-                self.log(String::from("turn completed"))?;
-                Ok(Flow::Finished)
-            }
-            EventKind::SessionClosed { reason } => Err(anyhow::Error::msg(format!(
-                "the session closed: {reason:?}"
-            ))),
+            EventKind::TurnCompleted { .. } => match (&self.then_continue, self.stage) {
+                (Some(_), Stage::FirstTurn) => {
+                    self.stage = Stage::Open;
+                    self.log(String::from(
+                        "turn completed; waiting for the agent to exit",
+                    ))?;
+                    Ok(Flow::Next)
+                }
+                (_, _) => {
+                    self.log(String::from("turn completed"))?;
+                    Ok(Flow::Finished)
+                }
+            },
+            EventKind::SessionClosed { reason } => match self.stage {
+                Stage::Open => {
+                    self.stage = Stage::Continuing;
+                    let result = self
+                        .link
+                        .send(CommandBody::Continue {
+                            session: event.session,
+                        })
+                        .await?;
+                    self.log(format!("continue after {reason:?} -> {result:?}"))?;
+                    Ok(Flow::Next)
+                }
+                Stage::FirstTurn | Stage::Continuing | Stage::SecondTurn => Err(
+                    anyhow::Error::msg(format!("the session closed: {reason:?}")),
+                ),
+            },
+            EventKind::SessionReady => match (&self.then_continue, self.stage) {
+                (Some(text), Stage::Continuing) => {
+                    self.stage = Stage::SecondTurn;
+                    let text = text.clone();
+                    let result = self
+                        .link
+                        .send(CommandBody::SendMessage {
+                            session: event.session,
+                            text: text.clone(),
+                        })
+                        .await?;
+                    self.log(format!("message {text:?} -> {result:?}"))?;
+                    Ok(Flow::Next)
+                }
+                (_, _) => Ok(Flow::Next),
+            },
             EventKind::SessionCreated { .. }
-            | EventKind::SessionReady
             | EventKind::UserMessage { .. }
             | EventKind::AssistantMessage { .. }
+            | EventKind::ReasoningDelta { .. }
+            | EventKind::Reasoning { .. }
             | EventKind::ToolCall { .. }
             | EventKind::RequestResolved { .. }
             | EventKind::Error { .. } => Ok(Flow::Next),

@@ -30,7 +30,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/7";
+pub const ALPN: &[u8] = b"conductor/8";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -103,11 +103,84 @@ pub struct Providers {
 pub enum Availability {
     Available {
         auth: Auth,
+        models: Models,
     },
     /// The host can't run this provider's sessions, for this reason.
     Unavailable {
         reason: String,
     },
+}
+
+/// The models a provider's CLI offers on this host, as the CLI lists them
+/// when the host starts, and the one a session gets when it names none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Models {
+    pub choices: Vec<ModelChoice>,
+    pub default: Option<ModelId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelChoice {
+    pub id: ModelId,
+    pub name: String,
+    pub description: String,
+    /// The efforts this model takes, lowest first.
+    pub efforts: Vec<Effort>,
+}
+
+/// A model by the name its CLI takes (`haiku`, `gpt-6-luna`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModelId(pub String);
+
+/// How hard the model reasons: Claude's `--effort`, Codex's
+/// `model_reasoning_effort`. Both CLIs spell the levels the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+    Ultra,
+}
+
+impl Effort {
+    pub fn wire(&self) -> &str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+            Effort::Ultra => "ultra",
+        }
+    }
+
+    /// A level a CLI lists. Any other, such as Codex's `minimal`, is `None`.
+    pub fn parse(word: &str) -> Option<Effort> {
+        match word {
+            "low" => Some(Effort::Low),
+            "medium" => Some(Effort::Medium),
+            "high" => Some(Effort::High),
+            "xhigh" => Some(Effort::XHigh),
+            "max" => Some(Effort::Max),
+            "ultra" => Some(Effort::Ultra),
+            _ => None,
+        }
+    }
+}
+
+impl Models {
+    pub fn none() -> Models {
+        Models {
+            choices: Vec::new(),
+            default: None,
+        }
+    }
+
+    pub fn find(&self, id: &ModelId) -> Option<&ModelChoice> {
+        self.choices.iter().find(|choice| &choice.id == id)
+    }
 }
 
 /// How the host's CLI for a provider reaches its model. It names the kind
@@ -322,15 +395,24 @@ pub struct Command {
 /// Every command after `StartSession` names the session it acts on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandBody {
+    /// `None` takes the provider's default model, or the CLI's default
+    /// effort for the model.
     StartSession {
         provider: Provider,
         directory: HostPath,
+        model: Option<ModelId>,
+        effort: Option<Effort>,
     },
     SendMessage {
         session: SessionId,
         text: String,
     },
     Interrupt {
+        session: SessionId,
+    },
+    /// Starts a closed session's agent again, resuming its conversation
+    /// with the provider's own resume. `SessionReady` follows in the log.
+    Continue {
         session: SessionId,
     },
     Resolve {
@@ -392,6 +474,12 @@ pub enum Rejection {
     },
     UnknownSession,
     SessionClosed,
+    /// `Continue` for a session whose agent still runs or is starting.
+    SessionOpen,
+    /// The host doesn't offer that model or effort, for this reason.
+    NotOffered {
+        reason: String,
+    },
     TurnInProgress,
     NoTurnRunning,
     UnknownRequest,
@@ -422,6 +510,8 @@ impl Rejection {
             }
             Rejection::UnknownSession => String::from("no session with that id"),
             Rejection::SessionClosed => String::from("the session has closed"),
+            Rejection::SessionOpen => String::from("the session is still open"),
+            Rejection::NotOffered { reason } => reason.clone(),
             Rejection::TurnInProgress => String::from("a turn is already running"),
             Rejection::NoTurnRunning => String::from("no turn is running"),
             Rejection::UnknownRequest => String::from("no request with that id"),
@@ -448,12 +538,17 @@ pub struct Event {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventKind {
+    /// `model` and `effort` are what the agent runs with; `None` is the
+    /// CLI's own default.
     SessionCreated {
         provider: Provider,
         directory: HostPath,
         by: ClientName,
+        model: Option<ModelId>,
+        effort: Option<Effort>,
     },
-    /// The agent process is up and takes messages.
+    /// The agent process is up and takes messages: at the start, and again
+    /// after a `Continue`.
     SessionReady,
     SessionClosed {
         reason: CloseReason,
@@ -474,6 +569,16 @@ pub enum EventKind {
     /// The finished text of one assistant message. It replaces the deltas
     /// since the previous message.
     AssistantMessage {
+        text: String,
+    },
+    /// A fragment of the agent's reasoning as it streams. Live only, like
+    /// `AssistantDelta`; the `Reasoning` that follows replaces them.
+    ReasoningDelta {
+        text: String,
+    },
+    /// The finished text of one stretch of reasoning: the summary the
+    /// provider gives, not the model's raw thoughts.
+    Reasoning {
         text: String,
     },
     ToolCall {

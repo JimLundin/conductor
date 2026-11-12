@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use proto::ClaudeCredential;
+use proto::{ClaudeCredential, Effort, Models};
 use serde_json::Value;
 
 use crate::{Exit, Home};
@@ -18,8 +18,9 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::protocol::{
-    ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision, PermissionMode,
-    PermissionRequestId, SessionId, UnsupportedVersion, check_version, encode, parse_line,
+    Applied, ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision, PermissionMode,
+    PermissionRequestId, SessionId, UnsupportedVersion, applied, check_version, encode, models,
+    parse_line,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -58,6 +59,8 @@ pub struct ClaudeOptions {
     pub credential: Option<ClaudeCredential>,
     pub cwd: PathBuf,
     pub model: Option<String>,
+    /// `None` leaves the model's default effort.
+    pub effort: Option<Effort>,
     pub permission_mode: PermissionMode,
     pub resume: Option<SessionId>,
     /// `None` leaves the CLI default, which loads user, project and local settings.
@@ -114,6 +117,10 @@ enum CommandMsg {
 
 pub struct ClaudeSession {
     commands: mpsc::Sender<CommandMsg>,
+    id: SessionId,
+    /// What the `initialize` response lists.
+    models: Models,
+    pid: Option<u32>,
 }
 
 impl ClaudeSession {
@@ -132,7 +139,13 @@ impl ClaudeSession {
                     .open(path)
             })
             .transpose()?;
-        let mut child = command(&opts).spawn()?;
+        // A fresh session gets its id up front; `--resume` keeps the one it has.
+        let id = opts
+            .resume
+            .clone()
+            .unwrap_or_else(|| SessionId(uuid::Uuid::new_v4().to_string()));
+        let mut child = command(&opts, &id).spawn()?;
+        let pid = child.id();
         let ((stdin, stdout), stderr) = child
             .stdin
             .take()
@@ -159,8 +172,15 @@ impl ClaudeSession {
 
         let session = ClaudeSession {
             commands: commands_tx,
+            id,
+            models: Models::none(),
+            pid,
         };
         let initialize = session.control(ControlCall::Initialize).await?;
+        let session = ClaudeSession {
+            models: models(&initialize),
+            ..session
+        };
         match (check_version(initialize), opts.versions) {
             (Ok(()), _) => Ok((session, events_rx)),
             (
@@ -186,6 +206,26 @@ impl ClaudeSession {
                 Err(Error::UnreportedVersion)
             }
         }
+    }
+
+    /// The models and efforts this CLI offers.
+    pub fn models(&self) -> &Models {
+        &self.models
+    }
+
+    /// The id `--resume` takes, which the CLI prints in every `init`.
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// The CLI's process id, while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
+    /// The model and effort the CLI runs with (`get_settings`).
+    pub async fn applied(&self) -> Result<Applied, Error> {
+        Ok(applied(self.control(ControlCall::GetSettings).await?)?)
     }
 
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
@@ -331,7 +371,7 @@ pub fn login(claude_path: &Path, home: &Home) -> Command {
     cmd
 }
 
-pub(crate) fn command(opts: &ClaudeOptions) -> Command {
+pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
     let mut cmd = cli(&opts.claude_path, &opts.home);
     match &opts.credential {
         Some(ClaudeCredential::Gateway { base_url, token }) => {
@@ -366,6 +406,9 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
     if let Some(model) = &opts.model {
         cmd.args(["--model", model]);
     }
+    if let Some(effort) = &opts.effort {
+        cmd.args(["--effort", effort.wire()]);
+    }
     if let Some(sources) = &opts.setting_sources {
         cmd.args([
             "--setting-sources",
@@ -376,18 +419,19 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
                 .join(","),
         ]);
     }
+    // A hidden flag. The text arrives only where the CLI also sends
+    // experimental betas, which `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`
+    // turns off (PROTOCOL.md).
     cmd.args([
         "--include-partial-messages",
+        "--thinking-display",
+        "summarized",
         "--permission-prompt-tool",
         "stdio",
     ]);
-    // A fresh session gets its id up front; `--resume` keeps the one it has.
     cmd.args(match &opts.resume {
         Some(_) => Vec::new(),
-        None => Vec::from([
-            String::from("--session-id"),
-            uuid::Uuid::new_v4().to_string(),
-        ]),
+        None => Vec::from([String::from("--session-id"), id.0.clone()]),
     });
     cmd.current_dir(&opts.cwd)
         .stdin(Stdio::piped())
@@ -648,23 +692,29 @@ impl Actor {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use proto::Effort;
+
     use super::{ClaudeOptions, PermissionMode, SessionId, SettingSource, VersionPolicy, command};
     use crate::Home;
 
     #[test]
     fn resumed_session_argv() {
-        let cmd = command(&ClaudeOptions {
-            claude_path: "/opt/claude".into(),
-            home: Home::Private(PathBuf::from("/srv/conductor/home/claude")),
-            credential: None,
-            cwd: "/tmp".into(),
-            model: Some(String::from("haiku")),
-            permission_mode: PermissionMode::Default,
-            resume: Some(SessionId(String::from("0b1c"))),
-            setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
-            stdout_log: None,
-            versions: VersionPolicy::SupportedOnly,
-        });
+        let cmd = command(
+            &ClaudeOptions {
+                claude_path: "/opt/claude".into(),
+                home: Home::Private(PathBuf::from("/srv/conductor/home/claude")),
+                credential: None,
+                cwd: "/tmp".into(),
+                model: Some(String::from("haiku")),
+                effort: Some(Effort::XHigh),
+                permission_mode: PermissionMode::Default,
+                resume: Some(SessionId(String::from("0b1c"))),
+                setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
+                stdout_log: None,
+                versions: VersionPolicy::SupportedOnly,
+            },
+            &SessionId(String::from("0b1c")),
+        );
         let std = cmd.as_std();
         let args = std
             .get_args()
@@ -686,9 +736,13 @@ mod tests {
                 "--resume=0b1c",
                 "--model",
                 "haiku",
+                "--effort",
+                "xhigh",
                 "--setting-sources",
                 "project,local",
                 "--include-partial-messages",
+                "--thinking-display",
+                "summarized",
                 "--permission-prompt-tool",
                 "stdio",
             ]

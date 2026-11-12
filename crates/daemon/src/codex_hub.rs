@@ -7,6 +7,9 @@
 //! runs a new one, so a crash costs the sessions that were open, not the
 //! host's Codex.
 //!
+//! A session continued after such an exit resumes its thread on the next
+//! server (`thread/resume`).
+//!
 //! A new credential stops the server the same way. Its key is in the
 //! server's environment, which is fixed at start, so the next thread runs a
 //! server that has it.
@@ -19,7 +22,7 @@ use agents::codex::{
     CodexEvent, CodexServer, CodexThread, ServerOptions, ThreadEvent, ThreadId, ThreadOptions,
 };
 use n0_future::StreamExt;
-use proto::CodexCredential;
+use proto::{CodexCredential, Models};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
@@ -49,10 +52,16 @@ pub enum HubError {
 }
 
 enum HubMsg {
-    /// Starts a thread, answered with the thread and its events.
+    /// Starts a thread, or resumes `resume`, answered with the thread and
+    /// its events.
     Start {
         options: ThreadOptions,
+        resume: Option<ThreadId>,
         reply: oneshot::Sender<Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>>,
+    },
+    /// The models the server lists.
+    Models {
+        reply: oneshot::Sender<Result<Models, agents::codex::Error>>,
     },
     /// Runs the next server with this credential, stopping the current one.
     Configure {
@@ -96,13 +105,27 @@ impl CodexHub {
         CodexHub { inbox }
     }
 
-    /// Starts a thread, and the app-server first if none runs. The thread's
-    /// events arrive on the receiver, ending with the server's exit.
+    /// Starts a thread, or resumes `resume` from Codex's own history, and
+    /// the app-server first if none runs. The thread's events arrive on the
+    /// receiver, ending with the server's exit.
     pub(crate) async fn start_thread(
         &self,
         options: ThreadOptions,
+        resume: Option<ThreadId>,
     ) -> Result<(CodexThread, mpsc::Receiver<Routed>), HubError> {
-        Ok(self.ask(|reply| HubMsg::Start { options, reply }).await??)
+        Ok(self
+            .ask(|reply| HubMsg::Start {
+                options,
+                resume,
+                reply,
+            })
+            .await??)
+    }
+
+    /// What `model/list` offers, from the app-server, which starts first if
+    /// none runs.
+    pub async fn models(&self) -> Result<Models, HubError> {
+        Ok(self.ask(|reply| HubMsg::Models { reply }).await??)
     }
 
     /// Takes a new credential. The running server stops, and its sessions
@@ -151,9 +174,21 @@ impl HubActor {
 
     async fn on(&mut self, input: HubInput) -> Result<(), Stopped> {
         match input {
-            HubInput::Msg(HubMsg::Start { options, reply }) => {
-                let started = self.start(options).await;
+            HubInput::Msg(HubMsg::Start {
+                options,
+                resume,
+                reply,
+            }) => {
+                let started = self.start(options, resume).await;
                 let _ = reply.send(started);
+                Ok(())
+            }
+            HubInput::Msg(HubMsg::Models { reply }) => {
+                let listed = match self.up().await {
+                    Ok(server) => server.list_models().await,
+                    Err(err) => Err(err),
+                };
+                let _ = reply.send(listed);
                 Ok(())
             }
             HubInput::Msg(HubMsg::Configure { credential, reply }) => {
@@ -210,9 +245,13 @@ impl HubActor {
     async fn start(
         &mut self,
         options: ThreadOptions,
+        resume: Option<ThreadId>,
     ) -> Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error> {
         let server = self.up().await?;
-        let thread = server.start_thread(options).await?;
+        let thread = match resume {
+            Some(id) => server.resume_thread(id, options).await?,
+            None => server.start_thread(options).await?,
+        };
         let (route, events) = mpsc::channel(256);
         self.routes.insert(thread.id.clone(), route);
         Ok((thread, events))

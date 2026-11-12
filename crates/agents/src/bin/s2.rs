@@ -1,7 +1,8 @@
 //! S2 live checklist: drives the real `codex app-server` through approve,
 //! decline, interrupt, interrupt with an approval open, two concurrent
 //! threads on one process, resume in a new process, an unknown approval
-//! id, questions and approval for the session, printing PASS/FAIL per step.
+//! id, questions and approval for the session, a chosen model and effort,
+//! reasoning, and a killed app-server resumed, printing PASS/FAIL per step.
 //!
 //! Usage: s2 [FIXTURE_DIR]
 //! Writes raw app-server stdout per process to FIXTURE_DIR/<name>.jsonl when given.
@@ -20,7 +21,7 @@ use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
-use proto::Answer;
+use proto::{Answer, Effort};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -86,6 +87,8 @@ enum Plan {
     Answer(Policy),
     /// Interrupt at the cue; decline any approval request.
     Interrupt(Cue),
+    /// Kill the app-server at the cue; the run ends when it exits.
+    Kill(Cue),
 }
 
 /// Whether every turn of a run has completed.
@@ -105,6 +108,10 @@ struct Turn {
     text: String,
     /// The text of every `AgentDelta`, joined.
     streamed: String,
+    /// The text of each finished reasoning item.
+    reasoning: Vec<String>,
+    /// The text of every `ReasoningDelta`, joined.
+    thought: String,
     outcome: Option<TurnOutcome>,
 }
 
@@ -119,6 +126,8 @@ impl Turn {
             items: Vec::new(),
             text: String::new(),
             streamed: String::new(),
+            reasoning: Vec::new(),
+            thought: String::new(),
             outcome: None,
         }
     }
@@ -131,6 +140,8 @@ impl Turn {
                     .push(String::from("secret question declined"));
             }
             ThreadEvent::AgentDelta { text, .. } => self.streamed.push_str(&text),
+            ThreadEvent::ReasoningDelta { text, .. } => self.thought.push_str(&text),
+            ThreadEvent::Reasoning { text, .. } => self.reasoning.push(text),
             ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
             ThreadEvent::AgentMessage { text, .. } => {
                 self.text = match self.text.as_str() {
@@ -159,6 +170,8 @@ fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
         | ThreadEvent::TurnCompleted { turn, .. }
         | ThreadEvent::AgentDelta { turn, .. }
         | ThreadEvent::AgentMessage { turn, .. }
+        | ThreadEvent::ReasoningDelta { turn, .. }
+        | ThreadEvent::Reasoning { turn, .. }
         | ThreadEvent::Item { turn, .. }
         | ThreadEvent::ApprovalRequested { turn, .. }
         | ThreadEvent::SecretQuestionDeclined { turn } => Some(turn),
@@ -208,6 +221,8 @@ struct Run {
     running: usize,
     /// What `interrupt()` returned, once the plan called it.
     interrupted: Option<Result<(), Error>>,
+    /// How the app-server exited, under `Plan::Kill`.
+    exited: Option<String>,
 }
 
 impl Run {
@@ -222,6 +237,7 @@ impl Run {
                 .map(|turn| (turn.thread.id.clone(), turn))
                 .collect(),
             interrupted: None,
+            exited: None,
         };
         if let Some(thread) = first {
             run.cue(&thread, Cue::Send).await?;
@@ -269,10 +285,16 @@ impl Run {
                     _ => Progress::Playing,
                 })
             }
-            CodexEvent::Exited { status } => Err(anyhow::Error::msg(format!(
-                "codex exited mid-turn: {}",
-                status.describe()
-            ))),
+            CodexEvent::Exited { status } => match self.plan {
+                Plan::Kill(_) => {
+                    self.exited = Some(status.describe());
+                    Ok(Progress::Done)
+                }
+                Plan::Answer(_) | Plan::Interrupt(_) => Err(anyhow::Error::msg(format!(
+                    "codex exited mid-turn: {}",
+                    status.describe()
+                ))),
+            },
             CodexEvent::Unknown(_) => Ok(Progress::Playing),
         }
     }
@@ -283,6 +305,8 @@ impl Run {
             ThreadEvent::Started
             | ThreadEvent::Unknown(_)
             | ThreadEvent::AgentMessage { .. }
+            | ThreadEvent::ReasoningDelta { .. }
+            | ThreadEvent::Reasoning { .. }
             | ThreadEvent::Item { .. }
             | ThreadEvent::ApprovalCancelled { .. }
             | ThreadEvent::SecretQuestionDeclined { .. } => {}
@@ -295,7 +319,7 @@ impl Run {
                     let decision = policy.decision(kind);
                     self.live.server.respond(id.clone(), decision).await?;
                 }
-                Plan::Interrupt(_) => {
+                Plan::Interrupt(_) | Plan::Kill(_) => {
                     self.live
                         .server
                         .respond(id.clone(), Decision::Decline)
@@ -319,6 +343,10 @@ impl Run {
             | (Plan::Interrupt(Cue::Approval), Cue::Approval, None) => {
                 self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
             }
+            (Plan::Kill(Cue::Delta), Cue::Delta, None) => {
+                self.interrupted = Some(Ok(()));
+                kill(self.live.server.pid());
+            }
             _ => {}
         }
         Ok(())
@@ -330,6 +358,7 @@ struct Single {
     live: Live,
     turn: Turn,
     interrupted: Option<Result<(), Error>>,
+    exited: Option<String>,
 }
 
 async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> Result<Single> {
@@ -340,6 +369,7 @@ async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> R
         interrupted,
         plan: _,
         running: _,
+        exited,
     } = Run::drive(live, plan, Vec::from([Turn::new(thread.clone(), id)])).await?;
     let turn = turns
         .into_values()
@@ -349,7 +379,115 @@ async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> R
         live,
         turn,
         interrupted,
+        exited,
     })
+}
+
+/// Kills the process as a crash would, without closing its stdin.
+fn kill(pid: Option<u32>) {
+    let killed = pid.map(|pid| {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+    });
+    tracing::info!(?pid, ?killed, "killed codex");
+}
+
+/// The effort steps 10 to 12 choose, other than the other steps' `low`.
+const CHOSEN_EFFORT: Effort = Effort::High;
+
+/// Reasoning text with its whitespace removed. Codex streams the summary
+/// parts without the blank line `Reasoning` joins them with.
+fn squeezed(text: &str) -> String {
+    text.split_whitespace().collect()
+}
+
+/// Steps 10 to 12, on a fourth process: a thread started with a chosen
+/// model and effort, which Codex reports back; a turn that reasons; and the
+/// app-server killed in the middle of a turn, with the thread resumed in a
+/// new process that remembers the first turn.
+async fn chosen_and_killed(
+    codex: &Path,
+    fixtures: Option<&Path>,
+    thread_opts: ThreadOptions,
+) -> Result<(Verdict, Verdict, Verdict)> {
+    let chosen = ThreadOptions {
+        effort: Some(CHOSEN_EFFORT),
+        ..thread_opts
+    };
+    let log = log_path(fixtures, "server4-chosen-killed");
+    let live = spawn(codex, log).await?;
+    let a = live.server.start_thread(chosen.clone()).await?;
+    let model = report(
+        "10 chosen model and effort",
+        match (&a.settings.model, &chosen.model, a.settings.effort) {
+            (got, Some(asked), Some(Effort::High)) if got == asked => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "asked {:?} {:?}; codex runs {:?}",
+            chosen.model, chosen.effort, a.settings
+        ),
+    )?;
+    let s = single(
+        live,
+        &a,
+        "My codeword is quince. Is 1000003 prime? Think it through carefully, then answer yes or no, and use no tools.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let t = &s.turn;
+    let reasoning = report(
+        "11 reasoning",
+        match (squeezed(&t.reasoning.concat()), &t.outcome) {
+            (joined, Some(TurnOutcome::Completed)) if joined == squeezed(&t.thought) => {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "reasoning items={:?} streamed={:?} reply={:?}",
+            t.reasoning, t.thought, t.text
+        ),
+    )?;
+    let killed = single(
+        s.live,
+        &a,
+        "Count from 1 to 300, one number per line.",
+        Plan::Kill(Cue::Delta),
+    )
+    .await?;
+    let live = spawn(codex, log_path(fixtures, "server5-resumed")).await?;
+    let resumed = live.server.resume_thread(a.id.clone(), chosen).await?;
+    let s = single(
+        live,
+        &resumed,
+        "What is my codeword? Answer with just the word and use no tools.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let resume = report(
+        "12 killed and resumed",
+        match (
+            &killed.exited,
+            s.turn.text.to_lowercase().find("quince"),
+            &s.turn.outcome,
+        ) {
+            (Some(_), Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "killed after {:?} exit={:?}; resumed {} -> {} reply={:?}",
+            killed.turn.streamed.lines().last(),
+            killed.exited,
+            a.id.0,
+            resumed.id.0,
+            s.turn.text
+        ),
+    )?;
+    let status = s.live.server.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((model, reasoning, resume))
 }
 
 /// What an interrupt at a cue does to the turn.
@@ -586,15 +724,20 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let live = spawn(&codex, log_path(fixtures, "server1")).await?;
     let models = live.server.list_models().await?;
     let model = models
+        .choices
         .iter()
-        .find_map(|m| m.description.strip_prefix("Fast").map(|_| m.id.clone()))
+        .find_map(|m| m.description.strip_prefix("Fast").map(|_| m.id.0.clone()))
         .context("model/list offers no model described as fast")?;
     writeln!(
         std::io::stdout(),
         "codex {} (userAgent {:?}); model {model} from {:?}",
         live.server.codex_version().unwrap_or("?"),
         live.server.user_agent(),
-        models.iter().map(|m| &m.id).collect::<Vec<&String>>()
+        models
+            .choices
+            .iter()
+            .map(|m| &m.id.0)
+            .collect::<Vec<&String>>()
     )?;
     // untrusted asks before every command, even `pwd`, whatever the
     // model thinks of the sandbox, and workspace-write gives it no reason to
@@ -602,7 +745,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let thread_opts = ThreadOptions {
         cwd: PathBuf::from(SCRATCH),
         model: Some(model),
-        effort: Some(String::from("low")),
+        effort: Some(Effort::Low),
         approval_policy: ApprovalPolicy::Untrusted,
         sandbox: Sandbox::WorkspaceWrite,
     };
@@ -818,7 +961,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let status = server.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let (question, for_session, withdrawn) =
-        questions(&codex, scratch, fixtures, thread_opts).await?;
+        questions(&codex, scratch, fixtures, thread_opts.clone()).await?;
+    let (chosen, reasoning, resumed) = chosen_and_killed(&codex, fixtures, thread_opts).await?;
     let failed = Vec::from([
         approve,
         decline,
@@ -832,6 +976,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         question,
         for_session,
         withdrawn,
+        chosen,
+        reasoning,
+        resumed,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

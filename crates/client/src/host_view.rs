@@ -5,8 +5,9 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use proto::{
-    ClientName, CloseReason, Event, EventKind, HostPath, HostSeq, Provider, Question, RequestId,
-    Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    ClientName, CloseReason, Effort, Event, EventKind, HostPath, HostSeq, ModelId, Provider,
+    Question, RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +19,9 @@ pub struct HostView {
 pub struct SessionView {
     pub provider: Provider,
     pub directory: HostPath,
+    /// What the agent runs with; `None` is the CLI's own default.
+    pub model: Option<ModelId>,
+    pub effort: Option<Effort>,
     pub status: SessionStatus,
     pub items: Vec<Item>,
     /// The last event that touched this session.
@@ -43,6 +47,12 @@ pub enum Item {
         text: String,
         state: ReplyState,
     },
+    /// The agent's reasoning, as its provider summarizes it. It streams
+    /// like a reply.
+    Reasoning {
+        text: String,
+        state: ReplyState,
+    },
     /// A tool call, with the approval it asked for, if any.
     Tool {
         call: ToolCallId,
@@ -57,10 +67,13 @@ pub enum Item {
         state: RequestState,
     },
     TurnCompleted(TurnOutcome),
+    /// The agent started again after it had closed for this reason.
+    Continued(CloseReason),
     Error(String),
 }
 
-/// A reply streams until its final text arrives or something else follows it.
+/// A reply or reasoning streams until its final text arrives or something
+/// else follows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyState {
     Streaming,
@@ -122,6 +135,7 @@ impl SessionStatus {
 pub struct Controls {
     pub composer: Composer,
     pub interrupt: Interrupt,
+    pub resume: Resume,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +147,13 @@ pub enum Composer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interrupt {
+    Offered,
+    Hidden,
+}
+
+/// Whether a closed session offers to start its agent again (`Continue`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resume {
     Offered,
     Hidden,
 }
@@ -167,11 +188,15 @@ impl HostView {
                 EventKind::SessionCreated {
                     provider,
                     directory,
+                    model,
+                    effort,
                     ..
                 },
             ) => Some(SessionView {
                 provider,
                 directory,
+                model,
+                effort,
                 status: SessionStatus::Starting,
                 items: Vec::new(),
                 activity: event.seq,
@@ -180,6 +205,9 @@ impl HostView {
             // another session's, so it is not this session's activity.
             (Some(view), EventKind::AssistantDelta { text }) => {
                 Some(view.reply(text, ReplyState::Streaming))
+            }
+            (Some(view), EventKind::ReasoningDelta { text }) => {
+                Some(view.reasoning(text, ReplyState::Streaming))
             }
             (Some(view), kind) => Some(SessionView {
                 activity: event.seq,
@@ -219,21 +247,22 @@ impl HostView {
 
 impl SessionView {
     pub fn controls(&self) -> Controls {
-        let (composer, interrupt) = match self.status {
-            SessionStatus::Starting => (Composer::Busy, Interrupt::Hidden),
-            SessionStatus::Idle => (Composer::Open, Interrupt::Hidden),
-            SessionStatus::Running => (Composer::Busy, Interrupt::Offered),
-            SessionStatus::Closed(_) => (Composer::Closed, Interrupt::Hidden),
+        let (composer, interrupt, resume) = match self.status {
+            SessionStatus::Starting => (Composer::Busy, Interrupt::Hidden, Resume::Hidden),
+            SessionStatus::Idle => (Composer::Open, Interrupt::Hidden, Resume::Hidden),
+            SessionStatus::Running => (Composer::Busy, Interrupt::Offered, Resume::Hidden),
+            SessionStatus::Closed(_) => (Composer::Closed, Interrupt::Hidden, Resume::Offered),
         };
         Controls {
             composer,
             interrupt,
+            resume,
         }
     }
 
     /// A running turn shows it is working, unless it waits on a person or
-    /// its last item is live already: a reply streaming in, or a tool call
-    /// running.
+    /// its last item is live already: a reply or reasoning streaming in, or
+    /// a tool call running.
     pub fn working(&self) -> Working {
         match (&self.status, self.attention(), self.items.last()) {
             (
@@ -241,6 +270,10 @@ impl SessionView {
                 Attention::Quiet,
                 Some(
                     Item::Reply {
+                        state: ReplyState::Streaming,
+                        ..
+                    }
+                    | Item::Reasoning {
                         state: ReplyState::Streaming,
                         ..
                     }
@@ -287,7 +320,14 @@ impl SessionView {
     fn apply(self, kind: EventKind) -> SessionView {
         match kind {
             EventKind::SessionCreated { .. } => self,
-            EventKind::SessionReady => self.status(SessionStatus::Idle),
+            EventKind::SessionReady => match self.status.clone() {
+                SessionStatus::Closed(reason) => self
+                    .status(SessionStatus::Idle)
+                    .push(Item::Continued(reason)),
+                SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Running => {
+                    self.status(SessionStatus::Idle)
+                }
+            },
             EventKind::SessionClosed { reason } => self
                 .change(Change::End)
                 .status(SessionStatus::Closed(reason)),
@@ -296,6 +336,8 @@ impl SessionView {
                 .push(Item::User { text, by }),
             EventKind::AssistantDelta { text } => self.reply(text, ReplyState::Streaming),
             EventKind::AssistantMessage { text } => self.reply(text, ReplyState::Done),
+            EventKind::ReasoningDelta { text } => self.reasoning(text, ReplyState::Streaming),
+            EventKind::Reasoning { text } => self.reasoning(text, ReplyState::Done),
             EventKind::ToolCall {
                 call,
                 phase: ToolPhase::Started { tool },
@@ -356,7 +398,7 @@ impl SessionView {
                 state: ReplyState::Streaming,
             }) => Some(text),
             last => {
-                items.extend(last);
+                items.extend(last.map(Item::settled));
                 None
             }
         };
@@ -368,16 +410,32 @@ impl SessionView {
         SessionView { items, ..self }
     }
 
-    /// Adds an item after closing a reply that was still streaming.
+    /// Reasoning folds as a reply does, into an item of its own.
+    fn reasoning(self, text: String, state: ReplyState) -> SessionView {
+        let mut items = self.items;
+        let open = match items.pop() {
+            Some(Item::Reasoning {
+                text,
+                state: ReplyState::Streaming,
+            }) => Some(text),
+            last => {
+                items.extend(last.map(Item::settled));
+                None
+            }
+        };
+        let text = match state {
+            ReplyState::Streaming => format!("{}{text}", open.unwrap_or_default()),
+            ReplyState::Done => text,
+        };
+        items.push(Item::Reasoning { text, state });
+        SessionView { items, ..self }
+    }
+
+    /// Adds an item after closing a reply or reasoning that was still
+    /// streaming.
     fn push(self, item: Item) -> SessionView {
         let mut items = self.items;
-        let last = items.pop().map(|last| match last {
-            Item::Reply { text, .. } => Item::Reply {
-                text,
-                state: ReplyState::Done,
-            },
-            other => other,
-        });
+        let last = items.pop().map(Item::settled);
         items.extend(last);
         items.push(item);
         SessionView { items, ..self }
@@ -415,13 +473,30 @@ impl SessionView {
 }
 
 impl Item {
+    /// The item, done streaming: something else follows it.
+    fn settled(self) -> Item {
+        match self {
+            Item::Reply { text, .. } => Item::Reply {
+                text,
+                state: ReplyState::Done,
+            },
+            Item::Reasoning { text, .. } => Item::Reasoning {
+                text,
+                state: ReplyState::Done,
+            },
+            other => other,
+        }
+    }
+
     fn call(&self) -> Option<&ToolCallId> {
         match self {
             Item::Tool { call, .. } => Some(call),
             Item::User { .. }
             | Item::Reply { .. }
+            | Item::Reasoning { .. }
             | Item::Question { .. }
             | Item::TurnCompleted(_)
+            | Item::Continued(_)
             | Item::Error(_) => None,
         }
     }
@@ -531,6 +606,8 @@ mod tests {
             provider: Provider::Claude,
             directory: HostPath(text(directory)),
             by: ClientName(text("desk")),
+            model: None,
+            effort: None,
         }
     }
 
@@ -654,6 +731,8 @@ mod tests {
                     SessionView {
                         provider: Provider::Claude,
                         directory: HostPath(text("/a")),
+                        model: None,
+                        effort: None,
                         status: SessionStatus::Idle,
                         items: Vec::from([
                             Item::User {
@@ -707,6 +786,8 @@ mod tests {
                     SessionView {
                         provider: Provider::Claude,
                         directory: HostPath(text("/b")),
+                        model: None,
+                        effort: None,
                         status: SessionStatus::Closed(CloseReason::Exited { status: text("1") }),
                         items: Vec::from([Item::Error(text("odd"))]),
                         activity: HostSeq(15),
@@ -1056,8 +1137,10 @@ mod tests {
                         }
                         Item::User { .. }
                         | Item::Reply { .. }
+                        | Item::Reasoning { .. }
                         | Item::Tool { .. }
                         | Item::TurnCompleted(_)
+                        | Item::Continued(_)
                         | Item::Error(_) => None,
                     })
                     .collect()

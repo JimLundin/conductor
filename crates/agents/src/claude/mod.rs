@@ -9,8 +9,8 @@ mod session;
 #[cfg(test)]
 pub(crate) use protocol::check_version;
 pub use protocol::{
-    ASK_USER_QUESTION, AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionMode,
-    PermissionRequestId, Role, SessionId, ToolDetail,
+    ASK_USER_QUESTION, AfterDeny, Applied, Block, ClaudeEvent, Outcome, PermissionDecision,
+    PermissionMode, PermissionRequestId, Role, SessionId, ToolDetail,
 };
 pub use session::{
     ClaudeOptions, ClaudeSession, Error, Sandbox, SettingSource, VersionPolicy, auth_status, cli,

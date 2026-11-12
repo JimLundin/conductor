@@ -137,7 +137,7 @@ fn State(
                 p { class: "credential-state", "{state}" }
             }
             match availability {
-                Some(Availability::Available { auth: Auth::Gateway { .. } }) => rsx! {
+                Some(Availability::Available { auth: Auth::Gateway { .. }, .. }) => rsx! {
                     button {
                         r#type: "button",
                         class: "clear",
@@ -152,7 +152,7 @@ fn State(
                         "Clear"
                     }
                 },
-                Some(Availability::Available { auth: Auth::SignedIn | Auth::Unmanaged })
+                Some(Availability::Available { auth: Auth::SignedIn | Auth::Unmanaged, .. })
                 | Some(Availability::Unavailable { .. })
                 | None => rsx! {},
             }
@@ -204,12 +204,15 @@ fn describe(availability: Option<&Availability>) -> String {
     match availability {
         Some(Availability::Available {
             auth: Auth::Gateway { base_url },
+            ..
         }) => format!("Gateway at {base_url}"),
         Some(Availability::Available {
             auth: Auth::SignedIn,
+            ..
         }) => String::from("Signed in on the host"),
         Some(Availability::Available {
             auth: Auth::Unmanaged,
+            ..
         }) => String::from("The host's own CLI, signed in on its own"),
         Some(Availability::Unavailable { reason }) => format!("Not available: {reason}"),
         None => String::from("Waiting for the host"),

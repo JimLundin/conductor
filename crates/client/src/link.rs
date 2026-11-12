@@ -513,11 +513,15 @@ impl Link {
         match (order, &event.kind) {
             // A delta repeats the seq of the stored event before it, which
             // the stream delivered first (`EventKind::AssistantDelta`).
-            (Some(Ordering::Less), EventKind::AssistantDelta { .. }) => {
-                Ok(self.outbox.emit(Update::Event(event)).await?)
-            }
+            (
+                Some(Ordering::Less),
+                EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. },
+            ) => Ok(self.outbox.emit(Update::Event(event)).await?),
             (Some(Ordering::Less), _) => Ok(()),
-            (Some(Ordering::Equal), EventKind::AssistantDelta { .. })
+            (
+                Some(Ordering::Equal),
+                EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. },
+            )
             | (Some(Ordering::Greater) | None, _) => Err(Lost::Gap {
                 after: after.0,
                 got: event.seq.0,

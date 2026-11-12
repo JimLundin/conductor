@@ -2,7 +2,7 @@
 //! and mapped into our own types here, and every line we write is built here.
 //! Frames and fields we do not model are ignored or passed on as `Unknown`.
 
-use proto::{Answer, Question, QuestionOption, Selection};
+use proto::{Answer, Effort, ModelChoice, ModelId, Models, Question, QuestionOption, Selection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -135,6 +135,12 @@ pub enum ClaudeEvent {
     StreamDelta {
         text: String,
     },
+    /// A piece of a thinking block as it streams. The CLI sends its text
+    /// only when it asks the API for summarized thinking (PROTOCOL.md); the
+    /// whole block follows as `Block::Thinking` in a `Message`.
+    ThinkingDelta {
+        text: String,
+    },
     PermissionRequested {
         id: PermissionRequestId,
         tool_name: String,
@@ -253,6 +259,7 @@ struct StreamEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Delta {
     TextDelta { text: String },
+    ThinkingDelta { thinking: String },
 }
 
 /// The one control request we serve, by `subtype`.
@@ -447,6 +454,12 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
                 },
         } => Inbound::Event(ClaudeEvent::StreamDelta { text }),
         Frame::StreamEvent {
+            event:
+                StreamEvent {
+                    delta: Some(Delta::ThinkingDelta { thinking }),
+                },
+        } => Inbound::Event(ClaudeEvent::ThinkingDelta { text: thinking }),
+        Frame::StreamEvent {
             event: StreamEvent { delta: None },
         } => Inbound::Event(ClaudeEvent::Unknown(raw)),
         Frame::Result {
@@ -619,6 +632,79 @@ struct InitializeResponse {
     claude_code_version: String,
 }
 
+#[derive(Deserialize)]
+struct InitializeModels {
+    models: Vec<ModelRow>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelRow {
+    value: String,
+    resolved_model: Option<String>,
+    display_name: String,
+    description: String,
+    supported_effort_levels: Option<Vec<String>>,
+}
+
+/// The model and effort the CLI runs with, as `get_settings` reports them
+/// in `applied`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Applied {
+    pub model: String,
+    pub effort: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Settings {
+    applied: Applied,
+}
+
+pub(crate) fn applied(settings: Value) -> serde_json::Result<Applied> {
+    serde_json::from_value::<Settings>(settings).map(|settings| settings.applied)
+}
+
+/// The row of `models` that stands for whichever model is the default.
+const DEFAULT_ROW: &str = "default";
+
+/// The models an `initialize` response lists. The `default` row is not a
+/// choice of its own: it names the row with the same `resolvedModel` as
+/// the default.
+pub(crate) fn models(initialize: &Value) -> Models {
+    let rows = serde_json::from_value::<InitializeModels>(initialize.clone())
+        .map(|listed| listed.models)
+        .unwrap_or_default();
+    let resolved = rows
+        .iter()
+        .find(|row| row.value == DEFAULT_ROW)
+        .and_then(|row| row.resolved_model.clone());
+    let named = rows
+        .into_iter()
+        .filter(|row| row.value != DEFAULT_ROW)
+        .collect::<Vec<ModelRow>>();
+    let default = named
+        .iter()
+        .find(|row| resolved.is_some() && row.resolved_model == resolved)
+        .map(|row| ModelId(row.value.clone()));
+    Models {
+        choices: named
+            .into_iter()
+            .map(|row| ModelChoice {
+                id: ModelId(row.value),
+                name: row.display_name,
+                description: row.description,
+                efforts: row
+                    .supported_effort_levels
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|level| Effort::parse(level))
+                    .collect(),
+            })
+            .collect(),
+        default,
+    }
+}
+
 /// Checks the `claude_code_version` an `initialize` response reports.
 pub(crate) fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
@@ -639,6 +725,7 @@ pub(crate) enum ControlCall {
     Initialize,
     Interrupt,
     SetPermissionMode(PermissionMode),
+    GetSettings,
 }
 
 impl ControlCall {
@@ -647,6 +734,7 @@ impl ControlCall {
             Self::Initialize => "initialize",
             Self::Interrupt => "interrupt",
             Self::SetPermissionMode(_) => "set_permission_mode",
+            Self::GetSettings => "get_settings",
         }
     }
 }
@@ -704,6 +792,7 @@ enum Request {
     Initialize,
     Interrupt,
     SetPermissionMode { mode: String },
+    GetSettings,
 }
 
 #[derive(Serialize)]
@@ -758,6 +847,7 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
                 ControlCall::SetPermissionMode(mode) => Request::SetPermissionMode {
                     mode: String::from(mode.wire()),
                 },
+                ControlCall::GetSettings => Request::GetSettings,
             },
         },
         Outbound::Permission { id, decision, open } => Line::ControlResponse {

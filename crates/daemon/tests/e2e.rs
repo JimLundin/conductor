@@ -29,10 +29,10 @@ use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClaudeCredential, ClientName, CloseReason,
-    CodexCredential, CommandBody, CommandResult, Credential, Decision, Epoch, Event, EventKind,
-    FileChange, HostPath, HostSeq, Provider, Providers, Question, QuestionOption, Rejection,
-    RequestId, Resolution, Selection, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    CodexCredential, CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
+    EventKind, FileChange, HostPath, HostSeq, ModelChoice, ModelId, Models, Provider, Providers,
+    Question, QuestionOption, Rejection, RequestId, Resolution, Selection, SessionId, ToolCallId,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -74,9 +74,9 @@ async fn host_with(claude_path: PathBuf) -> Fixture {
                 claude_path,
                 home: Home::User,
                 credential: None,
-                model: None,
             }),
             own: OwnSignIn::Unmanaged,
+            models: models(),
         },
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     })
@@ -97,8 +97,9 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
     let fixture = host_of(Launchers {
         claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
         codex: Launcher::Ready {
-            launch: Launch::Codex(CodexLaunch { hub, model: None }),
+            launch: Launch::Codex(CodexLaunch { hub }),
             own: OwnSignIn::Unmanaged,
+            models: models(),
         },
     })
     .await;
@@ -215,6 +216,8 @@ fn created() -> EventKind {
         provider: Provider::Claude,
         directory: HostPath(String::from("/work")),
         by: ClientName(String::from("desk")),
+        model: None,
+        effort: None,
     }
 }
 
@@ -241,6 +244,8 @@ fn replied(text: &str, activity: u64) -> HostView {
             SessionView {
                 provider: Provider::Claude,
                 directory: HostPath(String::from("/work")),
+                model: None,
+                effort: None,
                 status: SessionStatus::Starting,
                 items: Vec::from([done(text)]),
                 activity: HostSeq(activity),
@@ -263,6 +268,30 @@ fn start(provider: Provider, directory: &Path) -> CommandBody {
     CommandBody::StartSession {
         provider,
         directory: HostPath(directory.display().to_string()),
+        model: None,
+        effort: None,
+    }
+}
+
+/// What every test host's CLIs offer: a default with two efforts and a
+/// model with one.
+fn models() -> Models {
+    Models {
+        choices: Vec::from([
+            ModelChoice {
+                id: ModelId(String::from("big")),
+                name: String::from("Big"),
+                description: String::from("thinks"),
+                efforts: Vec::from([Effort::Low, Effort::High]),
+            },
+            ModelChoice {
+                id: ModelId(String::from("small")),
+                name: String::from("Small"),
+                description: String::from("quick"),
+                efforts: Vec::from([Effort::Low]),
+            },
+        ]),
+        default: Some(ModelId(String::from("big"))),
     }
 }
 
@@ -284,6 +313,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
         Some(Providers {
             claude: Availability::Available {
                 auth: Auth::Unmanaged,
+                models: models(),
             },
             codex: Availability::Unavailable {
                 reason: String::from(UNAVAILABLE),
@@ -566,6 +596,8 @@ fn opening(provider: Provider, directory: &Path) -> Vec<EventKind> {
             provider,
             directory: HostPath(directory.display().to_string()),
             by: test_client(),
+            model: Some(ModelId(String::from("big"))),
+            effort: None,
         },
         EventKind::SessionReady,
     ])
@@ -1274,8 +1306,10 @@ async fn an_interrupt_withdraws_an_open_question() {
             Item::Question { state, .. } => Some(state),
             Item::User { .. }
             | Item::Reply { .. }
+            | Item::Reasoning { .. }
             | Item::Tool { .. }
             | Item::TurnCompleted(_)
+            | Item::Continued(_)
             | Item::Error(_) => None,
         })
         .collect::<Vec<RequestState>>();
@@ -1380,6 +1414,8 @@ async fn a_missing_claude_binary_closes_the_session() {
                 provider: Provider::Claude,
                 directory: HostPath(dir.display().to_string()),
                 by: test_client(),
+                model: Some(ModelId(String::from("big"))),
+                effort: None,
             },
             EventKind::SessionClosed {
                 reason: CloseReason::FailedToStart {
@@ -1855,9 +1891,9 @@ async fn claude_host_in(data: &Path) -> Fixture {
                 claude_path: fake_claude(),
                 home: homes.claude,
                 credential: None,
-                model: None,
             }),
             own: OwnSignIn::Missing,
+            models: models(),
         },
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     };
@@ -1878,6 +1914,7 @@ fn gateway() -> Availability {
         auth: Auth::Gateway {
             base_url: String::from(GATEWAY),
         },
+        models: models(),
     }
 }
 
@@ -2000,6 +2037,19 @@ fn with_codex(codex: Availability) -> Providers {
     }
 }
 
+/// A Codex provider credential's model is the default (`Registry::models`).
+fn codex_gateway() -> Availability {
+    Availability::Available {
+        auth: Auth::Gateway {
+            base_url: String::from(GATEWAY),
+        },
+        models: Models {
+            default: Some(ModelId(String::from("conductor-test-model"))),
+            ..models()
+        },
+    }
+}
+
 fn codex_provider(key: &str) -> CommandBody {
     CommandBody::SetCredential {
         credential: Credential::Codex(CodexCredential::Provider {
@@ -2029,8 +2079,9 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
     let launchers = Launchers {
         claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
         codex: Launcher::Ready {
-            launch: Launch::Codex(CodexLaunch { hub, model: None }),
+            launch: Launch::Codex(CodexLaunch { hub }),
             own: OwnSignIn::Missing,
+            models: models(),
         },
     };
     let fx = serve(endpoint().await, launchers, &data);
@@ -2038,7 +2089,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
     assert_eq!(welcomed, Some(with_codex(no_credential())));
     assert_eq!(
         send(&link, codex_provider(FIRST_KEY)).await,
-        CommandResult::Providers(with_codex(gateway()))
+        CommandResult::Providers(with_codex(codex_gateway()))
     );
     let _ = send(&link, start(Provider::Codex, &server)).await;
     let first = events_until(&mut updates, Until::Ready).await;
@@ -2058,7 +2109,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
     );
     assert_eq!(
         send(&link, codex_provider(SECOND_KEY)).await,
-        CommandResult::Providers(with_codex(gateway()))
+        CommandResult::Providers(with_codex(codex_gateway()))
     );
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,

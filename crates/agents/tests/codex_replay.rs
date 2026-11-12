@@ -13,10 +13,11 @@ use std::time::Duration;
 use agents::Home;
 use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision, Item,
-    Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
+    Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
+    TurnOutcome,
 };
 use n0_future::StreamExt;
-use proto::Answer;
+use proto::{Answer, Effort};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -45,7 +46,7 @@ fn opts() -> ThreadOptions {
     ThreadOptions {
         cwd: "/tmp/s2-scratch".into(),
         model: Some(String::from("gpt-6-luna")),
-        effort: Some(String::from("low")),
+        effort: Some(Effort::Low),
         approval_policy: ApprovalPolicy::OnRequest,
         sandbox: Sandbox::ReadOnly,
     }
@@ -252,6 +253,8 @@ fn summary(event: &ThreadEvent) -> String {
         ThreadEvent::TurnCompleted { outcome, .. } => format!("turn {}", outcome_name(outcome)),
         ThreadEvent::AgentDelta { text, .. } => format!("delta {text:?}"),
         ThreadEvent::AgentMessage { text, .. } => format!("says {text:?}"),
+        ThreadEvent::ReasoningDelta { text, .. } => format!("reasoning delta {text:?}"),
+        ThreadEvent::Reasoning { text, .. } => format!("reasons {text:?}"),
         ThreadEvent::Item { phase, item, .. } => match item {
             Item::Command { status, .. } => format!("{phase:?} command {status}"),
             Item::FileChange {
@@ -339,8 +342,8 @@ async fn approve_decline_interrupt_and_two_threads() {
     assert_eq!(server.codex_version(), Some("0.166.0"));
     let models = server.list_models().await.unwrap();
     assert_eq!(
-        models.iter().find_map(|m| match m.id.as_str() {
-            "gpt-6-luna" => Some(m.id.as_str()),
+        models.choices.iter().find_map(|m| match m.id.0.as_str() {
+            "gpt-6-luna" => Some(m.id.0.as_str()),
             _ => None,
         }),
         Some("gpt-6-luna")
@@ -395,6 +398,7 @@ async fn approve_decline_interrupt_and_two_threads() {
             "A says \"I’ll create the requested file with exactly that content.\"",
             "A Started command inProgress",
             "A Completed command failed",
+            "A reasons \"\"",
             "A Started command inProgress",
             "A approval 0 command (3 options)",
             "A Completed command completed",
@@ -403,6 +407,7 @@ async fn approve_decline_interrupt_and_two_threads() {
             "A turn completed",
             // 2: decline.
             "A turn started",
+            "A reasons \"\"",
             "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
             "A says \"I’ll request permission to write `b.txt`; if it’s declined, I’ll stop.\"",
             "A Started command inProgress",
@@ -438,7 +443,7 @@ async fn approve_decline_interrupt_and_two_threads() {
         again,
         ["no open approval with id 0", "no open approval with id 1",]
     );
-    // Item kinds we do not map (userMessage, reasoning) and agentMessage
+    // Item kinds we do not map (userMessage), reasoning and agentMessage
     // starts stay Unknown, alongside the frames §7.2 does not ask for.
     assert_eq!(
         rec.unknown,
@@ -447,7 +452,7 @@ async fn approve_decline_interrupt_and_two_threads() {
             ("hook/completed".to_owned(), 3),
             ("hook/started".to_owned(), 3),
             ("item/commandExecution/outputDelta".to_owned(), 1),
-            ("item/completed".to_owned(), 8),
+            ("item/completed".to_owned(), 6),
             ("item/started".to_owned(), 16),
             ("mcpServer/startupStatus/updated".to_owned(), 6),
             ("remoteControl/status/changed".to_owned(), 1),
@@ -497,6 +502,61 @@ async fn resume_in_a_new_process() {
     assert_eq!(bogus, Err("no open approval with id never-sent".to_owned()));
 }
 
+/// `s2` steps 10 and 11: a thread started with a chosen effort, which Codex
+/// reports back, and a turn that reasons. The recording goes on to the turn
+/// `s2` killed, which waits here for a `turn/start` nobody sends.
+#[tokio::test]
+async fn chosen_effort_and_reasoning() {
+    let rec = spawn("server4-chosen-killed.jsonl").await;
+    let server = rec.server.clone();
+    let a = server.start_thread(opts()).await.unwrap();
+    let rec = turn(
+        rec,
+        &a,
+        "is 1000003 prime?",
+        Decision::Decline,
+        Interrupt::Never,
+    )
+    .await;
+    assert_eq!(
+        server.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
+    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    let deltas = rec
+        .seen
+        .iter()
+        .filter(|line| line.starts_with("A reasoning delta"))
+        .count();
+    let reasoning = "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It’s important to verify my information carefully, though!";
+    assert_eq!(
+        (
+            a.settings,
+            deltas,
+            rec.seen
+                .into_iter()
+                .filter(|line| !line.starts_with("A reasoning delta"))
+                .collect::<Vec<String>>()
+        ),
+        (
+            ThreadSettings {
+                model: String::from("gpt-6-luna"),
+                effort: Some(Effort::High)
+            },
+            89,
+            Vec::from([
+                String::from("A started"),
+                String::from("A turn started"),
+                format!("A reasons {reasoning:?}"),
+                String::from("A streams [\"Yes\", \".\"]"),
+                String::from("A says \"Yes.\""),
+                String::from("A turn completed"),
+                String::from("exited exit status: 0"),
+            ])
+        )
+    );
+}
+
 /// `s2` steps 7 to 9. The recording holds the question's
 /// `serverRequest/resolved` until our answer, so a change to the question's
 /// shape in a later pin fails here, as does a lost feature `warning`.
@@ -544,6 +604,7 @@ async fn questions_and_accept_for_session() {
             "A Started command inProgress",
             "A approval 1 command (3 options)",
             "A Completed command completed",
+            "A reasons \"\"",
             "A says \"\"",
             "A turn completed",
             "A turn started",

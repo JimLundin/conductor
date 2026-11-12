@@ -15,6 +15,7 @@ use agents::claude::{
     PermissionMode, PermissionRequestId, Role, SettingSource, VersionPolicy,
 };
 use n0_future::StreamExt;
+use proto::{Effort, ModelId};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -56,6 +57,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
         credential: None,
         cwd: claude.dir.clone(),
         model: None,
+        effort: None,
         permission_mode: PermissionMode::Default,
         resume: None,
         setting_sources: Some(Vec::from([SettingSource::Project])),
@@ -75,7 +77,7 @@ fn is_error(outcome: &Outcome) -> &str {
 fn block_summary(block: &Block) -> String {
     match block {
         Block::Text(t) => format!("text {t:?}"),
-        Block::Thinking(_) => String::from("thinking"),
+        Block::Thinking(t) => format!("thinking {t:?}"),
         Block::ToolUse { name, detail, .. } => format!("tool_use {name} {detail:?}"),
         Block::ToolResult { outcome, .. } => format!("tool_result error={}", is_error(outcome)),
         Block::Other(_) => String::from("other"),
@@ -111,6 +113,7 @@ fn summary(event: &ClaudeEvent) -> String {
                 .collect::<Vec<&str>>()
         ),
         ClaudeEvent::StreamDelta { text } => format!("delta {text:?}"),
+        ClaudeEvent::ThinkingDelta { text } => format!("thinks {text:?}"),
         ClaudeEvent::PermissionCancelled { .. } => String::from("permission_cancelled"),
         ClaudeEvent::TurnFinished {
             subtype,
@@ -430,6 +433,88 @@ async fn resume_and_accept_edits_recording() {
         ])
     );
     assert_eq!(replayed.second, Vec::<String>::new());
+}
+
+/// A probe of the pinned CLI with `--thinking-display summarized` and
+/// experimental betas on, through a proxy that dropped the one request field
+/// the owner's gateway refuses (Claude PROTOCOL.md).
+#[tokio::test]
+async fn summarized_thinking_recording() {
+    let replayed = replay("probe-thinking.jsonl", Vec::new()).await;
+    let thought = "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n";
+    let deltas = replayed
+        .events
+        .iter()
+        .filter(|line| line.starts_with("thinks "))
+        .count();
+    assert_eq!(
+        (
+            deltas,
+            replayed
+                .events
+                .iter()
+                .find(|line| !line.starts_with("thinks "))
+                .cloned()
+        ),
+        (
+            15,
+            Some(String::from(
+                "turn_started 08a7293d-1843-445f-9f30-b26c7548759d"
+            ))
+        )
+    );
+    assert_eq!(
+        replayed
+            .events
+            .into_iter()
+            .filter(|line| !line.starts_with("thinks "))
+            .collect::<Vec<String>>(),
+        [
+            String::from("turn_started 08a7293d-1843-445f-9f30-b26c7548759d"),
+            format!("assistant: thinking {thought:?}"),
+            String::from("streams [\"18\"]"),
+            String::from("assistant: text \"18\""),
+            String::from("finished success is_error=false Some(\"completed\")"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn initialize_lists_the_models_and_their_efforts() {
+    let path = fixture("session4-chosen-killed.jsonl");
+    let (session, _events) = ClaudeSession::spawn(options(&fake_claude("models", &path)))
+        .await
+        .unwrap();
+    let models = session.models();
+    assert_eq!(
+        (
+            models
+                .choices
+                .iter()
+                .map(|choice| (choice.id.0.as_str(), choice.name.as_str()))
+                .collect::<Vec<(&str, &str)>>(),
+            &models.default,
+            models
+                .find(&ModelId(String::from("haiku")))
+                .map(|haiku| &haiku.efforts),
+        ),
+        (
+            Vec::from([
+                ("opus", "Opus"),
+                ("claude-fable-5[1m]", "Fable"),
+                ("sonnet", "Sonnet"),
+                ("haiku", "Haiku"),
+            ]),
+            &Some(ModelId(String::from("opus"))),
+            Some(&Vec::from([
+                Effort::Low,
+                Effort::Medium,
+                Effort::High,
+                Effort::XHigh,
+                Effort::Max
+            ])),
+        )
+    );
 }
 
 #[tokio::test]

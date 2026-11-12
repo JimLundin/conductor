@@ -22,8 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::config;
 use super::protocol::{
     AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, INITIALIZE, Inbound,
-    ModelInfo, Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer, encode,
-    models, parse_line, thread_id, turn_id, user_agent,
+    Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId, answer,
+    encode, models, parse_line, thread_started, turn_id, user_agent,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -82,6 +82,7 @@ enum CommandMsg {
 pub struct CodexServer {
     commands: mpsc::Sender<CommandMsg>,
     user_agent: String,
+    pid: Option<u32>,
 }
 
 /// A thread on a [`CodexServer`]. Its events arrive on the server's event
@@ -89,6 +90,7 @@ pub struct CodexServer {
 #[derive(Clone)]
 pub struct CodexThread {
     pub id: ThreadId,
+    pub settings: ThreadSettings,
     server: CodexServer,
 }
 
@@ -111,6 +113,7 @@ impl CodexServer {
             config::write(dir, opts.credential.as_ref())?;
         }
         let mut child = command(&opts).spawn()?;
+        let pid = child.id();
         let ((stdin, stdout), stderr) = child
             .stdin
             .take()
@@ -139,12 +142,17 @@ impl CodexServer {
         let server = CodexServer {
             commands: commands_tx,
             user_agent: user_agent(initialize)?,
+            pid,
         };
         Ok((server, events_rx))
     }
 
     /// `userAgent` from the handshake. Its first segment carries the Codex
     /// version, as in `conductor/0.166.0 (...)`.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
     pub fn user_agent(&self) -> &str {
         &self.user_agent
     }
@@ -154,13 +162,14 @@ impl CodexServer {
         first.split_once('/').map(|(_, version)| version)
     }
 
-    pub async fn list_models(&self) -> Result<Vec<ModelInfo>, Error> {
+    pub async fn list_models(&self) -> Result<proto::Models, Error> {
         Ok(models(request(&self.commands, Call::ModelList).await?)?)
     }
 
     pub async fn start_thread(&self, opts: ThreadOptions) -> Result<CodexThread, Error> {
-        let id = thread_id(request(&self.commands, Call::ThreadStart(opts)).await?)?;
-        Ok(self.thread(id))
+        let (id, settings) =
+            thread_started(request(&self.commands, Call::ThreadStart(opts)).await?)?;
+        Ok(self.thread(id, settings))
     }
 
     /// Loads a thread from Codex's own history; works in a new process.
@@ -169,8 +178,9 @@ impl CodexServer {
         id: ThreadId,
         opts: ThreadOptions,
     ) -> Result<CodexThread, Error> {
-        let id = thread_id(request(&self.commands, Call::ThreadResume(id, opts)).await?)?;
-        Ok(self.thread(id))
+        let (id, settings) =
+            thread_started(request(&self.commands, Call::ThreadResume(id, opts)).await?)?;
+        Ok(self.thread(id, settings))
     }
 
     /// Answers an open approval or user-input request exactly once.
@@ -188,9 +198,10 @@ impl CodexServer {
         ask(&self.commands, |reply| CommandMsg::Shutdown { reply }).await
     }
 
-    fn thread(&self, id: ThreadId) -> CodexThread {
+    fn thread(&self, id: ThreadId, settings: ThreadSettings) -> CodexThread {
         CodexThread {
             id,
+            settings,
             server: self.clone(),
         }
     }

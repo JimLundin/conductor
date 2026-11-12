@@ -1,9 +1,15 @@
 //! The session list and the form that starts a session.
 
 use client::host_view::{Attention, HostView, SessionView};
-use client::new_session::{Attempt, PROVIDERS, ProviderNote, Refusal, label, note};
+use client::new_session::{
+    Attempt, PROVIDERS, ProviderNote, Refusal, effort_picks, kept_effort, label, model_picks,
+    models, note,
+};
 use dioxus::prelude::*;
-use proto::{Availability, CommandBody, CommandResult, HostPath, Provider, Providers, SessionId};
+use proto::{
+    Availability, CommandBody, CommandResult, Effort, HostPath, ModelId, Provider, Providers,
+    SessionId,
+};
 
 use crate::{Link, PaneHeader, Screen, send};
 
@@ -100,6 +106,8 @@ pub(crate) fn NewSession(
     on_started: EventHandler<SessionId>,
 ) -> Element {
     let mut provider = use_signal(|| Provider::Claude);
+    let mut model = use_signal(|| None::<ModelId>);
+    let mut effort = use_signal(|| None::<Effort>);
     let mut directory = use_signal(String::new);
     let attempt = use_signal(|| Attempt::Editing);
     let host = view.read();
@@ -120,6 +128,9 @@ pub(crate) fn NewSession(
         provider(),
         providers.as_ref().map(|providers| providers.of(provider())),
     );
+    let offered = models(providers.as_ref().map(|providers| providers.of(provider())));
+    let model_options = model_picks(&offered);
+    let effort_options = effort_picks(&offered, model().as_ref());
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
         (_, "") => Start::Empty,
@@ -132,7 +143,8 @@ pub(crate) fn NewSession(
                 class: "new-session",
                 onsubmit: move |event: FormEvent| {
                     event.prevent_default();
-                    begin(link, attempt, provider(), HostPath(directory().trim().to_string()), on_started);
+                    let directory = HostPath(directory().trim().to_string());
+                    begin(link, attempt, (provider(), model(), effort()), directory, on_started);
                 },
                 fieldset { class: "providers",
                     legend { "Agent" }
@@ -143,7 +155,12 @@ pub(crate) fn NewSession(
                                     r#type: "radio",
                                     name: "provider",
                                     checked: provider() == choice,
-                                    onchange: move |_| provider.set(choice),
+                                    // Another provider offers other models.
+                                    onchange: move |_| {
+                                        provider.set(choice);
+                                        model.set(None);
+                                        effort.set(None);
+                                    },
                                 }
                                 span { class: "segment-name", "{label(choice)}" }
                                 span { class: "segment-state", "{state}" }
@@ -160,6 +177,41 @@ pub(crate) fn NewSession(
                             }
                         },
                         (None, ProviderNote::Nothing) => rsx! {},
+                    }
+                }
+                div { class: "choices",
+                    label { class: "field",
+                        span { class: "field-label", "Model" }
+                        select {
+                            name: "model",
+                            // An effort the new model doesn't take goes back to its default.
+                            onchange: move |event| {
+                                let picked = offered.find(&ModelId(event.value())).map(|choice| choice.id.clone());
+                                effort.set(kept_effort(&offered, picked.as_ref(), effort()));
+                                model.set(picked);
+                            },
+                            for pick in model_options {
+                                option {
+                                    value: "{pick.value.as_ref().map(|id| id.0.clone()).unwrap_or_default()}",
+                                    selected: pick.value == model(),
+                                    "{pick.label}"
+                                }
+                            }
+                        }
+                    }
+                    label { class: "field",
+                        span { class: "field-label", "Effort" }
+                        select {
+                            name: "effort",
+                            onchange: move |event| effort.set(Effort::parse(&event.value())),
+                            for pick in effort_options {
+                                option {
+                                    value: "{pick.value.map(|effort| String::from(effort.wire())).unwrap_or_default()}",
+                                    selected: pick.value == effort(),
+                                    "{pick.label}"
+                                }
+                            }
+                        }
                     }
                 }
                 label { class: "field",
@@ -233,10 +285,11 @@ fn Hint(error: Option<String>) -> Element {
 fn begin(
     link: Signal<Link>,
     mut attempt: Signal<Attempt>,
-    provider: Provider,
+    choice: (Provider, Option<ModelId>, Option<Effort>),
     directory: HostPath,
     on_started: EventHandler<SessionId>,
 ) {
+    let (provider, model, effort) = choice;
     attempt.set(Attempt::Starting);
     spawn(async move {
         let answer = send(
@@ -244,6 +297,8 @@ fn begin(
             CommandBody::StartSession {
                 provider,
                 directory,
+                model,
+                effort,
             },
         )
         .await;
