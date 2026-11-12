@@ -172,11 +172,8 @@ impl Recorder {
                         self.interrupt = Interrupt::Sent;
                         Progress::Playing
                     }
-                    (ThreadEvent::TurnCompleted { turn: done, .. }, _) => {
-                        match done.eq(turn).then_some(Progress::Done) {
-                            Some(finished) => finished,
-                            None => Progress::Playing,
-                        }
+                    (ThreadEvent::TurnCompleted { turn: done, .. }, _) if &done == turn => {
+                        Progress::Done
                     }
                     _ => Progress::Playing,
                 }

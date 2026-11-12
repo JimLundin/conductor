@@ -255,6 +255,8 @@ struct FnCtx {
     assigned: BTreeSet<String>,
     /// Each parameter bound to a plain name, with its type's last segment.
     params: HashMap<String, String>,
+    /// The awaited tail of a body whose fn returns `Result<(), _>`.
+    unit_tail: Option<*const Expr>,
 }
 
 /// The rules of proposals 0038 and 0039 at one kind of position.
@@ -459,6 +461,7 @@ impl Checker<'_> {
                 .unwrap_or_default(),
             assigned: assigned_names(block),
             params: param_types(sig),
+            unit_tail: unit_tail(sig, block).map(std::ptr::from_ref),
         });
         if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
             self.check_receiver(r);
@@ -1157,6 +1160,30 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 {
                     self.flag(e.method.span(), &rules::COUNT);
                 }
+                if e.method == "filter"
+                    && some_call(&e.receiver)
+                    && matches!(e.args.first(), Some(Expr::Closure(c)) if comparison(&c.body))
+                {
+                    self.flag(e.method.span(), &rules::LIFT_FILTER);
+                }
+                if (e.method == "then_some" || e.method == "then")
+                    && matches!(&*e.receiver, Expr::MethodCall(m) if (m.method == "eq" || m.method == "ne") && m.args.len() == 1)
+                {
+                    self.flag(e.method.span(), &rules::LIFT_EQ);
+                }
+                if e.method == "try_collect" && stream_then(&e.receiver) {
+                    let unit = match &e.turbofish {
+                        Some(turbofish) => names_unit(turbofish),
+                        None => self
+                            .fns
+                            .last()
+                            .and_then(|f| f.unit_tail)
+                            .is_some_and(|tail| std::ptr::eq(tail, expr)),
+                    };
+                    if unit {
+                        self.flag(e.method.span(), &rules::STREAM_EFFECTS);
+                    }
+                }
                 let on_self = matches!(&*e.receiver, Expr::Path(p) if p.path.is_ident("self"));
                 for arg in &e.args {
                     let slot = Slot::MethodArg {
@@ -1278,7 +1305,16 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 self.loops.pop();
                 return;
             }
-            Expr::While(_) | Expr::ForLoop(_) => {
+            Expr::ForLoop(e) => {
+                if e.body.stmts.is_empty() || !e.body.stmts.iter().all(awaited_try) {
+                    self.flag(e.for_token.span, &rules::FOR_BODY);
+                }
+                self.loops.push(false);
+                visit::visit_expr(self, expr);
+                self.loops.pop();
+                return;
+            }
+            Expr::While(_) => {
                 self.loops.push(false);
                 visit::visit_expr(self, expr);
                 self.loops.pop();
@@ -1302,6 +1338,30 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             _ => {}
         }
         visit::visit_expr(self, expr);
+    }
+
+    fn visit_expr_match(&mut self, m: &'ast syn::ExprMatch) {
+        for (i, arm) in m.arms.iter().enumerate() {
+            let Some((token, guard)) = &arm.guard else {
+                continue;
+            };
+            match guard.as_ref() {
+                Expr::Binary(e) if comparison_op(&e.op) => {
+                    self.predicates.insert(std::ptr::from_ref(guard.as_ref()));
+                }
+                Expr::Macro(e) if e.mac.path.is_ident("matches") => {
+                    self.predicate_macros.insert(std::ptr::from_ref(&e.mac));
+                }
+                _ => self.flag(token.span, &rules::GUARD),
+            }
+            let fallback = m.arms[i + 1..]
+                .iter()
+                .any(|later| later.guard.is_none() && covers(&later.pat, &arm.pat));
+            if !fallback {
+                self.flag(token.span, &rules::GUARD_FALLBACK);
+            }
+        }
+        visit::visit_expr_match(self, m);
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
@@ -1370,6 +1430,142 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         }
         visit::visit_pat_ident(self, p);
     }
+}
+
+fn comparison_op(op: &syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::Eq(_)
+            | syn::BinOp::Ne(_)
+            | syn::BinOp::Lt(_)
+            | syn::BinOp::Le(_)
+            | syn::BinOp::Gt(_)
+            | syn::BinOp::Ge(_)
+    )
+}
+
+/// A closure body that is one comparison, through parentheses and a block
+/// holding only its tail.
+fn comparison(body: &Expr) -> bool {
+    match body {
+        Expr::Paren(e) => comparison(&e.expr),
+        Expr::Block(e) if e.label.is_none() => {
+            matches!(e.block.stmts.as_slice(), [syn::Stmt::Expr(tail, None)] if comparison(tail))
+        }
+        Expr::Binary(e) => comparison_op(&e.op),
+        _ => false,
+    }
+}
+
+/// `Some(x)`, an `Option` built at the call (proposal 0040).
+fn some_call(expr: &Expr) -> bool {
+    matches!(expr, Expr::Call(c) if matches!(&*c.func, Expr::Path(p)
+        if p.path.segments.len() <= 2
+            && p.path.segments.last().is_some_and(|s| s.ident == "Some")))
+}
+
+/// `stream::iter(..).then(..)`, a stream of awaited steps (proposal 0041).
+fn stream_then(expr: &Expr) -> bool {
+    matches!(expr, Expr::MethodCall(then) if then.method == "then"
+        && matches!(&*then.receiver, Expr::Call(c) if matches!(&*c.func, Expr::Path(p)
+            if segments(&p.path).ends_with(&["stream".to_string(), "iter".to_string()]))))
+}
+
+/// A turbofish that names `()`, as in `try_collect::<()>()` or
+/// `try_collect::<Vec<()>>()`.
+fn names_unit(turbofish: &syn::AngleBracketedGenericArguments) -> bool {
+    struct Unit(bool);
+    impl<'ast> Visit<'ast> for Unit {
+        fn visit_type_tuple(&mut self, t: &'ast syn::TypeTuple) {
+            self.0 |= t.elems.is_empty();
+            visit::visit_type_tuple(self, t);
+        }
+    }
+    let mut unit = Unit(false);
+    unit.visit_angle_bracketed_generic_arguments(turbofish);
+    unit.0
+}
+
+/// The expression a fn returning `Result<(), _>` awaits as its tail, as in
+/// `stream.try_collect().await`.
+fn unit_tail<'b>(sig: &syn::Signature, block: &'b syn::Block) -> Option<&'b Expr> {
+    let ReturnType::Type(_, ty) = &sig.output else {
+        return None;
+    };
+    let Type::Path(path) = &**ty else {
+        return None;
+    };
+    let last = path.path.segments.last()?;
+    let PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    let unit_ok = last.ident == "Result"
+        && matches!(args.args.first(), Some(GenericArgument::Type(Type::Tuple(t))) if t.elems.is_empty());
+    match block.stmts.last() {
+        Some(syn::Stmt::Expr(Expr::Await(tail), None)) if unit_ok => Some(&tail.base),
+        _ => None,
+    }
+}
+
+/// A statement `f(..).await?;` or `x.method(..).await?;`, the one statement a
+/// `for` body holds (proposal 0041).
+fn awaited_try(stmt: &syn::Stmt) -> bool {
+    matches!(stmt, syn::Stmt::Expr(Expr::Try(t), Some(_))
+        if matches!(&*t.expr, Expr::Await(a) if matches!(&*a.base, Expr::Call(_) | Expr::MethodCall(_))))
+}
+
+/// Whether every value `specific` matches, `general` matches too, judged by
+/// the patterns' structure. Anything this can't see through counts as covered
+/// only when the two are written alike (proposal 0040).
+fn covers(general: &syn::Pat, specific: &syn::Pat) -> bool {
+    use syn::Pat;
+    match (general, specific) {
+        (Pat::Wild(_), _) => true,
+        (Pat::Paren(g), s) => covers(&g.pat, s),
+        (g, Pat::Paren(s)) => covers(g, &s.pat),
+        (Pat::Ident(g), _) if g.subpat.is_none() && binds(&g.ident) => true,
+        (Pat::Ident(g), s) if g.subpat.is_some() => {
+            g.subpat.as_ref().is_some_and(|(_, sub)| covers(sub, s))
+        }
+        (g, Pat::Ident(s)) if s.subpat.is_some() => {
+            s.subpat.as_ref().is_some_and(|(_, sub)| covers(g, sub))
+        }
+        (g, Pat::Or(s)) => s.cases.iter().all(|case| covers(g, case)),
+        (Pat::Or(g), s) => g.cases.iter().any(|case| covers(case, s)),
+        (Pat::Reference(g), Pat::Reference(s)) => covers(&g.pat, &s.pat),
+        (Pat::Tuple(g), Pat::Tuple(s)) => all_cover(&g.elems, &s.elems),
+        (Pat::TupleStruct(g), Pat::TupleStruct(s)) => {
+            segments(&g.path) == segments(&s.path) && all_cover(&g.elems, &s.elems)
+        }
+        (Pat::Struct(g), Pat::Struct(s)) => {
+            let wild: Pat = syn::parse_quote!(_);
+            segments(&g.path) == segments(&s.path)
+                && g.fields.iter().all(|field| {
+                    let theirs = s.fields.iter().find(|f| f.member == field.member);
+                    covers(&field.pat, theirs.map_or(&wild, |f| &*f.pat))
+                })
+        }
+        (g, s) => g == s,
+    }
+}
+
+/// A plain lowercase name binds any value; `None` or a `CONST` names one.
+fn binds(ident: &syn::Ident) -> bool {
+    ident
+        .to_string()
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_lowercase() || c == '_')
+}
+
+fn all_cover(
+    general: &Punctuated<syn::Pat, syn::Token![,]>,
+    specific: &Punctuated<syn::Pat, syn::Token![,]>,
+) -> bool {
+    let rest = |p: &syn::Pat| matches!(p, syn::Pat::Rest(_));
+    general.len() == specific.len()
+        && !general.iter().chain(specific).any(rest)
+        && general.iter().zip(specific).all(|(g, s)| covers(g, s))
 }
 
 fn predicate_rule(op: &syn::BinOp) -> Option<&'static Rule> {

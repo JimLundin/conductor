@@ -20,7 +20,6 @@ use daemon::session::{ClaudeLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
-use n0_future::StreamExt;
 use proto::{
     AuthToken, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch, Event,
     EventKind, HostPath, HostSeq, Provider, Rejection, RequestId, Resolution, SessionId,
@@ -140,12 +139,11 @@ async fn events_through(updates: &mut mpsc::Receiver<Update>, last: HostSeq) -> 
 }
 
 /// Appends one Claude session's creation, or its deltas, to the log.
-async fn append(log: &Log, kinds: Vec<EventKind>) {
-    let appended = n0_future::stream::iter(kinds)
-        .then(|kind| log.append(SessionId(1), kind))
-        .collect::<Vec<Result<(), Stopped>>>()
-        .await;
-    assert_eq!(appended.into_iter().filter(Result::is_err).count(), 0);
+async fn append(log: &Log, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+    for kind in kinds {
+        log.append(SessionId(1), kind).await?;
+    }
+    Ok(())
 }
 
 fn created() -> EventKind {
@@ -266,12 +264,16 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created(), delta("Hel"), delta("lo")])).await;
+    append(&fx.log, Vec::from([created(), delta("Hel"), delta("lo")]))
+        .await
+        .unwrap();
     let before = events_through(&mut updates, HostSeq(3)).await;
 
-    append(&fx.log, Vec::from([delta(" wor"), delta("ld")])).await;
+    append(&fx.log, Vec::from([delta(" wor"), delta("ld")]))
+        .await
+        .unwrap();
     link.reconnect().await;
-    append(&fx.log, Vec::from([delta("!")])).await;
+    append(&fx.log, Vec::from([delta("!")])).await.unwrap();
     let after = events_through(&mut updates, HostSeq(6)).await;
     let seen = before.into_iter().chain(after).collect::<Vec<Event>>();
     assert_eq!(seqs(&seen), [1, 2, 3, 4, 5, 6].map(HostSeq));
@@ -285,12 +287,14 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     let fx = host().await;
     let (first, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created(), delta("Hel")])).await;
+    append(&fx.log, Vec::from([created(), delta("Hel")]))
+        .await
+        .unwrap();
     let seen = events_through(&mut updates, HostSeq(2)).await;
     first.stop().await.unwrap();
     drop(updates);
 
-    append(&fx.log, Vec::from([delta("lo")])).await;
+    append(&fx.log, Vec::from([delta("lo")])).await.unwrap();
     let cursor = Cursor {
         epoch: Epoch(11),
         seq: HostSeq(2),
@@ -309,7 +313,9 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
 #[tokio::test]
 async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
     let fx = host().await;
-    append(&fx.log, Vec::from([created(), delta("Hi")])).await;
+    append(&fx.log, Vec::from([created(), delta("Hi")]))
+        .await
+        .unwrap();
     let stale = Cursor {
         epoch: Epoch(10),
         seq: HostSeq(40),
@@ -865,16 +871,12 @@ impl Hop {
                 self.dead = Some(from);
                 Ok(())
             }
-            (Datagram::FromClient { bytes, from }, Some(dead), _) => {
-                match Some(from).filter(|from| from != &dead) {
-                    Some(live) => {
-                        self.live = Some(live);
-                        let _ = self.inner.send(&bytes).await?;
-                        Ok(())
-                    }
-                    None => Ok(()),
-                }
+            (Datagram::FromClient { bytes, from }, Some(dead), _) if from != dead => {
+                self.live = Some(from);
+                let _ = self.inner.send(&bytes).await?;
+                Ok(())
             }
+            (Datagram::FromClient { .. }, Some(_), _) => Ok(()),
             (Datagram::FromHost(bytes), _, Some(live)) => {
                 let _ = self.outer.send_to(&bytes, live).await?;
                 Ok(())

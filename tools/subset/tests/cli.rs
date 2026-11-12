@@ -225,7 +225,7 @@ fn if_let_only_with_a_single_branch() {
          crates/daemon/src/a_fail.rs:10:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:15:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:15:8: expr.let: `let` inside a condition chain\n\
-         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
+         crates/daemon/src/a_fail.rs:15:30: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
          crates/daemon/src/a_fail.rs:15:33: expr.let: `let` inside a condition chain\n"
     );
 }
@@ -1046,13 +1046,11 @@ fn boolean_expressions_only_in_predicate_closures() {
             "fn finished(events: &[Event]) -> usize {\n    events.iter().filter(|e| matches!(e.kind, Kind::TurnFinished)).count()\n}\n\nfn seen(events: &[Event], seq: HostSeq) -> Option<&Event> {\n    events.iter().find(|e| e.seq == seq)\n}\n\nfn first_live(events: &[Event], seq: HostSeq) -> Option<usize> {\n    events.iter().position(|e| e.seq >= seq && !matches!(e.kind, Kind::Replayed))\n}\n",
             "fn same(a: HostSeq, b: HostSeq) -> Same {\n    let same = a == b;\n    Same::from(same)\n}\n\nfn done(next: Option<Event>) {\n    if let Some(event) = next && matches!(event.kind, Kind::TurnFinished) {\n        finish(event);\n    }\n}\n\nfn label(next: Option<Event>) -> Label {\n    match next {\n        Some(e) if matches!(e.kind, Kind::TurnFinished) => Label::Done,\n        _ => Label::Busy,\n    }\n}\n\nfn all(events: &[Event]) -> usize {\n    events.iter().filter(|_| true).count()\n}\n\nfn counted(events: &[Event]) -> usize {\n    events.iter().filter_map(|e| match e.kind {\n        Kind::TurnFinished => Some(()),\n        _ => None,\n    }).count()\n}\n",
         ),
-        "crates/daemon/src/a_fail.rs:2:18: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
+        "crates/daemon/src/a_fail.rs:2:18: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
          crates/daemon/src/a_fail.rs:7:5: expr.if_let: `if let` with an `else`, or an `if` with a let-chain\n\
          crates/daemon/src/a_fail.rs:7:8: expr.let: `let` inside a condition chain\n\
-         crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
-         crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
-         crates/daemon/src/a_fail.rs:14:17: expr.match.guard: `if` guard on a match arm\n\
-         crates/daemon/src/a_fail.rs:14:20: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n\
+         crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
          crates/daemon/src/a_fail.rs:20:30: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n\
          crates/daemon/src/a_fail.rs:27:8: expr.method_call: count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)\n"
     );
@@ -1070,7 +1068,7 @@ fn a_closure_goes_only_to_a_listed_method() {
         "crates/daemon/src/a_fail.rs:2:17: expr.closure.adapter: a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037)\n\
          crates/daemon/src/a_fail.rs:2:29: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n\
          crates/daemon/src/a_fail.rs:6:30: expr.closure.adapter: a closure passed to a method only to a method in `closure_methods` or `predicate_adapters`: the iterator, `Option` and `Result` methods and the library methods the config lists (proposals 0006, 0026, 0028, 0037)\n\
-         crates/daemon/src/a_fail.rs:6:36: expr.binary.ne: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)\n"
+         crates/daemon/src/a_fail.rs:6:36: expr.binary.ne: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n"
     );
 }
 
@@ -1523,7 +1521,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 24);
+    assert_eq!(files.len(), 26);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))
@@ -1870,4 +1868,194 @@ fn report_html_writes_one_static_page_with_history() {
     ] {
         assert!(html.contains(expected), "missing {expected}");
     }
+}
+
+#[test]
+fn a_match_guard_is_one_comparison_with_an_unguarded_arm_after() {
+    assert_eq!(
+        rule_case(
+            "guard",
+            "crates/daemon/src/a.rs",
+            r#"fn admit(open: Option<Open>, token: AuthToken) -> Result<Hello, Refusal> {
+    match open {
+        Some(Open::Hello(hello)) if hello.token == token => Ok(hello),
+        Some(Open::Hello(_)) => Err(Refusal::WrongToken),
+        Some(Open::Subscribe(_)) | None => Err(Refusal::NoHello),
+    }
+}
+
+fn label(item: Item, change: &Change) -> Label {
+    match (item, change) {
+        (Item::Tool { call, .. }, Change::Finish(id)) if &call == id => Label::Done,
+        (Item::Request { kind, .. }, _) if matches!(kind, Kind::Write) => Label::Write,
+        (item, _) => item.label(),
+    }
+}
+
+fn feed(welcome: Welcome, subscribe: Subscribe) -> Reply {
+    match welcome {
+        Welcome { epoch, .. } if epoch == subscribe.epoch => Reply::Replay,
+        Welcome { .. } => Reply::Close,
+    }
+}
+"#,
+            r#"fn admit(open: Option<Open>, token: AuthToken, host: HostName) -> Result<Hello, Refusal> {
+    match open {
+        Some(Open::Hello(hello)) if hello.token == token && hello.host == host => Ok(hello),
+        Some(Open::Hello(hello)) if !hello.anonymous() => Err(Refusal::WrongToken),
+        Some(Open::Hello(hello)) if hello.signed() => Err(Refusal::WrongToken),
+        Some(Open::Hello(_)) => Err(Refusal::WrongToken),
+        Some(Open::Subscribe(_)) | None => Err(Refusal::NoHello),
+    }
+}
+
+fn reply(hello: Option<Hello>, token: AuthToken, mode: Mode) -> Reply {
+    match (hello, mode) {
+        (Some(hello), _) if hello.token == token => Reply::Welcome,
+        (Some(_), Mode::Strict) => Reply::Refuse,
+        (Some(_), Mode::Open) => Reply::Guest,
+        (None, _) => Reply::Refuse,
+    }
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:3:34: expr.match.guard: a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `||` or `!` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:3:49: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:3:58: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:3:72: expr.binary.eq: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:4:34: expr.match.guard: a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `||` or `!` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:4:37: expr.unary.not: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:5:34: expr.match.guard: a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `||` or `!` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:13:26: expr.match.guard: a guarded arm needs a later arm with no guard whose pattern covers the guarded one, so the otherwise case is written out (proposal 0040)\n"
+    );
+}
+
+#[test]
+fn a_lift_of_one_comparison_is_a_guard() {
+    assert_eq!(
+        rule_case(
+            "lift",
+            "crates/daemon/src/a.rs",
+            r#"fn submit(key: Key, composing: Composing) -> Option<Key> {
+    Some(key).filter(|key| key.is_enter() && !key.shift() && !composing.active())
+}
+
+fn probe(probes: &Probes, trans: Trans, source: SocketAddr) -> Option<&Probe> {
+    probes.get(&trans).filter(|probe| probe.addr == source)
+}
+
+fn failed(result: &ToolResult) -> Option<Outcome> {
+    result.is_error.then_some(Outcome::Failed)
+}
+"#,
+            r#"fn admit(hello: Hello, token: AuthToken) -> Option<Hello> {
+    Some(hello).filter(|hello| hello.token == token)
+}
+
+fn finished(call: CallId, id: &CallId, outcome: Outcome) -> Option<Outcome> {
+    call.eq(id).then_some(outcome)
+}
+
+fn changed(status: &Status, next: &Status) -> Option<Change> {
+    status.ne(next).then_some(Change::Status)
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:2:17: expr.method_call: `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:6:17: expr.method_call: `a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:10:21: expr.method_call: `a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n"
+    );
+}
+
+#[test]
+fn a_for_body_holds_only_awaited_calls_with_try() {
+    assert_eq!(
+        rule_case(
+            "for",
+            "crates/daemon/src/a.rs",
+            r#"impl Session {
+    async fn apply(&self, steps: Vec<Step>) -> Result<(), Stopped> {
+        for step in steps {
+            self.step(step).await?;
+        }
+        Ok(())
+    }
+}
+
+async fn append(log: &Log, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+    for kind in kinds {
+        log.append(kind.session(), kind).await?;
+        notify(&kind).await?;
+    }
+    Ok(())
+}
+"#,
+            r#"fn record(sizes: Vec<Size>, meter: &Meter) {
+    for size in sizes {
+        meter.record(size);
+    }
+}
+
+async fn emit(log: &Log, kinds: Vec<EventKind>) {
+    for kind in kinds {
+        let _ = log.append(kind).await;
+    }
+}
+
+impl Session {
+    async fn perform(&self, effects: Vec<Effect>) -> Result<(), Stopped> {
+        n0_future::stream::iter(effects)
+            .then(|effect| self.effect(effect))
+            .try_collect()
+            .await
+    }
+
+    async fn emit_all(&self, kinds: Vec<EventKind>) -> Result<Vec<Seq>, Stopped> {
+        n0_future::stream::iter(kinds.clone())
+            .then(|kind| self.emit(kind))
+            .try_collect::<Vec<()>>()
+            .await?;
+        n0_future::stream::iter(kinds)
+            .then(|kind| self.seq(kind))
+            .try_collect()
+            .await
+    }
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:2:5: expr.for: a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:8:5: expr.for: a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:17:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:24:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n"
+    );
+}
+
+#[test]
+fn a_replaced_form_is_a_warning_under_replaced_form_warnings() {
+    let config = scratch(
+        "replaced-warnings",
+        "version = 0\ninclude = [\"**/*.rs\"]\nallowed = [\"item.fn\", \"expr.call\", \"expr.method_call\", \"expr.path\", \"expr.closure.adapter\", \"expr.field\", \"expr.binary.eq\", \"pat.ident\", \"type.path\"]\nreplaced_form_warnings = [\"client/**\"]\n",
+        &[
+            (
+                "client/a.rs",
+                "fn admit(hello: Hello, token: Token) -> Option<Hello> {\n    Some(hello).filter(|hello| hello.token == token)\n}\n",
+            ),
+            (
+                "daemon/a.rs",
+                "fn admit(hello: Hello, token: Token) -> Option<Hello> {\n    Some(hello).filter(|hello| hello.token == token)\n}\n",
+            ),
+        ],
+    );
+    let (code, stdout, _) = subset(&["check", "--config", config.to_str().unwrap()]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (
+            1,
+            "client/a.rs:2:17: warning: expr.method_call: `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+             daemon/a.rs:2:17: expr.method_call: `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n"
+        )
+    );
+    std::fs::remove_file(config.with_file_name("daemon/a.rs")).unwrap();
+    let (code, _, _) = subset(&["check", "--config", config.to_str().unwrap()]);
+    assert_eq!(code, 0);
 }

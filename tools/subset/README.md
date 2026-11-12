@@ -133,6 +133,14 @@ endpoints = ["SendHalf", "RecvHalf"]
 - `consuming_readers` names types and traits that read by changing their
   buffer (0039). A `use` of one and a path through one are flagged. The
   default is `bytes::Buf`.
+- `replaced_form_warnings` lists path globs where a form that version 7
+  replaced is reported as a warning (0040, 0041): `Some(x).filter(..)` or
+  `a.eq(b).then_some(..)` with one comparison, and
+  `stream::iter(..).then(..).try_collect()` into `()`. `check` prints a
+  warning as `path:line:col: warning: <id>: <reason>` and still exits with
+  0 when it finds nothing else. A warning still scores as `outside`, and
+  `report` counts it. The default is none, so the forms are violations
+  everywhere.
 
 Both lists hold paths, matched against paths as the code writes them: the
 path's segment names the item, and the segments written before it agree
@@ -176,17 +184,23 @@ A list that is given replaces its default. To extend a default, copy it.
 | `item.use` | a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039) |
 | `expr.path` | a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039) |
 | `type.path` | a reader in `consuming_readers` changes its buffer on every read, so a tuple of reads means something only by evaluation order; split the bytes with `split_at_checked` and match them, as in the bootstrap review's §A7 (proposal 0039) |
-| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
-| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037) |
+| `macro.matches` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.eq` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.ne` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.lt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.le` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.gt` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.ge` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.and` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.binary.or` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
+| `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
 | `expr.method_call` | count matching items with `filter(\|x\| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028) |
+| `expr.match.guard` | a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `\|\|` or `!` (proposal 0040) |
+| `expr.match.guard` | a guarded arm needs a later arm with no guard whose pattern covers the guarded one, so the otherwise case is written out (proposal 0040) |
+| `expr.method_call` | `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040) |
+| `expr.method_call` | `a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040) |
+| `expr.for` | a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041) |
+| `expr.method_call` | awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
 | `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |
@@ -541,6 +555,20 @@ commit whose files don't parse is left out, with a note on stderr.
   item of the same kind and name has the other platform's predicate. Any
   `use` pairs with any `use`, and a `cfg` module needs no pair, since 0016
   exempts modules that exist on one platform only.
+- **A guard's fallback arm is matched by pattern structure.** 0040 wants a
+  later arm with no guard whose pattern covers the guarded one. The check
+  compares the two patterns: `_` and a lowercase binding cover anything, a
+  tuple, tuple struct or struct covers field by field under the same path,
+  an or-pattern covers when one of its cases does, and anything else covers
+  only when it is written the same way. A fallback split across several
+  arms, or one behind `..` in a tuple, isn't seen and is flagged.
+- **0041 recognises effects by shape.** A `for` body is checked statement
+  by statement. `stream::iter(..).then(..)` is flagged only when it ends in
+  `try_collect` into `()`: a turbofish that names `()`, or no turbofish in
+  the awaited tail of a fn that returns `Result<(), _>`. A `collect` into
+  `Vec<Result<(), E>>` that is then checked for errors runs effects too,
+  but syntax can't tell it from a list of results that is kept, so it is a
+  review check.
 - **`pat.wild` is allowed everywhere.** The rule in `subset.toml` that
   limits `_` to the positions clippy's wildcard lints allow is left to
   clippy.

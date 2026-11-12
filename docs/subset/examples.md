@@ -1,6 +1,6 @@
 # Subset patterns by example
 
-What the constructs in `subset.toml` (version 5) look like in practice.
+What the constructs in `subset.toml` (version 7) look like in practice.
 Every example passes `subset check`, and a test in `tools/subset` keeps it
 that way. A first-line comment naming a path, such as
 `// crates/proto/src/frame.rs`, places an example where a location rule
@@ -518,6 +518,56 @@ The base of a struct update may be a method call that returns a fresh
 value of the struct's type (proposal 0036). Write the call in place, as
 here, rather than binding it with `let current = outbox.current();` first.
 
+## 25. Comparing two runtime values is a guard
+
+```rust
+pub fn authenticate(open: Option<Open>, token: AuthToken) -> Result<Hello, Refusal> {
+    match open {
+        Some(Open::Hello(hello)) if hello.token == token => Ok(hello),
+        Some(Open::Hello(_)) => Err(Refusal::WrongToken),
+        Some(Open::Subscribe(_)) | None => Err(Refusal::NoHello),
+    }
+}
+
+pub fn submits(key: Key, composer: &Composer) -> Option<Key> {
+    Some(key).filter(|key| key.is_enter() && !key.shift_key() && !composer.is_composing())
+}
+```
+
+A pattern can't name a runtime value, so an arm that depends on a bound
+value being equal to, or ordered against, another runtime value takes a
+guard (proposal 0040). The guard is one comparison or one `matches!`, with
+no `&&`, `||` or `!`, and a later arm with no guard covers the same
+pattern, so the otherwise case is written out: Rust's exhaustiveness check
+ignores guards. `Some(hello).filter(|hello| hello.token == token)` and
+`hello.token.eq(&token).then_some(hello)` are violations. A lift that
+combines library booleans, as `submits` does, stays, since a guard can't
+hold `&&`.
+
+**Note:** an arm that needs two comparisons can't take a guard. Order or
+compare both with `cmp` in the scrutinee's tuple and match
+`Ordering::Equal`, as `crates/agents/src/bin/s1.rs` does.
+
+## 26. Awaited effects in order are a `for`
+
+```rust
+pub async fn replay(log: &Log, session: SessionId, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+    for kind in kinds {
+        log.append(session, kind).await?;
+    }
+    Ok(())
+}
+```
+
+A loop whose body only performs side effects is a `for`, and its body
+holds only awaited calls with `?` (proposal 0041). It produces no value:
+building or selecting values inside a `for` is a violation, and stays the
+adapters' job (§8). Inside an actor, the body calls a `&mut self`
+method, as in `self.step(step).await?;` in
+`crates/daemon/src/session.rs`. `stream::iter(..).then(..).try_collect()` into `()` is
+no longer the form for running effects in order. It stays for building a
+list from awaited steps.
+
 ## Still outside the subset
 
 - Generic structs, enums and traits, and any bound other than the codec
@@ -526,6 +576,7 @@ here, rather than binding it with `let current = outbox.current();` first.
   methods instead (proposal 0009).
 - Derives beyond the listed ones, such as `Default`, and `PartialOrd` or
   `Ord` on anything but an ordered newtype.
-- `if`, `if let` with an `else` or a let-chain, `while`, `for`, `return`
-  and the operators. They stay rewrites into
-  the core (`docs/subset/bootstrap-review.md`).
+- `if`, `if let` with an `else` or a let-chain, `while`, a `for` that
+  builds or selects values, a guard with `&&`, `||` or `!`, `return` and the
+  operators. They stay rewrites into the core
+  (`docs/subset/bootstrap-review.md`).

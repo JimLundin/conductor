@@ -66,6 +66,10 @@ struct Config {
     /// (proposal 0039).
     #[serde(default = "named::default_consuming_readers")]
     consuming_readers: Vec<String>,
+    /// Paths where a form that version 7 replaced (`rules::REPLACED`) is
+    /// reported as a warning, which `check` lets pass (proposals 0040, 0041).
+    #[serde(default)]
+    replaced_form_warnings: Vec<String>,
     #[serde(default)]
     scope: Vec<Scope>,
     weights: Option<weights::Weights>,
@@ -118,6 +122,15 @@ struct Violation {
     reason: String,
     line: usize,
     col: usize,
+    level: Level,
+}
+
+/// Whether a violation fails `check`. Every violation scores as `outside`.
+#[derive(Clone, Copy, PartialEq)]
+enum Level {
+    Error,
+    /// A replaced form under `replaced_form_warnings`.
+    Warning,
 }
 
 impl Violation {
@@ -209,9 +222,13 @@ fn run(args: &[String]) -> Result<ExitCode, Fatal> {
 fn check(config: &Path) -> Result<ExitCode, Fatal> {
     let violations = violations(config)?;
     for v in &violations {
-        println!("{}: {}: {}", v.location(), v.id, v.reason);
+        let level = match v.level {
+            Level::Error => "",
+            Level::Warning => "warning: ",
+        };
+        println!("{}: {level}{}: {}", v.location(), v.id, v.reason);
     }
-    Ok(if violations.is_empty() {
+    Ok(if violations.iter().all(|v| v.level == Level::Warning) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -620,6 +637,7 @@ fn analyse(
             .iter()
             .map(|(path, _, parsed)| (path.as_path(), parsed)),
     );
+    let warned = Globs::new(&config.replaced_form_warnings)?;
     let operators = named::operators(&config.fallible_operators);
     let readers = named::readers(&config.consuming_readers);
     let mut out = Vec::new();
@@ -647,6 +665,7 @@ fn analyse(
                 id: o.id.clone(),
                 line: o.line,
                 col: o.col,
+                level: Level::Error,
             });
         let lists = shape::Lists {
             endpoints: &config.endpoints,
@@ -666,12 +685,17 @@ fn analyse(
                 violating[i] = true;
             }
         }
+        let warns = warned.cover(relative_path);
         let shaped = findings.iter().map(|f| Violation {
             path: relative.clone(),
             id: f.rule.id.to_string(),
             reason: f.rule.message.to_string(),
             line: f.line,
             col: f.col,
+            level: match warns && rules::REPLACED.iter().any(|r| r.message == f.rule.message) {
+                true => Level::Warning,
+                false => Level::Error,
+            },
         });
         let mut violations: Vec<Violation> = plain.chain(shaped).collect();
         violations.sort_by_key(|v| (v.line, v.col));

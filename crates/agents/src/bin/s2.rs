@@ -558,12 +558,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     .await?;
     let resume = report(
         "5 resume in a new process",
-        match (
-            resumed.id.eq(&a.id).then_some(&resumed.id),
-            s.turn.text.find("a.txt"),
-            &s.turn.outcome,
-        ) {
-            (Some(_), Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
+        match (s.turn.text.find("a.txt"), &s.turn.outcome) {
+            (Some(_), Some(TurnOutcome::Completed)) if resumed.id == a.id => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(

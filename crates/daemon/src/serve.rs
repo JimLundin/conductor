@@ -7,7 +7,7 @@ use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open, Rejection,
-    RtcOffer, SessionId, Subscribe,
+    RtcOffer, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc};
 
@@ -112,9 +112,8 @@ impl Conductor {
         let (send, recv) = conn.accept_bi().await?;
         let (mut send, mut recv) = (SendHalf::Iroh(send), RecvHalf::Iroh(recv));
         let admitted = match recv.read::<Open>().await? {
-            Some(Open::Hello(hello)) => Some(hello)
-                .filter(|hello| hello.token == self.token)
-                .ok_or("wrong token"),
+            Some(Open::Hello(hello)) if hello.token == self.token => Ok(hello),
+            Some(Open::Hello(_)) => Err("wrong token"),
             Some(Open::Subscribe(_) | Open::Command(_) | Open::Rtc(_)) | None => {
                 Err("the first stream must be a hello")
             }
@@ -290,11 +289,8 @@ impl Conductor {
         mut send: SendHalf,
         subscribe: Subscribe,
     ) -> Result<(), StreamError> {
-        let welcome = self.log.welcome().await?;
-        match Some(welcome).filter(|welcome| welcome.epoch == subscribe.epoch) {
-            // A cursor from another epoch is refused by closing the stream.
-            None => Ok(send.finish()?),
-            Some(_) => {
+        match self.log.welcome().await? {
+            Welcome { epoch, .. } if epoch == subscribe.epoch => {
                 let subscription = self.log.subscribe(subscribe.after_seq).await?;
                 tracing::info!(
                     transport = transport.name(),
@@ -311,6 +307,8 @@ impl Conductor {
                 tracing::info!(transport = transport.name(), ?result, "subscription ended");
                 result
             }
+            // A cursor from another epoch is refused by closing the stream.
+            Welcome { .. } => Ok(send.finish()?),
         }
     }
 }

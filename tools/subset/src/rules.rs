@@ -100,7 +100,7 @@ pub const OK_DISCARD: Rule = rule(
     "expr.method_call",
     "`.ok()` is not a discard; write `let _ = value;` (proposal 0025)",
 );
-const PREDICATE: &str = "a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037)";
+const PREDICATE: &str = "a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)";
 pub const PREDICATE_MATCHES: Rule = rule("macro.matches", PREDICATE);
 pub const PREDICATE_EQ: Rule = rule("expr.binary.eq", PREDICATE);
 pub const PREDICATE_NE: Rule = rule("expr.binary.ne", PREDICATE);
@@ -115,6 +115,35 @@ pub const COUNT: Rule = rule(
     "expr.method_call",
     "count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)",
 );
+pub const GUARD: Rule = rule(
+    "expr.match.guard",
+    "a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `||` or `!` (proposal 0040)",
+);
+pub const GUARD_FALLBACK: Rule = rule(
+    "expr.match.guard",
+    "a guarded arm needs a later arm with no guard whose pattern covers the guarded one, so the otherwise case is written out (proposal 0040)",
+);
+pub const LIFT_FILTER: Rule = rule(
+    "expr.method_call",
+    "`Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)",
+);
+pub const LIFT_EQ: Rule = rule(
+    "expr.method_call",
+    "`a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)",
+);
+pub const FOR_BODY: Rule = rule(
+    "expr.for",
+    "a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)",
+);
+pub const STREAM_EFFECTS: Rule = rule(
+    "expr.method_call",
+    "awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)",
+);
+
+/// The rules that flag a form version 7 replaced. `replaced_form_warnings`
+/// in the config turns them into warnings under the paths it lists.
+pub const REPLACED: &[&Rule] = &[&LIFT_FILTER, &LIFT_EQ, &STREAM_EFFECTS];
+
 pub const IMPL_TRAIT: Rule = rule(
     "item.impl.trait",
     "trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)",
@@ -268,6 +297,12 @@ pub const RULES: &[&Rule] = &[
     &PREDICATE_OR,
     &PREDICATE_NOT,
     &COUNT,
+    &GUARD,
+    &GUARD_FALLBACK,
+    &LIFT_FILTER,
+    &LIFT_EQ,
+    &FOR_BODY,
+    &STREAM_EFFECTS,
     &IMPL_TRAIT,
     &LIFETIME_PARAM,
     &LIFETIME,
