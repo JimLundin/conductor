@@ -32,7 +32,9 @@ use proto::{
     Signal, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use serde::de::DeserializeOwned;
-use str0m::{Candidate, Rtc};
+use str0m::change::{SdpAnswer, SdpPendingOffer};
+use str0m::net::{DatagramRecv, Protocol, Receive, Transmit};
+use str0m::{Candidate, Input, Output, Rtc};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -1413,16 +1415,27 @@ async fn read_frame<T: DeserializeOwned>(
     }
 }
 
+/// A browser that has made its offer and waits for the answer.
+struct Offering {
+    rtc: Rtc,
+    pending: SdpPendingOffer,
+    offer: RtcOffer,
+}
+
 /// The offer a browser makes: one data channel.
-fn browser_offer() -> RtcOffer {
+fn offering() -> Offering {
     let mut rtc = Rtc::builder()
         .set_crypto_provider(Arc::new(str0m::crypto::from_feature_flags()))
         .build(Instant::now());
     let mut changes = rtc.sdp_api();
     let _ = changes.add_channel(String::from("probe"));
-    let (offer, _) = changes.apply().unwrap();
-    RtcOffer {
-        sdp: offer.to_sdp_string(),
+    let (offer, pending) = changes.apply().unwrap();
+    Offering {
+        rtc,
+        pending,
+        offer: RtcOffer {
+            sdp: offer.to_sdp_string(),
+        },
     }
 }
 
@@ -1436,8 +1449,12 @@ struct Signaling {
 }
 
 async fn offer(conn: &Connection) -> Signaling {
+    send_offer(conn, offering().offer).await
+}
+
+async fn send_offer(conn: &Connection, offer: RtcOffer) -> Signaling {
     let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    let offer = proto::encode(&Open::Rtc(browser_offer())).unwrap();
+    let offer = proto::encode(&Open::Rtc(offer)).unwrap();
     send.write_all(&offer).await.unwrap();
     let answer = tokio::time::timeout(STEP, read_frame::<Signal>(&mut recv))
         .await
@@ -1542,4 +1559,229 @@ async fn a_full_range_refuses_the_upgrade_and_iroh_keeps_serving() {
         1,
         "{logged}"
     );
+}
+
+/// The host's first datagram to `socket`, or `None` if none arrives within
+/// two seconds.
+async fn first_from_host(socket: &UdpSocket) -> Option<(Vec<u8>, SocketAddr)> {
+    let mut bytes = Vec::with_capacity(DATAGRAM);
+    let received = tokio::time::timeout(Duration::from_secs(2), socket.recv_buf_from(&mut bytes))
+        .await
+        .ok()?
+        .unwrap();
+    let (_, from) = received;
+    Some((bytes, from))
+}
+
+/// The host candidates' addresses in the answer.
+fn host_addrs(signaling: &Signaling) -> Vec<SocketAddr> {
+    match &signaling.answer {
+        Some(Signal::Answer { sdp }) => sdp
+            .lines()
+            .filter_map(|line| line.strip_prefix("a="))
+            .filter_map(|line| Candidate::from_sdp_string(line).ok())
+            .map(|candidate| candidate.addr())
+            .collect(),
+        Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. }) | None => {
+            Vec::new()
+        }
+    }
+}
+
+/// The candidates Safari trickles on mobile data: an mDNS host candidate the
+/// host can't resolve, and a srflx candidate at `public` with the related
+/// address zeroed.
+fn safari_candidates(public: SocketAddr) -> Vec<Signal> {
+    Vec::from([
+        Signal::Candidate {
+            candidate: String::from(
+                "candidate:3217215570 1 udp 2113939711 \
+                 d9fe3477-56cf-45d1-9625-8ebc4f10e456.local 61390 typ host \
+                 generation 0 network-cost 999",
+            ),
+        },
+        Signal::Candidate {
+            candidate: format!(
+                "candidate:842163049 1 udp 1685987071 {} {} typ srflx \
+                 raddr 0.0.0.0 rport 0 generation 0 network-cost 999",
+                public.ip(),
+                public.port()
+            ),
+        },
+    ])
+}
+
+async fn trickle(send: &mut SendStream, signals: Vec<Signal>) -> anyhow::Result<()> {
+    let frames = signals
+        .iter()
+        .map(proto::encode)
+        .collect::<Result<Vec<Vec<u8>>, proto::FrameError>>()?;
+    for frame in frames {
+        send.write_all(&frame).await?;
+    }
+    Ok(())
+}
+
+/// STUN's message type for a Binding request (RFC 5389 §6).
+fn stun_type(bytes: &[u8]) -> Option<Vec<u8>> {
+    bytes.split_at_checked(2).map(|(head, _)| head.to_vec())
+}
+
+#[tokio::test]
+async fn the_host_checks_a_srflx_candidate_before_hearing_from_it() {
+    let port = free_port();
+    let fx = rtc_host(port, port).await;
+    let endpoint = endpoint().await;
+    let conn = said_hello(&endpoint, &fx.target).await;
+    let mut signaling = offer(&conn).await;
+    let host = host_addrs(&signaling).into_iter().next().unwrap();
+    let browser = UdpSocket::bind((host.ip(), 0)).await.unwrap();
+    trickle(
+        &mut signaling.send,
+        safari_candidates(browser.local_addr().unwrap()),
+    )
+    .await
+    .unwrap();
+    let first = first_from_host(&browser).await;
+    assert_eq!(
+        first.map(|(bytes, from)| (stun_type(&bytes), from)),
+        Some((Some(Vec::from([0u8, 1])), host))
+    );
+    hang_up(signaling).await;
+    endpoint.close().await;
+    fx.router.shutdown().await.unwrap();
+}
+
+/// Whether the host's side of the path lets the browser's datagrams in. Like
+/// a stateful firewall in front of the host, it opens once the host has sent
+/// to the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pinhole {
+    Closed,
+    Open,
+}
+
+enum Progress {
+    Going,
+    Connected,
+}
+
+/// A browser on mobile data: the host knows it only by its srflx candidate,
+/// and can reach it only by sending first.
+struct SrflxBrowser {
+    rtc: Rtc,
+    socket: UdpSocket,
+    pinhole: Pinhole,
+}
+
+impl SrflxBrowser {
+    fn answered(offering: Offering, signaling: &Signaling, socket: UdpSocket) -> SrflxBrowser {
+        let Offering {
+            mut rtc, pending, ..
+        } = offering;
+        let sdp = match &signaling.answer {
+            Some(Signal::Answer { sdp }) => Some(sdp),
+            Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. })
+            | None => None,
+        };
+        let answer = SdpAnswer::from_sdp_string(sdp.unwrap()).unwrap();
+        rtc.sdp_api().accept_answer(pending, answer).unwrap();
+        // The browser's own agent knows its interface; the host hears of it
+        // only as an mDNS name it can't resolve.
+        let _ = rtc
+            .add_local_candidate(Candidate::host(socket.local_addr().unwrap(), "udp").unwrap())
+            .unwrap();
+        rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
+        SrflxBrowser {
+            rtc,
+            socket,
+            pinhole: Pinhole::Closed,
+        }
+    }
+
+    /// Drives the connection until DTLS is up, and says whether the host
+    /// had opened the path by then.
+    async fn connect(mut self) -> Pinhole {
+        loop {
+            match self.turn().await {
+                Progress::Going => {}
+                Progress::Connected => break self.pinhole,
+            }
+        }
+    }
+
+    async fn turn(&mut self) -> Progress {
+        match self.rtc.poll_output().unwrap() {
+            Output::Transmit(transmit) => {
+                self.send(transmit).await;
+                Progress::Going
+            }
+            Output::Event(str0m::Event::Connected) => Progress::Connected,
+            Output::Event(_) => Progress::Going,
+            Output::Timeout(deadline) => {
+                self.wait(deadline).await;
+                Progress::Going
+            }
+        }
+    }
+
+    async fn send(&self, transmit: Transmit) {
+        match self.pinhole {
+            Pinhole::Open => {
+                let _ = self
+                    .socket
+                    .send_to(&transmit.contents, transmit.destination)
+                    .await
+                    .unwrap();
+            }
+            Pinhole::Closed => {}
+        }
+    }
+
+    async fn wait(&mut self, deadline: Instant) {
+        let mut bytes = Vec::with_capacity(DATAGRAM);
+        let received =
+            tokio::time::timeout_at(deadline.into(), self.socket.recv_buf_from(&mut bytes)).await;
+        let input = match received {
+            Ok(received) => {
+                let (_, source) = received.unwrap();
+                self.pinhole = Pinhole::Open;
+                Input::Receive(
+                    Instant::now(),
+                    Receive {
+                        proto: Protocol::Udp,
+                        source,
+                        destination: self.socket.local_addr().unwrap(),
+                        contents: DatagramRecv::try_from(bytes.as_slice()).unwrap(),
+                    },
+                )
+            }
+            Err(_) => Input::Timeout(Instant::now()),
+        };
+        self.rtc.handle_input(input).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_browser_with_only_a_srflx_candidate_connects_through_the_hosts_first_check() {
+    let port = free_port();
+    let fx = rtc_host(port, port).await;
+    let endpoint = endpoint().await;
+    let conn = said_hello(&endpoint, &fx.target).await;
+    let offering = offering();
+    let mut signaling = send_offer(&conn, offering.offer.clone()).await;
+    let host = host_addrs(&signaling).into_iter().next().unwrap();
+    let socket = UdpSocket::bind((host.ip(), 0)).await.unwrap();
+    trickle(
+        &mut signaling.send,
+        safari_candidates(socket.local_addr().unwrap()),
+    )
+    .await
+    .unwrap();
+    let browser = SrflxBrowser::answered(offering, &signaling, socket);
+    let connected = tokio::time::timeout(STEP, browser.connect()).await;
+    assert_eq!(connected.ok(), Some(Pinhole::Open));
+    hang_up(signaling).await;
+    endpoint.close().await;
+    fx.router.shutdown().await.unwrap();
 }
