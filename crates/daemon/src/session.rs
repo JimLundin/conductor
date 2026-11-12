@@ -225,15 +225,11 @@ impl Feed {
 impl SessionActor {
     async fn run(mut self, mut inbox: mpsc::Receiver<SessionMsg>) -> Result<Infallible, Stopped> {
         loop {
-            let input = self.next_input(&mut inbox).await;
+            let input = tokio::select! {
+                msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
+                input = self.feed.next() => input,
+            };
             self.on(input).await?;
-        }
-    }
-
-    async fn next_input(&mut self, inbox: &mut mpsc::Receiver<SessionMsg>) -> Input {
-        tokio::select! {
-            msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
-            input = self.feed.next() => input,
         }
     }
 
