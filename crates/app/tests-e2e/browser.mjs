@@ -276,7 +276,7 @@ if (scenario === 'upgrade') {
   await page.locator('.segment', { hasText: 'Codex' }).click();
   check(
     (await page.locator('.providers .hint').innerText()) ===
-      'Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else.',
+      'Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network.',
     'choosing Codex says what it does without asking',
   );
   await startSession('Codex', first);

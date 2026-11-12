@@ -53,7 +53,8 @@ sandbox lets it write inside the session's directory and anywhere under
 approval.
 
 - [ ] With Codex chosen, **New session** says in a muted line that Codex
-      writes in this folder and in `/tmp` without asking.
+      writes in this folder and in `/tmp` without asking, and asks before
+      writing elsewhere, changing `.git` or using the network.
 - [ ] Ask it to create `~/smoke-outside/three.txt`. Approve it. The card
       shows Codex's reason under the command, if it gave one. The file
       exists.

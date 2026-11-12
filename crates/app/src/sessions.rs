@@ -156,7 +156,7 @@ pub(crate) fn NewSession(
                         },
                         (None, ProviderNote::WritesUnasked) => rsx! {
                             p { class: "hint muted",
-                                "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else."
+                                "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
                             }
                         },
                         (None, ProviderNote::Nothing) => rsx! {},
