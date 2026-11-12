@@ -1,7 +1,7 @@
 //! The session list and the form that starts a session.
 
 use client::host_view::{Attention, HostView, SessionView};
-use client::new_session::{Attempt, PROVIDERS, Refusal, label};
+use client::new_session::{Attempt, PROVIDERS, ProviderNote, Refusal, label, note};
 use dioxus::prelude::*;
 use proto::{Availability, CommandBody, CommandResult, HostPath, Provider, Providers, SessionId};
 
@@ -123,6 +123,17 @@ pub(crate) fn NewSession(
         Attempt::Refused(Refusal::Other(message)) => (None, None, Some(message.clone())),
         Attempt::Editing | Attempt::Starting => (None, None, None),
     };
+    let provider_note = match (
+        provider_error,
+        note(providers.as_ref().map(|providers| providers.of(provider()))),
+    ) {
+        (Some(error), _) => Note::Error(error),
+        (None, ProviderNote::Unavailable(reason)) => Note::Error(format!(
+            "{} can't run on this host: {reason}",
+            label(provider())
+        )),
+        (None, ProviderNote::Nothing) => Note::Nothing,
+    };
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
         (_, "") => Start::Empty,
@@ -153,7 +164,10 @@ pub(crate) fn NewSession(
                             }
                         }
                     }
-                    Hint { error: provider_error }
+                    match provider_note {
+                        Note::Error(error) => rsx! { Hint { error } },
+                        Note::Nothing => rsx! {},
+                    }
                 }
                 label { class: "field",
                     span { class: "field-label", "Directory" }
@@ -206,6 +220,12 @@ pub(crate) fn NewSession(
             }
         }
     }
+}
+
+/// What shows under the provider.
+enum Note {
+    Nothing,
+    Error(String),
 }
 
 /// Whether the form can be sent.

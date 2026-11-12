@@ -232,6 +232,11 @@ if (scenario === 'upgrade') {
   await fresh.close();
 } else if (scenario === 'fallback') {
   check((await path()) === 'Relayed', 'Live on the relay');
+  // This host runs no Codex CLI.
+  await page.getByRole('button', { name: 'New session' }).click();
+  await page.locator('.segment', { hasText: 'Codex' }).click();
+  const why = await page.locator('.providers .hint').innerText();
+  check(why.startsWith("Codex can't run on this host: "), `the form says why Codex is unavailable ("${why}")`);
   await turn();
   check((await path()) === 'Relayed', 'the turn completed on the relay');
   const failed = page.locator('header.status[data-path="Relayed"]:not([data-upgrade-error=""])');

@@ -1,6 +1,6 @@
 //! The new-session form: what came of the last attempt to start a session.
 
-use proto::{CommandResult, Provider, Rejection};
+use proto::{Availability, CommandResult, Provider, Rejection};
 
 pub const PROVIDERS: &[Provider] = &[Provider::Claude, Provider::Codex];
 
@@ -9,6 +9,22 @@ pub fn label(provider: Provider) -> String {
         Provider::Claude => "Claude Code",
         Provider::Codex => "Codex",
     })
+}
+
+/// What the form says under the chosen provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderNote {
+    Nothing,
+    /// The host can't run it, for this reason.
+    Unavailable(String),
+}
+
+/// `availability` is `None` until the host has said.
+pub fn note(availability: Option<&Availability>) -> ProviderNote {
+    match availability {
+        Some(Availability::Unavailable { reason }) => ProviderNote::Unavailable(reason.clone()),
+        Some(Availability::Available) | None => ProviderNote::Nothing,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,9 +64,28 @@ impl Attempt {
 
 #[cfg(test)]
 mod tests {
-    use proto::{CommandResult, Rejection};
+    use proto::{Availability, CommandResult, Rejection};
 
-    use super::{Attempt, Refusal};
+    use super::{Attempt, ProviderNote, Refusal, note};
+
+    #[test]
+    fn an_unavailable_provider_shows_its_reason() {
+        assert_eq!(
+            [
+                Some(Availability::Unavailable {
+                    reason: String::from("codex is not on PATH"),
+                }),
+                Some(Availability::Available),
+                None,
+            ]
+            .map(|availability| note(availability.as_ref())),
+            [
+                ProviderNote::Unavailable(String::from("codex is not on PATH")),
+                ProviderNote::Nothing,
+                ProviderNote::Nothing,
+            ]
+        );
+    }
 
     #[test]
     fn a_refusal_lands_under_its_field() {
