@@ -35,7 +35,7 @@ RECORDINGS = {
 }
 
 # The turn starts only once the test has sent its interrupt, so the session
-# must hold it until `init` (docs/p1/design.md §11).
+# must hold it until `init` (docs/architecture.md §5.1).
 RELEASED = {"claude-held-interrupt.jsonl"}
 
 # The stand-in stops reading after `initialize`, so the first message fails.
