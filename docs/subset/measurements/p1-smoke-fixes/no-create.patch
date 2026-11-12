@@ -1,0 +1,43 @@
+--- a/crates/proto/src/lib.rs
++++ b/crates/proto/src/lib.rs
+@@ -392,9 +392,7 @@
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+ pub enum Change {
+-    /// A new file.
+-    Create,
+-    /// The whole file written, new or replaced, as Claude's `Write` does.
++    /// The whole file written, new or replaced.
+     Write,
+     /// Part of an existing file changed.
+     Edit,
+--- a/crates/app/src/session.rs
++++ b/crates/app/src/session.rs
+@@ -204,7 +204,6 @@
+ 
+ fn verb(change: Change) -> String {
+     String::from(match change {
+-        Change::Create => "Create",
+         Change::Write => "Write",
+         Change::Edit => "Edit",
+         Change::Delete => "Delete",
+--- a/crates/daemon/src/mapping.rs
++++ b/crates/daemon/src/mapping.rs
+@@ -243,7 +243,7 @@
+                     .map(|file| FileChange {
+                         path: file.path,
+                         change: match file.kind {
+-                            ChangeKind::Add => Change::Create,
++                            ChangeKind::Add => Change::Write,
+                             ChangeKind::Update => Change::Edit,
+                             ChangeKind::Delete => Change::Delete,
+                         },
+@@ -459,7 +459,7 @@
+                         files: Vec::from([
+                             proto::FileChange {
+                                 path: String::from("a.txt"),
+-                                change: Change::Create,
++                                change: Change::Write,
+                             },
+                             proto::FileChange {
+                                 path: String::from("b.txt"),

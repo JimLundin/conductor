@@ -1,0 +1,79 @@
+diff --git a/crates/app/src/sessions.rs b/crates/app/src/sessions.rs
+index ba6cb2b..3a365be 100644
+--- a/crates/app/src/sessions.rs
++++ b/crates/app/src/sessions.rs
+@@ -112,34 +112,14 @@ pub(crate) fn NewSession(
+             None,
+             None,
+         ),
+-        Attempt::Refused(Refusal::Provider(reason)) => (
+-            None,
+-            Some(format!(
+-                "{} can't run on this host: {reason}",
+-                label(provider())
+-            )),
+-            None,
+-        ),
++        Attempt::Refused(Refusal::Provider(reason)) => (None, Some(reason.clone()), None),
+         Attempt::Refused(Refusal::Other(message)) => (None, None, Some(message.clone())),
+         Attempt::Editing | Attempt::Starting => (None, None, None),
+     };
+-    let provider_note = match (
+-        provider_error,
+-        note(
+-            provider(),
+-            providers.as_ref().map(|providers| providers.of(provider())),
+-        ),
+-    ) {
+-        (Some(error), _) => Note::Error(error),
+-        (None, ProviderNote::Unavailable(reason)) => Note::Error(format!(
+-            "{} can't run on this host: {reason}",
+-            label(provider())
+-        )),
+-        (None, ProviderNote::WritesUnasked) => Note::Muted(String::from(
+-            "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else.",
+-        )),
+-        (None, ProviderNote::Nothing) => Note::Nothing,
+-    };
++    let provider_note = note(
++        provider(),
++        providers.as_ref().map(|providers| providers.of(provider())),
++    );
+     let start = match (attempt(), directory().trim()) {
+         (Attempt::Starting, _) => Start::Busy,
+         (_, "") => Start::Empty,
+@@ -170,10 +150,16 @@ pub(crate) fn NewSession(
+                             }
+                         }
+                     }
+-                    match provider_note {
+-                        Note::Error(error) => rsx! { Hint { error } },
+-                        Note::Muted(text) => rsx! { p { class: "hint muted", "{text}" } },
+-                        Note::Nothing => rsx! {},
++                    match (provider_error, provider_note) {
++                        (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => rsx! {
++                            Hint { error: format!("{} can't run on this host: {reason}", label(provider())) }
++                        },
++                        (None, ProviderNote::WritesUnasked) => rsx! {
++                            p { class: "hint muted",
++                                "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else."
++                            }
++                        },
++                        (None, ProviderNote::Nothing) => rsx! {},
+                     }
+                 }
+                 label { class: "field",
+@@ -229,13 +215,6 @@ pub(crate) fn NewSession(
+     }
+ }
+ 
+-/// What shows under the provider.
+-enum Note {
+-    Nothing,
+-    Muted(String),
+-    Error(String),
+-}
+-
+ /// Whether the form can be sent.
+ enum Start {
+     Empty,
