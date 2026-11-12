@@ -127,6 +127,17 @@ set +e
   echo
   expect codex 1 'version=fake-codex' 'the host found Codex'
 
+  start_host credentials
+  echo
+  echo "## Credentials, webkit"
+  run webkit credentials "$scratch/credentials.png" "$scratch"
+  echo
+  echo "## Credentials, host log"
+  host_log credentials
+  echo
+  expect credentials 2 'stored a credential change' 'the gateway was stored, then cleared'
+  expect credentials 0 'conductor-test-browser-token' 'the token is in no log line'
+
   # conductor runs, held mid-reply; scratch's CLI hangs up as the session
   # starts; notes is never sent a message.
   session "$scratch/screens/conductor" claude-approve.jsonl held

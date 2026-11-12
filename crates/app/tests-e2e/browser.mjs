@@ -12,6 +12,8 @@
 //             and pairing a fresh install.
 //   codex     Two Codex sessions in <dir>/first and <dir>/second, one
 //             approved and one denied.
+//   credentials  A Claude gateway entered, shown as configured, and
+//             cleared; <dir> is unused.
 //   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
 //             (the CLI hangs up) and <dir>/notes (never sent to), shot at
 //             1280x800 and 390x844, light and dark.
@@ -232,6 +234,35 @@ if (scenario === 'turn') {
   check((await text('.request .resolved')) === 'Denied by iPhone', 'the second request was denied by this device');
   check((await text('.reply')) === 'The request was declined.', 'the second turn ended with its own answer');
   await page.screenshot({ path: out });
+} else if (scenario === 'credentials') {
+  const GATEWAY = 'https://gateway.conductor-test.invalid';
+  const TOKEN = 'conductor-test-browser-token';
+  await page.getByRole('button', { name: 'Credentials' }).click();
+  const claude = page.getByRole('form', { name: 'Claude Code' });
+  const state = claude.locator('.credential-state');
+  check((await state.innerText()) === "The host's own CLI, signed in on its own", 'Claude starts on its own CLI');
+  check(
+    (await page.getByRole('form', { name: 'Codex' }).locator('.credential-state').innerText()).startsWith('Not available:'),
+    'Codex is unavailable on this host'
+  );
+  const token = claude.getByLabel('Token');
+  check((await token.getAttribute('type')) === 'password', 'the token field is a password field');
+  await claude.getByLabel('Gateway URL').fill(GATEWAY);
+  await token.fill(TOKEN);
+  await claude.getByRole('button', { name: 'Save gateway' }).click();
+  await state.filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: 10_000 });
+  log(`state: "${await state.innerText()}"`);
+  check((await token.inputValue()) === '', 'the token field is empty once sent');
+  check(
+    (await claude.getByRole('status').innerText()) === "Sent to conductor over the encrypted link. This app doesn't keep it.",
+    'the form says the app keeps nothing'
+  );
+  const kept = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }, location.href]));
+  check(!kept.includes(TOKEN), 'the token is in no storage and not in the URL');
+  await page.screenshot({ path: out });
+  await claude.getByRole('button', { name: 'Clear the Claude Code credential' }).click();
+  await state.filter({ hasText: "The host's own CLI" }).waitFor({ timeout: 10_000 });
+  check((await claude.getByRole('status').innerText()) === 'Cleared on conductor.', 'the clear is confirmed');
 } else if (scenario === 'screens') {
   await startSession('Claude Code', `${dir}/notes`);
   await startSession('Claude Code', `${dir}/scratch`);

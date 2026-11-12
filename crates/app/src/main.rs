@@ -6,6 +6,7 @@
 // rsx! expands each "{text}" node to format!, which clippy flags.
 #![allow(clippy::useless_format)]
 
+mod credentials;
 mod session;
 mod sessions;
 mod ticket;
@@ -31,6 +32,7 @@ fn main() {
 pub(crate) enum Screen {
     Sessions,
     NewSession,
+    Credentials,
     Session(SessionId),
 }
 
@@ -120,17 +122,21 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     let notice = use_signal(|| None::<String>);
     let session = match screen() {
         Screen::Session(id) => view.read().sessions.get(&id).cloned(),
-        Screen::Sessions | Screen::NewSession => None,
+        Screen::Sessions | Screen::NewSession | Screen::Credentials => None,
     };
     // A session the host no longer reports (after a reset) falls back to the
     // list, which on a phone is the only way out of the detail pane.
     let shown = match (screen(), &session) {
-        (Screen::NewSession, _) | (Screen::Session(_), Some(_)) => "detail",
+        (Screen::NewSession | Screen::Credentials, _) | (Screen::Session(_), Some(_)) => "detail",
         (Screen::Sessions, _) | (Screen::Session(_), None) => "list",
     };
     rsx! {
         div { class: "app", "data-screen": shown,
-            StatusLine { status: status(), on_change_host }
+            StatusLine {
+                status: status(),
+                on_credentials: move |()| screen.set(Screen::Credentials),
+                on_change_host,
+            }
             div { class: "panes",
                 sessions::SessionList { view, screen: screen(), on_select: move |next| screen.set(next) }
                 main { class: "detail",
@@ -142,6 +148,14 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
                                 link,
                                 on_back: move |()| screen.set(Screen::Sessions),
                                 on_started: move |id| screen.set(Screen::Session(id)),
+                            }
+                        },
+                        (Screen::Credentials, _) => rsx! {
+                            credentials::CredentialsPane {
+                                host: status().and_then(|status| status.host).unwrap_or_else(|| String::from("the host")),
+                                providers: status().and_then(|status| status.providers),
+                                link,
+                                on_back: move |()| screen.set(Screen::Sessions),
                             }
                         },
                         (Screen::Session(id), Some(session)) => rsx! {
@@ -253,7 +267,11 @@ pub(crate) fn run_command(
 }
 
 #[component]
-fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Element {
+fn StatusLine(
+    status: Option<Status>,
+    on_credentials: EventHandler<()>,
+    on_change_host: EventHandler<()>,
+) -> Element {
     let status = status.unwrap_or(Status {
         state: LinkState::Disconnected,
         host: None,
@@ -267,6 +285,7 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
             span { class: "dot" }
             span { class: "host", "{host}" }
             span { class: "state", "{state}" }
+            button { class: "credentials", onclick: move |_| on_credentials.call(()), "Credentials" }
             button { class: "change-host", onclick: move |_| on_change_host.call(()), "Change host" }
             match status.error {
                 Some(error) => rsx! { span { class: "error", "{error}" } },

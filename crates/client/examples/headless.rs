@@ -2,6 +2,9 @@
 //! answers its requests and prints every update until the turn completes.
 //!
 //! `cargo run -p client --example headless -- <ticket> --directory DIR [--reconnect-after N]`
+//!
+//! `--register env` first sets the provider's credential on the host from
+//! this process's environment (`Register`).
 
 use std::cmp::Ordering;
 use std::io::Write;
@@ -11,8 +14,9 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    ClientName, CommandBody, CommandResult, Decision, Event, EventKind, HostPath, HostSeq,
-    Provider, SessionId, Ticket,
+    Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandBody, CommandResult,
+    Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId, Ticket,
+    WireApi,
 };
 use tokio::sync::mpsc;
 
@@ -38,6 +42,19 @@ struct Args {
     interrupt: When,
     #[arg(long, default_value_t = 60)]
     timeout_secs: u64,
+    #[arg(long, value_enum, default_value_t = Register::Keep)]
+    register: Register,
+}
+
+/// Whether to set the provider's credential on the host before the session.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Register {
+    /// Leave the host's credential as it is.
+    Keep,
+    /// A Claude gateway from `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`,
+    /// or a Codex provider from `CONDUCTOR_CODEX_NAME`, `_BASE_URL`,
+    /// `_MODEL` and `_KEY`. Nothing of them is printed.
+    Env,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -98,6 +115,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         decision,
         reconnect_after: args.reconnect_after,
         interrupt: args.interrupt,
+        register: args.register,
         link,
         updates,
         ours: None,
@@ -165,6 +183,7 @@ struct Session {
     decision: Decision,
     reconnect_after: Option<usize>,
     interrupt: When,
+    register: Register,
     link: HostLink,
     updates: mpsc::Receiver<Update>,
     ours: Option<Ours>,
@@ -234,6 +253,7 @@ impl Session {
         match self.ours {
             Some(_) => Ok(Flow::Next),
             None => {
+                self.register().await?;
                 let after = self.last_seq;
                 let session = self.start_session().await?;
                 self.ours = Some(Ours { session, after });
@@ -247,6 +267,55 @@ impl Session {
                     self.interrupt(session).await?;
                 }
                 Ok(Flow::Next)
+            }
+        }
+    }
+
+    /// Logs only the kind the host now reports, never a value.
+    async fn register(&self) -> anyhow::Result<()> {
+        let credential = match (self.register, self.provider) {
+            (Register::Keep, _) => None,
+            (Register::Env, Provider::Claude) => {
+                Some(Credential::Claude(ClaudeCredential::Gateway {
+                    base_url: var("ANTHROPIC_BASE_URL")?,
+                    token: var("ANTHROPIC_AUTH_TOKEN")?,
+                }))
+            }
+            (Register::Env, Provider::Codex) => {
+                Some(Credential::Codex(CodexCredential::Provider {
+                    name: var("CONDUCTOR_CODEX_NAME")?,
+                    base_url: var("CONDUCTOR_CODEX_BASE_URL")?,
+                    wire_api: WireApi::Responses,
+                    key: var("CONDUCTOR_CODEX_KEY")?,
+                    model: var("CONDUCTOR_CODEX_MODEL")?,
+                }))
+            }
+        };
+        match credential {
+            None => Ok(()),
+            Some(credential) => {
+                let result = self
+                    .link
+                    .send(CommandBody::SetCredential { credential })
+                    .await?;
+                let kind = match &result {
+                    CommandResult::Providers(providers) => match providers.of(self.provider) {
+                        Availability::Available {
+                            auth: Auth::Gateway { .. },
+                        } => Ok("gateway"),
+                        Availability::Available { .. } | Availability::Unavailable { .. } => {
+                            Err(anyhow::Error::msg("the host does not report the gateway"))
+                        }
+                    },
+                    CommandResult::Rejected(rejection) => {
+                        Err(anyhow::Error::msg(rejection.label()))
+                    }
+                    CommandResult::Accepted | CommandResult::Started { .. } => {
+                        Err(anyhow::Error::msg("the host gave an unexpected answer"))
+                    }
+                }?;
+                self.log(format!("registered the credential -> {kind}"))?;
+                Ok(())
             }
         }
     }
@@ -350,4 +419,10 @@ impl Session {
     fn log(&self, line: String) -> std::io::Result<()> {
         log(self.start, line)
     }
+}
+
+/// An environment variable the credential needs. Its error names the
+/// variable only.
+fn var(name: &str) -> anyhow::Result<String> {
+    std::env::var(name).with_context(|| format!("{name} is not set"))
 }
