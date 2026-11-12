@@ -45,6 +45,11 @@ not committed. Where this file disagrees with the JSON Schema or architecture
 
 - `approvalPolicy: on-request` with `sandbox: workspace-write` wrote `a.txt`
   in the working directory with no approval request. (Probe.)
+- `on-request` with `workspace-write` asked before `git add a.txt && git
+  commit` in a fresh repository in the working directory, with the reason
+  "May I rerun the exact command with permission to write Git metadata?":
+  the sandbox keeps `.git` read-only. (Live check through `conductord`,
+  2026-11-12, `gpt-6-luna`.)
 - `untrusted` with `workspace-write` asks before every command, including
   `pwd && ls -la`, whatever the model thinks of the sandbox. `s2` uses it.
   Steps 1 and 2 passed in 15 of 15 runs, each write asking once. (Probe, and

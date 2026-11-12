@@ -32,7 +32,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/2";
+pub const ALPN: &[u8] = b"conductor/3";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -350,10 +350,12 @@ pub enum EventKind {
     },
     /// An approval the tool call `call` waits on. `tool` repeats what the
     /// call's `Started` said, so a client can show the request on its own.
+    /// `reason` is the agent's own words for why it asks, when it gives any.
     RequestOpened {
         request: RequestId,
         call: ToolCallId,
         tool: ToolKind,
+        reason: Option<String>,
     },
     RequestResolved {
         request: RequestId,
@@ -377,8 +379,24 @@ pub enum ToolPhase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolKind {
     Command { command: String },
-    FileChange { paths: Vec<String> },
+    FileChange { files: Vec<FileChange> },
     Other { name: String, detail: String },
+}
+
+/// One file a tool call changes, and how.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChange {
+    pub path: String,
+    pub change: Change,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Change {
+    /// The whole file written, new or replaced.
+    Write,
+    /// Part of an existing file changed.
+    Edit,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

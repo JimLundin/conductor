@@ -40,11 +40,15 @@ const check = (ok, what) => {
 const engine = process.env.ENGINE ?? 'chromium';
 const browser = await { chromium, webkit }[engine].launch();
 log(`engine: ${engine} ${browser.version()}, scenario: ${scenario}`);
+// An iPhone's user agent, so the app names itself "iPhone" in Hello.
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 3,
   isMobile: true,
   hasTouch: true,
+  userAgent: IPHONE_UA,
 });
 // Records every status change with the page's own clock, so upgrade timings
 // don't depend on how often Playwright polls.
@@ -152,8 +156,9 @@ const turn = async ({ during = async () => {}, beforeApprove = async () => {} } 
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
   check((await text('.user .bubble')) === PROMPT, 'the message shows once');
   check((await text('.tool .tool-detail')) === WRITTEN, 'one tool card, for the written file');
+  check((await text('.tool .tool-name')) === 'Write', 'the card names the change a Write');
   check((await pane.locator('.tool').getAttribute('data-state')) === 'succeeded', 'the tool succeeded');
-  check((await text('.request .resolved')) === 'Approved by browser', 'the approval resolved once, by this browser');
+  check((await text('.request .resolved')) === 'Approved by iPhone', 'the approval resolved once, by this device');
   check((await text('.reply')) === REPLY, 'the streamed reply is every delta exactly once');
   check((await text('.turn-end')) === 'Turn finished', 'exactly one "Turn finished"');
 };
@@ -189,6 +194,14 @@ if (scenario === 'upgrade') {
   check(fallbacks.length === 0, 'WebRTC never dropped during the turn');
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
+
+  // Playwright can neither open the keyboard nor give the page a home
+  // indicator, so the inset is set by hand; the reload below drops it.
+  await page.addStyleTag({ content: '.composer { --inset-bottom: 34px; }' });
+  const padding = () => pane.locator('.composer').evaluate((el) => getComputedStyle(el).paddingBottom);
+  check((await padding()) === '42px', 'the composer keeps the home indicator inset with the keyboard down');
+  await pane.locator('.composer textarea').tap();
+  check((await padding()) === '8px', 'the composer drops the inset while it has focus, as with the keyboard up');
 
   const reloaded = Date.now();
   await page.goto(joinUrl.replace(/#join=.*/, ''));
@@ -227,6 +240,11 @@ if (scenario === 'upgrade') {
   await fresh.close();
 } else if (scenario === 'fallback') {
   check((await path()) === 'Relayed', 'Live on the relay');
+  // This host runs no Codex CLI.
+  await page.getByRole('button', { name: 'New session' }).click();
+  await page.locator('.segment', { hasText: 'Codex' }).click();
+  const why = await page.locator('.providers .hint').innerText();
+  check(why.startsWith("Codex can't run on this host: "), `the form says why Codex is unavailable ("${why}")`);
   await turn();
   check((await path()) === 'Relayed', 'the turn completed on the relay');
   const failed = page.locator('header.status[data-path="Relayed"]:not([data-upgrade-error=""])');
@@ -254,6 +272,13 @@ if (scenario === 'upgrade') {
   // each; the first asks to run a command and is approved, the second is
   // declined.
   const [first, second] = [`${dir}/first`, `${dir}/second`];
+  await page.getByRole('button', { name: 'New session' }).click();
+  await page.locator('.segment', { hasText: 'Codex' }).click();
+  check(
+    (await page.locator('.providers .hint').innerText()) ===
+      'Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network.',
+    'choosing Codex says what it does without asking',
+  );
   await startSession('Codex', first);
   await startSession('Codex', second);
   await openRow('first');
@@ -267,13 +292,13 @@ if (scenario === 'upgrade') {
   await openRow('first');
   await pane.locator('.request[data-open="true"] button.approve').click();
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
-  check((await text('.request .resolved')) === 'Approved by browser', 'the first request was approved by this browser');
+  check((await text('.request .resolved')) === 'Approved by iPhone', 'the first request was approved by this device');
   check((await pane.locator('.tool').getAttribute('data-state')) === 'succeeded', 'the approved command succeeded');
   check((await text('.reply')).endsWith('Created [a.txt](/tmp/s2-scratch/a.txt).'), 'the first turn ended with its own answer');
   await openRow('second');
   await pane.locator('.request[data-open="true"] button.deny').click();
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
-  check((await text('.request .resolved')) === 'Denied by browser', 'the second request was denied by this browser');
+  check((await text('.request .resolved')) === 'Denied by iPhone', 'the second request was denied by this device');
   check((await text('.reply')) === 'The request was declined.', 'the second turn ended with its own answer');
   await page.screenshot({ path: out });
 } else if (scenario === 'screens') {
@@ -304,7 +329,9 @@ if (scenario === 'upgrade') {
         await openRow(title, shot);
         await shot.waitForTimeout(450);
         const file = `${out}/${device}-${scheme}-${state}.png`;
-        await shot.screenshot({ path: file });
+        // The candidate pair differs from run to run, so it is left out of
+        // the shot; display: none, since a hidden span keeps its width.
+        await shot.screenshot({ path: file, style: '.status .path { display: none; }' });
         log(`screenshot ${file}`);
       }
       await shooter.close();

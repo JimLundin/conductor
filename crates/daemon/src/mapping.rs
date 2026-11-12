@@ -6,11 +6,12 @@ use agents::claude::{
     ToolDetail,
 };
 use agents::codex::{
-    self, ApprovalId, ApprovalKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId,
+    self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk,
+    ThreadEvent, TurnId,
 };
 use proto::{
-    ClientName, CloseReason, Decision, EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    Change, ClientName, CloseReason, Decision, EventKind, FileChange, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
 
 /// The provider's own id for an open request, which `agents` answers.
@@ -38,6 +39,7 @@ pub(crate) enum Step {
         /// The tool call the request asks about.
         call: ToolCallId,
         tool: ToolKind,
+        reason: Option<String>,
     },
     /// The session logs the call finished, as `Declined` if it failed after
     /// the user denied it.
@@ -74,6 +76,7 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             native: NativeRequest::Claude(id),
             call: ToolCallId(tool_use_id),
             tool: tool_kind(tool_name, detail),
+            reason: None,
         }]),
         ClaudeEvent::PermissionCancelled { id } => {
             Vec::from([Step::Withdraw(NativeRequest::Claude(id))])
@@ -137,13 +140,18 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
 
 fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
     match (name.as_str(), detail) {
-        ("Edit" | "Write" | "MultiEdit", ToolDetail::Path(path)) => ToolKind::FileChange {
-            paths: Vec::from([path]),
-        },
+        ("Write", ToolDetail::Path(path)) => one_file(path, Change::Write),
+        ("Edit" | "MultiEdit", ToolDetail::Path(path)) => one_file(path, Change::Edit),
         (_, ToolDetail::Command(command)) => ToolKind::Command { command },
         (_, ToolDetail::Path(detail) | ToolDetail::Text(detail)) => {
             ToolKind::Other { name, detail }
         }
+    }
+}
+
+fn one_file(path: String, change: Change) -> ToolKind {
+    ToolKind::FileChange {
+        files: Vec::from([FileChange { path, change }]),
     }
 }
 
@@ -196,10 +204,11 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             outcome: codex_outcome(&status),
         }]),
         ThreadEvent::ApprovalRequested { id, item, kind, .. } => match approval_tool(kind) {
-            Some(tool) => Vec::from([Step::Open {
+            Some((tool, reason)) => Vec::from([Step::Open {
                 native: NativeRequest::Codex(id),
                 call: ToolCallId(item),
                 tool,
+                reason,
             }]),
             None => Vec::from([Step::Emit(EventKind::Error {
                 message: String::from(
@@ -230,7 +239,17 @@ fn codex_item(item: Item) -> EventKind {
         Item::FileChange { id, changes, .. } => (
             id,
             ToolKind::FileChange {
-                paths: changes.into_iter().map(|change| change.path).collect(),
+                files: changes
+                    .into_iter()
+                    .map(|file| FileChange {
+                        path: file.path,
+                        change: match file.kind {
+                            ChangeKind::Add => Change::Write,
+                            ChangeKind::Update => Change::Edit,
+                            ChangeKind::Delete => Change::Delete,
+                        },
+                    })
+                    .collect(),
             },
         ),
     };
@@ -249,18 +268,37 @@ fn codex_outcome(status: &str) -> ToolOutcome {
     }
 }
 
-/// The tool an approval asks about. A question asks about none.
-fn approval_tool(kind: ApprovalKind) -> Option<ToolKind> {
+/// The tool an approval asks about, and Codex's reason for asking. A
+/// question asks about none.
+fn approval_tool(kind: ApprovalKind) -> Option<(ToolKind, Option<String>)> {
     match kind {
-        ApprovalKind::Command { command, .. } => Some(ToolKind::Command {
-            command: command.unwrap_or_default(),
-        }),
+        ApprovalKind::Command {
+            command, reason, ..
+        } => Some((
+            ToolKind::Command {
+                command: command.unwrap_or_default(),
+            },
+            reason,
+        )),
         // The request names no paths; the tool card the item started has them.
-        ApprovalKind::FileChange { .. } => Some(ToolKind::FileChange { paths: Vec::new() }),
-        ApprovalKind::Permissions { reason, .. } => Some(ToolKind::Other {
-            name: String::from("permissions"),
-            detail: reason.unwrap_or_default(),
-        }),
+        ApprovalKind::FileChange { reason, .. } => {
+            Some((ToolKind::FileChange { files: Vec::new() }, reason))
+        }
+        ApprovalKind::Permissions { reason, asks } => Some((
+            ToolKind::Other {
+                name: String::from("permissions"),
+                detail: asks
+                    .into_iter()
+                    .map(|ask| match ask {
+                        PermissionAsk::Network => String::from("network access"),
+                        PermissionAsk::Read(places) => format!("read {}", places.join(", ")),
+                        PermissionAsk::Write(places) => format!("write to {}", places.join(", ")),
+                    })
+                    .collect::<Vec<String>>()
+                    .join("; "),
+            },
+            reason,
+        )),
         ApprovalKind::UserInput { .. } => None,
     }
 }
@@ -280,9 +318,9 @@ mod tests {
     };
     use agents::codex::{
         self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
-        ThreadEvent, ThreadId, TurnId,
+        PermissionAsk, ThreadEvent, ThreadId, TurnId,
     };
-    use proto::{CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
+    use proto::{Change, CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
 
     use super::{NativeRequest, Step, claude_steps, codex_steps};
 
@@ -337,6 +375,8 @@ mod tests {
                         Block::Thinking(String::from("hmm")),
                         tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
                         tool_use("Bash", ToolDetail::Command(String::from("ls"))),
+                        tool_use("Write", ToolDetail::Path(String::from("c.txt"))),
+                        tool_use("Edit", ToolDetail::Path(String::from("d.txt"))),
                     ]),
                 }),
                 want: Vec::from([
@@ -351,6 +391,24 @@ mod tests {
                         "toolu_1",
                         ToolKind::Command {
                             command: String::from("ls"),
+                        },
+                    ),
+                    started(
+                        "toolu_1",
+                        ToolKind::FileChange {
+                            files: Vec::from([proto::FileChange {
+                                path: String::from("c.txt"),
+                                change: Change::Write,
+                            }]),
+                        },
+                    ),
+                    started(
+                        "toolu_1",
+                        ToolKind::FileChange {
+                            files: Vec::from([proto::FileChange {
+                                path: String::from("d.txt"),
+                                change: Change::Edit,
+                            }]),
                         },
                     ),
                 ]),
@@ -387,19 +445,90 @@ mod tests {
                     phase: ItemPhase::Started,
                     item: Item::FileChange {
                         id: String::from("patch-1"),
-                        changes: Vec::from([FileChange {
-                            path: String::from("a.txt"),
-                            kind: ChangeKind::Add,
-                        }]),
+                        changes: Vec::from([
+                            FileChange {
+                                path: String::from("a.txt"),
+                                kind: ChangeKind::Add,
+                            },
+                            FileChange {
+                                path: String::from("b.txt"),
+                                kind: ChangeKind::Update,
+                            },
+                            FileChange {
+                                path: String::from("c.txt"),
+                                kind: ChangeKind::Delete,
+                            },
+                        ]),
                         status: String::from("inProgress"),
                     },
                 }),
                 want: Vec::from([started(
                     "patch-1",
                     ToolKind::FileChange {
-                        paths: Vec::from([String::from("a.txt")]),
+                        files: Vec::from([
+                            proto::FileChange {
+                                path: String::from("a.txt"),
+                                change: Change::Write,
+                            },
+                            proto::FileChange {
+                                path: String::from("b.txt"),
+                                change: Change::Edit,
+                            },
+                            proto::FileChange {
+                                path: String::from("c.txt"),
+                                change: Change::Delete,
+                            },
+                        ]),
                     },
                 )]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("1")),
+                    turn: turn(),
+                    item: String::from("exec-2"),
+                    kind: ApprovalKind::Command {
+                        command: Some(String::from("touch ~/b.txt")),
+                        cwd: None,
+                        reason: Some(String::from("needs to write outside the workspace")),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest::Codex(ApprovalId(String::from("1"))),
+                    call: ToolCallId(String::from("exec-2")),
+                    tool: ToolKind::Command {
+                        command: String::from("touch ~/b.txt"),
+                    },
+                    reason: Some(String::from("needs to write outside the workspace")),
+                }]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("2")),
+                    turn: turn(),
+                    item: String::from("exec-3"),
+                    kind: ApprovalKind::Permissions {
+                        reason: Some(String::from("to fetch the crate")),
+                        asks: Vec::from([
+                            PermissionAsk::Network,
+                            PermissionAsk::Write(Vec::from([
+                                String::from("/home/u/.cargo"),
+                                String::from("/tmp"),
+                            ])),
+                        ]),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest::Codex(ApprovalId(String::from("2"))),
+                    call: ToolCallId(String::from("exec-3")),
+                    tool: ToolKind::Other {
+                        name: String::from("permissions"),
+                        detail: String::from("network access; write to /home/u/.cargo, /tmp"),
+                    },
+                    reason: Some(String::from("to fetch the crate")),
+                }]),
             },
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {

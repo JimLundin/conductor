@@ -182,7 +182,8 @@ pub enum EventKind {
     /// since the previous message.
     AssistantMessage { text: String },
     ToolCall { call: ToolCallId, phase: ToolPhase },
-    RequestOpened { request: RequestId, tool: String, detail: String },
+    /// Typed and joined to its call in §12; `reason` added with `conductor/3`.
+    RequestOpened { request: RequestId, call: ToolCallId, tool: ToolKind, reason: Option<String> },
     RequestResolved { request: RequestId, resolution: Resolution },
     TurnCompleted { outcome: TurnOutcome },
     /// Something went wrong that did not end the session.
@@ -200,9 +201,14 @@ pub enum ToolPhase {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolKind {
     Command { command: String },
-    FileChange { paths: Vec<String> },
+    FileChange { files: Vec<FileChange> },
     Other { name: String, detail: String },
 }
+
+/// One path a tool call changes, and how (§12, `conductor/3`).
+pub struct FileChange { pub path: String, pub change: Change }
+
+pub enum Change { Write, Edit, Delete }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -704,11 +710,11 @@ form). The two tables below are those matches.
 | `AgentDelta { text, .. }` (added in unit 2) | `Emit(AssistantDelta { text })` |
 | `AgentMessage { text, .. }` | `Emit(AssistantMessage { text })` |
 | `Item { Started, Command { id, command, .. } }` | `Emit(ToolCall { id, Started { Command { command } } })` |
-| `Item { Started, FileChange { id, changes, .. } }` | `Emit(ToolCall { id, Started { FileChange { paths } } })` |
+| `Item { Started, FileChange { id, changes, .. } }` | `Emit(ToolCall { id, Started { FileChange { files } } })`, `Add`/`Update`/`Delete` as `Write`/`Edit`/`Delete` |
 | `Item { Completed, item }` | `Emit(ToolCall { id, Finished { codex_outcome(status) } })` |
-| `ApprovalRequested { id, kind: Command { command, .. } }` | `Open { Codex(id), "command", command }` |
-| `ApprovalRequested { id, kind: FileChange { reason, .. } }` | `Open { Codex(id), "file change", reason }` |
-| `ApprovalRequested { id, kind: Permissions { reason, .. } }` | `Open { Codex(id), "permissions", reason }` |
+| `ApprovalRequested { id, item, kind: Command { command, reason, .. } }` | `Open { Codex(id), item, Command { command }, reason }` |
+| `ApprovalRequested { id, item, kind: FileChange { reason, .. } }` | `Open { Codex(id), item, FileChange { files: [] }, reason }` |
+| `ApprovalRequested { id, item, kind: Permissions { reason, requested } }` | `Open { Codex(id), item, Other { "permissions", requested }, reason }` |
 | `ApprovalRequested { kind: UserInput { .. } }` | `Emit(Error { "Codex asked a question. Questions arrive in a later slice; interrupt to continue." })` |
 | `ApprovalCancelled { id }` | `Withdraw(Codex(id))` |
 | `TurnCompleted { outcome }` | `TurnEnded(outcome)`, variant for variant |
@@ -1260,13 +1266,22 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   only performs awaited side effects; every other loop stays adapters.
 - **The fixture is gone from `crates/`**; unit 7 regenerates the screenshots
   from the real host running the fake CLIs.
-- **Open items for the next wire change** (from the unit 5 review; the app
-  is not changed until then):
-  - Claude's `Write` tool shows as "Edit" on its tool card, because
-    `ToolKind::FileChange` carries no tool name.
-  - The approval card drops Codex's `reason` (such as "needs escalated
-    permission to write outside the workspace"), which `ApprovalKind`
-    carries and `mapping` discards.
-  - Nothing tells the user that Codex works without asking inside the
-    session's directory (`OnRequest` with `WorkspaceWrite`). The New Session
-    screen or the session header needs a hint.
+- **Open items for the next wire change** (from the unit 5 review), all
+  done with `conductor/3` on branch `p1-smoke-fixes`:
+  - Done: Claude's `Write` tool showed as "Edit" on its tool card, because
+    `ToolKind::FileChange` carried no tool name. It now carries one
+    `FileChange { path, change }` per path, with `Change::{Write, Edit,
+    Delete}`. `Write` covers a new or replaced whole file: Claude's `Write`
+    and Codex's `add` alike.
+  - Done: the approval card dropped Codex's `reason`.
+    `RequestOpened { reason: Option<String> }` carries it, and the card
+    shows it under the tool line. Claude sends `None`: no `can_use_tool` in
+    `fixtures/` carries a reason.
+  - Done: nothing told the user that Codex works without asking inside the
+    session's directory (`OnRequest` with `WorkspaceWrite`). Choosing Codex
+    in New Session shows a muted line saying so.
+- **Smoke run 1's app findings** (`smoke.md`, Findings), fixed on the same
+  branch: each web client names its device in `Hello` (finding 4); a
+  running turn with nothing live shows "Thinking…" (finding 3); New Session
+  shows an unavailable provider's reason (finding 6); a focused composer
+  drops the home-indicator inset (finding 5, to confirm on the device).

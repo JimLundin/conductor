@@ -14,7 +14,11 @@ use iroh::endpoint::{BindError, presets};
 use iroh::{Endpoint, RelayMode};
 
 #[cfg(not(target_family = "wasm"))]
+pub use native::client_name;
+#[cfg(not(target_family = "wasm"))]
 use native::public_endpoint;
+#[cfg(target_family = "wasm")]
+pub use web::client_name;
 #[cfg(target_family = "wasm")]
 use web::public_endpoint;
 

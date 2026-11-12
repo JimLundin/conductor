@@ -1,7 +1,7 @@
 //! The session list and the form that starts a session.
 
 use client::host_view::{Attention, HostView, SessionView};
-use client::new_session::{Attempt, PROVIDERS, Refusal, label};
+use client::new_session::{Attempt, PROVIDERS, ProviderNote, Refusal, label, note};
 use dioxus::prelude::*;
 use proto::{Availability, CommandBody, CommandResult, HostPath, Provider, Providers, SessionId};
 
@@ -112,17 +112,14 @@ pub(crate) fn NewSession(
             None,
             None,
         ),
-        Attempt::Refused(Refusal::Provider(reason)) => (
-            None,
-            Some(format!(
-                "{} can't run on this host: {reason}",
-                label(provider())
-            )),
-            None,
-        ),
+        Attempt::Refused(Refusal::Provider(reason)) => (None, Some(reason.clone()), None),
         Attempt::Refused(Refusal::Other(message)) => (None, None, Some(message.clone())),
         Attempt::Editing | Attempt::Starting => (None, None, None),
     };
+    let provider_note = note(
+        provider(),
+        providers.as_ref().map(|providers| providers.of(provider())),
+    );
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
         (_, "") => Start::Empty,
@@ -153,7 +150,17 @@ pub(crate) fn NewSession(
                             }
                         }
                     }
-                    Hint { error: provider_error }
+                    match (provider_error, provider_note) {
+                        (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => rsx! {
+                            Hint { error: format!("{} can't run on this host: {reason}", label(provider())) }
+                        },
+                        (None, ProviderNote::WritesUnasked) => rsx! {
+                            p { class: "hint muted",
+                                "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+                            }
+                        },
+                        (None, ProviderNote::Nothing) => rsx! {},
+                    }
                 }
                 label { class: "field",
                     span { class: "field-label", "Directory" }

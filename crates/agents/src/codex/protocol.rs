@@ -7,10 +7,12 @@ use std::path::PathBuf;
 use codex_codes::protocol::methods;
 use codex_codes::{
     AskForApproval, ClientInfo, CommandExecutionRequestApprovalResponse,
-    FileChangeRequestApprovalResponse, InitializeCapabilities, InitializeParams, JsonRpcMessage,
-    ModelListParams, Notification, PatchChangeKind, ReasoningEffort, RequestId, SandboxMode,
-    ServerRequest, ThreadItemPayload, ThreadResumeParams, ThreadStartParams, TurnInterruptParams,
-    TurnStartParams, TurnStatus, UserInput,
+    FileChangeRequestApprovalResponse, FileSystemAccessMode, FileSystemPath,
+    FileSystemSandboxEntry, FileSystemSpecialPath, InitializeCapabilities, InitializeParams,
+    JsonRpcMessage, LegacyAppPathString, ModelListParams, Notification, PatchChangeKind,
+    ReasoningEffort, RequestId, RequestPermissionProfile, SandboxMode, ServerRequest,
+    ThreadItemPayload, ThreadResumeParams, ThreadStartParams, TurnInterruptParams, TurnStartParams,
+    TurnStatus, UserInput,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -111,6 +113,16 @@ pub enum Item {
     },
 }
 
+/// What a permissions request asks the sandbox to allow beyond its own.
+/// Codex's own names for special places (`/tmp`, the project roots) are kept
+/// as they read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionAsk {
+    Network,
+    Read(Vec<String>),
+    Write(Vec<String>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApprovalKind {
     Command {
@@ -124,7 +136,7 @@ pub enum ApprovalKind {
     },
     Permissions {
         reason: Option<String>,
-        requested: Value,
+        asks: Vec<PermissionAsk>,
     },
     /// `item/tool/requestUserInput`; answer it with [`Decision::Raw`].
     UserInput { questions: Value },
@@ -290,6 +302,89 @@ struct Asked {
     options: Vec<Value>,
 }
 
+fn permission_asks(profile: &RequestPermissionProfile) -> Vec<PermissionAsk> {
+    let network = profile
+        .network
+        .as_ref()
+        .and_then(|network| network.enabled)
+        .and_then(|enabled| enabled.then_some(PermissionAsk::Network));
+    let (read, write) = match &profile.file_system {
+        Some(file_system) => (
+            listed(
+                &file_system.read,
+                &file_system.entries,
+                &FileSystemAccessMode::Read,
+            ),
+            listed(
+                &file_system.write,
+                &file_system.entries,
+                &FileSystemAccessMode::Write,
+            ),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+    network
+        .into_iter()
+        .chain(
+            Some(read)
+                .filter(|paths| !paths.is_empty())
+                .map(PermissionAsk::Read),
+        )
+        .chain(
+            Some(write)
+                .filter(|paths| !paths.is_empty())
+                .map(PermissionAsk::Write),
+        )
+        .collect()
+}
+
+/// The places a profile asks `access` to, in its plain lists and its entries.
+fn listed(
+    plain: &Option<Vec<LegacyAppPathString>>,
+    entries: &Option<Vec<FileSystemSandboxEntry>>,
+    access: &FileSystemAccessMode,
+) -> Vec<String> {
+    plain
+        .iter()
+        .flatten()
+        .map(|path| path.0.clone())
+        .chain(
+            entries
+                .iter()
+                .flatten()
+                .filter(|entry| &entry.access == access)
+                .map(|entry| place(&entry.path)),
+        )
+        .collect()
+}
+
+fn place(path: &FileSystemPath) -> String {
+    match path {
+        FileSystemPath::Path { path } => path.0.clone(),
+        FileSystemPath::Glob_pattern { pattern } => pattern.clone(),
+        FileSystemPath::Special { value } => match value {
+            FileSystemSpecialPath::Root => String::from("/"),
+            FileSystemSpecialPath::Minimal => String::from("the minimal system paths"),
+            FileSystemSpecialPath::ProjectRoots { subpath: None } => {
+                String::from("the project roots")
+            }
+            FileSystemSpecialPath::ProjectRoots {
+                subpath: Some(subpath),
+            } => format!("{} in the project roots", subpath.0),
+            FileSystemSpecialPath::Tmpdir => String::from("$TMPDIR"),
+            FileSystemSpecialPath::SlashTmp => String::from("/tmp"),
+            FileSystemSpecialPath::Unknown {
+                path,
+                subpath: None,
+            } => path.clone(),
+            FileSystemSpecialPath::Unknown {
+                path,
+                subpath: Some(subpath),
+            } => format!("{path}/{}", subpath.0),
+        },
+    }
+}
+
 /// `None` for a request we don't serve, an error for one whose parts don't re-encode.
 fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
     Ok(match request {
@@ -331,7 +426,7 @@ fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
                 shape: AnswerShape::Permissions(requested.clone()),
                 kind: ApprovalKind::Permissions {
                     reason: p.reason,
-                    requested,
+                    asks: permission_asks(&p.permissions),
                 },
                 options: Vec::new(),
             })
@@ -831,8 +926,8 @@ mod tests {
 
     use super::{
         AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call, CodexEvent,
-        Decision, Inbound, Outbound, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer,
-        encode, encoded, parse_line,
+        Decision, Inbound, Outbound, PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions,
+        TurnId, answer, encode, encoded, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -1057,6 +1152,35 @@ mod tests {
                     ]),
                 },
             }
+        );
+    }
+
+    #[test]
+    fn a_permissions_request_lists_what_it_asks_for() {
+        let line = r#"{"method":"item/permissions/requestApproval","id":3,"params":{"threadId":"th_1","turnId":"tu_1","itemId":"exec-2","startedAtMs":1,"cwd":"/w","reason":"to fetch","permissions":{"network":{"enabled":true},"fileSystem":{"write":["/home/u/.cargo"],"entries":[{"access":"write","path":{"type":"special","value":{"kind":"slashTmp"}}},{"access":"read","path":{"type":"path","path":"/etc/hosts"}}]}}}}"#;
+        assert_eq!(
+            match parse_line(line).unwrap() {
+                Inbound::Approval {
+                    event:
+                        ThreadEvent::ApprovalRequested {
+                            kind: ApprovalKind::Permissions { reason, asks },
+                            ..
+                        },
+                    ..
+                } => Some((reason, asks)),
+                _ => None,
+            },
+            Some((
+                Some(String::from("to fetch")),
+                Vec::from([
+                    PermissionAsk::Network,
+                    PermissionAsk::Read(Vec::from([String::from("/etc/hosts")])),
+                    PermissionAsk::Write(Vec::from([
+                        String::from("/home/u/.cargo"),
+                        String::from("/tmp"),
+                    ])),
+                ])
+            ))
         );
     }
 

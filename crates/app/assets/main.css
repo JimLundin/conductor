@@ -359,6 +359,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* Fades in late, so a quick gap between events doesn't flash it. */
+.working {
+  color: var(--muted);
+  font-size: 0.875rem;
+  animation: appear 240ms ease-out 400ms backwards, breathe 1.8s ease-in-out 640ms infinite;
+}
+@keyframes appear { from { opacity: 0; } }
+@keyframes breathe { 50% { opacity: 0.4; } }
+
 .tool {
   display: flex;
   align-items: baseline;
@@ -388,7 +397,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .tool-name { flex-shrink: 0; color: var(--ink); font-weight: 600; }
-.tool-paths { display: flex; flex-direction: column; min-width: 0; }
+.tool-files { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.tool-file { display: flex; align-items: baseline; gap: 0.55rem; min-width: 0; }
 .tool-detail {
   min-width: 0;
   font-family: var(--mono);
@@ -418,6 +428,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   background: var(--raised);
 }
 .request:not([data-open="true"]) .tool { margin-bottom: 0.4rem; }
+.request-reason { margin: -0.25rem 0 0.75rem; color: var(--muted); font-size: 0.875rem; overflow-wrap: anywhere; }
+.request:not([data-open="true"]) .request-reason { margin: 0 0 0.4rem; }
 .actions { display: flex; gap: 0.6rem; }
 .actions button { flex: 1; min-height: 48px; }
 .actions .deny { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
@@ -445,14 +457,19 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   font-weight: 500;
 }
 
+/* iOS keeps the home indicator's inset while the keyboard covers it, which
+   left a band between the composer and the keyboard. A focused composer
+   has the keyboard up on a phone, and no inset on a desktop. */
 .composer {
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
   display: flex;
   align-items: flex-end;
   gap: 0.5rem;
-  padding: 0.5rem max(0.75rem, env(safe-area-inset-right, 0px)) calc(0.5rem + env(safe-area-inset-bottom, 0px)) max(0.75rem, env(safe-area-inset-left, 0px));
+  padding: 0.5rem max(0.75rem, env(safe-area-inset-right, 0px)) calc(0.5rem + var(--inset-bottom)) max(0.75rem, env(safe-area-inset-left, 0px));
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
+.composer:focus-within { --inset-bottom: 0px; }
 .composer textarea {
   flex: 1;
   min-height: 44px;
@@ -541,6 +558,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .field input[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .hint { margin-top: 0.45rem; font-size: 0.875rem; }
 .hint.error { color: var(--red); }
+.hint.muted { color: var(--muted); }
 
 .suggestions ul {
   margin: 0;

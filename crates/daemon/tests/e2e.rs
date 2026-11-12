@@ -26,10 +26,10 @@ use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream, presets
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    AuthToken, Availability, ClientName, CloseReason, Command, CommandBody, CommandId,
-    CommandResult, Decision, Epoch, Event, EventKind, Hello, HelloReply, HostPath, HostSeq, Open,
-    Provider, Providers, Rejection, RequestId, Resolution, RtcOffer, SessionId, Signal, ToolCallId,
-    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    AuthToken, Availability, Change, ClientName, CloseReason, Command, CommandBody, CommandId,
+    CommandResult, Decision, Epoch, Event, EventKind, FileChange, Hello, HelloReply, HostPath,
+    HostSeq, Open, Provider, Providers, Rejection, RequestId, Resolution, RtcOffer, SessionId,
+    Signal, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use serde::de::DeserializeOwned;
 use str0m::{Candidate, Rtc};
@@ -545,7 +545,10 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
             call: ToolCallId(String::from(call)),
             phase: ToolPhase::Started {
                 tool: ToolKind::FileChange {
-                    paths: Vec::from([String::from(path)]),
+                    files: Vec::from([FileChange {
+                        path: String::from(path),
+                        change: Change::Write,
+                    }]),
                 },
             },
         },
@@ -553,8 +556,12 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
             request: RequestId(1),
             call: ToolCallId(String::from(call)),
             tool: ToolKind::FileChange {
-                paths: Vec::from([String::from(path)]),
+                files: Vec::from([FileChange {
+                    path: String::from(path),
+                    change: Change::Write,
+                }]),
             },
+            reason: None,
         },
     ])
 }
@@ -599,6 +606,7 @@ fn codex_tool(call: &str, command: &str, decision: Decision, outcome: ToolOutcom
         state: ToolState::Finished(outcome),
         approval: Approval::Asked {
             request: RequestId(1),
+            reason: None,
             state: RequestState::Resolved(Resolution::Decided {
                 decision,
                 by: test_client(),
@@ -1044,6 +1052,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
                     request: RequestId(1),
                     call,
                     tool,
+                    reason: None,
                 },
             ]),
         ]

@@ -13,7 +13,7 @@ once, and how the whole thing feels.
 ## Setup
 
 - [ ] `main` is pushed, and the Pages deploy for that commit is green, so the
-      phone runs the same protocol as the host (ALPN `conductor/2`).
+      phone runs the same protocol as the host (ALPN `conductor/3`).
 - [ ] Make a scratch git repo: `mkdir -p /tmp/smoke && cd /tmp/smoke && git init`.
 - [ ] Start the host from the checkout, with cheap models:
 
@@ -38,7 +38,8 @@ In the desktop browser, open **New session**, choose Claude Code, and enter
 `/tmp/smoke`.
 
 - [ ] Ask it to create `one.txt` containing `one`. Approve it on the tool
-      card. The file exists, and the card says "Approved by browser".
+      card. The file exists, and the card says "Write" with the path and
+      "Approved by Windows" (or the desktop's own platform).
 - [ ] Ask it to create `two.txt`. Deny it. No file appears, and the turn ends.
 - [ ] Ask for a long answer (for example "explain git rebase in detail").
       Press Interrupt while it streams. The turn ends as interrupted within
@@ -51,11 +52,16 @@ sandbox lets it write inside the session's directory and anywhere under
 `/tmp` without asking, so ask for a file in your home directory to get an
 approval.
 
-- [ ] Ask it to create `~/smoke-outside/three.txt`. Approve it. The file
+- [ ] With Codex chosen, **New session** says in a muted line that Codex
+      writes in this folder and in `/tmp` without asking, and asks before
+      writing elsewhere, changing `.git` or using the network.
+- [ ] Ask it to create `~/smoke-outside/three.txt`. Approve it. The card
+      shows Codex's reason under the command, if it gave one. The file
       exists.
 - [ ] Ask for `~/smoke-outside/four.txt`. Deny it. No file appears.
 - [ ] Ask for a long answer and interrupt it once text streams. Codex may
-      reason for 15 to 30 seconds before any text appears.
+      reason for 15 to 30 seconds before any text appears; meanwhile the
+      transcript ends with "Thinking…".
 
 ## 4. Both at once, on the phone
 
@@ -64,7 +70,8 @@ approval.
 - [ ] On the iPhone, the session list shows both sessions, each with an
       approval badge.
 - [ ] Approve one from the phone and the other from the desktop. Each card
-      names who approved it.
+      names the device that approved it: "Approved by iPhone" on one, the
+      desktop's platform (for example "Approved by Windows") on the other.
 
 ## 5. Reload and reconnect
 
@@ -77,7 +84,8 @@ approval.
 ## 6. The phone keyboard
 
 - [ ] On the iPhone, tap the composer. The keyboard doesn't cover the
-      composer or the last message, and the page doesn't zoom.
+      composer or the last message, the page doesn't zoom, and no band shows
+      between the composer and the keyboard.
 - [ ] Type a multi-line message, and send it with the send button.
 
 ## 7. Refusals

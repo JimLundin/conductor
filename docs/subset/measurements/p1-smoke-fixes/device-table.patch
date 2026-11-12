@@ -1,0 +1,122 @@
+diff --git a/crates/client/src/device.rs b/crates/client/src/device.rs
+index 086421f..289a642 100644
+--- a/crates/client/src/device.rs
++++ b/crates/client/src/device.rs
+@@ -11,68 +11,65 @@ pub enum Touch {
+     Screen,
+ }
+ 
+-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+-enum Device {
+-    IPhone,
+-    IPad,
+-    Android,
+-    ChromeOs,
+-    Windows,
+-    Mac,
+-    Linux,
++/// A word in a user agent, and the device it names without and with a
++/// touchscreen.
++struct Row {
++    marker: &'static str,
++    name: &'static str,
++    touch_name: &'static str,
+ }
+ 
+ /// Checked in this order: an iPhone's or iPad's user agent also says "Mac
+ /// OS X", and Android's and ChromeOS's also say "Linux".
+-const DEVICES: &[Device] = &[
+-    Device::IPhone,
+-    Device::IPad,
+-    Device::Android,
+-    Device::ChromeOs,
+-    Device::Windows,
+-    Device::Mac,
+-    Device::Linux,
++const DEVICES: &[Row] = &[
++    Row {
++        marker: "iPhone",
++        name: "iPhone",
++        touch_name: "iPhone",
++    },
++    Row {
++        marker: "iPad",
++        name: "iPad",
++        touch_name: "iPad",
++    },
++    Row {
++        marker: "Android",
++        name: "Android",
++        touch_name: "Android",
++    },
++    Row {
++        marker: "CrOS",
++        name: "ChromeOS",
++        touch_name: "ChromeOS",
++    },
++    Row {
++        marker: "Windows",
++        name: "Windows",
++        touch_name: "Windows",
++    },
++    Row {
++        marker: "Macintosh",
++        name: "Mac",
++        touch_name: "iPad",
++    },
++    Row {
++        marker: "Linux",
++        name: "Linux",
++        touch_name: "Linux",
++    },
+ ];
+ 
+-impl Device {
+-    /// The word in a user agent that names the device.
+-    fn marker(self) -> String {
+-        String::from(match self {
+-            Device::IPhone => "iPhone",
+-            Device::IPad => "iPad",
+-            Device::Android => "Android",
+-            Device::ChromeOs => "CrOS",
+-            Device::Windows => "Windows",
+-            Device::Mac => "Macintosh",
+-            Device::Linux => "Linux",
+-        })
+-    }
+-
+-    fn name(self) -> String {
+-        String::from(match self {
+-            Device::IPhone => "iPhone",
+-            Device::IPad => "iPad",
+-            Device::Android => "Android",
+-            Device::ChromeOs => "ChromeOS",
+-            Device::Windows => "Windows",
+-            Device::Mac => "Mac",
+-            Device::Linux => "Linux",
+-        })
+-    }
+-}
+-
+ /// iPadOS Safari sends a Mac's user agent, so a "Mac" with a touchscreen is
+ /// an iPad. An agent that names no known device is a "Browser".
+ pub fn device_name(user_agent: &str, touch: Touch) -> ClientName {
+-    let found = DEVICES
++    let name = DEVICES
+         .iter()
+-        .copied()
+-        .find(|device| user_agent.contains(&device.marker()));
+-    let device = match (found, touch) {
+-        (Some(Device::Mac), Touch::Screen) => Some(Device::IPad),
+-        (found, Touch::None | Touch::Screen) => found,
+-    };
+-    ClientName(device.map_or_else(|| String::from("Browser"), Device::name))
++        .find(|row| user_agent.contains(row.marker))
++        .map_or("Browser", |row| match touch {
++            Touch::None => row.name,
++            Touch::Screen => row.touch_name,
++        });
++    ClientName(String::from(name))
+ }
+ 
+ #[cfg(test)]

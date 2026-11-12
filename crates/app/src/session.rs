@@ -2,13 +2,13 @@
 
 use client::host_view::{
     self, Approval, Interrupt, Item, ReplyState, RequestState, SessionStatus, SessionView,
-    ToolState,
+    ToolState, Working,
 };
 use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
-    CloseReason, CommandBody, Decision, RequestId, Resolution, SessionId, ToolKind, ToolOutcome,
-    TurnOutcome,
+    Change, CloseReason, CommandBody, Decision, RequestId, Resolution, SessionId, ToolKind,
+    ToolOutcome, TurnOutcome,
 };
 
 use crate::sessions::short;
@@ -23,6 +23,7 @@ pub(crate) fn SessionPane(
     on_back: EventHandler<()>,
 ) -> Element {
     let controls = session.controls();
+    let working = session.working();
     let provider = label(session.provider);
     let status = session.status.word();
     let empty = match (&session.status, session.items.first()) {
@@ -60,6 +61,10 @@ pub(crate) fn SessionPane(
                         TranscriptItem { key: "{i}", item, on_decide: move |(request, decision)| {
                             run_command(link, notice, CommandBody::Resolve { session: id, request, decision })
                         } }
+                    }
+                    match working {
+                        Working::Shown => rsx! { p { class: "working", role: "status", "Thinking…" } },
+                        Working::Hidden => rsx! {},
                     }
                 }
             }
@@ -121,11 +126,13 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                 Approval::NotAsked => rsx! { ToolLine { tool, state } },
                 Approval::Asked {
                     request,
+                    reason,
                     state: RequestState::Open,
                 } => rsx! {
                     section { class: "request", "data-open": true,
                         p { class: "request-title", "Allow this?" }
                         ToolLine { tool, state }
+                        Reason { reason }
                         div { class: "actions",
                             button { class: "deny", onclick: move |_| on_decide((request, Decision::Deny)), "Deny" }
                             button { class: "approve", onclick: move |_| on_decide((request, Decision::Approve)), "Approve" }
@@ -133,11 +140,13 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                     }
                 },
                 Approval::Asked {
+                    reason,
                     state: RequestState::Resolved(resolution),
                     ..
                 } => rsx! {
                     section { class: "request", "data-open": false,
                         ToolLine { tool, state }
+                        Reason { reason }
                         p { class: "resolved",
                             match resolution {
                                 Resolution::Decided { decision: Decision::Approve, by } => format!("Approved by {}", by.0),
@@ -171,13 +180,18 @@ fn ToolLine(tool: ToolKind, state: String) -> Element {
                 ToolKind::Command { command } => rsx! {
                     code { class: "tool-detail", "{command}" }
                 },
-                ToolKind::FileChange { paths } => rsx! {
-                    span { class: "tool-name", "Edit" }
-                    span { class: "tool-paths",
-                        for path in paths {
-                            code { class: "tool-detail", "{path}" }
+                ToolKind::FileChange { files } => match files.first() {
+                    Some(_) => rsx! {
+                        span { class: "tool-files",
+                            for file in files {
+                                span { class: "tool-file",
+                                    span { class: "tool-name", "{verb(file.change)}" }
+                                    code { class: "tool-detail", "{file.path}" }
+                                }
+                            }
                         }
-                    }
+                    },
+                    None => rsx! { span { class: "tool-name", "Change files" } },
                 },
                 ToolKind::Other { name, detail } => rsx! {
                     span { class: "tool-name", "{name}" }
@@ -185,6 +199,23 @@ fn ToolLine(tool: ToolKind, state: String) -> Element {
                 },
             }
         }
+    }
+}
+
+fn verb(change: Change) -> String {
+    String::from(match change {
+        Change::Write => "Write",
+        Change::Edit => "Edit",
+        Change::Delete => "Delete",
+    })
+}
+
+/// Why the agent asks, in its own words.
+#[component]
+fn Reason(reason: Option<String>) -> Element {
+    match reason {
+        Some(reason) => rsx! { p { class: "request-reason", "{reason}" } },
+        None => rsx! {},
     }
 }
 

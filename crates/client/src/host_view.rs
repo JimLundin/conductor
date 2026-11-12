@@ -74,6 +74,8 @@ pub enum Approval {
     NotAsked,
     Asked {
         request: RequestId,
+        /// The agent's own words for why it asks, if it gave any.
+        reason: Option<String>,
         state: RequestState,
     },
 }
@@ -87,7 +89,7 @@ pub enum RequestState {
 /// An in-place change to an earlier tool call. Asking, resolving and
 /// finishing are the same shape, so they are one `map` over the items.
 enum Change {
-    Ask(ToolCallId, RequestId),
+    Ask(ToolCallId, RequestId, Option<String>),
     Resolve(RequestId, Resolution),
     Finish(ToolCallId, ToolOutcome),
     /// The host ended the turn or the session: nothing still running will
@@ -124,6 +126,13 @@ pub enum Composer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interrupt {
     Offered,
+    Hidden,
+}
+
+/// Whether the transcript ends with a sign that the agent is working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Working {
+    Shown,
     Hidden,
 }
 
@@ -214,6 +223,33 @@ impl SessionView {
         }
     }
 
+    /// A running turn shows it is working, unless it waits on a person or
+    /// its last item is live already: a reply streaming in, or a tool call
+    /// running.
+    pub fn working(&self) -> Working {
+        match (&self.status, self.attention(), self.items.last()) {
+            (
+                SessionStatus::Running,
+                Attention::Quiet,
+                Some(
+                    Item::Reply {
+                        state: ReplyState::Streaming,
+                        ..
+                    }
+                    | Item::Tool {
+                        state: ToolState::Running,
+                        ..
+                    },
+                ),
+            ) => Working::Hidden,
+            (SessionStatus::Running, Attention::Quiet, _) => Working::Shown,
+            (SessionStatus::Running, Attention::Requests(_), _) => Working::Hidden,
+            (SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Closed(_), _, _) => {
+                Working::Hidden
+            }
+        }
+    }
+
     pub fn attention(&self) -> Attention {
         let open = self
             .items
@@ -266,7 +302,8 @@ impl SessionView {
                 request,
                 call,
                 tool,
-            } => self.ask(call, request, tool),
+                reason,
+            } => self.ask(call, request, tool, reason),
             EventKind::RequestResolved {
                 request,
                 resolution,
@@ -322,20 +359,27 @@ impl SessionView {
 
     /// A request joins its tool call's card. A request for a call this view
     /// never saw started gets a card of its own.
-    fn ask(self, call: ToolCallId, request: RequestId, tool: ToolKind) -> SessionView {
+    fn ask(
+        self,
+        call: ToolCallId,
+        request: RequestId,
+        tool: ToolKind,
+        reason: Option<String>,
+    ) -> SessionView {
         match self
             .items
             .iter()
             .filter_map(Item::call)
             .find(|seen| seen.0 == call.0)
         {
-            Some(_) => self.change(Change::Ask(call, request)),
+            Some(_) => self.change(Change::Ask(call, request, reason)),
             None => self.push(Item::Tool {
                 call,
                 tool,
                 state: ToolState::Running,
                 approval: Approval::Asked {
                     request,
+                    reason,
                     state: RequestState::Open,
                 },
             }),
@@ -391,7 +435,7 @@ impl ToolState {
             (ToolState::Running, Change::End) => ToolState::Stopped,
             (
                 state,
-                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+                Change::Ask(_, _, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
             ) => state,
         }
     }
@@ -400,31 +444,36 @@ impl ToolState {
 impl Approval {
     fn changed(self, call: &ToolCallId, change: &Change) -> Approval {
         match (self, change) {
-            (_, Change::Ask(id, request)) if call == id => Approval::Asked {
+            (_, Change::Ask(id, request, reason)) if call == id => Approval::Asked {
                 request: request.to_owned(),
+                reason: reason.clone(),
                 state: RequestState::Open,
             },
-            (Approval::Asked { request, .. }, Change::Resolve(id, resolution))
-                if &request == id =>
-            {
+            (
                 Approval::Asked {
-                    request,
-                    state: RequestState::Resolved(resolution.clone()),
-                }
-            }
+                    request, reason, ..
+                },
+                Change::Resolve(id, resolution),
+            ) if &request == id => Approval::Asked {
+                request,
+                reason,
+                state: RequestState::Resolved(resolution.clone()),
+            },
             (
                 Approval::Asked {
                     request,
+                    reason,
                     state: RequestState::Open,
                 },
                 Change::End,
             ) => Approval::Asked {
                 request,
+                reason,
                 state: RequestState::Resolved(Resolution::Withdrawn),
             },
             (
                 approval,
-                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+                Change::Ask(_, _, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
             ) => approval,
         }
     }
@@ -442,7 +491,7 @@ mod tests {
 
     use super::{
         Approval, Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView,
-        ToolState,
+        ToolState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -505,6 +554,7 @@ mod tests {
                     tool: ToolKind::Command {
                         command: text("ls"),
                     },
+                    reason: Some(text("to list")),
                 },
             ),
             (
@@ -515,6 +565,7 @@ mod tests {
                     tool: ToolKind::Command {
                         command: text("rm"),
                     },
+                    reason: None,
                 },
             ),
             (
@@ -591,6 +642,7 @@ mod tests {
                                 state: ToolState::Finished(ToolOutcome::Succeeded),
                                 approval: Approval::Asked {
                                     request: RequestId(1),
+                                    reason: Some(text("to list")),
                                     state: RequestState::Resolved(Resolution::Decided {
                                         decision: Decision::Approve,
                                         by: ClientName(text("phone")),
@@ -605,6 +657,7 @@ mod tests {
                                 state: ToolState::Stopped,
                                 approval: Approval::Asked {
                                     request: RequestId(2),
+                                    reason: None,
                                     state: RequestState::Resolved(Resolution::Withdrawn),
                                 },
                             },
@@ -650,6 +703,7 @@ mod tests {
             tool: ToolKind::Command {
                 command: text("ls"),
             },
+            reason: None,
         }
     }
 
@@ -673,6 +727,7 @@ mod tests {
             state,
             approval: Approval::Asked {
                 request: RequestId(request),
+                reason: None,
                 state: approval,
             },
         }
@@ -766,6 +821,144 @@ mod tests {
             view.directories(),
             Vec::from([HostPath(text("/b")), HostPath(text("/a"))])
         );
+    }
+
+    /// The events after a session starts, and whether it then shows that
+    /// the agent is working.
+    struct WorkingCase {
+        events: Vec<EventKind>,
+        working: Working,
+    }
+
+    #[test]
+    fn a_running_turn_shows_it_is_working_until_something_live_ends_the_transcript() {
+        let user = EventKind::UserMessage {
+            text: text("hi"),
+            by: ClientName(text("phone")),
+        };
+        let finished = EventKind::ToolCall {
+            call: ToolCallId(text("toolu_1")),
+            phase: ToolPhase::Finished {
+                outcome: ToolOutcome::Succeeded,
+            },
+        };
+        let cases = Vec::from([
+            WorkingCase {
+                events: Vec::new(),
+                working: Working::Hidden,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone()]),
+                working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), delta("Hel")]),
+                working: Working::Hidden,
+            },
+            WorkingCase {
+                events: Vec::from([
+                    user.clone(),
+                    delta("Hel"),
+                    EventKind::AssistantMessage {
+                        text: text("Hello"),
+                    },
+                ]),
+                working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), started("toolu_1")]),
+                working: Working::Hidden,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), started("toolu_1"), finished]),
+                working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([
+                    user,
+                    EventKind::TurnCompleted {
+                        outcome: TurnOutcome::Completed,
+                    },
+                ]),
+                working: Working::Hidden,
+            },
+        ]);
+        let (got, want) = cases
+            .into_iter()
+            .map(|case| {
+                let view = fold(
+                    Vec::from([created("/a"), EventKind::SessionReady])
+                        .into_iter()
+                        .chain(case.events)
+                        .map(|kind| (1, kind))
+                        .collect(),
+                );
+                (
+                    view.sessions
+                        .values()
+                        .map(SessionView::working)
+                        .collect::<Vec<Working>>(),
+                    Vec::from([case.working]),
+                )
+            })
+            .unzip::<Vec<Working>, Vec<Working>, Vec<Vec<Working>>, Vec<Vec<Working>>>();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn rv_no_thinking_under_an_open_approval_after_a_parallel_tool_finished() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::UserMessage {
+                    text: text("hi"),
+                    by: ClientName(text("phone")),
+                },
+            ),
+            (1, started("toolu_1")),
+            (1, started("toolu_2")),
+            (
+                1,
+                EventKind::ToolCall {
+                    call: ToolCallId(text("toolu_2")),
+                    phase: ToolPhase::Finished {
+                        outcome: ToolOutcome::Succeeded,
+                    },
+                },
+            ),
+            (1, opened(1)),
+        ]));
+        let session = view.sessions.values().next().unwrap();
+        assert_eq!(session.attention(), Attention::Requests(1));
+        assert_eq!(session.working(), Working::Hidden);
+    }
+
+    #[test]
+    fn rv_no_thinking_under_an_open_approval_after_a_commentary_reply() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::UserMessage {
+                    text: text("hi"),
+                    by: ClientName(text("phone")),
+                },
+            ),
+            (1, started("toolu_1")),
+            (
+                1,
+                EventKind::AssistantMessage {
+                    text: text("I need to write a file."),
+                },
+            ),
+            (1, opened(1)),
+        ]));
+        let session = view.sessions.values().next().unwrap();
+        assert_eq!(session.attention(), Attention::Requests(1));
+        assert_eq!(session.working(), Working::Hidden);
     }
 
     #[test]
