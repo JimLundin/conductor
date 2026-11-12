@@ -24,55 +24,53 @@ pub enum Platform {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Device {
-    IPhone,
-    IPad,
-    Android,
-    ChromeOs,
-    Windows,
-    Mac,
-    Linux,
+/// A word in a user agent, and the device it names without and with a
+/// touchscreen.
+struct Row {
+    marker: &'static str,
+    name: &'static str,
+    touch_name: &'static str,
 }
 
 /// Checked in this order: an iPhone's or iPad's user agent also says "Mac
 /// OS X", and Android's and ChromeOS's also say "Linux".
-const DEVICES: &[Device] = &[
-    Device::IPhone,
-    Device::IPad,
-    Device::Android,
-    Device::ChromeOs,
-    Device::Windows,
-    Device::Mac,
-    Device::Linux,
+const DEVICES: &[Row] = &[
+    Row {
+        marker: "iPhone",
+        name: "iPhone",
+        touch_name: "iPhone",
+    },
+    Row {
+        marker: "iPad",
+        name: "iPad",
+        touch_name: "iPad",
+    },
+    Row {
+        marker: "Android",
+        name: "Android",
+        touch_name: "Android",
+    },
+    Row {
+        marker: "CrOS",
+        name: "ChromeOS",
+        touch_name: "ChromeOS",
+    },
+    Row {
+        marker: "Windows",
+        name: "Windows",
+        touch_name: "Windows",
+    },
+    Row {
+        marker: "Macintosh",
+        name: "Mac",
+        touch_name: "iPad",
+    },
+    Row {
+        marker: "Linux",
+        name: "Linux",
+        touch_name: "Linux",
+    },
 ];
-
-impl Device {
-    /// The word in a user agent that names the device.
-    fn marker(self) -> String {
-        String::from(match self {
-            Device::IPhone => "iPhone",
-            Device::IPad => "iPad",
-            Device::Android => "Android",
-            Device::ChromeOs => "CrOS",
-            Device::Windows => "Windows",
-            Device::Mac => "Macintosh",
-            Device::Linux => "Linux",
-        })
-    }
-
-    fn name(self) -> String {
-        String::from(match self {
-            Device::IPhone => "iPhone",
-            Device::IPad => "iPad",
-            Device::Android => "Android",
-            Device::ChromeOs => "ChromeOS",
-            Device::Windows => "Windows",
-            Device::Mac => "Mac",
-            Device::Linux => "Linux",
-        })
-    }
-}
 
 /// A native client is named by its OS as a browser on it would be, and an
 /// OS with no such name keeps its own. iPadOS Safari sends a Mac's user
@@ -81,25 +79,21 @@ impl Device {
 pub(crate) fn device_name(platform: Platform) -> ClientName {
     match platform {
         Platform::Browser { user_agent, touch } => {
-            let found = DEVICES
+            let name = DEVICES
                 .iter()
-                .copied()
-                .find(|device| user_agent.contains(&device.marker()));
-            let device = match (found, touch) {
-                (Some(Device::Mac), Touch::Screen) => Some(Device::IPad),
-                (found, Touch::None | Touch::Screen) => found,
-            };
-            ClientName(device.map_or_else(|| String::from("Browser"), Device::name))
+                .find(|row| user_agent.contains(row.marker))
+                .map_or("Browser", |row| match touch {
+                    Touch::None => row.name,
+                    Touch::Screen => row.touch_name,
+                });
+            ClientName(String::from(name))
         }
-        Platform::Native { os } => {
-            let device = match os.as_str() {
-                "windows" => Some(Device::Windows),
-                "macos" => Some(Device::Mac),
-                "linux" => Some(Device::Linux),
-                _ => None,
-            };
-            ClientName(device.map_or(os, Device::name))
-        }
+        Platform::Native { os } => ClientName(match os.as_str() {
+            "windows" => String::from("Windows"),
+            "macos" => String::from("Mac"),
+            "linux" => String::from("Linux"),
+            _ => os,
+        }),
     }
 }
 
