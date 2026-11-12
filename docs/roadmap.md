@@ -36,9 +36,16 @@ Each item ends in something to try. The fleet design is
    `session-questions`: questions to the user (Claude's `AskUserQuestion`,
    Codex's `requestUserInput`) as a question card with options and typed
    text, and approve-for-session as a third button that names what it
-   allows. Next: reasoning text, per-session model and effort, resume.
-   Resume runs against the private homes from item 1. *Try:* restart a
-   session's CLI and continue it.
+   allows. Built in round B, on `session-model-b`: reasoning summaries as a
+   "Thinking" disclosure that streams live; a model and an effort picked per
+   session from what each CLI lists, shown in the session's header; and
+   `Continue`, which starts a closed session's CLI again with the
+   provider's resume in the private home. Claude's reasoning text needs
+   experimental betas on, which the owner's gateway refuses, so through it
+   Claude shows none (Claude `PROTOCOL.md`). Continue covers CLI restarts
+   within a running host; a host restart waits for item 4. Next: plans,
+   and the effort changed between turns. *Try:* restart a session's CLI and
+   continue it (`tools/live-host.sh` checks it as `continue=pass`).
 3. **Sign in from the app** (§6.3), on one host. Built first, on
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
@@ -50,8 +57,10 @@ Each item ends in something to try. The fleet design is
    Codex from the iPhone without touching the host's keyboard.
 4. **Durability.** The log, receipts and open requests survive a host
    restart (redb + postcard); clients resume from their cursors. Session
-   ids become ULIDs (§6.7) before the tables key on them. *Try:* restart
-   the host mid-session and continue from the phone.
+   ids become ULIDs (§6.7) before the tables key on them, with
+   `CLAUDE_CODE_PROJECT_DIR_NAME` (§6.2), and the store keeps each
+   session's conversation id, so `Continue` works after a host restart too.
+   *Try:* restart the host mid-session and continue from the phone.
 5. **Worktrees.** One git worktree per session on `conductor/<ulid>`, a
    checkpoint per turn, diffs and revert from the phone. *Try:* revert a
    turn from the phone.

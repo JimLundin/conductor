@@ -56,18 +56,48 @@ The daemon translates each provider's protocol into one provider-neutral
 model (`crates/daemon/src/mapping.rs`). The app only ever sees that model,
 so one UI and one set of commands work for both agents.
 
-- **Commands:** `StartSession { provider, directory }`, `SendMessage`,
-  `Interrupt`, `Resolve { request, Approve | ApproveForSession | Deny }`,
-  `Answer { request, answers }`. Each command gets one `CommandResult`. A
-  reply that doesn't fit its request (a decision for a question, the wrong
-  number of answers, `ApproveForSession` where none is offered) is
-  refused as `WrongReply`.
-- **Events:** a session is created, becomes ready, closes; a user message; the
-  assistant's text, streamed as deltas and then as the finished message; tool
-  calls (`Command`, `FileChange`, `Other`) started and finished; approval
-  requests opened and resolved (first decision wins, and a late one is told
-  who decided); questions asked and answered; a turn completes, is
-  interrupted or fails.
+- **Commands:** `StartSession { provider, directory, model, effort }`,
+  `SendMessage`, `Interrupt`, `Continue`, `Resolve { request, Approve |
+  ApproveForSession | Deny }`, `Answer { request, answers }`. Each command
+  gets one `CommandResult`. A reply that doesn't fit its request (a
+  decision for a question, the wrong number of answers, `ApproveForSession`
+  where none is offered) is refused as `WrongReply`.
+- **Events:** a session is created, becomes ready, closes, and becomes
+  ready again after a `Continue`; a user message; the agent's reasoning and
+  the assistant's text, each streamed as deltas and then as the finished
+  text; tool calls (`Command`, `FileChange`, `Other`) started and finished;
+  approval requests opened and resolved (first decision wins, and a late
+  one is told who decided); questions asked and answered; a turn
+  completes, is interrupted or fails.
+- **Model and effort:** `Welcome` lists, for each provider the host can
+  run, the models its CLI offered when the host started (`Models`: each
+  model's id, name, description and efforts, and the default).
+  `StartSession` may name one of them and one of its efforts (`low` to
+  `ultra`); a model or an effort the host doesn't list is refused as
+  `NotOffered`. With none named, the session gets the default: a Codex provider
+  credential's model, which is what its gateway serves; else the host's
+  `--claude-model` or `--codex-model`; else the one the CLI marks as its
+  default. The list comes from the CLI even with a credential. `SessionCreated` carries the model and effort
+  the session runs with. The effort is fixed for the session.
+- **Reasoning:** `ReasoningDelta` streams and `Reasoning` stores the
+  finished text, which is the provider's summary of the model's reasoning:
+  a few sentences per stretch, never the raw thoughts, so the host stores
+  it whole. Each stretch is its own item; the app shows it as a collapsed
+  "Thinking" disclosure, whose summary reads "Thinking…" while it streams.
+  A stretch without text (Claude through a gateway that omits it) shows
+  nothing.
+- **Continue:** a session outlives its agent's process. When the process
+  exits (a crash, a kill, a stopped Codex app-server), the session closes
+  and keeps the id of its conversation. `Continue` starts the CLI again on
+  that conversation with the provider's resume (Claude's `--resume <id>` in
+  the private home, Codex's `thread/resume` on a new app-server), with the
+  same model and effort and the provider's current credential, and logs
+  `SessionReady`. The session keeps its id and its log. `Continue` on a
+  session whose agent runs is refused as `SessionOpen`. A session closed
+  before its first turn starts its CLI afresh, since there is nothing to
+  resume yet. Continue covers CLI restarts within a running host only: a
+  host restart loses the in-memory log and the session's conversation id
+  until durability (`docs/roadmap.md` item 4).
 - **Requests:** an approval and a question are both requests: one
   `RequestId` space per session, first reply wins, and the agent's
   withdrawal, the end of the turn or the end of the session withdraws one
@@ -79,7 +109,8 @@ so one UI and one set of commands work for both agents.
   chosen. Every question also takes typed text, which both agents accept.
   `Answer` carries one answer per question, in order: the chosen labels,
   then any typed text. It resolves as `Answered { answers, by }`.
-- **Durable and live:** every event except the streaming deltas is durable:
+- **Durable and live:** every event except the streaming deltas (assistant
+  and reasoning) is durable:
   it takes the next `HostSeq` and is replayed on catch-up. Deltas go only to
   subscribers that are live, because the finished message replaces them. A
   delta carries the seq of the last stored event, so the client's gap check
@@ -99,12 +130,16 @@ How each agent carries these, from the `s1` and `s2` recordings:
 | Withdrawn | `control_cancel_request` | `serverRequest/resolved` after the interrupted turn ends |
 | For the session | `allow` with `updatedPermissions`: the suggested allow `addRules`, destination `session`; with none suggested, not offered | `acceptForSession` on a command or a permissions request, taken though `availableDecisions` omits it (`s2` step 8 checks it); not offered on a file change, which no run has recorded |
 | Refused | Duplicate question texts, by the CLI before it asks | A question with `isSecret`, by the host, which logs and replays every answer |
+| Models | The `initialize` response's `models`, with `supportedEffortLevels`; a `default` row | `model/list`, with `supportedReasoningEfforts` and `isDefault` |
+| Effort | `--effort`; `get_settings` reports it back | `model_reasoning_effort` in the thread's `config`; `thread/start` reports it back |
+| Reasoning | `thinking_delta`s and a `thinking` block; text only with `--thinking-display summarized` and experimental betas on | `item/reasoning/summaryTextDelta` and the item's `summary`, with `model_reasoning_summary` set |
+| Resume | `--resume <session_id>` in a new process | `thread/resume { threadId }` on a new app-server |
 
 The `AskUserQuestion` tool call is not shown as a tool call; its question
 card is.
 
-Next in the model (`docs/roadmap.md`): reasoning text, per-session model
-and effort, resume, plans.
+Next in the model (`docs/roadmap.md`): plans, and the effort changed
+between turns.
 
 ## 4. Transport
 
@@ -151,7 +186,9 @@ Every piece of state has one owner task; handles talk to it over channels.
 - **Registry** maps session ids to session handles and starts sessions.
 - **Session** owns one agent, its turn and its open requests. An interrupt
   that arrives before the agent began the turn is held until it does. An
-  open request is withdrawn when the turn ends.
+  open request is withdrawn when the turn ends. It outlives the agent's
+  process: once that exits it takes only `Continue`, which starts the agent
+  again on the same conversation.
 - **CodexHub** owns the one `codex app-server` process per host and routes
   its threads to their sessions.
 - **Serve** accepts connections, checks `Hello`, dispatches commands and
@@ -164,7 +201,8 @@ Every piece of state has one owner task; handles talk to it over channels.
 ```
 claude --input-format stream-json --output-format stream-json --verbose \
        --permission-prompt-tool stdio --include-partial-messages \
-       --permission-mode <mode> [--model M] [--resume <session_id>] \
+       --thinking-display summarized --permission-mode <mode> \
+       [--model M] [--effort E] [--resume <session_id> | --session-id <uuid>] \
        --setting-sources user,project,local
 ```
 
@@ -189,8 +227,9 @@ with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
 - Newline-delimited JSON-RPC with no `jsonrpc` field; allow very long lines.
   The handshake is `initialize` with `capabilities: {experimentalApi: true}`.
 - We call `thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`
-  and `model/list`, and handle `turn/started`, `turn/completed`,
-  `item/started`, `item/completed` and `item/agentMessage/delta`.
+  and `model/list` (once, when the host starts), and handle
+  `turn/started`, `turn/completed`, `item/started`, `item/completed`,
+  `item/agentMessage/delta` and `item/reasoning/summaryTextDelta`.
 - Approvals arrive as server requests (`item/commandExecution/requestApproval`,
   `item/fileChange/requestApproval`, `item/permissions/requestApproval`,
   `item/tool/requestUserInput`) and `serverRequest/resolved` withdraws one.
@@ -204,7 +243,9 @@ with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
   an RPC result even when `isBlocking` is `false` (Codex `PROTOCOL.md`).
 - Every thread starts with the `default_mode_request_user_input` feature
   on, so the model can ask questions outside plan mode. Codex marks it
-  under development and sends a `warning` for it.
+  under development and sends a `warning` for it. Every thread also sets
+  `model_reasoning_summary = "auto"`: with a custom model provider Codex
+  sends no reasoning summary otherwise.
 
 **Verification:** replay tests feed recorded stdio from `fixtures/` through
 the parsers and assert the exact events. `cargo run --bin s1` and `s2` drive
@@ -408,6 +449,16 @@ Two consequences for how sessions start (§5.2):
   §6.8 relies on this. It lands with the ULID session ids (§6.7), in the
   durability phase: today's `SessionId` is a host counter that restarts at
   1, so two sessions would share a transcript directory.
+  Until then a transcript is in `projects/<the working directory, / as
+  ->/<uuid>.jsonl`, under a UUID the host picks with `--session-id` when
+  the CLI first starts. `Continue` resumes by that UUID, which `--resume`
+  finds in any project directory, so two sessions in one directory never
+  share a conversation (observed). What waits for the ULIDs: the host
+  keeps the UUID only in memory, so after a host restart nothing links a
+  session to its transcript; Conductor can't delete a session's
+  transcript with it, since the directory is shared by every session in
+  that working directory; and a move (§6.8) can't copy one directory per
+  session.
 
 `conductord` writes `<data>/home/claude/settings.json` (`cleanupPeriodDays`
 36500) and `<data>/home/codex/config.toml` (`check_for_update_on_startup =
