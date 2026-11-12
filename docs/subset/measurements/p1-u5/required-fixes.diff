@@ -1,0 +1,645 @@
+diff --git a/crates/daemon/src/codex_hub.rs b/crates/daemon/src/codex_hub.rs
+index 391991c..60ca072 100644
+--- a/crates/daemon/src/codex_hub.rs
++++ b/crates/daemon/src/codex_hub.rs
+@@ -184,12 +184,11 @@ impl HubActor {
+             event,
+         };
+         match self.routes.get(&thread) {
+-            Some(route) => match route.send(event).await {
+-                Ok(()) => {}
+-                Err(_) => {
++            Some(route) => {
++                if let Err(mpsc::error::SendError(_)) = route.send(event).await {
+                     self.routes.remove(&thread);
+                 }
+-            },
++            }
+             None => tracing::debug!(thread = %thread.0, "an event for a thread with no session"),
+         }
+     }
+diff --git a/crates/daemon/src/mapping.rs b/crates/daemon/src/mapping.rs
+index d77fe13..9fcc541 100644
+--- a/crates/daemon/src/mapping.rs
++++ b/crates/daemon/src/mapping.rs
+@@ -5,7 +5,9 @@ use agents::claude::{
+     AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionRequestId, Role,
+     ToolDetail,
+ };
+-use agents::codex::{ApprovalId, ApprovalKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId};
++use agents::codex::{
++    self, ApprovalId, ApprovalKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId,
++};
+ use proto::{
+     ClientName, CloseReason, Decision, EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+     TurnOutcome,
+@@ -193,53 +195,25 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
+             call: ToolCallId(id),
+             outcome: codex_outcome(&status),
+         }]),
+-        ThreadEvent::ApprovalRequested {
+-            id,
+-            item,
+-            kind: ApprovalKind::Command { command, .. },
+-            ..
+-        } => codex_open(
+-            id,
+-            item,
+-            ToolKind::Command {
+-                command: command.unwrap_or_default(),
+-            },
+-        ),
+-        // The request names no paths; the tool card the item started has them.
+-        ThreadEvent::ApprovalRequested {
+-            id,
+-            item,
+-            kind: ApprovalKind::FileChange { .. },
+-            ..
+-        } => codex_open(id, item, ToolKind::FileChange { paths: Vec::new() }),
+-        ThreadEvent::ApprovalRequested {
+-            id,
+-            item,
+-            kind: ApprovalKind::Permissions { reason, .. },
+-            ..
+-        } => codex_open(
+-            id,
+-            item,
+-            ToolKind::Other {
+-                name: String::from("permissions"),
+-                detail: reason.unwrap_or_default(),
+-            },
+-        ),
+-        ThreadEvent::ApprovalRequested {
+-            kind: ApprovalKind::UserInput { .. },
+-            ..
+-        } => Vec::from([Step::Emit(EventKind::Error {
+-            message: String::from(
+-                "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
+-            ),
+-        })]),
++        ThreadEvent::ApprovalRequested { id, item, kind, .. } => match approval_tool(kind) {
++            Some(tool) => Vec::from([Step::Open {
++                native: NativeRequest::Codex(id),
++                call: ToolCallId(item),
++                tool,
++            }]),
++            None => Vec::from([Step::Emit(EventKind::Error {
++                message: String::from(
++                    "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
++                ),
++            })]),
++        },
+         ThreadEvent::ApprovalCancelled { id } => {
+             Vec::from([Step::Withdraw(NativeRequest::Codex(id))])
+         }
+         ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(match outcome {
+-            agents::codex::TurnOutcome::Completed => TurnOutcome::Completed,
+-            agents::codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
+-            agents::codex::TurnOutcome::Failed { message } => TurnOutcome::Failed {
++            codex::TurnOutcome::Completed => TurnOutcome::Completed,
++            codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
++            codex::TurnOutcome::Failed { message } => TurnOutcome::Failed {
+                 message: message.unwrap_or_else(|| String::from("the turn failed")),
+             },
+         })]),
+@@ -275,18 +249,26 @@ fn codex_outcome(status: &str) -> ToolOutcome {
+     }
+ }
+ 
+-fn codex_open(id: ApprovalId, item: String, tool: ToolKind) -> Vec<Step> {
+-    Vec::from([Step::Open {
+-        native: NativeRequest::Codex(id),
+-        call: ToolCallId(item),
+-        tool,
+-    }])
++/// The tool an approval asks about. A question asks about none.
++fn approval_tool(kind: ApprovalKind) -> Option<ToolKind> {
++    match kind {
++        ApprovalKind::Command { command, .. } => Some(ToolKind::Command {
++            command: command.unwrap_or_default(),
++        }),
++        // The request names no paths; the tool card the item started has them.
++        ApprovalKind::FileChange { .. } => Some(ToolKind::FileChange { paths: Vec::new() }),
++        ApprovalKind::Permissions { reason, .. } => Some(ToolKind::Other {
++            name: String::from("permissions"),
++            detail: reason.unwrap_or_default(),
++        }),
++        ApprovalKind::UserInput { .. } => None,
++    }
+ }
+ 
+-pub(crate) fn codex_answer(decision: Decision) -> agents::codex::Decision {
++pub(crate) fn codex_answer(decision: Decision) -> codex::Decision {
+     match decision {
+-        Decision::Approve => agents::codex::Decision::Accept,
+-        Decision::Deny => agents::codex::Decision::Decline,
++        Decision::Approve => codex::Decision::Accept,
++        Decision::Deny => codex::Decision::Decline,
+     }
+ }
+ 
+@@ -297,18 +279,17 @@ mod tests {
+         Block, ClaudeEvent, Outcome, PermissionRequestId, Role, SessionId, ToolDetail,
+     };
+     use agents::codex::{
+-        ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase, ThreadEvent,
+-        ThreadId, TurnId,
+-    };
+-    use proto::{
+-        CloseReason, EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
++        self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
++        ThreadEvent, ThreadId, TurnId,
+     };
++    use proto::{CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
+ 
+-    use super::{NativeRequest, NativeTurn, Step, claude_steps, codex_steps};
++    use super::{NativeRequest, Step, claude_steps, codex_steps};
+ 
++    /// The steps one provider event maps to, and the steps it should.
+     struct Case {
+-        event: ClaudeEvent,
+-        steps: Vec<Step>,
++        got: Vec<Step>,
++        want: Vec<Step>,
+     }
+ 
+     fn finished(outcome: Outcome, terminal_reason: Option<&str>) -> ClaudeEvent {
+@@ -328,103 +309,80 @@ mod tests {
+         }
+     }
+ 
+-    fn started(tool: ToolKind) -> Step {
++    fn started(id: &str, tool: ToolKind) -> Step {
+         Step::Emit(EventKind::ToolCall {
+-            call: ToolCallId(String::from("toolu_1")),
++            call: ToolCallId(String::from(id)),
+             phase: ToolPhase::Started { tool },
+         })
+     }
+ 
++    fn on_thread(event: ThreadEvent) -> Vec<Step> {
++        codex_steps(CodexEvent::Thread {
++            thread: ThreadId(String::from("th_1")),
++            event,
++        })
++    }
++
++    fn turn() -> TurnId {
++        TurnId(String::from("tu_1"))
++    }
++
+     #[test]
+-    fn each_claude_event_maps_to_its_steps() {
++    fn each_provider_event_maps_to_its_steps() {
+         let cases = Vec::from([
+             Case {
+-                event: ClaudeEvent::Message {
++                got: claude_steps(ClaudeEvent::Message {
+                     role: Role::Assistant,
+                     content: Vec::from([
+                         Block::Thinking(String::from("hmm")),
+                         tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
+                         tool_use("Bash", ToolDetail::Command(String::from("ls"))),
+                     ]),
+-                },
+-                steps: Vec::from([
+-                    started(ToolKind::Other {
+-                        name: String::from("Read"),
+-                        detail: String::from("b.txt"),
+-                    }),
+-                    started(ToolKind::Command {
+-                        command: String::from("ls"),
+-                    }),
++                }),
++                want: Vec::from([
++                    started(
++                        "toolu_1",
++                        ToolKind::Other {
++                            name: String::from("Read"),
++                            detail: String::from("b.txt"),
++                        },
++                    ),
++                    started(
++                        "toolu_1",
++                        ToolKind::Command {
++                            command: String::from("ls"),
++                        },
++                    ),
+                 ]),
+             },
+             Case {
+-                event: ClaudeEvent::PermissionCancelled {
++                got: claude_steps(ClaudeEvent::PermissionCancelled {
+                     id: PermissionRequestId(String::from("p1")),
+-                },
+-                steps: Vec::from([Step::Withdraw(NativeRequest::Claude(PermissionRequestId(
++                }),
++                want: Vec::from([Step::Withdraw(NativeRequest::Claude(PermissionRequestId(
+                     String::from("p1"),
+                 )))]),
+             },
+             Case {
+-                event: finished(Outcome::Failed, Some("aborted_tools")),
+-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Interrupted)]),
++                got: claude_steps(finished(Outcome::Failed, Some("aborted_tools"))),
++                want: Vec::from([Step::TurnEnded(TurnOutcome::Interrupted)]),
+             },
+             Case {
+-                event: finished(Outcome::Failed, None),
+-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
++                got: claude_steps(finished(Outcome::Failed, None)),
++                want: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
+                     message: String::from("error_during_execution"),
+                 })]),
+             },
+             Case {
+-                event: ClaudeEvent::Exited {
++                got: claude_steps(ClaudeEvent::Exited {
+                     status: Exit::Unknown(String::from("gone")),
+-                },
+-                steps: Vec::from([Step::Closed(CloseReason::Exited {
++                }),
++                want: Vec::from([Step::Closed(CloseReason::Exited {
+                     status: String::from("unknown exit (gone)"),
+                 })]),
+             },
+-        ]);
+-        let (events, expected) = cases
+-            .into_iter()
+-            .map(|case| (case.event, case.steps))
+-            .unzip::<ClaudeEvent, Vec<Step>, Vec<ClaudeEvent>, Vec<Vec<Step>>>();
+-        assert_eq!(
+-            events
+-                .into_iter()
+-                .map(claude_steps)
+-                .collect::<Vec<Vec<Step>>>(),
+-            expected
+-        );
+-    }
+-
+-    struct CodexCase {
+-        event: ThreadEvent,
+-        steps: Vec<Step>,
+-    }
+-
+-    fn turn() -> TurnId {
+-        TurnId(String::from("tu_1"))
+-    }
+-
+-    fn asked(kind: ApprovalKind) -> ThreadEvent {
+-        ThreadEvent::ApprovalRequested {
+-            id: ApprovalId(String::from("0")),
+-            turn: turn(),
+-            item: String::from("exec-1"),
+-            kind,
+-            options: Vec::new(),
+-        }
+-    }
+-
+-    #[test]
+-    fn each_codex_event_maps_to_its_steps() {
+-        let cases = Vec::from([
+-            CodexCase {
+-                event: ThreadEvent::TurnStarted { turn: turn() },
+-                steps: Vec::from([Step::TurnStarted(NativeTurn::Codex(turn()))]),
+-            },
+-            CodexCase {
+-                event: ThreadEvent::Item {
++            Case {
++                got: on_thread(ThreadEvent::Item {
+                     turn: turn(),
+                     phase: ItemPhase::Started,
+                     item: Item::FileChange {
+@@ -435,79 +393,44 @@ mod tests {
+                         }]),
+                         status: String::from("inProgress"),
+                     },
+-                },
+-                steps: Vec::from([Step::Emit(EventKind::ToolCall {
+-                    call: ToolCallId(String::from("patch-1")),
+-                    phase: ToolPhase::Started {
+-                        tool: ToolKind::FileChange {
+-                            paths: Vec::from([String::from("a.txt")]),
+-                        },
++                }),
++                want: Vec::from([started(
++                    "patch-1",
++                    ToolKind::FileChange {
++                        paths: Vec::from([String::from("a.txt")]),
+                     },
+-                })]),
++                )]),
+             },
+-            CodexCase {
+-                event: ThreadEvent::Item {
++            Case {
++                got: on_thread(ThreadEvent::ApprovalRequested {
++                    id: ApprovalId(String::from("0")),
+                     turn: turn(),
+-                    phase: ItemPhase::Completed,
+-                    item: Item::Command {
+-                        id: String::from("exec-1"),
+-                        command: String::from("ls"),
+-                        status: String::from("declined"),
+-                        exit_code: None,
++                    item: String::from("exec-1"),
++                    kind: ApprovalKind::UserInput {
++                        questions: serde_json::Value::Null,
+                     },
+-                },
+-                steps: Vec::from([Step::ToolFinished {
+-                    call: ToolCallId(String::from("exec-1")),
+-                    outcome: ToolOutcome::Declined,
+-                }]),
+-            },
+-            CodexCase {
+-                event: asked(ApprovalKind::Command {
+-                    command: Some(String::from("ls")),
+-                    cwd: None,
+-                    reason: None,
++                    options: Vec::new(),
+                 }),
+-                steps: Vec::from([Step::Open {
+-                    native: NativeRequest::Codex(ApprovalId(String::from("0"))),
+-                    call: ToolCallId(String::from("exec-1")),
+-                    tool: ToolKind::Command {
+-                        command: String::from("ls"),
+-                    },
+-                }]),
+-            },
+-            CodexCase {
+-                event: asked(ApprovalKind::UserInput {
+-                    questions: serde_json::Value::Null,
+-                }),
+-                steps: Vec::from([Step::Emit(EventKind::Error {
++                want: Vec::from([Step::Emit(EventKind::Error {
+                     message: String::from(
+                         "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
+                     ),
+                 })]),
+             },
+-            CodexCase {
+-                event: ThreadEvent::TurnCompleted {
++            Case {
++                got: on_thread(ThreadEvent::TurnCompleted {
+                     turn: turn(),
+-                    outcome: agents::codex::TurnOutcome::Failed { message: None },
+-                },
+-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
++                    outcome: codex::TurnOutcome::Failed { message: None },
++                }),
++                want: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
+                     message: String::from("the turn failed"),
+                 })]),
+             },
+         ]);
+-        let (events, expected) = cases
++        let (got, want) = cases
+             .into_iter()
+-            .map(|case| (case.event, case.steps))
+-            .unzip::<ThreadEvent, Vec<Step>, Vec<ThreadEvent>, Vec<Vec<Step>>>();
+-        assert_eq!(
+-            events
+-                .into_iter()
+-                .map(|event| codex_steps(CodexEvent::Thread {
+-                    thread: ThreadId(String::from("th_1")),
+-                    event,
+-                }))
+-                .collect::<Vec<Vec<Step>>>(),
+-            expected
+-        );
++            .map(|case| (case.got, case.want))
++            .unzip::<Vec<Step>, Vec<Step>, Vec<Vec<Step>>, Vec<Vec<Step>>>();
++        assert_eq!(got, want);
+     }
+ }
+diff --git a/crates/daemon/src/session.rs b/crates/daemon/src/session.rs
+index 1bc5a37..01e30a6 100644
+--- a/crates/daemon/src/session.rs
++++ b/crates/daemon/src/session.rs
+@@ -70,16 +70,16 @@ struct SessionMsg {
+     reply: oneshot::Sender<CommandResult>,
+ }
+ 
+-/// The agent, once started.
++/// The agent, once started, and where its events arrive.
+ enum Agent {
+-    Claude(ClaudeSession),
+-    Codex(CodexThread),
+-}
+-
+-/// Where the agent's events arrive.
+-enum Feed {
+-    Claude(mpsc::Receiver<ClaudeEvent>),
+-    Codex(mpsc::Receiver<CodexEvent>),
++    Claude {
++        session: ClaudeSession,
++        events: mpsc::Receiver<ClaudeEvent>,
++    },
++    Codex {
++        thread: CodexThread,
++        events: mpsc::Receiver<CodexEvent>,
++    },
+ }
+ 
+ /// An agent call that failed.
+@@ -121,7 +121,6 @@ enum Pending {
+ struct SessionActor {
+     id: SessionId,
+     agent: Agent,
+-    feed: Feed,
+     log: Log,
+     turn: Turn,
+     requests: HashMap<RequestId, Pending>,
+@@ -174,12 +173,11 @@ async fn run(
+     inbox: mpsc::Receiver<SessionMsg>,
+ ) -> Result<Infallible, Stopped> {
+     match start(directory, launch).await {
+-        Ok((agent, feed)) => {
++        Ok(agent) => {
+             log.append(id, EventKind::SessionReady).await?;
+             let actor = SessionActor {
+                 id,
+                 agent,
+-                feed,
+                 log,
+                 turn: Turn::Idle,
+                 requests: HashMap::new(),
+@@ -198,7 +196,7 @@ async fn run(
+     }
+ }
+ 
+-async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), AgentError> {
++async fn start(directory: HostPath, launch: Launch) -> Result<Agent, AgentError> {
+     match launch {
+         Launch::Claude(ClaudeLaunch { claude_path, model }) => {
+             let (session, events) = ClaudeSession::spawn(ClaudeOptions {
+@@ -213,7 +211,7 @@ async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), Age
+                 versions: VersionPolicy::AllowUntested,
+             })
+             .await?;
+-            Ok((Agent::Claude(session), Feed::Claude(events)))
++            Ok(Agent::Claude { session, events })
+         }
+         // Paseo's preset: Codex asks before leaving the workspace.
+         Launch::Codex(CodexLaunch { hub, model }) => {
+@@ -226,7 +224,7 @@ async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), Age
+                     sandbox: Sandbox::WorkspaceWrite,
+                 })
+                 .await?;
+-            Ok((Agent::Codex(thread), Feed::Codex(events)))
++            Ok(Agent::Codex { thread, events })
+         }
+     }
+ }
+@@ -240,11 +238,15 @@ impl Pending {
+     }
+ }
+ 
+-impl Feed {
++impl Agent {
+     async fn next(&mut self) -> Input {
+         match self {
+-            Feed::Claude(events) => events.recv().await.map_or(Input::AgentGone, Input::Claude),
+-            Feed::Codex(events) => events.recv().await.map_or(Input::AgentGone, Input::Codex),
++            Agent::Claude { events, .. } => {
++                events.recv().await.map_or(Input::AgentGone, Input::Claude)
++            }
++            Agent::Codex { events, .. } => {
++                events.recv().await.map_or(Input::AgentGone, Input::Codex)
++            }
+         }
+     }
+ }
+@@ -254,7 +256,7 @@ impl SessionActor {
+         loop {
+             let input = tokio::select! {
+                 msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
+-                input = self.feed.next() => input,
++                input = self.agent.next() => input,
+             };
+             self.on(input).await?;
+         }
+@@ -369,8 +371,8 @@ impl SessionActor {
+     /// `TurnStarted`, which an interrupt must wait for anyway.
+     async fn send(&self, text: String) -> Result<(), AgentError> {
+         match &self.agent {
+-            Agent::Claude(claude) => Ok(claude.send_user(text).await?),
+-            Agent::Codex(thread) => {
++            Agent::Claude { session, .. } => Ok(session.send_user(text).await?),
++            Agent::Codex { thread, .. } => {
+                 let _ = thread.send_turn(text).await?;
+                 Ok(())
+             }
+@@ -379,11 +381,12 @@ impl SessionActor {
+ 
+     async fn interrupt(&self, turn: &NativeTurn) -> Result<(), AgentError> {
+         match (&self.agent, turn) {
+-            (Agent::Claude(claude), NativeTurn::Claude) => Ok(claude.interrupt().await?),
+-            (Agent::Codex(thread), NativeTurn::Codex(turn)) => {
++            (Agent::Claude { session, .. }, NativeTurn::Claude) => Ok(session.interrupt().await?),
++            (Agent::Codex { thread, .. }, NativeTurn::Codex(turn)) => {
+                 Ok(thread.interrupt(turn.clone()).await?)
+             }
+-            (Agent::Claude(_), NativeTurn::Codex(_)) | (Agent::Codex(_), NativeTurn::Claude) => {
++            (Agent::Claude { .. }, NativeTurn::Codex(_))
++            | (Agent::Codex { .. }, NativeTurn::Claude) => {
+                 tracing::error!(session = self.id.0, "a turn of the other provider");
+                 Ok(())
+             }
+@@ -397,14 +400,14 @@ impl SessionActor {
+         by: &ClientName,
+     ) -> Result<(), AgentError> {
+         match (&self.agent, native) {
+-            (Agent::Claude(claude), NativeRequest::Claude(id)) => Ok(claude
++            (Agent::Claude { session, .. }, NativeRequest::Claude(id)) => Ok(session
+                 .respond(id, mapping::claude_answer(decision, by))
+                 .await?),
+-            (Agent::Codex(thread), NativeRequest::Codex(id)) => {
++            (Agent::Codex { thread, .. }, NativeRequest::Codex(id)) => {
+                 Ok(thread.respond(id, mapping::codex_answer(decision)).await?)
+             }
+-            (Agent::Claude(_), NativeRequest::Codex(_))
+-            | (Agent::Codex(_), NativeRequest::Claude(_)) => {
++            (Agent::Claude { .. }, NativeRequest::Codex(_))
++            | (Agent::Codex { .. }, NativeRequest::Claude(_)) => {
+                 tracing::error!(session = self.id.0, "a request of the other provider");
+                 Ok(())
+             }
+diff --git a/crates/daemon/tests/e2e.rs b/crates/daemon/tests/e2e.rs
+index d5987a7..9a7e688 100644
+--- a/crates/daemon/tests/e2e.rs
++++ b/crates/daemon/tests/e2e.rs
+@@ -742,23 +742,20 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
+ }
+ 
+ /// The recording starts the turn only once `release` exists, and the fake
+-/// answers only an interrupt sent after that, so this passes only if the
+-/// session holds the interrupt until the turn starts.
+-#[tokio::test]
+-async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
+-    let fx = host().await;
+-    let dir = scratch("held", "claude-held-interrupt.jsonl");
++/// answers only an interrupt sent after that (Codex's of that turn's id), so
++/// this passes only if the session holds the interrupt until the turn starts.
++async fn held_interrupt(fx: Fixture, dir: PathBuf, provider: Provider) {
+     let (link, mut updates) = link(fx.target.clone(), None).await;
+     until_live(&mut updates).await;
+-    let _ = send(&link, start(Provider::Claude, &dir)).await;
+-    let _ = send(&link, message("count to 100")).await;
++    let _ = send(&link, start(provider, &dir)).await;
++    let _ = send(&link, message("count to 300")).await;
+     assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+     std::fs::write(dir.join("release"), "").unwrap();
+     assert_eq!(
+         kinds_until(&mut updates, Until::TurnEnd).await,
+         [
+-            opening(Provider::Claude, &dir),
+-            Vec::from([user("count to 100"), turn_end(TurnOutcome::Interrupted)]),
++            opening(provider, &dir),
++            Vec::from([user("count to 300"), turn_end(TurnOutcome::Interrupted)]),
+         ]
+         .concat()
+     );
+@@ -766,6 +763,12 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
+     fx.router.shutdown().await.unwrap();
+ }
+ 
++#[tokio::test]
++async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
++    let dir = scratch("held", "claude-held-interrupt.jsonl");
++    held_interrupt(host().await, dir, Provider::Claude).await;
++}
++
+ /// The CLI withdraws the open request when the turn is interrupted, and the
+ /// tool call it asked about fails.
+ #[tokio::test]
+@@ -962,27 +965,10 @@ async fn two_codex_sessions_share_one_server() {
+     fx.router.shutdown().await.unwrap();
+ }
+ 
+-/// The recording starts the turn only once `release` exists, and waits for
+-/// an interrupt of that turn's id sent after that.
+ #[tokio::test]
+ async fn a_codex_interrupt_before_the_turn_starts_is_sent_by_turn_id() {
+     let (fx, dir) = codex_host("codex-held-interrupt.jsonl").await;
+-    let (link, mut updates) = link(fx.target.clone(), None).await;
+-    until_live(&mut updates).await;
+-    let _ = send(&link, start(Provider::Codex, &dir)).await;
+-    let _ = send(&link, message("count to 300")).await;
+-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+-    std::fs::write(dir.join("release"), "").unwrap();
+-    assert_eq!(
+-        kinds_until(&mut updates, Until::TurnEnd).await,
+-        [
+-            opening(Provider::Codex, &dir),
+-            Vec::from([user("count to 300"), turn_end(TurnOutcome::Interrupted)]),
+-        ]
+-        .concat()
+-    );
+-    link.stop().await.unwrap();
+-    fx.router.shutdown().await.unwrap();
++    held_interrupt(fx, dir, Provider::Codex).await;
+ }
+ 
+ #[tokio::test]
