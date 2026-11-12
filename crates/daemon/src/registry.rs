@@ -170,9 +170,8 @@ impl Registry {
     }
 
     /// The session, how its provider runs now and what it offers, for a
-    /// `Continue`. The
-    /// session starts its agent itself, so a slow start never blocks the
-    /// registry.
+    /// `Continue`. The session starts its agent itself, so a slow start
+    /// never blocks the registry.
     pub async fn relaunch(
         &self,
         session: SessionId,
@@ -342,17 +341,24 @@ impl RegistryActor {
     /// Lists `provider`'s models again with its new credential, which may
     /// serve others. A CLI that lists none offers only the default.
     async fn relist(&mut self, provider: Provider) {
-        if let (Ok((launch, _)), Launcher::Ready { own, chosen, .. }) =
-            (self.ready(provider), self.launchers.of(provider))
+        if let (
+            Ok((with_credential, _)),
+            Launcher::Ready {
+                launch,
+                own,
+                chosen,
+                ..
+            },
+        ) = (self.ready(provider), self.launchers.of(provider))
         {
             let ready = Launcher::Ready {
-                models: list_models(launch.clone(), self.store.dir())
+                models: list_models(with_credential, self.store.dir())
                     .await
                     .unwrap_or_else(|reason| {
                         tracing::warn!(%reason, ?provider, "the CLI listed no models");
                         Models::none()
                     }),
-                launch,
+                launch: launch.clone(),
                 own: own.to_owned(),
                 chosen: chosen.clone(),
             };
