@@ -335,13 +335,15 @@ so far. T3 Code does the same with `ProviderTextDeltaCoalescer.ts`.
    covers the overlap, and the client skips seqs it already applied. Commands go over
    WebRTC from then on. The iroh connection stays open and idle.
 8. **Fallback:** if ICE, DTLS or the data channel isn't up within 15 s, the client stays
-   on iroh, shows `Relayed` and the reason, and
+   on iroh, shows `Relayed`, reports the reason to the host (`Signal::Failed`), and
    retries after 15 s, 30 s, 60 s and 120 s, then every 300 s. The schedule starts over
    when the link reconnects or WebRTC carries a subscription. If the WebRTC connection
    fails or its subscription channel closes, the client subscribes on iroh from its
    cursor at once, then retries.
-9. **Path:** the status line shows `PathKind::WebRtc` once the upgrade carries the
-   subscription. Native clients hole-punch with iroh and never upgrade.
+9. **Path:** `PathKind::WebRtc` carries the selected candidate pair (host, srflx, prflx)
+   from the browser's `getStats`. The status line shows it, and the browser sends it to
+   the host log (`Signal::Selected`). Native clients hole-punch with iroh and never
+   upgrade.
 10. **Reference:** Vibe Kanban `crates/relay-webrtc/` (Apache-2.0) for signaling and
     chunking. It now uses str0m too.
 

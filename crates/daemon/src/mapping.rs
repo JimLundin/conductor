@@ -12,9 +12,9 @@ use proto::{
     ToolOutcome, ToolPhase, TurnOutcome,
 };
 
-/// An open request's id as the provider gave it. Only the session's own
-/// agent reads it, as its provider's id, so it can't name another
-/// provider's request.
+/// An open request's id as the provider gave it. The type doesn't say which
+/// provider: a session's steps come only from its own agent's events
+/// (`Agent::next`), so its agent reads the id back as its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NativeRequest(pub(crate) String);
 

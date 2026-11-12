@@ -1,7 +1,6 @@
 //! The host's event log. One task owns it and assigns every stored event its
-//! seq;
-//! [`Log`] handles talk to it over a channel, so nothing is shared behind a
-//! lock.
+//! seq; [`Log`] handles talk to it over a channel, so nothing is shared
+//! behind a lock.
 
 use std::convert::Infallible;
 

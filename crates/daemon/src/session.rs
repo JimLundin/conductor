@@ -97,7 +97,7 @@ enum AgentError {
 }
 
 /// An interrupt that arrived before the agent began the turn. Sent then, it
-/// would be lost (docs/p1/design.md §11), so it waits for `TurnStarted`.
+/// would be lost (docs/architecture.md §5.1), so it waits for `TurnStarted`.
 enum Held {
     Nothing,
     Interrupt,
