@@ -6,7 +6,7 @@
 # status: "done", "in_progress" (needs `branch`) or "planned".
 # touches: crate names, or crate/path for a single module.
 
-updated = 2026-11-11
+updated = 2026-11-12
 
 [[phase]]
 name = "Spikes"
@@ -188,6 +188,13 @@ name = "Subset checker v6"
 status = "done"
 purpose = "The next subset version: checker gaps and owner decisions from the reviews."
 done_when = "subset.toml says version 6 and the queued checker gaps fail their fixtures."
+touches = ["subset"]
+[[phase.unit]]
+id = "subset-v7"
+name = "Subset checker v7"
+status = "done"
+purpose = "Proposals 0040 (one-comparison match guard) and 0041 (for loops for side effects), as the owner amended them."
+done_when = "subset.toml says version 7, the review's adversarial inputs fail their tests, and crates/ checks clean."
 touches = ["subset"]
 [[phase.unit]]
 id = "archmap"
