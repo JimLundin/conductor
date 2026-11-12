@@ -29,7 +29,9 @@ Each item ends in something to try. The fleet design is
    `conductord login claude|codex` runs the same sign-in flow on the host's
    terminal. *Try:* on a machine with neither CLI installed, start
    `conductord`, sign in, run a session of each, and check that `~/.claude`
-   and `~/.codex` are untouched.
+   and `~/.codex` are untouched. Built on `managed-cli`; the *Try* waits for
+   the owner's sign-in (`conductord login`, then `tools/live-host.sh
+   --data-dir`).
 2. **A wider session model** (§3): questions to the user, reasoning text,
    approve-for-session, per-session model and effort, resume. Resume runs
    against the private homes from item 1. *Try:* restart a session's CLI

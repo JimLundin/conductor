@@ -138,8 +138,10 @@ Every piece of state has one owner task; handles talk to it over channels.
 claude --input-format stream-json --output-format stream-json --verbose \
        --permission-prompt-tool stdio --include-partial-messages \
        --permission-mode <mode> [--model M] [--resume <session_id>] \
-       --setting-sources project,local
+       --setting-sources user,project,local
 ```
+
+with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
 
 - stdout is JSON lines: `system`/`init` (once per turn, with the
   `session_id`), `assistant` and `user` messages with content blocks,
@@ -260,9 +262,9 @@ manager.
 |---|---|---|
 | Official channels | Native installer (`install.sh`, `install.ps1`, `install.cmd`), npm `@anthropic-ai/claude-code`, Homebrew, WinGet, apt, dnf, apk ([setup], verified) | npm `@openai/codex`, a Homebrew cask, GitHub release binaries ([install.md], [releases], verified) |
 | Pinning | The installer takes a version (`bash -s 2.1.89`, [setup], verified), but `install.sh` always downloads the newest build first and has it install the requested one (verified, read in the script). npm pins with `@<version>`. | Release tags `rust-vX.Y.Z` pin exactly; npm pins with `@<version>` ([releases], [npm-codex], verified). The cask can't install an older version (inferred). |
-| What Conductor fetches | `https://downloads.claude.ai/claude-code-releases/<version>/<platform>/claude`, the URL `install.sh` uses, with `manifest.json` and `manifest.json.sig` from the same directory (verified, read in the script and fetched) | The release asset `codex-<triple>.tar.gz` (`.exe.zip` on Windows) from `github.com/openai/codex/releases/tag/rust-v<version>` ([releases], verified) |
+| What Conductor fetches | `https://downloads.claude.ai/claude-code-releases/<version>/<platform>/claude`, the URL `install.sh` uses, with `manifest.json` and `manifest.json.sig` from the same directory (verified, read in the script and fetched) | The release asset `codex-package-<triple>.tar.gz`, on Windows too, from `github.com/openai/codex/releases/tag/rust-v<version>`: the package Codex's own `install.sh` installs, with `bin/codex`, `bin/codex-exec-server`, `bin/codex-code-mode-host`, `codex-resources/bwrap` and `codex-path/rg`. The bare `codex-<triple>.tar.gz` holds only `codex`, and without the rest every command an agent runs fails to start (`install.sh` read, both archives listed, and `s2` failing 5 of 9 steps on the bare binary, verified) |
 | Platforms | `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, their `-musl` variants, `win32-x64`, `win32-arm64` (the 2.1.316 manifest, verified) | `x86_64`/`aarch64` for `unknown-linux-musl`, `apple-darwin` and `pc-windows-msvc` ([releases], verified) |
-| Upstream integrity | The manifest lists a SHA-256 per platform and is signed with Anthropic's GPG key, fingerprint `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`, for releases from 2.1.89 on. macOS binaries are signed and notarized, Windows binaries are Authenticode-signed, Linux binaries are not individually signed ([setup], verified). | GitHub publishes a SHA-256 digest per asset ([releases], verified). Linux binaries are cosign-signed through Sigstore (`.sigstore` bundles), macOS binaries are codesigned, Windows binaries are signed with Azure Trusted Signing (the release workflows in [codex-src], verified). `codex-package_SHA256SUMS` covers only the `codex-package-*` tarballs, and GitHub artifact attestations return 404 for the CLI assets (verified). |
+| Upstream integrity | The manifest lists a SHA-256 per platform and is signed with Anthropic's GPG key, fingerprint `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`, for releases from 2.1.89 on. macOS binaries are signed and notarized, Windows binaries are Authenticode-signed, Linux binaries are not individually signed ([setup], verified). | GitHub publishes a SHA-256 digest per asset ([releases], verified). Linux binaries are cosign-signed through Sigstore (`.sigstore` bundles), macOS binaries are codesigned, Windows binaries are signed with Azure Trusted Signing (the release workflows in [codex-src], verified). `codex-package_SHA256SUMS` lists each `codex-package-*` tarball, and each Linux package has a `.tar.gz.sigstore` bundle over the tarball itself. GitHub artifact attestations return 404 for the CLI assets (verified). |
 | Updates | Native installs update themselves in the background. `DISABLE_AUTOUPDATER=1` stops the check; `DISABLE_UPDATES=1` also blocks `claude update` and `claude install`, and is meant for distributing Claude Code "through your own channels" ([setup], [env-vars], verified). | The TUI checks GitHub for a newer release and suggests an upgrade command; it doesn't update itself. `check_for_update_on_startup = false` turns the check off. No update check was found in the app-server (`codex-rs/tui/src/updates.rs`, `config_toml.rs` in [codex-src], verified; the app-server part inferred from a search). |
 
 npm was rejected as the channel. It needs Node.js on every host, Codex's
@@ -281,16 +283,22 @@ against the recorded hash.
 1. `tools/pin claude <version>` downloads `manifest.json` and its
    signature, verifies the signature against the Anthropic key fingerprint
    above, downloads every platform's binary and checks each against the
-   manifest. `tools/pin codex <version>` downloads every platform's asset,
-   checks each against GitHub's published digest, and verifies the Linux
-   cosign bundles. Both write the result to `pins.toml` at the repository
-   root.
-2. `conductord` compiles `pins.toml` in. On start it makes sure the pinned
-   binary is at `<data>/cli/<provider>/<version>/`. It downloads to a
-   temporary file, checks the SHA-256, and renames it into place, so a crash
-   leaves either nothing or a verified binary. A wrong hash, or a download
-   that fails, makes the provider `Unavailable` with the reason, as a
-   missing CLI does today.
+   manifest. `tools/pin codex <version>` downloads every platform's package,
+   checks each against GitHub's published digest and
+   `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
+   `cosign` is installed; `pins.toml` records whether it was. Both write the
+   result to `pins.toml` at the repository root, and its compiled form to
+   `crates/agents/src/pins.rs`, because the subset has no `include_str!`.
+2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
+   is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
+   package unpacked whole, with `bin/codex`. It downloads to a temporary
+   file, checks the SHA-256, and renames it into place (the package is
+   unpacked with the system `tar` beside it first, then the directory is
+   renamed), so a crash leaves either nothing or a verified install. A wrong
+   hash, or a download that fails, makes the provider `Unavailable` with the
+   reason, as a missing CLI does today. On Linux it takes Claude's glibc
+   build; Codex publishes only musl builds for Linux. A musl host such as
+   Alpine is not handled yet.
 3. The previous version stays on disk until no session uses it.
 
 This keeps OpenPGP and Sigstore out of the daemon. The trust is in the
@@ -306,8 +314,10 @@ The pin and the protocol code move together. Bumping a pin is one commit
 that:
 
 1. runs `tools/pin` for the new version;
-2. runs `s1` or `s2` against the pinned binary, which installs it into a
-   scratch data dir, and re-records `fixtures/claude` or `fixtures/codex`;
+2. runs `s1` or `s2` against the pinned binary, which installs it into
+   `/tmp/conductor-live` with the same installer and runs it with the
+   user's own homes and logins, and re-records `fixtures/claude` or
+   `fixtures/codex`;
 3. widens `SUPPORTED_VERSIONS` and `check_version`
    (`crates/agents/src/claude/protocol.rs`) to include it.
 
@@ -356,11 +366,28 @@ Two consequences for how sessions start (§5.2):
 - Each Claude process gets `CLAUDE_CODE_PROJECT_DIR_NAME=<session ulid>`, so
   its transcript lives at `<data>/home/claude/projects/<ulid>/` whatever the
   working directory is ([sessions], verified; it needs 2.1.234 or later).
-  §6.8 relies on this.
+  §6.8 relies on this. It lands with the ULID session ids (§6.7), in the
+  durability phase: today's `SessionId` is a host counter that restarts at
+  1, so two sessions would share a transcript directory.
 
-`conductord` writes `<data>/home/codex/config.toml` with
-`check_for_update_on_startup = false`, and sets `DISABLE_UPDATES=1` for
-Claude.
+`conductord` writes `<data>/home/claude/settings.json` (`cleanupPeriodDays`
+36500) and `<data>/home/codex/config.toml` (`check_for_update_on_startup =
+false`) on first run only, because the CLIs edit their own config too. Every
+`claude` it starts gets `DISABLE_UPDATES=1`, `s1` included, so a live check
+can't update the user's own install either. In a private home it also loses
+any `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
+from the host's environment, which would otherwise take precedence over the
+home's sign-in (observed: a shell inside Claude Code carries
+`CLAUDE_CODE_OAUTH_TOKEN`, and `claude auth status` then reports a login in
+an empty home). Even `--version` runs with the
+private home set, because `codex --version` writes helper binaries into
+`CODEX_HOME/tmp` (observed).
+
+Until the app can sign in (§6.3), `conductord login claude|codex` runs the
+sign-in on the host's terminal against the private home: `claude auth login
+--claudeai`, §6.3's per-host mode, which stores its own credential, and
+`codex login --device-auth`. The shared `setup-token` token needs the
+credential store of §6.3, which comes with sign-in from the app.
 
 ### 6.3 Credentials, entered in the app
 
