@@ -82,8 +82,11 @@ impl Conductor {
     async fn authenticate(&self, conn: &Connection) -> Result<Option<ClientName>, StreamError> {
         let (mut send, mut recv) = conn.accept_bi().await?;
         let admitted = match wire::read::<Open>(&mut recv).await? {
-            Some(Open::Hello(hello)) if hello.token == self.token => Ok(hello),
-            Some(Open::Hello(_)) => Err("wrong token"),
+            Some(Open::Hello(hello)) => hello
+                .token
+                .check(&self.token)
+                .map(|()| hello)
+                .map_err(|_| "wrong token"),
             Some(Open::Subscribe(_) | Open::Command(_)) | None => {
                 Err("the first stream must be a hello")
             }

@@ -5,4 +5,4 @@
 [ "$1" = --version ] && { echo "fake-claude"; exit 0; }
 # The arguments name the variables it records (fake-cli.py).
 exec /usr/bin/python3 -I "$(dirname "$0")/fake-cli.py" \
-  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CONFIG_DIR
+  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SUBPROCESS_ENV_SCRUB CLAUDE_CONFIG_DIR

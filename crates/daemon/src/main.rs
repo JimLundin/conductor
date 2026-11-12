@@ -6,7 +6,7 @@ use agents::install::{Cli, install};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use daemon::codex_hub::CodexHub;
-use daemon::credentials::Store;
+use daemon::credentials::{Store, Stored};
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
@@ -14,7 +14,7 @@ use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{Credentials, Ticket};
+use proto::Ticket;
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 
@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let data_dir = data_dir_or_default(data_dir)?;
             let homes = daemon::homes(&data_dir)?;
-            let (store, credentials) = Store::open(&data_dir)?;
+            let (store, stored) = Store::open(&data_dir)?;
             let claude = match cli_path(Cli::Claude, claude_path, &data_dir).await {
                 Ok((claude_path, origin)) => {
                     let status = agents::claude::auth_status(&claude_path, &homes.claude);
@@ -128,7 +128,10 @@ async fn main() -> anyhow::Result<()> {
                     let hub = CodexHub::spawn(ServerOptions {
                         codex_path,
                         home: homes.codex,
-                        credential: credentials.codex.clone(),
+                        credential: match &stored {
+                            Stored::Opened(credentials) => credentials.codex.clone(),
+                            Stored::Unreadable(_) => None,
+                        },
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
@@ -145,7 +148,7 @@ async fn main() -> anyhow::Result<()> {
                 Err(reason) => unavailable(reason),
             };
             let launchers = Launchers { claude, codex };
-            let router = host(data_dir, web_url, name, launchers, store, credentials).await?;
+            let router = host(data_dir, web_url, name, launchers, store, stored).await?;
             tokio::signal::ctrl_c().await?;
             router.shutdown().await?;
             Ok(())
@@ -204,14 +207,23 @@ async fn cli_path(
     }
 }
 
+/// How long the sign-in check may take before the host counts the home
+/// as signed out.
+const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// A given CLI signs in however it does. A pinned one is signed in when
-/// `status`, its own sign-in check against the private home, succeeds.
+/// `status`, its own sign-in check against the private home, succeeds
+/// within `SIGN_IN_CHECK`. It runs once, at start.
 async fn own_sign_in(origin: Origin, mut status: tokio::process::Command) -> OwnSignIn {
+    status.kill_on_drop(true);
     match origin {
         Origin::Given => OwnSignIn::Unmanaged,
-        Origin::Pinned => match status.output().await.map(|output| output.status.code()) {
-            Ok(Some(0)) => OwnSignIn::SignedIn,
-            Ok(_) | Err(_) => OwnSignIn::Missing,
+        Origin::Pinned => match tokio::time::timeout(SIGN_IN_CHECK, status.output())
+            .await
+            .map(|output| output.map(|output| output.status.code()))
+        {
+            Ok(Ok(Some(0))) => OwnSignIn::SignedIn,
+            Ok(Ok(_) | Err(_)) | Err(_) => OwnSignIn::Missing,
         },
     }
 }
@@ -222,7 +234,7 @@ async fn host(
     name: String,
     launchers: Launchers,
     store: Store,
-    credentials: Credentials,
+    stored: Stored,
 ) -> anyhow::Result<Router> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
@@ -240,7 +252,7 @@ async fn host(
     let log = Log::spawn(name, daemon::random_epoch());
     let conductor = Conductor {
         log: log.clone(),
-        registry: Registry::spawn(log, launchers, store, credentials),
+        registry: Registry::spawn(log, launchers, store, stored),
         token,
     };
     let ticket = Ticket {

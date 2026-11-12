@@ -30,7 +30,7 @@ use proto::{
     Auth, AuthToken, Availability, Change, ClaudeCredential, ClientName, CloseReason,
     CodexCredential, CommandBody, CommandResult, Credential, Decision, Epoch, Event, EventKind,
     FileChange, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
-    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome, WireApi,
+    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -121,9 +121,9 @@ fn data_dir(name: &str) -> PathBuf {
 
 /// A host on `endpoint`, keeping its credentials in `data`.
 fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
-    let (store, credentials) = Store::open(data).unwrap();
+    let (store, stored) = Store::open(data).unwrap();
     let log = Log::spawn(String::from("test-host"), Epoch(11));
-    let registry = Registry::spawn(log.clone(), launchers, store, credentials);
+    let registry = Registry::spawn(log.clone(), launchers, store, stored);
     let target = Target {
         addr: endpoint.addr(),
         token: AuthToken::from_bytes(TOKEN),
@@ -1484,7 +1484,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
     assert_eq!(
         read(&dir.join("env.txt")),
         format!(
-            "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\nCLAUDE_CONFIG_DIR={}\n",
+            "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\nCLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\nCLAUDE_CONFIG_DIR={}\n",
             data.join("home/claude").display()
         )
     );
@@ -1543,7 +1543,6 @@ fn codex_provider(key: &str) -> CommandBody {
         credential: Credential::Codex(CodexCredential::Provider {
             name: String::from("Conductor test"),
             base_url: String::from(GATEWAY),
-            wire_api: WireApi::Responses,
             key: String::from(key),
             model: String::from("conductor-test-model"),
         }),
@@ -1592,7 +1591,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
     assert_eq!(
         read(&server.join("codex-config.toml")),
         format!(
-            "check_for_update_on_startup = false\nmodel_provider = \"conductor\"\nmodel = \"conductor-test-model\"\n\n[model_providers.conductor]\nname = \"Conductor test\"\nbase_url = \"{GATEWAY}\"\nenv_key = \"CONDUCTOR_CODEX_KEY\"\nwire_api = \"responses\"\n"
+            "check_for_update_on_startup = false\nmodel_provider = \"conductor\"\nmodel = \"conductor-test-model\"\n\n[model_providers.conductor]\nname = \"Conductor test\"\nbase_url = \"{GATEWAY}\"\nenv_key = \"CONDUCTOR_CODEX_KEY\"\nwire_api = \"responses\"\n\n[shell_environment_policy.filters]\nCONDUCTOR_CODEX_KEY = \"exclude\"\n"
         )
     );
     assert_eq!(
@@ -1602,8 +1601,8 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,
         [EventKind::SessionClosed {
-            reason: CloseReason::Exited {
-                status: String::from("unknown exit (stopped for a new Codex credential)"),
+            reason: CloseReason::Stopped {
+                reason: String::from("new Codex credential"),
             },
         }]
     );
@@ -1666,6 +1665,85 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
     assert_eq!(
         (welcomed, data.join("credentials").exists()),
         (Some(with_claude(no_credential())), false)
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside() {
+    let data = data_dir("unreadable");
+    // A store key of its own, then a store that doesn't open with it.
+    let _ = Store::open(&data).unwrap();
+    std::fs::write(data.join("credentials"), b"not a sealed store").unwrap();
+    let fx = claude_host_in(&data).await;
+    let (link, _updates, welcomed) = live(&fx).await;
+    let unreadable = Availability::Unavailable {
+        reason: format!(
+            "{} does not open with the store key; clearing a credential moves it aside",
+            data.join("credentials").display()
+        ),
+    };
+    assert_eq!(
+        welcomed,
+        Some(with_claude(unreadable.clone())),
+        "a stored credential may be in it, so the home's sign-in is not used"
+    );
+    let refused = CommandResult::Rejected(Rejection::CredentialNotSaved {
+        reason: format!(
+            "{} does not open with the store key; clearing a credential moves it aside",
+            data.join("credentials").display()
+        ),
+    });
+    assert_eq!(send(&link, claude_gateway()).await, refused);
+    assert_eq!(
+        read(&data.join("credentials")),
+        "not a sealed store",
+        "a refused set leaves the file as it was"
+    );
+    assert_eq!(
+        send(
+            &link,
+            CommandBody::ClearCredential {
+                provider: Provider::Codex
+            }
+        )
+        .await,
+        CommandResult::Providers(with_claude(no_credential()))
+    );
+    assert_eq!(
+        read(&data.join("credentials.unreadable")),
+        "not a sealed store"
+    );
+    assert_eq!(
+        send(&link, claude_gateway()).await,
+        CommandResult::Providers(with_claude(gateway()))
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_base_url_that_could_hide_a_secret_is_refused() {
+    let data = data_dir("base-url");
+    let fx = claude_host_in(&data).await;
+    let (link, _updates, _) = live(&fx).await;
+    let body = CommandBody::SetCredential {
+        credential: Credential::Claude(ClaudeCredential::Gateway {
+            base_url: String::from("https://gateway.example/?key=conductor-test"),
+            token: String::from(CLAUDE_TOKEN),
+        }),
+    };
+    assert_eq!(
+        (send(&link, body).await, data.join("credentials").exists()),
+        (
+            CommandResult::Rejected(Rejection::InvalidCredential {
+                reason: String::from(
+                    "the base URL may not carry a user, a password, a query or a fragment"
+                ),
+            }),
+            false
+        )
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();

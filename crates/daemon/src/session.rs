@@ -20,7 +20,7 @@ use proto::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
-use crate::codex_hub::{CodexHub, HubError};
+use crate::codex_hub::{CodexHub, HubError, Routed};
 use crate::log::Log;
 use crate::mapping::{self, NativeRequest, NativeTurn, Step};
 
@@ -86,7 +86,7 @@ enum Agent {
     },
     Codex {
         thread: CodexThread,
-        events: mpsc::Receiver<CodexEvent>,
+        events: mpsc::Receiver<Routed>,
     },
 }
 
@@ -141,6 +141,8 @@ enum Input {
     Order(SessionMsg),
     Claude(ClaudeEvent),
     Codex(CodexEvent),
+    /// The host stopped the agent, for this reason.
+    Stopped(String),
     /// The agent's event stream ended.
     AgentGone,
     /// Every handle was dropped.
@@ -264,7 +266,13 @@ impl Agent {
                 events.recv().await.map_or(Input::AgentGone, Input::Claude)
             }
             Agent::Codex { events, .. } => {
-                events.recv().await.map_or(Input::AgentGone, Input::Codex)
+                events
+                    .recv()
+                    .await
+                    .map_or(Input::AgentGone, |routed| match routed {
+                        Routed::Codex(event) => Input::Codex(event),
+                        Routed::Stopped { reason } => Input::Stopped(reason),
+                    })
             }
         }
     }
@@ -290,6 +298,10 @@ impl SessionActor {
             }
             Input::Claude(event) => self.apply(mapping::claude_steps(event)).await,
             Input::Codex(event) => self.apply(mapping::codex_steps(event)).await,
+            Input::Stopped(reason) => {
+                let reason = CloseReason::Stopped { reason };
+                self.apply(Vec::from([Step::Closed(reason)])).await
+            }
             Input::AgentGone => {
                 let reason = CloseReason::Exited {
                     status: String::from("the agent's events ended"),

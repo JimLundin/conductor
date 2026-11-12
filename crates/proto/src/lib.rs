@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
 pub use relay::without_root_dot;
-pub use ticket::{AuthToken, Ticket, TicketError};
+pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
@@ -149,23 +149,16 @@ pub enum ClaudeCredential {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CodexCredential {
     /// A custom model provider: Codex's `[model_providers.<id>]` with
-    /// `name`, `base_url` and `wire_api`, selected with `model`. The key
-    /// reaches Codex in the environment variable the section's `env_key`
-    /// names, never in its config.
+    /// `name` and `base_url`, selected with `model`. Its `wire_api` is
+    /// `responses`, the only one Codex 0.166 knows. The key reaches Codex in
+    /// the environment variable the section's `env_key` names, never in its
+    /// config.
     Provider {
         name: String,
         base_url: String,
-        wire_api: WireApi,
         key: String,
         model: String,
     },
-}
-
-/// The wire protocols a Codex model provider can speak. Codex 0.166 knows
-/// only `responses` (`model-provider-info`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WireApi {
-    Responses,
 }
 
 impl std::fmt::Debug for ClaudeCredential {
@@ -242,6 +235,30 @@ impl Credential {
         match self {
             Credential::Claude(_) => Provider::Claude,
             Credential::Codex(_) => Provider::Codex,
+        }
+    }
+
+    /// Refuses a base URL that isn't plain `http(s)://host/path`. The URL is
+    /// shown to every client and written into Codex's config, so it must
+    /// not hide a secret in userinfo, a query or a fragment.
+    pub fn check(&self) -> Result<(), String> {
+        let base_url = match self {
+            Credential::Claude(ClaudeCredential::Gateway { base_url, .. })
+            | Credential::Codex(CodexCredential::Provider { base_url, .. }) => base_url,
+        };
+        let url = url::Url::parse(base_url).map_err(|err| format!("the base URL: {err}"))?;
+        match (
+            url.scheme(),
+            url.username(),
+            url.password(),
+            url.query(),
+            url.fragment(),
+        ) {
+            ("http" | "https", "", None, None, None) => Ok(()),
+            ("http" | "https", _, _, _, _) => Err(String::from(
+                "the base URL may not carry a user, a password, a query or a fragment",
+            )),
+            (_, _, _, _, _) => Err(String::from("the base URL must be http or https")),
         }
     }
 }
@@ -369,6 +386,10 @@ pub enum Rejection {
     CredentialNotSaved {
         reason: String,
     },
+    /// The credential is malformed, for this reason, and was not stored.
+    InvalidCredential {
+        reason: String,
+    },
 }
 
 impl Rejection {
@@ -387,6 +408,9 @@ impl Rejection {
             Rejection::AlreadyResolved { by } => format!("already resolved by {}", by.0),
             Rejection::CredentialNotSaved { reason } => {
                 format!("the host could not store the credential: {reason}")
+            }
+            Rejection::InvalidCredential { reason } => {
+                format!("the credential is not valid: {reason}")
             }
         }
     }
@@ -512,6 +536,54 @@ pub enum TurnOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloseReason {
-    FailedToStart { message: String },
-    Exited { status: String },
+    FailedToStart {
+        message: String,
+    },
+    Exited {
+        status: String,
+    },
+    /// The host stopped the agent on purpose, for this reason.
+    Stopped {
+        reason: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClaudeCredential, Credential};
+
+    #[test]
+    fn a_base_url_may_not_hide_a_secret() {
+        let checked = Vec::from([
+            "https://gateway.example/v1",
+            "https://user:pw@gateway.example",
+            "https://gateway.example/?key=1",
+            "https://gateway.example/#k",
+            "ftp://gateway.example",
+            "gateway.example",
+        ])
+        .into_iter()
+        .map(|base_url| {
+            Credential::Claude(ClaudeCredential::Gateway {
+                base_url: String::from(base_url),
+                token: String::from("t"),
+            })
+            .check()
+        })
+        .collect::<Vec<Result<(), String>>>();
+        let hidden = Err(String::from(
+            "the base URL may not carry a user, a password, a query or a fragment",
+        ));
+        assert_eq!(
+            checked,
+            Vec::from([
+                Ok(()),
+                hidden.clone(),
+                hidden.clone(),
+                hidden,
+                Err(String::from("the base URL must be http or https")),
+                Err(String::from("the base URL: relative URL without a base")),
+            ])
+        );
+    }
 }

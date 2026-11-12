@@ -6,7 +6,7 @@ use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
     Auth, Availability, ClaudeCredential, CodexCredential, CommandBody, CommandResult, Credential,
-    Provider, Providers, WireApi,
+    Provider, Providers,
 };
 
 use crate::{Link, PaneHeader, send};
@@ -102,7 +102,6 @@ fn CodexProvider(host: String, availability: Option<Availability>, link: Signal<
                 let credential = Credential::Codex(CodexCredential::Provider {
                     name: name().trim().to_string(),
                     base_url: base_url().trim().to_string(),
-                    wire_api: WireApi::Responses,
                     key: key.replace(String::new()),
                     model: model().trim().to_string(),
                 });
@@ -130,10 +129,11 @@ fn State(
     sent: Signal<Sent>,
 ) -> Element {
     let state = describe(availability.as_ref());
+    let focus = format!("document.getElementById('{id}').focus()");
     rsx! {
         div { class: "credential-head",
             div {
-                h3 { id: "{id}", "{label(provider)}" }
+                h3 { id: "{id}", tabindex: "-1", "{label(provider)}" }
                 p { class: "credential-state", "{state}" }
             }
             match availability {
@@ -143,7 +143,12 @@ fn State(
                         class: "clear",
                         "aria-label": "Clear the {label(provider)} credential",
                         disabled: matches!(sent(), Sent::Sending),
-                        onclick: move |_| submit(link, sent, CommandBody::ClearCredential { provider }, Sent::Cleared),
+                        // The button goes once the clear lands, so focus goes to
+                        // the heading instead of the page.
+                        onclick: move |_| {
+                            submit(link, sent, CommandBody::ClearCredential { provider }, Sent::Cleared);
+                            document::eval(&focus);
+                        },
                         "Clear"
                     }
                 },
@@ -163,7 +168,12 @@ fn Field(label: String, kind: String, placeholder: String, mut value: Signal<Str
             input {
                 r#type: "{kind}",
                 placeholder: "{placeholder}",
-                autocomplete: "off",
+                // A password manager ignores "off" on a password field, so a
+                // secret says it is new and isn't filled in from a saved one.
+                autocomplete: match kind.as_str() {
+                    "password" => "new-password",
+                    _ => "off",
+                },
                 autocapitalize: "off",
                 autocorrect: "off",
                 spellcheck: "false",
@@ -181,7 +191,7 @@ fn Outcome(host: String, sent: Sent) -> Element {
         Sent::Sending => rsx! { p { class: "hint muted", role: "status", "Sending…" } },
         Sent::Stored => rsx! {
             p { class: "hint muted", role: "status",
-                "Sent to {host} over the encrypted link. This app doesn't keep it."
+                "Sent to {host} over the encrypted link. This app doesn't keep it; your browser may offer to save it."
             }
         },
         Sent::Cleared => rsx! { p { class: "hint muted", role: "status", "Cleared on {host}." } },

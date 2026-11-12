@@ -94,6 +94,7 @@ fn closed(reason: &CloseReason) -> String {
     match reason {
         CloseReason::FailedToStart { message } => format!("The agent did not start: {message}"),
         CloseReason::Exited { status } => format!("The session has ended ({status})."),
+        CloseReason::Stopped { reason } => format!("Stopped: {reason}"),
     }
 }
 

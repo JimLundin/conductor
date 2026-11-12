@@ -9,6 +9,7 @@ use std::fmt;
 use data_encoding::BASE64URL_NOPAD;
 use iroh_base::{EndpointId, RelayUrl};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 const VERSION: u8 = 0;
 const ID_LEN: usize = 32;
@@ -40,9 +41,23 @@ pub enum TicketError {
     RelayUrl,
 }
 
+/// A `Hello` whose token is not the host's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("wrong token")]
+pub struct WrongToken {}
+
 impl AuthToken {
     pub fn from_bytes(bytes: [u8; TOKEN_LEN]) -> AuthToken {
         AuthToken(bytes)
+    }
+
+    /// Checks `self` against the host's token in constant time, so the
+    /// time a refusal takes says nothing about the token.
+    pub fn check(&self, expected: &AuthToken) -> Result<(), WrongToken> {
+        match self.0.as_slice().ct_eq(expected.0.as_slice()).unwrap_u8() {
+            1 => Ok(()),
+            _ => Err(WrongToken {}),
+        }
     }
 }
 

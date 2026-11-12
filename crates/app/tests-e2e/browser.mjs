@@ -254,15 +254,25 @@ if (scenario === 'turn') {
   log(`state: "${await state.innerText()}"`);
   check((await token.inputValue()) === '', 'the token field is empty once sent');
   check(
-    (await claude.getByRole('status').innerText()) === "Sent to conductor over the encrypted link. This app doesn't keep it.",
+    (await claude.getByRole('status').innerText()) === "Sent to conductor over the encrypted link. This app doesn't keep it; your browser may offer to save it.",
     'the form says the app keeps nothing'
   );
-  const kept = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }, location.href]));
-  check(!kept.includes(TOKEN), 'the token is in no storage and not in the URL');
+  check((await token.getAttribute('autocomplete')) === 'new-password', 'the token field asks a password manager not to fill it');
+  const kept = await page.evaluate(async () =>
+    JSON.stringify([
+      { ...localStorage },
+      { ...sessionStorage },
+      location.href,
+      document.documentElement.outerHTML,
+      await indexedDB.databases(),
+    ])
+  );
+  check(!kept.includes(TOKEN), 'the token is in no storage, the URL or the DOM');
   await page.screenshot({ path: out });
   await claude.getByRole('button', { name: 'Clear the Claude Code credential' }).click();
   await state.filter({ hasText: "The host's own CLI" }).waitFor({ timeout: 10_000 });
   check((await claude.getByRole('status').innerText()) === 'Cleared on conductor.', 'the clear is confirmed');
+  check((await page.evaluate(() => document.activeElement?.id)) === 'claude-credential', 'focus moves to the Claude heading');
 } else if (scenario === 'screens') {
   await startSession('Claude Code', `${dir}/notes`);
   await startSession('Claude Code', `${dir}/scratch`);

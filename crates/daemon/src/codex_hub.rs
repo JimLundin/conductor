@@ -18,10 +18,21 @@ use agents::Exit;
 use agents::codex::{
     CodexEvent, CodexServer, CodexThread, ServerOptions, ThreadEvent, ThreadId, ThreadOptions,
 };
+use n0_future::StreamExt;
 use proto::CodexCredential;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
+
+/// What the hub sends a Codex session.
+#[derive(Debug, Clone)]
+pub(crate) enum Routed {
+    Codex(CodexEvent),
+    /// The hub stopped the app-server on purpose, for this reason.
+    Stopped {
+        reason: String,
+    },
+}
 
 /// A handle to the hub's task. Clone it freely.
 #[derive(Debug, Clone)]
@@ -41,9 +52,7 @@ enum HubMsg {
     /// Starts a thread, answered with the thread and its events.
     Start {
         options: ThreadOptions,
-        reply: oneshot::Sender<
-            Result<(CodexThread, mpsc::Receiver<CodexEvent>), agents::codex::Error>,
-        >,
+        reply: oneshot::Sender<Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>>,
     },
     /// Runs the next server with this credential, stopping the current one.
     Configure {
@@ -64,7 +73,7 @@ enum Server {
 struct HubActor {
     options: ServerOptions,
     server: Server,
-    routes: HashMap<ThreadId, mpsc::Sender<CodexEvent>>,
+    routes: HashMap<ThreadId, mpsc::Sender<Routed>>,
 }
 
 enum HubInput {
@@ -92,7 +101,7 @@ impl CodexHub {
     pub(crate) async fn start_thread(
         &self,
         options: ThreadOptions,
-    ) -> Result<(CodexThread, mpsc::Receiver<CodexEvent>), HubError> {
+    ) -> Result<(CodexThread, mpsc::Receiver<Routed>), HubError> {
         Ok(self.ask(|reply| HubMsg::Start { options, reply }).await??)
     }
 
@@ -156,9 +165,8 @@ impl HubActor {
                         "stopped the codex app-server for a new credential"
                     );
                     self.server = Server::Down;
-                    self.close_all(Exit::Unknown(String::from(
-                        "stopped for a new Codex credential",
-                    )));
+                    let reason = String::from("new Codex credential");
+                    self.close_all(Routed::Stopped { reason }).await;
                 }
                 let _ = reply.send(());
                 Ok(())
@@ -170,7 +178,8 @@ impl HubActor {
             HubInput::Codex(CodexEvent::Exited { status }) => {
                 tracing::warn!(status = %status.describe(), "the codex app-server exited");
                 self.server = Server::Down;
-                self.close_all(status);
+                self.close_all(Routed::Codex(CodexEvent::Exited { status }))
+                    .await;
                 Ok(())
             }
             HubInput::Codex(CodexEvent::Unknown(frame)) => {
@@ -181,12 +190,19 @@ impl HubActor {
         }
     }
 
-    /// Tells every session the server has gone, and forgets their routes.
-    fn close_all(&mut self, status: Exit) {
-        let exited = CodexEvent::Exited { status };
-        for (_, route) in self.routes.drain() {
-            let _ = route.try_send(exited.clone());
-        }
+    /// Tells every session the server has gone, waiting for room in a full
+    /// channel, and forgets their routes.
+    async fn close_all(&mut self, last: Routed) {
+        let closes = self
+            .routes
+            .drain()
+            .map(|(_, route)| (route, last.clone()))
+            .collect::<Vec<(mpsc::Sender<Routed>, Routed)>>();
+        // A session that has gone fails its send, which is fine.
+        let _ = n0_future::stream::iter(closes)
+            .then(|(route, close)| async move { route.send(close).await })
+            .collect::<Vec<Result<(), mpsc::error::SendError<Routed>>>>()
+            .await;
     }
 
     /// Inserts the route before it answers, so the thread's first events,
@@ -194,7 +210,7 @@ impl HubActor {
     async fn start(
         &mut self,
         options: ThreadOptions,
-    ) -> Result<(CodexThread, mpsc::Receiver<CodexEvent>), agents::codex::Error> {
+    ) -> Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error> {
         let server = self.up().await?;
         let thread = server.start_thread(options).await?;
         let (route, events) = mpsc::channel(256);
@@ -224,10 +240,10 @@ impl HubActor {
     /// A thread whose session ended has no route any more, and its events
     /// are dropped.
     async fn route(&mut self, thread: ThreadId, event: ThreadEvent) {
-        let event = CodexEvent::Thread {
+        let event = Routed::Codex(CodexEvent::Thread {
             thread: thread.clone(),
             event,
-        };
+        });
         match self.routes.get(&thread) {
             Some(route) => {
                 if let Err(mpsc::error::SendError(_)) = route.send(event).await {

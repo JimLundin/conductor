@@ -55,7 +55,7 @@ mod tests {
         Auth, AuthToken, Availability, ClientName, CodexCredential, Command, CommandBody,
         CommandId, CommandResult, Credential, Decision, Epoch, Event, EventKind, Hello, HelloReply,
         HostSeq, Open, Providers, Rejection, RequestId, Resolution, SessionId, Subscribe,
-        TurnOutcome, Welcome, WireApi,
+        TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -93,7 +93,6 @@ mod tests {
                 credential: Credential::Codex(CodexCredential::Provider {
                     name: String::from("n"),
                     base_url: String::from("u"),
-                    wire_api: WireApi::Responses,
                     key: String::from("k"),
                     model: String::from("m"),
                 }),
@@ -101,7 +100,7 @@ mod tests {
         });
         assert_eq!(
             encode(&open).unwrap(),
-            frame(b"\x02\x01\x04\x01\x00\x01n\x01u\x00\x01k\x01m")
+            frame(b"\x02\x01\x04\x01\x00\x01n\x01u\x01k\x01m")
         );
         assert_eq!(
             format!("{open:?}"),

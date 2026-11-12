@@ -16,7 +16,6 @@ use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandBody, CommandResult,
     Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId, Ticket,
-    WireApi,
 };
 use tokio::sync::mpsc;
 
@@ -285,7 +284,6 @@ impl Session {
                 Some(Credential::Codex(CodexCredential::Provider {
                     name: var("CONDUCTOR_CODEX_NAME")?,
                     base_url: var("CONDUCTOR_CODEX_BASE_URL")?,
-                    wire_api: WireApi::Responses,
                     key: var("CONDUCTOR_CODEX_KEY")?,
                     model: var("CONDUCTOR_CODEX_MODEL")?,
                 }))

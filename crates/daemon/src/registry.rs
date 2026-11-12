@@ -11,7 +11,7 @@ use proto::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
-use crate::credentials::Store;
+use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session};
 
@@ -94,25 +94,20 @@ struct RegistryActor {
     log: Log,
     launchers: Launchers,
     store: Store,
-    credentials: Credentials,
+    stored: Stored,
     sessions: BTreeMap<SessionId, Session>,
     last: SessionId,
 }
 
 impl Registry {
-    /// `credentials` is what `store` holds.
-    pub fn spawn(
-        log: Log,
-        launchers: Launchers,
-        store: Store,
-        credentials: Credentials,
-    ) -> Registry {
+    /// `stored` is what `store` held when it opened.
+    pub fn spawn(log: Log, launchers: Launchers, store: Store, stored: Stored) -> Registry {
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
             launchers,
             store,
-            credentials,
+            stored,
             sessions: BTreeMap::new(),
             last: SessionId(0),
         };
@@ -173,18 +168,6 @@ impl Registry {
 }
 
 impl RegistryActor {
-    /// A Claude session gets the stored credential when it starts; Codex's
-    /// app-server already has it.
-    fn with_credential(&self, launch: Launch) -> Launch {
-        match launch {
-            Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
-                credential: self.credentials.claude.clone(),
-                ..claude
-            }),
-            Launch::Codex(codex) => Launch::Codex(codex),
-        }
-    }
-
     async fn run(
         mut self,
         mut messages: mpsc::Receiver<RegistryMsg>,
@@ -214,15 +197,48 @@ impl RegistryActor {
             }
             RegistryMsg::SetCredential { credential, reply } => {
                 let provider = credential.provider();
-                let next = self.credentials.clone().set(credential);
-                let _ = reply.send(self.store(provider, next).await?);
+                let result = match (credential.check(), &self.stored) {
+                    (Err(reason), _) => {
+                        CommandResult::Rejected(Rejection::InvalidCredential { reason })
+                    }
+                    // Saving now would overwrite the other provider's.
+                    (Ok(()), Stored::Unreadable(reason)) => {
+                        CommandResult::Rejected(Rejection::CredentialNotSaved {
+                            reason: reason.clone(),
+                        })
+                    }
+                    (Ok(()), Stored::Opened(credentials)) => {
+                        let next = credentials.clone().set(credential);
+                        self.store(provider, next).await?
+                    }
+                };
+                let _ = reply.send(result);
             }
             RegistryMsg::ClearCredential { provider, reply } => {
-                let next = self.credentials.clone().clear(provider);
-                let _ = reply.send(self.store(provider, next).await?);
+                let result = match self.readable() {
+                    Ok(credentials) => self.store(provider, credentials.clear(provider)).await?,
+                    Err(reason) => {
+                        CommandResult::Rejected(Rejection::CredentialNotSaved { reason })
+                    }
+                };
+                let _ = reply.send(result);
             }
         }
         Ok(())
+    }
+
+    /// The stored credentials. A store that doesn't open is moved aside
+    /// first, which is how a Clear recovers it from the phone.
+    fn readable(&mut self) -> Result<Credentials, String> {
+        match &self.stored {
+            Stored::Opened(credentials) => Ok(credentials.clone()),
+            Stored::Unreadable(_) => {
+                let aside = self.store.move_aside().map_err(|err| format!("{err:#}"))?;
+                tracing::warn!(aside = %aside.display(), "moved the unreadable credential store aside");
+                self.stored = Stored::Opened(Credentials::none());
+                Ok(Credentials::none())
+            }
+        }
     }
 
     /// Saves `next`, which changes `provider`'s credential only, then uses
@@ -249,7 +265,7 @@ impl RegistryActor {
                 {
                     hub.configure(next.codex.clone()).await?;
                 }
-                self.credentials = next;
+                self.stored = Stored::Opened(next);
                 Ok(CommandResult::Providers(self.providers()))
             }
         }
@@ -269,13 +285,27 @@ impl RegistryActor {
         }
     }
 
-    /// How `provider` runs and signs in, or why it can't: a stored
-    /// credential comes first, then the CLI's own sign-in.
-    fn ready(&self, provider: Provider) -> Result<(&Launch, Auth), String> {
-        match (self.launchers.of(provider), self.credentials.auth(provider)) {
-            (Launcher::Unavailable(reason), _) => Err(reason.clone()),
-            (Launcher::Ready { launch, .. }, Some(auth)) => Ok((launch, auth)),
-            (Launcher::Ready { launch, own }, None) => own.auth().map(|auth| (launch, auth)),
+    /// How `provider` runs, with the credential a Claude session gets when
+    /// it starts, and how it signs in, or why it can't. A stored credential
+    /// comes first, then the CLI's own sign-in. A store that doesn't open
+    /// may hold a credential, so it never falls back to the sign-in.
+    fn ready(&self, provider: Provider) -> Result<(Launch, Auth), String> {
+        match (self.launchers.of(provider), &self.stored) {
+            (Launcher::Unavailable(reason), _)
+            | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => Err(reason.clone()),
+            (Launcher::Ready { launch, own }, Stored::Opened(credentials)) => {
+                let launch = match launch.clone() {
+                    Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
+                        credential: credentials.claude.clone(),
+                        ..claude
+                    }),
+                    Launch::Codex(codex) => Launch::Codex(codex),
+                };
+                match credentials.auth(provider) {
+                    Some(auth) => Ok((launch, auth)),
+                    None => own.auth().map(|auth| (launch, auth)),
+                }
+            }
         }
     }
 
@@ -286,9 +316,7 @@ impl RegistryActor {
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         // `read_dir` fails for a missing path and for a file alike.
-        let ready = self
-            .ready(provider)
-            .map(|(launch, _)| self.with_credential(launch.clone()));
+        let ready = self.ready(provider).map(|(launch, _)| launch);
         match (std::fs::read_dir(&directory.0), ready) {
             (Err(_), _) => Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)),
             (Ok(_), Err(reason)) => Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {

@@ -309,9 +309,12 @@ pub fn login(claude_path: &Path, home: &Home) -> Command {
 pub(crate) fn command(opts: &ClaudeOptions) -> Command {
     let mut cmd = cli(&opts.claude_path, &opts.home);
     match &opts.credential {
+        // The scrub keeps the token out of the commands, hooks and MCP
+        // servers Claude starts; Claude itself still uses it.
         Some(ClaudeCredential::Gateway { base_url, token }) => {
             cmd.env("ANTHROPIC_BASE_URL", base_url)
-                .env("ANTHROPIC_AUTH_TOKEN", token);
+                .env("ANTHROPIC_AUTH_TOKEN", token)
+                .env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1");
         }
         None => {}
     }
