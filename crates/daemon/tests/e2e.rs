@@ -2449,6 +2449,42 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
     fx.router.shutdown().await.unwrap();
 }
 
+/// Through the owner's gateway, with betas off, the CLI streams an empty
+/// thinking block (`claude-killed.jsonl`'s first turn), which shows nothing.
+#[tokio::test]
+async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
+    let fx = host().await;
+    let dir = scratch("betas-off", "claude-killed.jsonl");
+    let (phone, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&phone, start(Provider::Claude, &dir)).await;
+    let _ = send(&phone, message("sheep?")).await;
+    let turn = events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        (
+            turn.iter()
+                .filter(|event| matches!(
+                    event.kind,
+                    EventKind::Reasoning { .. } | EventKind::ReasoningDelta { .. }
+                ))
+                .count(),
+            items(&fold(turn), 1)
+                .into_iter()
+                .filter(|item| matches!(item, Item::Reasoning { .. } | Item::Reply { .. }))
+                .collect::<Vec<Item>>(),
+        ),
+        (
+            0,
+            Vec::from([Item::Reply {
+                text: String::from("18"),
+                state: ReplyState::Done,
+            }])
+        )
+    );
+    phone.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
 /// A Claude CLI killed mid-turn closes the session; `Continue` starts it
 /// again with `--resume` on the same conversation, model and effort, and
 /// the next turn runs.
