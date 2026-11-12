@@ -6,7 +6,8 @@ use agents::claude::{
     ToolDetail,
 };
 use agents::codex::{
-    self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId,
+    self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk,
+    ThreadEvent, TurnId,
 };
 use proto::{
     Change, ClientName, CloseReason, Decision, EventKind, FileChange, ToolCallId, ToolKind,
@@ -283,10 +284,18 @@ fn approval_tool(kind: ApprovalKind) -> Option<(ToolKind, Option<String>)> {
         ApprovalKind::FileChange { reason, .. } => {
             Some((ToolKind::FileChange { files: Vec::new() }, reason))
         }
-        ApprovalKind::Permissions { reason, requested } => Some((
+        ApprovalKind::Permissions { reason, asks } => Some((
             ToolKind::Other {
                 name: String::from("permissions"),
-                detail: requested.to_string(),
+                detail: asks
+                    .into_iter()
+                    .map(|ask| match ask {
+                        PermissionAsk::Network => String::from("network access"),
+                        PermissionAsk::Read(places) => format!("read {}", places.join(", ")),
+                        PermissionAsk::Write(places) => format!("write to {}", places.join(", ")),
+                    })
+                    .collect::<Vec<String>>()
+                    .join("; "),
             },
             reason,
         )),
@@ -309,7 +318,7 @@ mod tests {
     };
     use agents::codex::{
         self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
-        ThreadEvent, ThreadId, TurnId,
+        PermissionAsk, ThreadEvent, ThreadId, TurnId,
     };
     use proto::{Change, CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
 
@@ -492,6 +501,33 @@ mod tests {
                         command: String::from("touch ~/b.txt"),
                     },
                     reason: Some(String::from("needs to write outside the workspace")),
+                }]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("2")),
+                    turn: turn(),
+                    item: String::from("exec-3"),
+                    kind: ApprovalKind::Permissions {
+                        reason: Some(String::from("to fetch the crate")),
+                        asks: Vec::from([
+                            PermissionAsk::Network,
+                            PermissionAsk::Write(Vec::from([
+                                String::from("/home/u/.cargo"),
+                                String::from("/tmp"),
+                            ])),
+                        ]),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest::Codex(ApprovalId(String::from("2"))),
+                    call: ToolCallId(String::from("exec-3")),
+                    tool: ToolKind::Other {
+                        name: String::from("permissions"),
+                        detail: String::from("network access; write to /home/u/.cargo, /tmp"),
+                    },
+                    reason: Some(String::from("to fetch the crate")),
                 }]),
             },
             Case {

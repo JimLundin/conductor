@@ -155,7 +155,7 @@ fn approval_label(id: &ApprovalId, kind: ApprovalKind, options: &[Value]) -> Str
     let what = match kind {
         ApprovalKind::Command { command, .. } => format!("command {command:?}"),
         ApprovalKind::FileChange { reason, .. } => format!("fileChange {reason:?}"),
-        ApprovalKind::Permissions { requested, .. } => format!("permissions {requested}"),
+        ApprovalKind::Permissions { asks, .. } => format!("permissions {asks:?}"),
         ApprovalKind::UserInput { questions } => format!("userInput {questions}"),
     };
     // An option is a bare string or a one-key object such as
