@@ -16,9 +16,8 @@ several of your machines, with no server of ours in the path.
   static files from GitHub Pages and installed as an app: Chrome, Edge or
   Safari's Add to Dock on the desktop, Add to Home Screen on the iPhone.
   There is no native client and no Apple Developer account.
-- **Traffic is end-to-end encrypted.** Clients reach hosts over iroh through
-  n0's public relays, then upgrade to a direct WebRTC connection when they
-  can (§4).
+- **Traffic is end-to-end encrypted.** Clients reach hosts over iroh, through
+  n0's public relays where a direct path isn't possible (§4).
 
 ### Goals for v1
 
@@ -44,7 +43,6 @@ preview, cloud workers, multi-user use.
 | D1 | Rust for the daemon, the client core and the UI | One set of types end to end. The agents' SDKs are thin wrappers over stdio protocols we speak directly. |
 | D2 | One Dioxus web app for every device | Dioxus renders real HTML, which mobile Safari needs for keyboard, scrolling and selection. An installed web app behaves like a native one on the desktop and the iPhone, so there is one build and one test target. A thin native shell can come later if a need appears (tray, global hotkey). |
 | D3 | iroh 1.x through n0's public relays; the relay map is one setting | Connections are authenticated and encrypted and dialed by public key. A browser can't send UDP, so in a browser every iroh connection is relayed. |
-| D3b | Upgrade browsers to direct WebRTC over the authenticated iroh stream | WebRTC is the only direct path a browser has. Without it, every client, including a desktop on the host's own LAN, would send all traffic through n0's relays, which are meant for development. The iroh stream carries the signaling, so no signaling server is needed; if WebRTC fails the client stays on iroh. |
 | D4 | Each host is the only source of truth for its own sessions | No replication between hosts. Clients connect to each host and merge. Catching up is "events after seq N". |
 | D5 | Trust comes from a fleet root key that signs device certificates (planned, §6) | Hosts store only the root's public key, so pairing a device once gives it access to every host. |
 | D6 | Speak each agent's native protocol, with owned wire types for only the messages we use | Claude's stream-json control protocol and Codex's app-server JSON-RPC carry approvals, interrupts and resume. Lowest-common-denominator protocols (ACP) lose them. |
@@ -70,8 +68,8 @@ so one UI and one set of commands work for both agents.
   it takes the next `HostSeq` and is replayed on catch-up. Deltas go only to
   subscribers that are live, because the finished message replaces them. A
   delta carries the seq of the last stored event, so the client's gap check
-  still holds. A client that reconnects or switches transport mid-reply may
-  miss deltas; the finished message repairs the text.
+  still holds. A client that reconnects mid-reply may miss deltas; the
+  finished message repairs the text.
 
 What both providers have belongs in the model. What only one has goes in
 typed per-provider options instead of being forced into it: Claude's
@@ -93,7 +91,6 @@ client:
 | `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, providers }`. |
 | `Open::Command` | One `Command` → one `CommandResult`, then the stream closes. |
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor, then streams live. A cursor from another epoch is refused. |
-| `Open::Rtc { sdp }` | Negotiates the WebRTC upgrade (§4.3) and stays open while it lives. |
 
 Each frame is a `u32` length and a postcard body.
 
@@ -111,47 +108,8 @@ Each frame is a `u32` length and a postcard body.
   needs clang for wasm32.
 - Tests use `presets::Minimal` with relays disabled, on loopback.
 
-### 4.3 WebRTC upgrade
-
-1. Once the browser's link is live, it creates an `RTCPeerConnection` with
-   one data channel and opens `Open::Rtc { sdp }`. The host answers from a
-   str0m `Rtc` with `Signal::Answer`, and both sides trickle
-   `Signal::Candidate`s on the same stream.
-2. **Binding:** each side's DTLS fingerprint is in its SDP, and both SDPs
-   travel only on the authenticated iroh stream, which the host checks.
-3. **STUN:** both sides ask public STUN servers for their public address
-   (`proto::DEFAULT_STUN_SERVERS`, `--stun` on the host). str0m does no STUN,
-   so the host encodes the binding exchange itself. There is no TURN.
-4. **Host sockets:** one UDP socket per up, non-loopback IPv4 interface, on an
-   ephemeral port or the first free port of `--rtc-ports`.
-5. **Streams:** every stream but `Hello` becomes an ordered, reliable data
-   channel with the same frames, split into messages of at most 16 KiB
-   (`proto::CHUNK_LEN`) and reassembled with `proto::FrameBuffer`.
-6. **Switching:** when the channel opens, the client subscribes on WebRTC
-   from its cursor and drops the relayed subscription; the host's replay
-   covers the overlap and the client skips seqs it has. If WebRTC drops, the
-   client subscribes on iroh again at once and retries the upgrade later
-   (15 s, 30 s, 60 s, 120 s, then every 300 s).
-
-#### Running the host in WSL
-
-With `networkingMode=mirrored`, WSL shares Windows' addresses, but the
-Hyper-V firewall blocks inbound traffic to WSL by default, so a phone's ICE
-checks never arrive. Start the host with a fixed range and open it for WSL on
-private networks only:
-
-```sh
-conductord host --rtc-ports 50000-50099
-```
-
-```powershell
-New-NetFirewallHyperVRule -Name ConductorWebRTC -DisplayName "Conductor WebRTC" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 50000-50099 -Profiles Private -Action Allow
-```
-
-`Remove-NetFirewallHyperVRule -Name ConductorWebRTC` removes it. The browser
-offers its LAN address only as an mDNS `.local` name, which the host skips;
-the host learns the phone's address as a peer-reflexive candidate once its
-checks arrive.
+There is no WebRTC upgrade: iroh over n0's relay carries all traffic, and
+that is enough for this app's text-sized traffic.
 
 ## 5. The host (`conductord`)
 
@@ -318,6 +276,6 @@ client catches up from its cursors.
 | anthropics/claude-agent-sdk-python | MIT | Claude's control protocol |
 | openai/codex (`codex-rs/app-server`, its JSON Schema) | Apache-2.0 | Codex's protocol |
 | getpaseo/paseo | Apache-2.0 | Provider option sets, timeline epochs |
-| BloopAI/vibe-kanban (`executors`, `relay-webrtc`) | Apache-2.0 | Second reference for the clients; WebRTC signaling and chunking |
+| BloopAI/vibe-kanban (`executors`) | Apache-2.0 | Second reference for the clients |
 | hardbeat920/monocode | MIT | SSH host bootstrap, provider lifecycle |
-| n0-computer/iroh, algesten/str0m, DioxusLabs/dioxus | Apache-2.0/MIT | Transport, host WebRTC, UI |
+| n0-computer/iroh, DioxusLabs/dioxus | Apache-2.0/MIT | Transport, UI |

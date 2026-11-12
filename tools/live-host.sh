@@ -33,7 +33,7 @@ mkdir -p "$logs"
 rm -rf "$scratch"
 mkdir -p "$scratch"
 data_dir=$(mktemp -d)
-"$target"/debug/conductord host --data-dir "$data_dir" --claude-model haiku --codex-model gpt-6-luna --no-webrtc \
+"$target"/debug/conductord host --data-dir "$data_dir" --claude-model haiku --codex-model gpt-6-luna \
   >"$logs/host.out" 2>"$logs/host.log" &
 host_pid=$!
 trap 'kill $host_pid 2>/dev/null || true; rm -rf "$data_dir"' EXIT
