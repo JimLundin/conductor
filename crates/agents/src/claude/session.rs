@@ -13,6 +13,7 @@ use proto::{ClaudeCredential, Effort, Models};
 use serde_json::Value;
 
 use crate::{Exit, Home};
+use n0_future::StreamExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
@@ -80,6 +81,9 @@ pub enum Error {
     Encode(#[from] serde_json::Error),
     #[error("the claude process has exited")]
     Exited,
+    /// The CLI exited before it answered `initialize`, saying why.
+    #[error("claude exited: {0}")]
+    Refused(String),
     #[error("claude rejected {subtype}: {message}")]
     Control { subtype: String, message: String },
     #[error("claude did not answer {0} within {CONTROL_TIMEOUT:?}")]
@@ -152,9 +156,9 @@ impl ClaudeSession {
             .zip(child.stdout.take())
             .zip(child.stderr.take())
             .ok_or(Error::Command(String::from("claude stdio was not piped")))?;
-        tokio::spawn(log_stderr(stderr));
+        let last_stderr = tokio::spawn(log_stderr(stderr));
 
-        let (events_tx, events_rx) = mpsc::channel(1024);
+        let (events_tx, mut events_rx) = mpsc::channel(1024);
         let (commands_tx, commands_rx) = mpsc::channel(32);
         let actor = Actor {
             process: Process::Running(Box::new(Running {
@@ -176,7 +180,10 @@ impl ClaudeSession {
             models: Models::none(),
             pid,
         };
-        let initialize = session.control(ControlCall::Initialize).await?;
+        let initialize = match session.control(ControlCall::Initialize).await {
+            Err(Error::Exited) => Err(Error::Refused(refusal(&mut events_rx, last_stderr).await)),
+            answer => answer,
+        }?;
         let session = ClaudeSession {
             models: models(&initialize),
             ..session
@@ -441,15 +448,49 @@ pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
     crate::process::no_window(cmd)
 }
 
-async fn log_stderr(stderr: ChildStderr) -> std::io::Result<()> {
-    let mut lines = BufReader::new(stderr).lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => tracing::warn!(target: "claude::stderr", "{line}"),
-            Ok(None) => break Ok(()),
-            Err(e) => break Err(e),
-        }
+/// Logs each stderr line, and returns the last once stderr closes.
+async fn log_stderr(stderr: ChildStderr) -> Option<String> {
+    n0_future::stream::unfold(BufReader::new(stderr).lines(), |mut lines| async move {
+        lines
+            .next_line()
+            .await
+            .ok()
+            .flatten()
+            .map(|line| (line, lines))
+    })
+    .inspect(|line| tracing::warn!(target: "claude::stderr", "{line}"))
+    .last()
+    .await
+}
+
+/// Why a CLI exited before it answered `initialize`: the `errors` of the
+/// `result` it printed, else its last stderr line.
+async fn refusal(
+    events: &mut mpsc::Receiver<ClaudeEvent>,
+    last_stderr: tokio::task::JoinHandle<Option<String>>,
+) -> String {
+    let errors = Box::pin(n0_future::stream::unfold(events, |events| async move {
+        events.try_recv().ok().map(|event| (event, events))
+    }))
+    .filter_map(|event| match event {
+        ClaudeEvent::TurnFinished { errors, .. } => errors.first().map(|_| errors.join("; ")),
+        _ => None,
+    })
+    .next()
+    .await;
+    match errors {
+        Some(errors) => errors,
+        None => stderr_reason(last_stderr).await,
     }
+}
+
+async fn stderr_reason(last_stderr: tokio::task::JoinHandle<Option<String>>) -> String {
+    tokio::time::timeout(CONTROL_TIMEOUT, last_stderr)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+        .unwrap_or_else(|| String::from("it printed no reason"))
 }
 
 struct Running {

@@ -211,6 +211,12 @@ From the 2026-11-12 `s1` run, steps 11 to 13, and probes the same day.
   `<home>/projects/<cwd with / as ->/<session_id>.jsonl`, and `--resume`
   found it from another working directory, and with another `--model` and
   `--effort`. (Probe.)
+- `--resume` with no transcript in the home never answers `initialize`. It
+  prints one `result` with `subtype: "error_during_execution"`, `num_turns:
+  0` and `errors: ["No conversation found with session ID: <id>"]`, writes
+  the same text to stderr, and exits 1 (2026-11-12, scratch home,
+  `session6-resume-missing.jsonl`). A start that exits before `initialize`
+  fails with the `result`'s `errors`, or else the last stderr line.
 - `set_permission_mode` is acknowledged with `{"mode": "acceptEdits"}` and
   followed by a `system/status` frame. (Step 5.)
 - Closing stdin ends the process. It exited 0 when the last turn succeeded and

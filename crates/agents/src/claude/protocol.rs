@@ -170,6 +170,9 @@ pub enum ClaudeEvent {
         outcome: Outcome,
         terminal_reason: Option<String>,
         session_id: SessionId,
+        /// Why the CLI could not run the turn, as `No conversation found
+        /// with session ID: …` for a `--resume` with no transcript.
+        errors: Vec<String>,
     },
     Exited {
         status: Exit,
@@ -226,6 +229,7 @@ enum Frame {
         is_error: Option<bool>,
         terminal_reason: Option<String>,
         session_id: String,
+        errors: Option<Vec<String>>,
     },
     ControlRequest {
         request_id: String,
@@ -467,11 +471,13 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
             is_error,
             terminal_reason,
             session_id,
+            errors,
         } => Inbound::Event(ClaudeEvent::TurnFinished {
             subtype,
             outcome: outcome(is_error),
             terminal_reason,
             session_id: SessionId(session_id),
+            errors: errors.unwrap_or_default(),
         }),
         Frame::ControlRequest {
             request_id,

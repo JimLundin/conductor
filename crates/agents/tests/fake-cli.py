@@ -18,6 +18,8 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
   once that many lines are read, so the session's next write fails. The
   process stays up 1 s after the recording ends, so the failure isn't an exit.
 - `{"fake": "exit"}` kills the process with SIGKILL, as a crash would.
+- `{"fake": "fail", "stderr": "...", "status": 1}` writes that line to
+  stderr and exits with that status, as a CLI that refuses to start does.
 
 Each start in the same directory is a new run. Run 1 plays `stdout.jsonl`
 and logs `stdin.jsonl`; run n after it plays `stdout.n.jsonl`, or
@@ -123,6 +125,10 @@ for line in recording:
         continue
     if msg.get("fake") == "exit":
         os.kill(os.getpid(), signal.SIGKILL)
+    if msg.get("fake") == "fail":
+        sys.stderr.write(msg["stderr"] + "\n")
+        sys.stderr.flush()
+        os._exit(msg["status"])
     if msg.get("fake") == "pace":
         pace = msg["ms"] / 1000
         continue

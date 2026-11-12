@@ -393,6 +393,7 @@ mod tests {
             outcome,
             terminal_reason: terminal_reason.map(String::from),
             session_id: SessionId(String::from("s")),
+            errors: Vec::new(),
         }
     }
 

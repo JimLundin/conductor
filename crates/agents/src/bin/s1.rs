@@ -248,6 +248,7 @@ impl Turn {
                 outcome,
                 terminal_reason,
                 session_id,
+                ..
             } => {
                 self.finished = Some(Finished {
                     subtype,

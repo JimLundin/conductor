@@ -2375,6 +2375,8 @@ const THOUGHT: &str = "\"All but 9 run away\" means 9 stay, so he buys double th
 
 /// Reasoning streams to live clients and is stored once finished, so a
 /// client that catches up later sees the finished text without deltas.
+/// The CLI sends this traffic only with betas on, which the owner's
+/// gateway refuses.
 #[tokio::test]
 async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
     let fx = host().await;
@@ -2541,6 +2543,40 @@ async fn a_killed_claude_session_continues_its_conversation() {
         [Item::Continued(CloseReason::Exited {
             status: String::from("signal: 9 (SIGKILL)"),
         })]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// A `Continue` whose transcript is gone leaves the session closed, with
+/// the CLI's own reason (the recorded `result` of the pinned CLI).
+#[tokio::test]
+async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
+    let fx = host().await;
+    let dir = scratch("resume-missing", "claude-killed.jsonl");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-resume-missing.jsonl"),
+        dir.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = send(&link, message("sheep?")).await;
+    let _ = events_until(&mut updates, Until::TurnEnd).await;
+    let _ = send(&link, message("count")).await;
+    let _ = events_until(&mut updates, Until::Closed).await;
+    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::Closed).await,
+        [EventKind::SessionClosed {
+            reason: CloseReason::FailedToStart {
+                message: String::from(
+                    "claude exited: No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10"
+                ),
+            },
+        }]
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();

@@ -633,6 +633,53 @@ async fn unknown_control_request_gets_an_error_reply() {
     );
 }
 
+/// The pinned CLI's answer to `--resume` with no transcript in its home:
+/// one `result` on stdout and the same text on stderr, then exit 1, with no
+/// answer to `initialize`.
+#[tokio::test]
+async fn a_resume_with_no_transcript_fails_with_the_clis_reason() {
+    let recorded = std::fs::read_to_string(fixture("session6-resume-missing.jsonl")).unwrap();
+    let stdout = recording(
+        "resume-missing",
+        Vec::from([
+            recorded.trim_end(),
+            r#"{"fake":"fail","stderr":"No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10","status":1}"#,
+        ]),
+    );
+    let claude = fake_claude("resume-missing", &stdout);
+    let refused = ClaudeSession::spawn(options(&claude))
+        .await
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        refused.as_deref(),
+        Some(
+            "claude exited: No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10"
+        )
+    );
+}
+
+/// A CLI that prints no `result`, as one without a flag we pass, fails
+/// with its last stderr line.
+#[tokio::test]
+async fn a_cli_that_exits_at_start_fails_with_its_last_stderr_line() {
+    let stdout = recording(
+        "unknown-option",
+        Vec::from([
+            r#"{"fake":"fail","stderr":"error: unknown option '--thinking-display'","status":1}"#,
+        ]),
+    );
+    let claude = fake_claude("unknown-option", &stdout);
+    let refused = ClaudeSession::spawn(options(&claude))
+        .await
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        refused.as_deref(),
+        Some("claude exited: error: unknown option '--thinking-display'")
+    );
+}
+
 const FUTURE_CLI: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.2.0"}}}"#;
 
 #[tokio::test]

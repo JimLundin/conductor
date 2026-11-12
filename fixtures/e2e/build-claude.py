@@ -26,6 +26,7 @@ SESSION3 = HERE.parent / "claude" / "session3-questions.jsonl"
 PROBE = HERE.parent / "claude" / "probe-thinking.jsonl"
 SESSION4 = HERE.parent / "claude" / "session4-chosen-killed.jsonl"
 SESSION5 = HERE.parent / "claude" / "session5-resumed.jsonl"
+SESSION6 = HERE.parent / "claude" / "session6-resume-missing.jsonl"
 
 # The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt at
 # start, pong, 3c interrupt mid-stream, pong, 3d interrupt at send, pong,
@@ -103,3 +104,11 @@ for name, (source, picked) in RECORDINGS.items():
     killed = [wait({"type": "user"}), json.dumps({"fake": "exit"})] if name in KILLED else []
     out = hang_up + gated(lines[0], False, False) + turn + killed
     (HERE / name).write_text("\n".join(out) + "\n")
+
+# A `--resume` whose transcript is gone: the CLI prints its one `result`,
+# writes the same reason to stderr and exits 1, before `initialize`.
+refused = SESSION6.read_text().splitlines()
+reason = json.loads(refused[-1])["errors"][-1]
+(HERE / "claude-resume-missing.jsonl").write_text(
+    "\n".join(refused + [json.dumps({"fake": "fail", "stderr": reason, "status": 1})]) + "\n"
+)
