@@ -359,6 +359,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* Fades in late, so a quick gap between events doesn't flash it. */
+.working {
+  color: var(--muted);
+  font-size: 0.875rem;
+  animation: appear 240ms ease-out 400ms backwards, breathe 1.8s ease-in-out 640ms infinite;
+}
+@keyframes appear { from { opacity: 0; } }
+@keyframes breathe { 50% { opacity: 0.4; } }
+
 .tool {
   display: flex;
   align-items: baseline;

@@ -129,6 +129,13 @@ pub enum Interrupt {
     Hidden,
 }
 
+/// Whether the transcript ends with a sign that the agent is working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Working {
+    Shown,
+    Hidden,
+}
+
 /// Whether a session waits on a person.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Attention {
@@ -213,6 +220,30 @@ impl SessionView {
         Controls {
             composer,
             interrupt,
+        }
+    }
+
+    /// A running turn shows it is working, unless its last item is live
+    /// already: a reply streaming in, or a tool call running or asking.
+    pub fn working(&self) -> Working {
+        match (&self.status, self.items.last()) {
+            (
+                SessionStatus::Running,
+                Some(
+                    Item::Reply {
+                        state: ReplyState::Streaming,
+                        ..
+                    }
+                    | Item::Tool {
+                        state: ToolState::Running,
+                        ..
+                    },
+                ),
+            ) => Working::Hidden,
+            (SessionStatus::Running, _) => Working::Shown,
+            (SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Closed(_), _) => {
+                Working::Hidden
+            }
         }
     }
 
@@ -457,7 +488,7 @@ mod tests {
 
     use super::{
         Approval, Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView,
-        ToolState,
+        ToolState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -787,6 +818,88 @@ mod tests {
             view.directories(),
             Vec::from([HostPath(text("/b")), HostPath(text("/a"))])
         );
+    }
+
+    /// The events after a session starts, and whether it then shows that
+    /// the agent is working.
+    struct WorkingCase {
+        events: Vec<EventKind>,
+        working: Working,
+    }
+
+    #[test]
+    fn a_running_turn_shows_it_is_working_until_something_live_ends_the_transcript() {
+        let user = EventKind::UserMessage {
+            text: text("hi"),
+            by: ClientName(text("phone")),
+        };
+        let finished = EventKind::ToolCall {
+            call: ToolCallId(text("toolu_1")),
+            phase: ToolPhase::Finished {
+                outcome: ToolOutcome::Succeeded,
+            },
+        };
+        let cases = Vec::from([
+            WorkingCase {
+                events: Vec::new(),
+                working: Working::Hidden,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone()]),
+                working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), delta("Hel")]),
+                working: Working::Hidden,
+            },
+            WorkingCase {
+                events: Vec::from([
+                    user.clone(),
+                    delta("Hel"),
+                    EventKind::AssistantMessage {
+                        text: text("Hello"),
+                    },
+                ]),
+                working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), started("toolu_1")]),
+                working: Working::Hidden,
+            },
+            WorkingCase {
+                events: Vec::from([user.clone(), started("toolu_1"), finished]),
+                working: Working::Shown,
+            },
+            WorkingCase {
+                events: Vec::from([
+                    user,
+                    EventKind::TurnCompleted {
+                        outcome: TurnOutcome::Completed,
+                    },
+                ]),
+                working: Working::Hidden,
+            },
+        ]);
+        let (got, want) = cases
+            .into_iter()
+            .map(|case| {
+                let view = fold(
+                    Vec::from([created("/a"), EventKind::SessionReady])
+                        .into_iter()
+                        .chain(case.events)
+                        .map(|kind| (1, kind))
+                        .collect(),
+                );
+                (
+                    view.sessions
+                        .values()
+                        .map(SessionView::working)
+                        .collect::<Vec<Working>>(),
+                    Vec::from([case.working]),
+                )
+            })
+            .unzip::<Vec<Working>, Vec<Working>, Vec<Vec<Working>>, Vec<Vec<Working>>>();
+        assert_eq!(got, want);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use client::host_view::{
     self, Approval, Interrupt, Item, ReplyState, RequestState, SessionStatus, SessionView,
-    ToolState,
+    ToolState, Working,
 };
 use client::new_session::label;
 use dioxus::prelude::*;
@@ -23,6 +23,7 @@ pub(crate) fn SessionPane(
     on_back: EventHandler<()>,
 ) -> Element {
     let controls = session.controls();
+    let working = session.working();
     let provider = label(session.provider);
     let status = session.status.word();
     let empty = match (&session.status, session.items.first()) {
@@ -60,6 +61,10 @@ pub(crate) fn SessionPane(
                         TranscriptItem { key: "{i}", item, on_decide: move |(request, decision)| {
                             run_command(link, notice, CommandBody::Resolve { session: id, request, decision })
                         } }
+                    }
+                    match working {
+                        Working::Shown => rsx! { p { class: "working", role: "status", "Thinking…" } },
+                        Working::Hidden => rsx! {},
                     }
                 }
             }
