@@ -318,9 +318,13 @@ so far. T3 Code does the same with `ProviderTextDeltaCoalescer.ts`.
    str0m does no STUN, so the host encodes the RFC 8489 Binding exchange itself and adds
    the answer as a server-reflexive candidate. No TURN server is configured, so nothing
    relays except n0's iroh relay.
-5. **Host sockets:** one UDP socket per up, non-loopback IPv4 interface, each on an
-   ephemeral port. They never collide with iroh's socket, or with another host on the same
-   machine.
+5. **Host sockets:** one UDP socket per up, non-loopback IPv4 interface. Each takes an
+   ephemeral port, or with `--rtc-ports <first>-<last>` the first free port in that
+   range, so a session uses one port of the range per interface. When the range is full,
+   the host refuses the offer: it logs a warning that names the range and closes the
+   signaling stream, and the client stays on iroh. The sockets close when the session
+   ends, before its signaling stream does. They never collide with iroh's socket, or with
+   another host on the same machine.
 6. **Streams:** every stream of §5.1 except `Hello` becomes an ordered, reliable data
    channel carrying the same length-prefixed frames. A frame is split into messages of
    at most 16 KiB (`proto::CHUNK_LEN`) and reassembled with `proto::FrameBuffer`. A data
@@ -333,15 +337,54 @@ so far. T3 Code does the same with `ProviderTextDeltaCoalescer.ts`.
    WebRTC from then on. The iroh connection stays open and idle.
 8. **Fallback:** if ICE, DTLS or the data channel isn't up within 15 s, the client stays
    on iroh, shows `Relayed`, reports the reason to the host (`Signal::Failed`), and
-   retries after a jittered backoff from 2 s to 2 min. If the WebRTC connection fails or
-   its subscription channel closes, the client subscribes on iroh from its cursor at
-   once, then retries.
+   retries after 15 s, 30 s, 60 s and 120 s, then every 300 s. The schedule starts over
+   when the link reconnects or WebRTC carries a subscription. If the WebRTC connection
+   fails or its subscription channel closes, the client subscribes on iroh from its
+   cursor at once, then retries.
 9. **Path:** `PathKind::WebRtc` carries the selected candidate pair (host, srflx, prflx)
    from the browser's `getStats`. The status line shows it, and the browser sends it to
    the host log (`Signal::Selected`). Native clients hole-punch with iroh and never
    upgrade.
 10. **Reference:** Vibe Kanban `crates/relay-webrtc/` (Apache-2.0) for signaling and
     chunking. It now uses str0m too.
+
+#### Running the host in WSL (mirrored networking)
+
+With `networkingMode=mirrored`, WSL shares the Windows machine's addresses, so a phone on
+the same Wi-Fi can reach the host directly. Windows still filters that traffic with the
+Hyper-V firewall, whose default for WSL is `DefaultInboundAction: Block`. The phone's
+ICE checks then never arrive (0 datagrams in), and the upgrade fails. By default the
+host's WebRTC sockets take random ports, so no narrow rule can open them.
+
+1. Start the host with a fixed port range:
+
+   ```sh
+   conductord host --rtc-ports 50000-50099
+   ```
+
+   Each WebRTC session takes one port per local IPv4 address, so 100 ports cover several
+   clients with room to spare.
+
+2. In an administrator PowerShell on Windows, allow inbound UDP to that range for WSL
+   only:
+
+   ```powershell
+   New-NetFirewallHyperVRule -Name ConductorWebRTC -DisplayName "Conductor WebRTC" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 50000-50099 -Action Allow
+   ```
+
+   `{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}` is WSL's `VMCreatorId`. Check the current
+   default with `Get-NetFirewallHyperVVMSetting -PolicyStore ActiveStore -Name
+   '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'`.
+
+3. To remove the rule again:
+
+   ```powershell
+   Remove-NetFirewallHyperVRule -Name ConductorWebRTC
+   ```
+
+The browser offers its own LAN address only as an mDNS `.local` name, which the host
+skips. That doesn't stop the upgrade: once the phone's checks arrive, the host learns the
+phone's address as a peer-reflexive candidate.
 
 **This is required, not optional.** You accept n0 relays for setup and for occasional
 fallback, but not for all phone traffic, so the phone isn't done until WebRTC carries its

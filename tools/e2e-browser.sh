@@ -3,10 +3,11 @@
 # GitHub Pages does, and drives headless Chromium and WebKit at an iPhone
 # viewport against `conductord host` running the fake CLIs
 # (crates/agents/tests/fake-*.sh), first through n0's relays, then over the
-# WebRTC upgrade. Each scenario gets its own host: the upgrade, a forced
-# upgrade failure (fallback), WebRTC dropped mid-turn (drop), two Codex
-# sessions on one app-server (codex, Chromium only), and the screenshots of
-# the states a real CLI shows only with careful timing (screens).
+# WebRTC upgrade. Each scenario gets its own host: the upgrade, with its
+# sockets in --rtc-ports (upgrade), a forced upgrade failure (fallback),
+# WebRTC dropped mid-turn (drop), two Codex sessions on one app-server
+# (codex, Chromium only), and the screenshots of the states a real CLI shows
+# only with careful timing (screens).
 # Output: docs/p1/browser-run.txt and docs/p1/screens/*-{running,closed,idle}.png.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -99,7 +100,7 @@ set +e
   wasm=$(ls -t "$target"/dx/app/release/web/public/assets/*.wasm | head -1)
   echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
 
-  start_host upgrade
+  start_host upgrade --rtc-ports 50000-50099
   echo
   echo "## Upgrade, Chromium"
   turn_run chromium upgrade "$scratch/chromium.png"
@@ -113,6 +114,10 @@ set +e
   echo
   expect upgrade 6 'command .*transport="webrtc"' 'both turns'"'"' commands went over WebRTC'
   expect upgrade 0 'command .*transport="iroh"' 'no command went over iroh'
+  ports=$(host_log upgrade | grep -oE 'host_candidates=\[[^]]*\]' | grep -oE ':[0-9]+' | tr -d : | sort -un)
+  [ -n "$ports" ] && [ -z "$(awk '$1 < 50000 || $1 > 50099' <<<"$ports")" ] ||
+    { echo "FAILED: host upgrade: host candidate ports $(echo $ports) not all in --rtc-ports 50000-50099"; exit 1; }
+  echo "ok: host upgrade: host candidate ports $(echo $ports) are in --rtc-ports 50000-50099"
 
   for engine in chromium webkit; do
     start_host "fallback-$engine" --test-rtc-blackhole

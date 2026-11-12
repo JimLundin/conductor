@@ -110,6 +110,32 @@ Wi-Fi as the host.
    inbound UDP to WSL. The desktop browser on the same machine exchanges
    datagrams (59 in, 83 out) but ICE stays in Checking; Windows and WSL share
    192.168.0.27 in mirrored mode. The client retries every 15 s, forever.
+
+   *Follow-up (branch `rtc-ports`).* The phone's case is the Hyper-V firewall:
+   `conductord host --rtc-ports 50000-50099` plus the rule in architecture §5.4,
+   "Running the host in WSL". The client now retries after 15 s, 30 s, 60 s and
+   120 s, then every 300 s.
+
+   *Same-machine hypothesis, untested.* The desktop browser and the host share
+   192.168.0.27, and WSL's `hostAddressLoopback` setting is off by default. Its
+   documentation says that only with it on can Windows and WSL reach each other
+   by an address assigned to the host; `127.0.0.1` always works. The browser's
+   checks reach the host (59 in), and the host learns the browser as a
+   peer-reflexive candidate at 192.168.0.27 on the browser's port. But inside
+   WSL, 192.168.0.27 is a local address, so Linux delivers the host's responses
+   (83 out) on its own loopback, where nothing listens on the browser's port.
+   They never reach Windows. The browser gets no binding response, so ICE stays
+   in Checking. The host's `webrtc session ended` line should show
+   `last_remote=192.168.0.27:<port>` with `connected=false`.
+
+   *Experiment.* (1) In WSL, `ip route get 192.168.0.27` should print `local
+   192.168.0.27 dev lo`. (2) During an attempt, `sudo tcpdump -ni any udp
+   portrange 50000-50099` should show the host's responses leaving on `lo`, not
+   on `eth0`. (3) Set `hostAddressLoopback=true` under `[experimental]` in
+   `%UserProfile%\.wslconfig`, run `wsl --shutdown`, start the host again, and
+   retry the desktop browser. If ICE then connects with a prflx pair, the
+   hypothesis holds. If it doesn't, compare `chrome://webrtc-internals`
+   (requests sent and responses received per candidate pair) with the host log.
 2. **Step 3, the checklist was wrong**: Codex may write under `/tmp` without
    asking, so `/tmp/smoke-outside` never prompted. Fixed above.
 3. **Step 3, Codex shows nothing while it reasons.** The rebase turn sent no
