@@ -111,6 +111,9 @@ From the 2026-11-11 `s1` runs with `--include-partial-messages`.
 - Closing stdin ends the process. It exited 0 when the last turn succeeded and
   1 when the last turn was the interrupted step 3b. That the exit code follows
   the last turn's `is_error` is an inference from two runs, not a tested rule.
-- `claude-codes` always passes `--print`. The SDK does not. Streaming input,
-  control requests and multi-turn sessions all worked with it. (All steps.)
+- We always pass `--print`. The SDK does not. Streaming input, control
+  requests and multi-turn sessions all worked with it. (All steps.)
+- We send `initialize` without the SDK's `"hooks": null`, and user messages as
+  a content block array without `session_id`, where the SDK sends a string
+  with `"session_id": "default"`. The CLI accepts both. (Every session.)
 - stderr was empty in every run.

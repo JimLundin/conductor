@@ -1,23 +1,16 @@
-//! The stdio boundary. Each app-server stdout line is parsed with `codex-codes`
-//! and mapped into our own types here, and every line we write is built here.
-//! Nothing from `codex-codes` leaves this module.
+//! The stdio boundary. Each app-server stdout line is parsed into the few
+//! JSON-RPC messages we read and mapped into our own types here, and every line
+//! we write is built here. Methods and fields we do not model are ignored or
+//! passed on as `Unknown`.
 
 use std::path::PathBuf;
 
-use codex_codes::protocol::methods;
-use codex_codes::{
-    AskForApproval, ClientInfo, CommandExecutionRequestApprovalResponse,
-    FileChangeRequestApprovalResponse, FileSystemAccessMode, FileSystemPath,
-    FileSystemSandboxEntry, FileSystemSpecialPath, InitializeCapabilities, InitializeParams,
-    JsonRpcMessage, LegacyAppPathString, ModelListParams, Notification, PatchChangeKind,
-    ReasoningEffort, RequestId, RequestPermissionProfile, SandboxMode, ServerRequest,
-    ThreadItemPayload, ThreadResumeParams, ThreadStartParams, TurnInterruptParams, TurnStartParams,
-    TurnStatus, UserInput,
-};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Exit;
+
+pub(crate) const INITIALIZE: &str = "initialize";
 
 /// A Codex thread id, as returned by `thread/start` and accepted by `thread/resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -35,18 +28,47 @@ pub struct ApprovalId(pub String);
 
 impl ApprovalId {
     pub(crate) fn of(id: &RequestId) -> ApprovalId {
-        ApprovalId(id.to_string())
+        ApprovalId(match id {
+            RequestId::Integer(n) => n.to_string(),
+            RequestId::String(s) => s.clone(),
+        })
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A JSON-RPC id, which Codex sends as a number or a string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum RequestId {
+    Integer(i64),
+    String(String),
+}
+
+impl RequestId {
+    fn read(id: &Value) -> Option<RequestId> {
+        match id {
+            Value::Number(n) => n.as_i64().map(RequestId::Integer),
+            Value::String(s) => Some(RequestId::String(s.clone())),
+            _ => None,
+        }
+    }
+
+    fn wire(self) -> Value {
+        match self {
+            RequestId::Integer(n) => Value::from(n),
+            RequestId::String(s) => Value::from(s),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ApprovalPolicy {
     Untrusted,
     OnRequest,
     Never,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Sandbox {
     ReadOnly,
     WorkspaceWrite,
@@ -83,14 +105,15 @@ pub enum ItemPhase {
     Completed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum ChangeKind {
     Add,
     Delete,
     Update,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FileChange {
     pub path: String,
     pub kind: ChangeKind,
@@ -251,37 +274,249 @@ pub(crate) enum Inbound {
     },
 }
 
-pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
-    let raw = serde_json::from_str::<Value>(line)?;
-    Ok(
-        match serde_json::from_value::<JsonRpcMessage>(raw.clone()) {
-            Ok(msg) => inbound(msg, raw),
-            Err(_) => unknown(raw),
-        },
-    )
+/// A JSON-RPC message: a request has an `id` and a `method`, a response an
+/// `id` and a `result` or an `error`, and a notification only a `method`.
+#[derive(Deserialize)]
+struct Envelope {
+    id: Option<Value>,
+    method: Option<String>,
+    params: Option<Value>,
+    result: Option<Value>,
+    error: Option<RpcError>,
 }
 
-fn inbound(msg: JsonRpcMessage, raw: Value) -> Inbound {
-    match msg {
-        JsonRpcMessage::Response(r) => Inbound::Response {
-            id: r.id,
-            outcome: Ok(r.result),
+/// The server requests we serve, by `method`, with what each asks.
+#[derive(Deserialize)]
+#[serde(tag = "method", content = "params")]
+enum ServerRequest {
+    #[serde(rename = "item/commandExecution/requestApproval")]
+    Command {
+        command: Option<String>,
+        cwd: Option<String>,
+        reason: Option<String>,
+        #[serde(rename = "availableDecisions")]
+        available_decisions: Option<Vec<Value>>,
+    },
+    #[serde(rename = "item/fileChange/requestApproval")]
+    FileChange {
+        reason: Option<String>,
+        #[serde(rename = "grantRoot")]
+        grant_root: Option<String>,
+    },
+    #[serde(rename = "item/permissions/requestApproval")]
+    Permissions {
+        reason: Option<String>,
+        permissions: Value,
+    },
+    #[serde(rename = "item/tool/requestUserInput")]
+    UserInput { questions: Value },
+}
+
+/// Where a server request belongs, common to every request we serve.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Target {
+    thread_id: String,
+    turn_id: String,
+    item_id: String,
+}
+
+/// The notifications we map, by `method`.
+#[derive(Deserialize)]
+#[serde(tag = "method", content = "params")]
+enum Notification {
+    #[serde(rename = "thread/started")]
+    ThreadStarted { thread: Id },
+    #[serde(rename = "turn/started")]
+    TurnStarted {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        turn: Turn,
+    },
+    #[serde(rename = "turn/completed")]
+    TurnCompleted {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        turn: Turn,
+    },
+    #[serde(rename = "item/agentMessage/delta")]
+    AgentMessageDelta {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        delta: String,
+    },
+    #[serde(rename = "serverRequest/resolved")]
+    ServerRequestResolved {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "requestId")]
+        request_id: Value,
+    },
+    #[serde(rename = "item/started")]
+    ItemStarted {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        item: ThreadItem,
+    },
+    #[serde(rename = "item/completed")]
+    ItemCompleted {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        item: ThreadItem,
+    },
+}
+
+#[derive(Deserialize)]
+struct Id {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct Turn {
+    id: String,
+    status: TurnStatus,
+    error: Option<TurnError>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TurnStatus {
+    Completed,
+    Interrupted,
+    Failed,
+    InProgress,
+}
+
+#[derive(Deserialize)]
+struct TurnError {
+    message: String,
+}
+
+/// The item types we map; any other makes its notification `Unknown`.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ThreadItem {
+    AgentMessage {
+        text: String,
+    },
+    CommandExecution {
+        id: String,
+        command: String,
+        status: String,
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i64>,
+    },
+    FileChange {
+        id: String,
+        changes: Vec<FileChange>,
+        status: String,
+    },
+}
+
+/// What a permissions request asks for, as far as we show it.
+#[derive(Deserialize)]
+struct PermissionProfile {
+    network: Option<Network>,
+    #[serde(rename = "fileSystem")]
+    file_system: Option<FileSystem>,
+}
+
+#[derive(Deserialize)]
+struct Network {
+    enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct FileSystem {
+    read: Option<Vec<String>>,
+    write: Option<Vec<String>>,
+    entries: Option<Vec<FileSystemEntry>>,
+}
+
+#[derive(Deserialize)]
+struct FileSystemEntry {
+    access: Access,
+    path: Place,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Access {
+    Read,
+    Write,
+    Deny,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum Place {
+    Path {
+        path: String,
+    },
+    #[serde(rename = "glob_pattern")]
+    GlobPattern {
+        pattern: String,
+    },
+    Special {
+        value: SpecialPlace,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum SpecialPlace {
+    Root,
+    Minimal,
+    ProjectRoots {
+        subpath: Option<String>,
+    },
+    Tmpdir,
+    SlashTmp,
+    Unknown {
+        path: String,
+        subpath: Option<String>,
+    },
+}
+
+pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
+    let raw = serde_json::from_str::<Value>(line)?;
+    Ok(match serde_json::from_value::<Envelope>(raw.clone()) {
+        Ok(envelope) => inbound(envelope, raw),
+        Err(_) => Inbound::Event(thread_unknown(raw)),
+    })
+}
+
+fn inbound(envelope: Envelope, raw: Value) -> Inbound {
+    let Envelope {
+        id,
+        method,
+        params,
+        result,
+        error,
+    } = envelope;
+    match (id.as_ref().and_then(RequestId::read), method, result, error) {
+        (Some(id), Some(method), _, _) => request(id, method, params, raw),
+        (Some(id), None, Some(result), _) => Inbound::Response {
+            id,
+            outcome: Ok(result),
         },
-        JsonRpcMessage::Error(e) => Inbound::Response {
-            id: e.id,
-            outcome: Err(e.error.message),
+        (Some(id), None, None, Some(error)) => Inbound::Response {
+            id,
+            outcome: Err(error.message),
         },
-        JsonRpcMessage::Request(req) => {
-            match ServerRequest::from_envelope(&req.method, req.params) {
-                Ok(request) => approval(req.id, request, raw),
-                // A known method whose params no longer fit our types.
-                Err(_) => unsupported(req.id, req.method, raw),
-            }
-        }
-        JsonRpcMessage::Notification(n) => match Notification::from_envelope(&n.method, n.params) {
-            Ok(notification) => notification_event(notification, raw),
-            Err(_) => Inbound::Event(thread_unknown(raw)),
+        // `"result": null` reads as no result.
+        (Some(id), None, None, None) => Inbound::Response {
+            id,
+            outcome: Ok(Value::Null),
         },
+        (None, Some(_), _, _) => notification(raw),
+        (None, None, _, _) => Inbound::Event(thread_unknown(raw)),
     }
 }
 
@@ -294,32 +529,20 @@ fn plain_decisions() -> Vec<Value> {
 
 /// A server request we serve, before it is tagged with its id.
 struct Asked {
-    thread: String,
-    turn: String,
-    item: String,
     shape: AnswerShape,
     kind: ApprovalKind,
     options: Vec<Value>,
 }
 
-fn permission_asks(profile: &RequestPermissionProfile) -> Vec<PermissionAsk> {
+fn permission_asks(profile: PermissionProfile) -> Vec<PermissionAsk> {
     let network = profile
         .network
-        .as_ref()
         .and_then(|network| network.enabled)
         .and_then(|enabled| enabled.then_some(PermissionAsk::Network));
-    let (read, write) = match &profile.file_system {
+    let (read, write) = match profile.file_system {
         Some(file_system) => (
-            listed(
-                &file_system.read,
-                &file_system.entries,
-                &FileSystemAccessMode::Read,
-            ),
-            listed(
-                &file_system.write,
-                &file_system.entries,
-                &FileSystemAccessMode::Write,
-            ),
+            listed(&file_system.read, &file_system.entries, &Access::Read),
+            listed(&file_system.write, &file_system.entries, &Access::Write),
         ),
         None => (Vec::new(), Vec::new()),
     };
@@ -340,14 +563,14 @@ fn permission_asks(profile: &RequestPermissionProfile) -> Vec<PermissionAsk> {
 
 /// The places a profile asks `access` to, in its plain lists and its entries.
 fn listed(
-    plain: &Option<Vec<LegacyAppPathString>>,
-    entries: &Option<Vec<FileSystemSandboxEntry>>,
-    access: &FileSystemAccessMode,
+    plain: &Option<Vec<String>>,
+    entries: &Option<Vec<FileSystemEntry>>,
+    access: &Access,
 ) -> Vec<String> {
     plain
         .iter()
         .flatten()
-        .map(|path| path.0.clone())
+        .cloned()
         .chain(
             entries
                 .iter()
@@ -358,109 +581,98 @@ fn listed(
         .collect()
 }
 
-fn place(path: &FileSystemPath) -> String {
+fn place(path: &Place) -> String {
     match path {
-        FileSystemPath::Path { path } => path.0.clone(),
-        FileSystemPath::Glob_pattern { pattern } => pattern.clone(),
-        FileSystemPath::Special { value } => match value {
-            FileSystemSpecialPath::Root => String::from("/"),
-            FileSystemSpecialPath::Minimal => String::from("the minimal system paths"),
-            FileSystemSpecialPath::ProjectRoots { subpath: None } => {
-                String::from("the project roots")
-            }
-            FileSystemSpecialPath::ProjectRoots {
+        Place::Path { path } => path.clone(),
+        Place::GlobPattern { pattern } => pattern.clone(),
+        Place::Special { value } => match value {
+            SpecialPlace::Root => String::from("/"),
+            SpecialPlace::Minimal => String::from("the minimal system paths"),
+            SpecialPlace::ProjectRoots { subpath: None } => String::from("the project roots"),
+            SpecialPlace::ProjectRoots {
                 subpath: Some(subpath),
-            } => format!("{} in the project roots", subpath.0),
-            FileSystemSpecialPath::Tmpdir => String::from("$TMPDIR"),
-            FileSystemSpecialPath::SlashTmp => String::from("/tmp"),
-            FileSystemSpecialPath::Unknown {
+            } => format!("{subpath} in the project roots"),
+            SpecialPlace::Tmpdir => String::from("$TMPDIR"),
+            SpecialPlace::SlashTmp => String::from("/tmp"),
+            SpecialPlace::Unknown {
                 path,
                 subpath: None,
             } => path.clone(),
-            FileSystemSpecialPath::Unknown {
+            SpecialPlace::Unknown {
                 path,
                 subpath: Some(subpath),
-            } => format!("{path}/{}", subpath.0),
+            } => format!("{path}/{subpath}"),
         },
     }
 }
 
-/// `None` for a request we don't serve, an error for one whose parts don't re-encode.
-fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
+fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
     Ok(match request {
-        ServerRequest::CmdExecApproval(p) => Some(Asked {
-            options: match p.available_decisions {
-                Some(decisions) => decisions
-                    .iter()
-                    .map(serde_json::to_value)
-                    .collect::<serde_json::Result<Vec<Value>>>()?,
-                None => plain_decisions(),
-            },
-            thread: p.thread_id,
-            turn: p.turn_id,
-            item: p.item_id,
+        ServerRequest::Command {
+            command,
+            cwd,
+            reason,
+            available_decisions,
+        } => Asked {
             shape: AnswerShape::Command,
             kind: ApprovalKind::Command {
-                command: p.command,
-                cwd: p.cwd.map(|c| c.0),
-                reason: p.reason,
+                command,
+                cwd,
+                reason,
             },
-        }),
-        ServerRequest::FileChangeApproval(p) => Some(Asked {
-            thread: p.thread_id,
-            turn: p.turn_id,
-            item: p.item_id,
+            options: available_decisions.unwrap_or_else(plain_decisions),
+        },
+        ServerRequest::FileChange { reason, grant_root } => Asked {
             shape: AnswerShape::FileChange,
-            kind: ApprovalKind::FileChange {
-                reason: p.reason,
-                grant_root: p.grant_root,
-            },
+            kind: ApprovalKind::FileChange { reason, grant_root },
             options: plain_decisions(),
-        }),
-        ServerRequest::PermissionsRequestApproval(p) => {
-            let requested = serde_json::to_value(&p.permissions)?;
-            Some(Asked {
-                thread: p.thread_id,
-                turn: p.turn_id,
-                item: p.item_id,
-                shape: AnswerShape::Permissions(requested.clone()),
-                kind: ApprovalKind::Permissions {
-                    reason: p.reason,
-                    asks: permission_asks(&p.permissions),
-                },
-                options: Vec::new(),
-            })
-        }
-        ServerRequest::ToolRequestUserInput(p) => Some(Asked {
-            thread: p.thread_id,
-            turn: p.turn_id,
-            item: p.item_id,
-            shape: AnswerShape::UserInput,
-            kind: ApprovalKind::UserInput {
-                questions: serde_json::to_value(&p.questions)?,
+        },
+        ServerRequest::Permissions {
+            reason,
+            permissions,
+        } => Asked {
+            kind: ApprovalKind::Permissions {
+                reason,
+                asks: permission_asks(serde_json::from_value(permissions.clone())?),
             },
+            shape: AnswerShape::Permissions(permissions),
             options: Vec::new(),
-        }),
-        _ => None,
+        },
+        ServerRequest::UserInput { questions } => Asked {
+            shape: AnswerShape::UserInput,
+            kind: ApprovalKind::UserInput { questions },
+            options: Vec::new(),
+        },
     })
 }
 
-fn approval(rpc_id: RequestId, request: ServerRequest, raw: Value) -> Inbound {
-    let method = String::from(request.method());
-    match asked(request) {
-        Ok(Some(asked)) => Inbound::Approval {
-            thread: ThreadId(asked.thread),
+/// A request whose method we don't serve, or whose params don't fit, still
+/// gets an error reply.
+fn request(rpc_id: RequestId, method: String, params: Option<Value>, raw: Value) -> Inbound {
+    let served = serde_json::from_value::<ServerRequest>(raw.clone())
+        .and_then(asked)
+        .and_then(|asked| {
+            serde_json::from_value::<Target>(params.unwrap_or(Value::Null))
+                .map(|target| (asked, target))
+        });
+    match served {
+        Ok((asked, target)) => Inbound::Approval {
+            thread: ThreadId(target.thread_id),
             shape: asked.shape,
             event: ThreadEvent::ApprovalRequested {
                 id: ApprovalId::of(&rpc_id),
-                turn: TurnId(asked.turn),
-                item: asked.item,
+                turn: TurnId(target.turn_id),
+                item: target.item_id,
                 kind: asked.kind,
                 options: asked.options,
             },
             rpc_id,
         },
-        Ok(None) | Err(_) => unsupported(rpc_id, method, raw),
+        Err(_) => Inbound::Unsupported {
+            rpc_id,
+            method,
+            event: thread_unknown(raw),
+        },
     }
 }
 
@@ -471,125 +683,106 @@ fn on_thread(thread: String, event: ThreadEvent) -> Inbound {
     })
 }
 
-fn notification_event(notification: Notification, raw: Value) -> Inbound {
-    match notification {
-        Notification::ThreadStarted(n) => on_thread(n.thread.id, ThreadEvent::Started),
-        Notification::TurnStarted(n) => on_thread(
-            n.thread_id,
+fn notification(raw: Value) -> Inbound {
+    match serde_json::from_value::<Notification>(raw.clone()) {
+        Ok(Notification::ThreadStarted { thread }) => on_thread(thread.id, ThreadEvent::Started),
+        Ok(Notification::TurnStarted { thread_id, turn }) => on_thread(
+            thread_id,
             ThreadEvent::TurnStarted {
-                turn: TurnId(n.turn.id),
+                turn: TurnId(turn.id),
             },
         ),
-        Notification::TurnCompleted(n) => {
-            let outcome = match n.turn.status {
+        Ok(Notification::TurnCompleted { thread_id, turn }) => {
+            let outcome = match turn.status {
                 TurnStatus::Completed => TurnOutcome::Completed,
                 TurnStatus::Interrupted => TurnOutcome::Interrupted,
                 TurnStatus::Failed | TurnStatus::InProgress => TurnOutcome::Failed {
-                    message: n.turn.error.map(|e| e.message),
+                    message: turn.error.map(|e| e.message),
                 },
             };
             on_thread(
-                n.thread_id,
+                thread_id,
                 ThreadEvent::TurnCompleted {
-                    turn: TurnId(n.turn.id),
+                    turn: TurnId(turn.id),
                     outcome,
                 },
             )
         }
-        Notification::AgentMessageDelta(n) => on_thread(
-            n.thread_id,
+        Ok(Notification::AgentMessageDelta {
+            thread_id,
+            turn_id,
+            delta,
+        }) => on_thread(
+            thread_id,
             ThreadEvent::AgentDelta {
-                turn: TurnId(n.turn_id),
-                text: n.delta,
+                turn: TurnId(turn_id),
+                text: delta,
             },
         ),
-        Notification::ServerRequestResolved(n) => Inbound::Resolved {
-            thread: ThreadId(n.thread_id),
-            rpc_id: n.request_id,
-        },
-        Notification::ItemStarted(n) => match item(n.item.payload) {
-            Some(ItemKind::Agent(_)) | None => Inbound::Event(thread_unknown(raw)),
-            Some(ItemKind::Tool(item)) => on_thread(
-                n.thread_id,
-                ThreadEvent::Item {
-                    turn: TurnId(n.turn_id),
-                    phase: ItemPhase::Started,
-                    item,
-                },
-            ),
-        },
-        Notification::ItemCompleted(n) => match item(n.item.payload) {
+        Ok(Notification::ServerRequestResolved {
+            thread_id,
+            request_id,
+        }) => match RequestId::read(&request_id) {
+            Some(rpc_id) => Inbound::Resolved {
+                thread: ThreadId(thread_id),
+                rpc_id,
+            },
             None => Inbound::Event(thread_unknown(raw)),
-            Some(ItemKind::Agent(text)) => on_thread(
-                n.thread_id,
-                ThreadEvent::AgentMessage {
-                    turn: TurnId(n.turn_id),
-                    text,
-                },
-            ),
-            Some(ItemKind::Tool(item)) => on_thread(
-                n.thread_id,
-                ThreadEvent::Item {
-                    turn: TurnId(n.turn_id),
-                    phase: ItemPhase::Completed,
-                    item,
-                },
-            ),
         },
-        _ => Inbound::Event(thread_unknown(raw)),
-    }
-}
-
-/// The item kinds we map; everything else stays `Unknown`.
-enum ItemKind {
-    Agent(String),
-    Tool(Item),
-}
-
-fn item(payload: ThreadItemPayload) -> Option<ItemKind> {
-    match payload {
-        ThreadItemPayload::AgentMessage { text, .. } => Some(ItemKind::Agent(text)),
-        ThreadItemPayload::CommandExecution {
-            id,
-            command,
-            status,
-            exit_code,
+        Ok(Notification::ItemStarted {
+            item: ThreadItem::AgentMessage { .. },
             ..
-        } => Some(ItemKind::Tool(Item::Command {
-            id,
-            command,
-            status: wire(&status),
-            exit_code,
-        })),
-        ThreadItemPayload::FileChange {
-            id,
-            changes,
-            status,
-        } => Some(ItemKind::Tool(Item::FileChange {
-            id,
-            changes: changes
-                .into_iter()
-                .map(|c| FileChange {
-                    path: c.path,
-                    kind: match c.kind {
-                        PatchChangeKind::Add => ChangeKind::Add,
-                        PatchChangeKind::Delete => ChangeKind::Delete,
-                        PatchChangeKind::Update { .. } => ChangeKind::Update,
-                    },
-                })
-                .collect(),
-            status: wire(&status),
-        })),
-        _ => None,
+        })
+        | Err(_) => Inbound::Event(thread_unknown(raw)),
+        Ok(Notification::ItemStarted {
+            thread_id,
+            turn_id,
+            item,
+        }) => item_event(thread_id, turn_id, ItemPhase::Started, item),
+        Ok(Notification::ItemCompleted {
+            thread_id,
+            turn_id,
+            item,
+        }) => item_event(thread_id, turn_id, ItemPhase::Completed, item),
     }
 }
 
-/// A closed Codex enum as the bare string it serializes to.
-fn wire<T: Serialize>(v: &T) -> String {
-    match serde_json::to_value(v) {
-        Ok(Value::String(s)) => s,
-        other => format!("{other:?}"),
-    }
+fn item_event(thread: String, turn: String, phase: ItemPhase, item: ThreadItem) -> Inbound {
+    let turn = TurnId(turn);
+    on_thread(
+        thread,
+        match item {
+            ThreadItem::AgentMessage { text } => ThreadEvent::AgentMessage { turn, text },
+            ThreadItem::CommandExecution {
+                id,
+                command,
+                status,
+                exit_code,
+            } => ThreadEvent::Item {
+                turn,
+                phase,
+                item: Item::Command {
+                    id,
+                    command,
+                    status,
+                    exit_code,
+                },
+            },
+            ThreadItem::FileChange {
+                id,
+                changes,
+                status,
+            } => ThreadEvent::Item {
+                turn,
+                phase,
+                item: Item::FileChange {
+                    id,
+                    changes,
+                    status,
+                },
+            },
+        },
+    )
 }
 
 /// A frame with a `params.threadId` belongs to that thread even when we do
@@ -608,29 +801,6 @@ fn thread_unknown(raw: Value) -> CodexEvent {
     }
 }
 
-/// A frame that does not parse as JSON-RPC. If it still has an `id` and a
-/// `method`, it is a request that needs a reply.
-fn unknown(raw: Value) -> Inbound {
-    match (
-        raw.get("id").cloned(),
-        raw.get("method").and_then(Value::as_str),
-    ) {
-        (Some(id), Some(method)) => match serde_json::from_value::<RequestId>(id) {
-            Ok(rpc_id) => unsupported(rpc_id, method.to_owned(), raw),
-            Err(_) => Inbound::Event(thread_unknown(raw)),
-        },
-        _ => Inbound::Event(thread_unknown(raw)),
-    }
-}
-
-fn unsupported(rpc_id: RequestId, method: String, raw: Value) -> Inbound {
-    Inbound::Unsupported {
-        rpc_id,
-        method,
-        event: thread_unknown(raw),
-    }
-}
-
 /// A request we originate.
 #[derive(Debug, Clone)]
 pub(crate) enum Call {
@@ -642,15 +812,74 @@ pub(crate) enum Call {
     TurnInterrupt { thread: ThreadId, turn: TurnId },
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeParams {
+    client_info: ClientInfo,
+    capabilities: Capabilities,
+}
+
+#[derive(Serialize)]
+struct ClientInfo {
+    name: String,
+    version: String,
+}
+
+/// `experimentalApi` is `true`, which brings `availableDecisions` on approvals.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Capabilities {
+    experimental_api: Value,
+}
+
+/// `thread/start` and `thread/resume`; a missing value goes out as `null`,
+/// which `params` then drops.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadParams {
+    thread_id: Option<String>,
+    approval_policy: ApprovalPolicy,
+    sandbox: Sandbox,
+    cwd: String,
+    model: Option<String>,
+    config: Option<EffortConfig>,
+}
+
+/// The `config` override that sets the reasoning effort.
+#[derive(Serialize)]
+struct EffortConfig {
+    model_reasoning_effort: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnStartParams {
+    thread_id: String,
+    input: Vec<UserInput>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum UserInput {
+    Text { text: String },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnInterruptParams {
+    thread_id: String,
+    turn_id: String,
+}
+
 impl Call {
     pub(crate) fn method(&self) -> &str {
         match self {
-            Self::Initialize => methods::INITIALIZE,
-            Self::ModelList => methods::MODEL_LIST,
-            Self::ThreadStart(_) => methods::THREAD_START,
-            Self::ThreadResume(_, _) => methods::THREAD_RESUME,
-            Self::TurnStart { .. } => methods::TURN_START,
-            Self::TurnInterrupt { .. } => methods::TURN_INTERRUPT,
+            Self::Initialize => INITIALIZE,
+            Self::ModelList => "model/list",
+            Self::ThreadStart(_) => "thread/start",
+            Self::ThreadResume(_, _) => "thread/resume",
+            Self::TurnStart { .. } => "turn/start",
+            Self::TurnInterrupt { .. } => "turn/interrupt",
         }
     }
 
@@ -659,36 +888,18 @@ impl Call {
             Self::Initialize => serde_json::to_value(InitializeParams {
                 client_info: ClientInfo {
                     name: String::from("conductor"),
-                    title: None,
                     version: String::from(env!("CARGO_PKG_VERSION")),
                 },
-                capabilities: Some(InitializeCapabilities {
-                    experimental_api: Some(true),
-                    ..Default::default()
-                }),
+                capabilities: Capabilities {
+                    experimental_api: Value::Bool(true),
+                },
             }),
-            Self::ModelList => serde_json::to_value(ModelListParams::default()),
-            Self::ThreadStart(opts) => serde_json::to_value(ThreadStartParams {
-                approval_policy: Some(approval_policy(opts.approval_policy)),
-                sandbox: Some(sandbox(opts.sandbox)),
-                cwd: Some(opts.cwd.display().to_string()),
-                model: opts.model.clone(),
-                config: effort_config(opts)?,
-                ..Default::default()
-            }),
-            Self::ThreadResume(thread, opts) => serde_json::to_value(ThreadResumeParams {
-                thread_id: thread.0.clone(),
-                approval_policy: Some(approval_policy(opts.approval_policy)),
-                sandbox: Some(sandbox(opts.sandbox)),
-                cwd: Some(opts.cwd.display().to_string()),
-                model: opts.model.clone(),
-                config: effort_config(opts)?,
-                ..Default::default()
-            }),
+            Self::ModelList => Ok(Value::Object(serde_json::Map::new())),
+            Self::ThreadStart(opts) => thread_params(None, opts),
+            Self::ThreadResume(thread, opts) => thread_params(Some(thread.0.clone()), opts),
             Self::TurnStart { thread, text } => serde_json::to_value(TurnStartParams {
                 thread_id: thread.0.clone(),
-                input: text_input(text),
-                ..Default::default()
+                input: Vec::from([UserInput::Text { text: text.clone() }]),
             }),
             Self::TurnInterrupt { thread, turn } => serde_json::to_value(TurnInterruptParams {
                 thread_id: thread.0.clone(),
@@ -698,48 +909,41 @@ impl Call {
     }
 }
 
-fn text_input(text: &str) -> Vec<UserInput> {
-    Vec::from([UserInput::Text {
-        text: text.to_owned(),
-        text_elements: None,
-    }])
+fn thread_params(thread_id: Option<String>, opts: &ThreadOptions) -> serde_json::Result<Value> {
+    let params = serde_json::to_value(ThreadParams {
+        thread_id,
+        approval_policy: opts.approval_policy,
+        sandbox: opts.sandbox,
+        cwd: opts.cwd.display().to_string(),
+        model: opts.model.clone(),
+        config: opts.effort.clone().map(|effort| EffortConfig {
+            model_reasoning_effort: effort,
+        }),
+    })?;
+    Ok(match params {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .filter(|(_, value)| !value.is_null())
+                .collect(),
+        ),
+        other => other,
+    })
 }
 
-/// The `config` override that sets the reasoning effort.
-#[derive(Serialize)]
-struct EffortConfig {
-    model_reasoning_effort: ReasoningEffort,
+#[derive(Deserialize)]
+struct ModelList {
+    data: Vec<Model>,
 }
 
-fn effort_config(opts: &ThreadOptions) -> serde_json::Result<Option<Value>> {
-    opts.effort
-        .as_ref()
-        .map(|effort| {
-            serde_json::to_value(EffortConfig {
-                model_reasoning_effort: ReasoningEffort(effort.clone()),
-            })
-        })
-        .transpose()
-}
-
-fn approval_policy(p: ApprovalPolicy) -> AskForApproval {
-    match p {
-        ApprovalPolicy::Untrusted => AskForApproval::Untrusted,
-        ApprovalPolicy::OnRequest => AskForApproval::OnRequest,
-        ApprovalPolicy::Never => AskForApproval::Never,
-    }
-}
-
-fn sandbox(s: Sandbox) -> SandboxMode {
-    match s {
-        Sandbox::ReadOnly => SandboxMode::Read_only,
-        Sandbox::WorkspaceWrite => SandboxMode::Workspace_write,
-        Sandbox::DangerFullAccess => SandboxMode::Danger_full_access,
-    }
+#[derive(Deserialize)]
+struct Model {
+    id: String,
+    description: String,
 }
 
 pub(crate) fn models(result: Value) -> serde_json::Result<Vec<ModelInfo>> {
-    let list = serde_json::from_value::<codex_codes::ModelListResponse>(result)?;
+    let list = serde_json::from_value::<ModelList>(result)?;
     Ok(list
         .data
         .into_iter()
@@ -750,20 +954,36 @@ pub(crate) fn models(result: Value) -> serde_json::Result<Vec<ModelInfo>> {
         .collect())
 }
 
+#[derive(Deserialize)]
+struct ThreadResponse {
+    thread: Id,
+}
+
+#[derive(Deserialize)]
+struct TurnResponse {
+    turn: Id,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeResponse {
+    user_agent: String,
+}
+
 pub(crate) fn thread_id(result: Value) -> serde_json::Result<ThreadId> {
     // `thread/start` and `thread/resume` both answer `{thread: {id, ..}, ..}`.
-    let r = serde_json::from_value::<codex_codes::ThreadStartResponse>(result)?;
+    let r = serde_json::from_value::<ThreadResponse>(result)?;
     Ok(ThreadId(r.thread.id))
 }
 
 pub(crate) fn turn_id(result: Value) -> serde_json::Result<TurnId> {
-    let r = serde_json::from_value::<codex_codes::TurnStartResponse>(result)?;
+    let r = serde_json::from_value::<TurnResponse>(result)?;
     Ok(TurnId(r.turn.id))
 }
 
 /// `userAgent` from `initialize`, such as `conductor/0.166.0 (Ubuntu ...)`.
 pub(crate) fn user_agent(result: Value) -> serde_json::Result<String> {
-    let r = serde_json::from_value::<codex_codes::InitializeResponse>(result)?;
+    let r = serde_json::from_value::<InitializeResponse>(result)?;
     Ok(r.user_agent)
 }
 
@@ -807,13 +1027,29 @@ enum GrantScope {
     Session,
 }
 
+/// The answer to a command or file change approval.
+#[derive(Serialize)]
+struct PlainAnswer {
+    decision: PlainDecision,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum PlainDecision {
+    Accept,
+    AcceptForSession,
+    Decline,
+    Cancel,
+}
+
 /// The JSON-RPC `result` that answers an open request with `decision`.
 pub(crate) fn answer(shape: &AnswerShape, decision: Decision) -> Result<Value, AnswerError> {
     match (shape, decision) {
         (_, Decision::Raw(result)) => Ok(result),
         (AnswerShape::UserInput, _) => Err(AnswerError::NotApplicable),
-        (AnswerShape::Command, decision) => encoded(command_answer(decision)),
-        (AnswerShape::FileChange, decision) => encoded(file_change_answer(decision)),
+        (AnswerShape::Command | AnswerShape::FileChange, decision) => encoded(PlainAnswer {
+            decision: plain(decision),
+        }),
         (AnswerShape::Permissions(requested), Decision::Accept) => encoded(PermissionGrant {
             permissions: requested.clone(),
             scope: GrantScope::Turn,
@@ -832,6 +1068,15 @@ pub(crate) fn answer(shape: &AnswerShape, decision: Decision) -> Result<Value, A
     }
 }
 
+fn plain(decision: Decision) -> PlainDecision {
+    match decision {
+        Decision::Accept => PlainDecision::Accept,
+        Decision::AcceptForSession => PlainDecision::AcceptForSession,
+        Decision::Decline => PlainDecision::Decline,
+        Decision::Cancel | Decision::Raw(_) => PlainDecision::Cancel,
+    }
+}
+
 /// Declining a permissions request grants an empty profile.
 #[derive(Serialize)]
 struct NoPermissions {
@@ -840,24 +1085,6 @@ struct NoPermissions {
 
 fn encoded<T: Serialize>(answer: T) -> Result<Value, AnswerError> {
     serde_json::to_value(answer).map_err(AnswerError::Encode)
-}
-
-fn command_answer(decision: Decision) -> CommandExecutionRequestApprovalResponse {
-    match decision {
-        Decision::Accept => CommandExecutionRequestApprovalResponse::accept(),
-        Decision::AcceptForSession => CommandExecutionRequestApprovalResponse::accept_for_session(),
-        Decision::Decline => CommandExecutionRequestApprovalResponse::decline(),
-        Decision::Cancel | Decision::Raw(_) => CommandExecutionRequestApprovalResponse::cancel(),
-    }
-}
-
-fn file_change_answer(decision: Decision) -> FileChangeRequestApprovalResponse {
-    match decision {
-        Decision::Accept => FileChangeRequestApprovalResponse::accept(),
-        Decision::AcceptForSession => FileChangeRequestApprovalResponse::accept_for_session(),
-        Decision::Decline => FileChangeRequestApprovalResponse::decline(),
-        Decision::Cancel | Decision::Raw(_) => FileChangeRequestApprovalResponse::cancel(),
-    }
 }
 
 /// JSON-RPC "method not found".
@@ -878,17 +1105,17 @@ struct NotificationFrame {
 
 #[derive(Serialize)]
 struct AnswerFrame {
-    id: RequestId,
+    id: Value,
     result: Value,
 }
 
 #[derive(Serialize)]
 struct RejectFrame {
     error: RpcError,
-    id: RequestId,
+    id: Value,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct RpcError {
     code: i64,
     message: String,
@@ -902,17 +1129,18 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
             params: call.params()?,
         }),
         Outbound::Initialized => serde_json::to_string(&NotificationFrame {
-            method: String::from(methods::INITIALIZED),
+            method: String::from("initialized"),
         }),
-        Outbound::Answer { rpc_id, result } => {
-            serde_json::to_string(&AnswerFrame { id: rpc_id, result })
-        }
+        Outbound::Answer { rpc_id, result } => serde_json::to_string(&AnswerFrame {
+            id: rpc_id.wire(),
+            result,
+        }),
         Outbound::Reject { rpc_id, message } => serde_json::to_string(&RejectFrame {
             error: RpcError {
                 code: METHOD_NOT_FOUND,
                 message,
             },
-            id: rpc_id,
+            id: rpc_id.wire(),
         }),
     }
 }
@@ -921,13 +1149,12 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use codex_codes::RequestId;
     use serde_json::Value;
 
     use super::{
         AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call, CodexEvent,
-        Decision, Inbound, Outbound, PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions,
-        TurnId, answer, encode, encoded, parse_line,
+        Decision, Inbound, Outbound, PermissionAsk, RequestId, Sandbox, ThreadEvent, ThreadId,
+        ThreadOptions, TurnId, answer, encode, encoded, parse_line,
     };
 
     fn json(text: &str) -> Value {

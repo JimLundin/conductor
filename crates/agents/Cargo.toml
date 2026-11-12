@@ -11,8 +11,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-claude-codes.workspace = true
-codex-codes = { workspace = true, features = ["cli"] }
+uuid.workspace = true
 # For the s1 and s2 live checks; the replay tests also use n0-future.
 anyhow.workspace = true
 n0-future.workspace = true

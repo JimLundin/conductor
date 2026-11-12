@@ -1,7 +1,7 @@
 //! Claude Code driven over its stream-json control protocol (`--input-format
-//! stream-json --permission-prompt-tool stdio`). Parsing and framing come from
-//! the `claude-codes` crate; this module owns process lifecycle and maps the
-//! protocol into Conductor's own types.
+//! stream-json --permission-prompt-tool stdio`). `protocol` reads and writes the
+//! few frames we use; this module owns process lifecycle and maps the protocol
+//! into Conductor's own types.
 
 mod protocol;
 mod session;

@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
-use claude_codes::ClaudeCliBuilder;
 use serde_json::Value;
 
 use crate::Exit;
@@ -32,11 +32,11 @@ pub enum SettingSource {
 }
 
 impl SettingSource {
-    pub(crate) fn to_cli(self) -> claude_codes::SettingSource {
+    fn wire(&self) -> &str {
         match self {
-            SettingSource::User => claude_codes::SettingSource::User,
-            SettingSource::Project => claude_codes::SettingSource::Project,
-            SettingSource::Local => claude_codes::SettingSource::Local,
+            SettingSource::User => "user",
+            SettingSource::Project => "project",
+            SettingSource::Local => "local",
         }
     }
 }
@@ -44,7 +44,7 @@ impl SettingSource {
 /// Which CLI versions a session agrees to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionPolicy {
-    /// Refuse a CLI outside the range `claude-codes` supports.
+    /// Refuse a CLI outside the supported range.
     SupportedOnly,
     /// Run it anyway, with a warning.
     AllowUntested,
@@ -241,25 +241,72 @@ impl ClaudeSession {
     }
 }
 
+/// The variables a parent Claude Code session sets. They are removed so the CLI
+/// starts as its own session even when Conductor runs inside one.
+const PARENT_SESSION_VARS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+];
+
 pub(crate) fn command(opts: &ClaudeOptions) -> Command {
-    let builder = ClaudeCliBuilder::new()
-        .command(&opts.claude_path)
-        .working_directory(&opts.cwd)
-        .permission_prompt_tool("stdio")
-        .include_partial_messages(true)
-        .permission_mode(opts.permission_mode.to_cli())
-        .resume(opts.resume.as_ref().map(|id| id.0.clone()));
-    let builder = match &opts.model {
-        Some(model) => builder.model(model),
-        None => builder,
-    };
-    let builder = match &opts.setting_sources {
-        Some(sources) => {
-            builder.setting_sources(sources.iter().copied().map(SettingSource::to_cli))
-        }
-        None => builder,
-    };
-    builder.build_command()
+    let mut cmd = Command::new(&opts.claude_path);
+    cmd.args([
+        "--print",
+        "--verbose",
+        "--output-format",
+        "stream-json",
+        "--input-format",
+        "stream-json",
+        "--permission-mode",
+        opts.permission_mode.wire(),
+    ]);
+    // One argument, so an id that starts with `-` is not read as a flag.
+    if let Some(id) = &opts.resume {
+        cmd.arg(format!("--resume={}", id.0));
+    }
+    if let Some(model) = &opts.model {
+        cmd.args(["--model", model]);
+    }
+    if let Some(sources) = &opts.setting_sources {
+        cmd.args([
+            "--setting-sources",
+            &sources
+                .iter()
+                .map(SettingSource::wire)
+                .collect::<Vec<&str>>()
+                .join(","),
+        ]);
+    }
+    cmd.args([
+        "--include-partial-messages",
+        "--permission-prompt-tool",
+        "stdio",
+    ]);
+    // A fresh session gets its id up front; `--resume` keeps the one it has.
+    cmd.args(match &opts.resume {
+        Some(_) => Vec::new(),
+        None => Vec::from([
+            String::from("--session-id"),
+            uuid::Uuid::new_v4().to_string(),
+        ]),
+    });
+    for var in PARENT_SESSION_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.current_dir(&opts.cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    crate::process::no_window(cmd)
 }
 
 async fn log_stderr(stderr: ChildStderr) -> std::io::Result<()> {
