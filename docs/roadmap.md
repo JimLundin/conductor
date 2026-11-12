@@ -35,9 +35,10 @@ Each item ends in something to try. The fleet design is
    approve-for-session, per-session model and effort, resume. Resume runs
    against the private homes from item 1. *Try:* restart a session's CLI
    and continue it.
-3. **Sign in from the app** (§6.3), on one host. API keys and subscription
-   sign-ins entered on the phone; secrets only in flight in the browser and
-   encrypted under the host key on the host. `Welcome` reports each
+3. **Sign in from the app** (§6.3), on one host. API keys, the Claude
+   `setup-token` token and the Codex device-code sign-in, entered on the
+   phone; secrets only in flight in the browser and encrypted under the
+   host key on the host. `Welcome` reports each
    provider's sign-in state. *Try:* on a fresh host, sign in to Claude and
    Codex from the iPhone without touching the host's keyboard.
 4. **Durability.** The log, receipts and open requests survive a host
@@ -50,9 +51,10 @@ Each item ends in something to try. The fleet design is
 6. **Fleet and pairing** (§6.1, §6.4 to §6.6). A fleet root key signs
    device and host certificates and replaces the shared ticket token;
    `conductord join` and *Add host*; a signed fleet config with the roster,
-   pins, settings and API keys, served by any host; per-host subscription
-   sign-in after a join; several hosts in one sidebar. *Try:* add a second
-   host from the phone and run a session on it with the fleet's key.
+   pins, settings, API keys and the Claude token, served by any host; a
+   per-host Codex ChatGPT sign-in after a join; several hosts in one
+   sidebar. *Try:* add a second host from the phone and run a Claude
+   session on it with the fleet's token, without signing in again.
 7. **Push.** Web Push from the host when an approval or question opens.
    *Try:* lock the phone and get the approval notification.
 8. **Move a session** (§6.8), after experiments E4 and E5 (§6.9). Bundle

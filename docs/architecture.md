@@ -245,7 +245,8 @@ or upgrading a CLI.
 
 The goal is one setup running in several places. Every host runs the same
 pinned Claude Code and Codex, installed and owned by `conductord`, with the
-same settings and, where the providers allow it, the same credentials. A
+same settings and the same credentials, except a Codex ChatGPT login,
+which each host signs in to once (§6.6). A
 host that joins the fleet can run sessions without a manual setup, and a
 session can move from one host to another.
 
@@ -274,7 +275,7 @@ replaces it.
   certificates and every fleet config version, and the other hosts hold no
   signing key. `fleet init` also writes the root key once as a
   passphrase-sealed file for the owner to keep, so a lost root host doesn't
-  strand the fleet (open question 1).
+  strand the fleet (F1, §6.10).
 - A browser keeps its device key as a non-extractable WebCrypto key in
   IndexedDB, and iOS gives a Home Screen app its own storage, so the phone
   pairs from the installed app. The app shows its public key as a QR code
@@ -418,54 +419,86 @@ The browser flow, `account/login/start { type: "chatgpt" }`, returns an
 `localhost:1455` ([codex-app-server], [codex-src], verified). A phone can't
 reach that, so it is not offered.
 
-#### The policy that shapes this
+#### Claude: one subscription token for the fleet, by owner decision
 
-Anthropic's legal page, verbatim: "developers may not collect, store, or
-intermediate Claude.ai credentials or session tokens — sign-in to a Claude
-account must complete through Anthropic's own flow." The same page allows
-"an end user signing in to the unmodified Claude Code binary with their own
-Claude subscription", and allows provisioning one's own API keys in "a
-development environment, secrets manager, or machine image" ([legal],
-verified).
+Anthropic's legal page says, verbatim: "developers may not collect, store,
+or intermediate Claude.ai credentials or session tokens — sign-in to a
+Claude account must complete through Anthropic's own flow." It also says
+"Anthropic reserves the right to take measures to enforce these
+restrictions and may do so without prior notice" ([legal], verified). The
+same page allows provisioning one's own API keys in "a development
+environment, secrets manager, or machine image".
 
-So Conductor never stores a Claude subscription credential. It does not use
-`setup-token`, because the token it prints would have to be stored by
-Conductor and copied to other hosts. A subscription sign-in runs Claude
-Code's own `claude auth login` on the host, and Claude Code stores the
-result in the host's private `CLAUDE_CONFIG_DIR` itself. Conductor stores
-API keys, which the policy lets the owner manage as they like.
+**Owner decision F2 (2026-11-12).** Conductor stores one `claude setup-token`
+token, encrypted, and copies it to every host through the signed fleet
+config, the same way it shares API keys. Storing and copying the token is
+what the clause above describes. The owner has read it and accepts that
+grey area for their own account and their own tool. The risk is action
+against the Claude account, possibly without notice. The binary stays
+unmodified, and the sign-in itself still happens on Anthropic's page.
 
-Codex is treated the same way, for a technical reason rather than a policy
-one (§6.6). Conductor stores the OpenAI API key; a ChatGPT login is made by
-the Codex app-server on each host and stays in that host's `CODEX_HOME`.
+Technically, the token can be shared. `setup-token` mints "a one-year OAuth token",
+prints it and saves nothing, and needs a Pro, Max, Ultra, Team or
+Enterprise plan ([authentication], verified). It does not refresh: "To
+replace an expired token, generate a new one and restart" ([env-vars],
+verified). So unlike a `/login` session it has no rotating refresh token,
+and many hosts can use it at once without logging each other out
+(inferred from those two facts; experiment E2 confirms it). It "can only
+make model requests", with no Remote Control or connectors
+([authentication], verified), and Conductor needs neither.
+
+Each host passes it as `CLAUDE_CODE_OAUTH_TOKEN` when it spawns `claude`.
+`ANTHROPIC_API_KEY` takes precedence over it ([authentication], verified),
+so the fleet setting `claude_auth: ApiKey | Subscription` decides which of
+the two a host sets, and a host never sets both. The fleet config records
+when the token was issued, and the app warns 30 days before the year is
+up; renewing is the same sign-in again.
+
+**The fallback stays.** If the owner turns sharing off, or Anthropic acts
+on it, each host signs in with Claude Code's own `claude auth login`, which
+stores its credential in the host's private `CLAUDE_CONFIG_DIR`, and
+Conductor stores nothing for Claude subscriptions. §6.6 describes that mode.
+
+#### Codex: API key shared, ChatGPT login per host
+
+Conductor stores the OpenAI API key in the fleet config. A ChatGPT login
+can't be shared, for a technical reason (§6.6). The Codex app-server on
+each host makes its own login and keeps it in that host's `CODEX_HOME`.
 
 #### Sign in from the phone
 
-The host runs the login and the phone does the browser part.
+The host runs the CLI's sign-in and the phone does the browser part.
 
-1. In the app, the owner picks a host and *Sign in to Claude* or *Sign in to
-   Codex*. The app sends `StartLogin { provider }`.
-2. **Claude.** The host runs `claude auth login --claudeai` with
-   `CLAUDE_CONFIG_DIR` set, on pipes, and reads the URL it prints. The app
-   shows *Open Anthropic sign-in*. The owner signs in on Anthropic's page,
-   which shows a code, pastes the code into the app, and the app sends
-   `SubmitLoginCode { login, code }`. The host writes it to the CLI's stdin
-   and reports the exit status. Whether the CLI prints the URL and reads
-   the code when stdin is a pipe rather than a terminal is inferred, and
-   experiment E1 checks it; if it needs a terminal, the host runs it under a
-   pseudo-terminal.
-3. **Codex.** The host calls `account/login/start { type:
+1. In the app, the owner picks *Sign in to Claude* or *Sign in to Codex* on
+   a host. The app sends `StartLogin { provider }`.
+2. **Claude, shared token.** The host runs `claude setup-token` with its
+   private `CLAUDE_CONFIG_DIR`, on pipes, and reads the URL it prints. The
+   app shows *Open Anthropic sign-in*. The owner signs in on Anthropic's
+   page, which shows a code, pastes the code into the app, and the app
+   sends `SubmitLoginCode { login, code }`. The host writes the code to the
+   CLI's stdin, reads the token the CLI prints, and sends it to the root
+   host, which puts it in the fleet config (§6.5). Relaying the code
+   through the app is an owner decision (F5, §6.10). That the CLI prints
+   the URL, reads the code and prints the token when its stdin and stdout
+   are pipes is inferred, and experiment E1 checks it; if it needs a terminal, the host
+   runs it under a pseudo-terminal.
+3. **Claude, per-host fallback.** The same flow with `claude auth login
+   --claudeai`, which "reads the pasted code from standard input"
+   ([troubleshoot], verified) and stores the result itself. Nothing goes to
+   the fleet config.
+4. **Codex.** The host calls `account/login/start { type:
    "chatgptDeviceCode" }` on its app-server. The app shows the
    `verificationUrl` and the `userCode` with a copy button. The owner opens
    the URL and enters the code, and `account/login/completed` ends the
    flow. Codex writes `auth.json` in the host's `CODEX_HOME`.
-4. **API keys.** The app has one field per provider. `SetApiKey { provider,
-   key }` goes to the root host, which puts it in the fleet config (§6.5),
+5. **API keys.** The app has one field per provider. `SetCredential {
+   credential }` goes to the root host, which puts it in the fleet config,
    so every host gets it.
 
 The login URL, the user code and the pasted code are live-only messages.
 They are not events in the log, are never written to the store, and appear
-in no trace output.
+in no trace output. The Claude token goes from the host that minted it to
+the root host on `conductor-fleet` and never reaches the browser.
 
 `Welcome.providers` grows from "can this host run the provider" to "and is
 it signed in, and how": `Availability::Available { auth: ApiKey |
@@ -483,8 +516,9 @@ back; the host reports only that a key is set, and its last four characters.
 
 #### Storage on the host
 
-Conductor stores API keys and its own keys (the host's iroh key and, on the
-root host, the fleet root key). They are encrypted in the store with
+Conductor stores the fleet's credentials (the API keys and the Claude
+token) and its own keys (the host's iroh key and, on the root host, the
+fleet root key). They are encrypted in the store with
 XChaCha20-Poly1305 under a 32-byte **host key**.
 
 - On macOS the host key lives in the login Keychain, on Windows it is
@@ -498,8 +532,9 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   the CLIs' own `~/.claude/.credentials.json` and `~/.codex/auth.json`
   ([authentication], [codex-auth], verified). The design says this
   plainly instead of promising more.
-- Keys reach the CLIs only at spawn. Claude gets `ANTHROPIC_API_KEY` in its
-  environment. The Codex app-server gets `account/login/start { type:
+- Credentials reach the CLIs only at spawn. Claude gets `ANTHROPIC_API_KEY`
+  or `CLAUDE_CODE_OAUTH_TOKEN` in its environment, so Conductor never writes
+  either into the CLI's home. The Codex app-server gets `account/login/start { type:
   "apiKey" }` after `initialize`, with `cli_auth_credentials_store =
   "ephemeral"` in its config when the host uses a key, so Codex keeps it in
   memory only (the store options in `config/src/types.rs`, [codex-src],
@@ -524,15 +559,16 @@ A host joins with a one-time invite, from either side.
 Joining is idempotent. An invite already used by the same node id returns the
 same certificate, so a join that died after the reply can run again. The new
 host then installs the pinned CLIs (§6.2) and can run sessions at once with
-the fleet's API keys. A provider the fleet uses by subscription needs one
+the fleet's API keys and Claude token. Codex with a ChatGPT login needs one
 sign-in on the new host (§6.6), and the app asks for it as soon as the host
 appears.
 
 Leaving is revocation. The root host adds the node id to `revoked` in a new
 fleet config version, and every host refuses it from then on. A revoked host
-has seen the API keys, so the app tells the owner to rotate them, and the
-owner signs out of the subscriptions that host used on the provider's own
-account page.
+has seen the fleet's credentials, so the app tells the owner to rotate the
+API keys, issue a new Claude token, and sign that host out of ChatGPT on
+OpenAI's account page. Whether an old `setup-token` token can be revoked
+before its year is up is not documented (not verified).
 
 ### 6.5 The fleet config: one signed document any host can serve
 
@@ -546,13 +582,13 @@ FleetConfig {
     revoked: Vec<NodeId>,         // devices and hosts
     pins: Pins,                   // §6.2
     settings: FleetSettings,      // default models, effort, permission modes
-    api_keys: ApiKeys,            // §6.3, sent only to hosts
+    credentials: Credentials,     // API keys, Claude token; sent only to hosts
 }
 SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root key
 ```
 
 - **One writer.** Only the root host signs, so versions never fork and there
-  is nothing to merge. A change from the app (a new API key, a pin bump, a
+  is nothing to merge. A change from the app (a new credential, a pin bump, a
   new host) is a command to the root host, which applies it, bumps the
   version, signs and stores it.
 - **Any host serves it.** Every host keeps the newest valid config it has
@@ -564,7 +600,7 @@ SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root k
   whether that is the root host or not. A host that comes back after a long
   time adopts the newest version, installs any new pin and drops revoked
   devices before it accepts a client.
-- **Only hosts get the API keys.** The whole config goes only to peers with a
+- **Only hosts get the credentials.** The whole config goes only to peers with a
   `Host` certificate, on the authenticated, encrypted `conductor-fleet`
   link. Each host stores it encrypted under its host key (§6.3).
 - **Clients see the rest.** `Welcome` carries the host's config version and its
@@ -576,11 +612,15 @@ transfer is enough. There is no gossip protocol, CRDT or per-field merge.
 The single writer costs nothing extra here, because a signature from one key
 is already what makes the roster trustworthy.
 
-### 6.6 Subscription logins are per host
+### 6.6 Which subscriptions a fleet can share
 
-The owner wants a new host to share credentials. For API keys it does, through
-the fleet config. For subscription logins it can't, and the design falls back
-to one sign-in per host.
+The owner wants a new host to share credentials. API keys and the Claude
+`setup-token` token are shared through the fleet config (§6.3). A Codex
+ChatGPT login can't be, and Codex falls back to one sign-in per host.
+
+#### Codex: one ChatGPT sign-in per host
+
+This is a technical limit, not a policy choice.
 
 - **Codex rotates its ChatGPT refresh token.** Codex refreshes when the
   access token is within 5 minutes of expiry or the last refresh is more
@@ -600,25 +640,38 @@ to one sign-in per host.
   request, which is marked for OpenAI's internal use only ([codex-src],
   verified). Building on it would break without notice, and Conductor would
   then hold ChatGPT tokens it has no business holding.
-- **Claude's login rotates too.** Claude Code refreshes its `/login` token
-  and coordinates so "only one process refreshes"; before 2.1.211, two
-  sessions renewing with the same token "revoked the saved login"
-  ([authentication], [troubleshoot], verified). That points to a rotating
-  refresh token (inferred), so a copied `.credentials.json` would fail the
-  same way. Copying it would also be Conductor storing a Claude.ai
-  credential, which §6.3 rules out.
 
-So each host signs in to each subscription once, from the phone, by §6.3's
-flow. The app makes it one step: after a join, the new host appears with
-*Sign in to Claude* and *Sign in to Codex* buttons for the providers the
-fleet uses by subscription. Inside one host, every Claude process shares
-the host's `CLAUDE_CONFIG_DIR` and every Codex thread shares the one
-app-server, so each CLI's own refresh coordination applies.
+So each host signs in to ChatGPT once, from the phone, by §6.3's
+device-code flow. After a join, the new host appears with *Sign in to
+Codex* when the fleet uses Codex by ChatGPT login. Inside one host, every
+Codex thread shares the one app-server, so Codex's own refresh coordination
+applies (`auth_storage_commit_guard` in [codex-src], verified).
 
-Whether a sign-in on a second host invalidates the first host's login is not
-documented for either provider. Experiments E2 and E3 test it. If it does,
-that provider can be signed in on one host at a time, and the app says so
-before the second sign-in.
+Whether a ChatGPT sign-in on a second host invalidates the first host's
+login is not documented. Experiment E3 tests it. If it does, Codex by
+ChatGPT can run on one host at a time, and the app says so before the
+second sign-in.
+
+#### Claude: shared by owner decision, with a per-host fallback
+
+Sharing the Claude token is owner decision F2 (§6.10). Anthropic's legal page
+says "developers may not collect, store, or intermediate Claude.ai
+credentials or session tokens" ([legal], verified), and the owner accepts
+that grey area for their own account and their own tool. The risk is that
+Anthropic acts against the account, which the same page says it may do
+"without prior notice".
+
+So the per-host mode stays designed, for when sharing is turned off. In it,
+each host runs `claude auth login` and Claude Code keeps its own credential.
+That login is not shareable either. Claude Code refreshes its `/login`
+token and coordinates so "only one process refreshes"; before 2.1.211, two
+sessions renewing with the same token "revoked the saved login"
+([authentication], [troubleshoot], verified). That points to a rotating
+refresh token (inferred), so a copied `.credentials.json` would fail the
+way a shared Codex `auth.json` does. Inside one host, every Claude process
+shares the host's `CLAUDE_CONFIG_DIR`, so Claude Code's coordination
+applies. Experiment E2 tests whether a second host's login invalidates the
+first.
 
 ### 6.7 Fleet-unique session ids and branch names
 
@@ -753,63 +806,48 @@ Diffs and revert for turns before the move still work on the target,
 because the checkpoint refs moved with the branch and the events moved with
 the log.
 
-### 6.9 Experiments, which need owner consent
+### 6.9 Experiments
 
-None of these has been run. Each touches a real Claude or ChatGPT account,
-so each **needs owner consent**, and each runs in scratch
-`CLAUDE_CONFIG_DIR` and `CODEX_HOME` directories so the owner's own
-`~/.claude` and `~/.codex` are never read or written. A throwaway account is
+None of these has been run. Each touches a real Claude or ChatGPT account.
+
+**Owner consent (2026-11-12).** Each experiment may run in the phase that
+needs it, in scratch `CLAUDE_CONFIG_DIR` and `CODEX_HOME` directories only,
+so the owner's own `~/.claude` and `~/.codex` are never read or written.
+The coordinator tells the owner before each run. A throwaway account is
 better where one exists.
 
 | | Question | Experiment | Risk to the account |
 |---|---|---|---|
-| E1 | Does `claude auth login --claudeai` print its URL and read the code when stdin and stdout are pipes? | Run it with a scratch `CLAUDE_CONFIG_DIR`, stdin and stdout piped to a script that prints the URL and forwards one line. Complete the sign-in in a browser on another device. Then `claude auth status` in the same directory. | A new login appears on the account. Sign out of it afterwards. |
-| E2 | Does a second Claude subscription login on another host invalidate the first? | Sign in hosts A and B (scratch dirs, separate machines) with the same account. Run one turn on each, every day for 4 days, past a refresh. Record `claude auth status` on both. | If the answer is yes, A is logged out once. |
+| E1 | Does `claude setup-token` print its URL, read the code and print the token when stdin and stdout are pipes? And `claude auth login --claudeai`, for the fallback? | Run each with a scratch `CLAUDE_CONFIG_DIR`, stdin and stdout piped to a script that prints the URL and forwards one line. Complete the sign-in in a browser on another device. Check that `setup-token` printed a token, and run `claude auth status` after `auth login`. | A new token and a new login appear on the account. Sign out of the login afterwards. |
+| E2 | Can two hosts use one `setup-token` token at once, and does a second `claude auth login` on another host invalidate the first? | Part 1: set one token as `CLAUDE_CODE_OAUTH_TOKEN` on hosts A and B (scratch dirs, separate machines) and run turns on both at the same time, daily for 4 days. Part 2: sign in A and B with `claude auth login` to the same account, run one turn on each daily for 4 days, past a refresh, and record `claude auth status` on both. | Part 2 may log A out once. |
 | E3 | Does a second ChatGPT device-code login invalidate the first, and does sharing one `auth.json` break as documented? | Part 1: device-code sign-in on A and B with the same account. Call `account/read { refreshToken: true }` on A, then on B, then a turn on each; repeat on day 9. Part 2: copy A's `auth.json` to a scratch home C, force a refresh on A, then on C, and expect `refresh_token_reused` on C. | Part 2 is meant to log one copy out. It may also invalidate A's login, which the owner then signs in again. |
 | E4 | Does a Claude session resume on another machine with a different working directory? | On A, start a session with a scratch `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME`, do two turns that read and edit files. Copy the project directory and the git branch to B under a different path, run `claude --resume <id>` from the new worktree with the stream-json flags, and ask what it did before. Check that it answers from history and edits the new path. | Uses the account's quota; an API key works and avoids the subscription. |
 | E5 | Does Codex `thread/resume` find a copied rollout by id and honour `cwd`? | The same as E4 with a scratch `CODEX_HOME`: copy the rollout to the same relative path on B, call `thread/resume { threadId, cwd }`, run a turn, and check the command's working directory. | Uses quota; an API key works. |
 
-E1 decides whether the Claude sign-in needs a pseudo-terminal. E2 and E3
-decide whether a subscription can be signed in on several hosts at once.
-E4 and E5 decide whether moving sessions is buildable as designed. They are
-worth running before the phase that needs each.
+E1 decides whether the Claude sign-in needs a pseudo-terminal. E2 confirms
+the shared token and settles the fallback. E3 decides whether Codex by
+ChatGPT can run on several hosts at once. E4 and E5 decide whether moving
+sessions is buildable as designed. Run each before the phase that needs it:
+E1 before sign-in from the app, E2 and E3 before fleet and pairing, E4 and
+E5 before moving sessions.
 
-### 6.10 Open questions for the owner
+### 6.10 Decisions
 
-1. **Where does the root key live?** Recommendation: on the first host, with
-   the passphrase-sealed backup file written at `fleet init`, and fleet
-   changes wait while the root host is offline. The alternative, the root
-   key on every host, means any one host can admit devices, which turns one
-   stolen laptop into control of the fleet.
-2. **Is relaying the Claude sign-in code through the app acceptable under
-   Anthropic's policy?** The sign-in happens on Anthropic's page and the code
-   goes into the unmodified binary, and Conductor never stores it; but the
-   app does carry the code (§6.3). Recommendation: accept it, because the
-   policy's own example allows an end user signing in to the unmodified
-   binary on a platform that hosts it, and keep the Claude API key as the
-   option with no question attached. If you'd rather be strict, the
-   sign-in has to happen at the host's own terminal.
-3. **Is one sign-in per host acceptable for subscriptions?** The research
-   says sharing a login breaks Codex and is forbidden for Claude (§6.6).
-   Recommendation: yes, with the app prompting right after a join. The
-   alternative that shares fully is API keys for both, billed per token
-   instead of by subscription.
-4. **Enable Codex device-code login?** It is a beta that you switch on in
-   ChatGPT's security settings (§6.3). Recommendation: enable it. Without
-   it, a ChatGPT login on a headless host needs an SSH tunnel to port 1455,
-   which the phone can't do.
-5. **Move by bundle, or by pushing to `origin`?** Recommendation: bundle
-   over iroh (§6.8), with no visible branch or CI run on the remote. A push
-   is simpler to inspect but has those side effects.
-6. **Refuse a move between different pins?** Recommendation: refuse, and
-   offer to update the target first. The transcript formats are internal
-   and change between versions ([sessions], verified).
-7. **Codex analytics.** Codex sends analytics unless `analytics.enabled =
-   false` ([codex-src], verified). Recommendation: off in the hosts'
-   private `config.toml`, as a fleet setting you can change.
-8. **Where moving sits in the order.** Recommendation: after push, last in
-   "Next", because it needs durability, worktrees and the fleet first, and
-   because E4 and E5 may change it.
+The owner settled these on 2026-11-12.
+
+| # | Date | Decision |
+|---|---|---|
+| F1 | 2026-11-12 | **The root key lives on one root host**, the first host, with a passphrase-sealed backup file written at `fleet init`. Fleet changes wait while the root host is offline. Putting the root key on every host was rejected, because then one stolen laptop could admit devices. |
+| F2 | 2026-11-12 | **One Claude `setup-token` token is shared across the fleet**, encrypted, through the signed fleet config, against the clause quoted in §6.3, as a grey area the owner accepts for their own account and tool. The risk is action against the account. The per-host `claude auth login` mode stays designed as the fallback (§6.6). |
+| F3 | 2026-11-12 | **A Codex ChatGPT login is one sign-in per host**, because refresh tokens rotate and a reused one fails with `refresh_token_reused` (§6.6). |
+| F4 | 2026-11-12 | **API keys, Anthropic and OpenAI, are shared fleet-wide** through the fleet config. |
+| F5 | 2026-11-12 | **The Claude sign-in code is relayed through the app**, in flight only, to the CLI's stdin on the host (§6.3). |
+| F6 | 2026-11-12 | **Codex device-code sign-in is on.** The owner enables it in ChatGPT's security settings. Without it, a ChatGPT login on a headless host needs an SSH tunnel to port 1455, which the phone can't open. |
+| F7 | 2026-11-12 | **A move sends the branch as a git bundle over iroh**, not a push to `origin`, so it creates no visible branch or CI run on the remote (§6.8). |
+| F8 | 2026-11-12 | **A move between hosts on different pins is refused**, and the app offers to update the target first. The transcript formats are internal and change between versions ([sessions], verified). |
+| F9 | 2026-11-12 | **Codex analytics are off** (`analytics.enabled = false` in the hosts' private `config.toml`, [codex-src], verified), as a fleet setting the owner can change. |
+| F10 | 2026-11-12 | **Moving sessions comes last** in "Next", after push, because it needs durability, worktrees and the fleet first, and E4 and E5 may change it. |
+| F11 | 2026-11-12 | **Experiments E1 to E5 may run** in the phase that needs each, in scratch config directories only, with the owner told before each run (§6.9). |
 
 ### 6.11 Sources
 
