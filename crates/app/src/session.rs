@@ -204,7 +204,6 @@ fn ToolLine(tool: ToolKind, state: String) -> Element {
 
 fn verb(change: Change) -> String {
     String::from(match change {
-        Change::Create => "Create",
         Change::Write => "Write",
         Change::Edit => "Edit",
         Change::Delete => "Delete",

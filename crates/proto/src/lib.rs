@@ -392,9 +392,7 @@ pub struct FileChange {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Change {
-    /// A new file.
-    Create,
-    /// The whole file written, new or replaced, as Claude's `Write` does.
+    /// The whole file written, new or replaced.
     Write,
     /// Part of an existing file changed.
     Edit,

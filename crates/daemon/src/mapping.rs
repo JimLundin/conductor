@@ -243,7 +243,7 @@ fn codex_item(item: Item) -> EventKind {
                     .map(|file| FileChange {
                         path: file.path,
                         change: match file.kind {
-                            ChangeKind::Add => Change::Create,
+                            ChangeKind::Add => Change::Write,
                             ChangeKind::Update => Change::Edit,
                             ChangeKind::Delete => Change::Delete,
                         },
@@ -459,7 +459,7 @@ mod tests {
                         files: Vec::from([
                             proto::FileChange {
                                 path: String::from("a.txt"),
-                                change: Change::Create,
+                                change: Change::Write,
                             },
                             proto::FileChange {
                                 path: String::from("b.txt"),

@@ -208,7 +208,7 @@ pub enum ToolKind {
 /// One path a tool call changes, and how (§12, `conductor/3`).
 pub struct FileChange { pub path: String, pub change: Change }
 
-pub enum Change { Create, Write, Edit, Delete }
+pub enum Change { Write, Edit, Delete }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -710,7 +710,7 @@ form). The two tables below are those matches.
 | `AgentDelta { text, .. }` (added in unit 2) | `Emit(AssistantDelta { text })` |
 | `AgentMessage { text, .. }` | `Emit(AssistantMessage { text })` |
 | `Item { Started, Command { id, command, .. } }` | `Emit(ToolCall { id, Started { Command { command } } })` |
-| `Item { Started, FileChange { id, changes, .. } }` | `Emit(ToolCall { id, Started { FileChange { files } } })`, `Add`/`Update`/`Delete` as `Create`/`Edit`/`Delete` |
+| `Item { Started, FileChange { id, changes, .. } }` | `Emit(ToolCall { id, Started { FileChange { files } } })`, `Add`/`Update`/`Delete` as `Write`/`Edit`/`Delete` |
 | `Item { Completed, item }` | `Emit(ToolCall { id, Finished { codex_outcome(status) } })` |
 | `ApprovalRequested { id, item, kind: Command { command, reason, .. } }` | `Open { Codex(id), item, Command { command }, reason }` |
 | `ApprovalRequested { id, item, kind: FileChange { reason, .. } }` | `Open { Codex(id), item, FileChange { files: [] }, reason }` |
@@ -1270,9 +1270,9 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   done with `conductor/3` on branch `p1-smoke-fixes`:
   - Done: Claude's `Write` tool showed as "Edit" on its tool card, because
     `ToolKind::FileChange` carried no tool name. It now carries one
-    `FileChange { path, change }` per path, with `Change::{Create, Write,
-    Edit, Delete}`. Claude's `Write` is `Write`, not `Create`, since it also
-    replaces existing files.
+    `FileChange { path, change }` per path, with `Change::{Write, Edit,
+    Delete}`. `Write` covers a new or replaced whole file: Claude's `Write`
+    and Codex's `add` alike.
   - Done: the approval card dropped Codex's `reason`.
     `RequestOpened { reason: Option<String> }` carries it, and the card
     shows it under the tool line. Claude sends `None`: no `can_use_tool` in
