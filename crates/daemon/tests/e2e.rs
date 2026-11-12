@@ -2579,6 +2579,84 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
     fx.router.shutdown().await.unwrap();
 }
 
+const COUNTING: &str = "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward—I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won’t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!";
+
+/// The app-server killed mid-turn, as live: after `turn/started`, with
+/// deltas streamed. The session closes with no failed turn, and `Continue`
+/// resumes the thread.
+#[tokio::test]
+async fn a_codex_server_killed_mid_turn_closes_and_continues() {
+    let (fx, server) = codex_host("codex-killed-mid-turn.jsonl").await;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/codex-resumed.jsonl"),
+        server.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(
+        &link,
+        start_with(Provider::Codex, &server, "small", Effort::Low),
+    )
+    .await;
+    let _ = send(&link, message("prime?")).await;
+    let _ = kinds_until(&mut updates, Until::TurnEnd).await;
+    let _ = send(&link, message(COUNT)).await;
+    let killed = kinds_until(&mut updates, Until::Closed).await;
+    assert_eq!(
+        (
+            killed
+                .iter()
+                .filter(|kind| matches!(kind, EventKind::AssistantDelta { .. }))
+                .count(),
+            killed
+                .into_iter()
+                .filter(|kind| !matches!(
+                    kind,
+                    EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                ))
+                .collect::<Vec<EventKind>>(),
+        ),
+        (
+            3,
+            Vec::from([
+                user(COUNT),
+                EventKind::Reasoning {
+                    text: String::from(COUNTING),
+                },
+                EventKind::SessionClosed {
+                    reason: CloseReason::Exited {
+                        status: String::from("signal: 9 (SIGKILL)"),
+                    },
+                },
+            ])
+        )
+    );
+    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::Ready).await,
+        [EventKind::SessionReady]
+    );
+    let _ = send(&link, message("codeword?")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd)
+            .await
+            .into_iter()
+            .filter(|kind| !matches!(
+                kind,
+                EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+            ))
+            .collect::<Vec<EventKind>>(),
+        [
+            user("codeword?"),
+            reply("quince"),
+            turn_end(TurnOutcome::Completed),
+        ]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
 /// The thread, model and effort a `thread/start` or `thread/resume` names.
 fn thread_settings(
     params: &serde_json::Value,

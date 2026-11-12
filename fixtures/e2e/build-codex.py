@@ -192,8 +192,14 @@ RECORDINGS = {
     + answered(q_turns[FOR_SESSION], "acceptForSession")
     + q_turns[AGAIN],
     "codex-question-withdraw.jsonl": q_head + q_first + withdrawn(q_turns[QUESTION_WITHDRAWN]),
-    # The stand-in dies on the next turn, as an app-server killed mid-turn.
+    # The stand-in dies as the next turn starts, before it answers `turn/start`.
     "codex-killed.jsonl": c_head + c_threads[0] + c_turns[0] + killed,
+    # The live kill: after `turn/started`, with the recorded deltas sent.
+    "codex-killed-mid-turn.jsonl": c_head
+    + c_threads[0]
+    + c_turns[0]
+    + c_turns[1]
+    + [json.dumps({"fake": "exit"})],
     "codex-resumed.jsonl": r_head + r_threads[0] + r_turns[0],
 }
 
