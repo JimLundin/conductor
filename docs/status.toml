@@ -115,7 +115,7 @@ touches = ["daemon", "agents"]
 [[phase.unit]]
 id = "p1-5"
 name = "Unit 5: Codex sessions"
-status = "in_progress"
+status = "done"
 branch = "p1-u5-codex"
 purpose = "CodexHub, the Codex half of mapping, Codex in the registry."
 done_when = "The Codex e2e tests pass, including two sessions on one server."
