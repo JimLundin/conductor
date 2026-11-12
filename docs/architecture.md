@@ -68,7 +68,10 @@ so one UI and one set of commands work for both agents.
   who decided); a turn completes, is interrupted or fails.
 - **Durable and live:** every event except the streaming deltas is durable:
   it takes the next `HostSeq` and is replayed on catch-up. Deltas go only to
-  subscribers that are live, because the finished message replaces them.
+  subscribers that are live, because the finished message replaces them. A
+  delta carries the seq of the last stored event, so the client's gap check
+  still holds. A client that reconnects or switches transport mid-reply may
+  miss deltas; the finished message repairs the text.
 
 What both providers have belongs in the model. What only one has goes in
 typed per-provider options instead of being forced into it: Claude's
