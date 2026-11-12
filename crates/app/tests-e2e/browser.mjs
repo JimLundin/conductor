@@ -329,7 +329,9 @@ if (scenario === 'upgrade') {
         await openRow(title, shot);
         await shot.waitForTimeout(450);
         const file = `${out}/${device}-${scheme}-${state}.png`;
-        await shot.screenshot({ path: file });
+        // The candidate pair differs from run to run, so it is left out of
+        // the shot; display: none, since a hidden span keeps its width.
+        await shot.screenshot({ path: file, style: '.status .path { display: none; }' });
         log(`screenshot ${file}`);
       }
       await shooter.close();
