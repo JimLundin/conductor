@@ -5,6 +5,7 @@ use iroh_mdns_address_lookup::MdnsAddressLookup;
 use proto::ClientName;
 
 use crate::CandidatePair;
+use crate::device::{Platform, device_name};
 use crate::wire::WireError;
 
 /// n0's relays and DNS lookup, plus mDNS so hosts on the same LAN connect
@@ -17,10 +18,12 @@ pub(crate) async fn public_endpoint() -> Result<Endpoint, BindError> {
         .await
 }
 
-/// The desktop app's name in `Hello`. The headless example and the tests
-/// give their own.
+/// The desktop app's name in `Hello`: its OS. The headless example and the
+/// tests give their own.
 pub fn client_name() -> ClientName {
-    ClientName(String::from("desktop"))
+    device_name(Platform::Native {
+        os: String::from(std::env::consts::OS),
+    })
 }
 
 /// Native clients hole-punch with iroh and never upgrade, so a native build
