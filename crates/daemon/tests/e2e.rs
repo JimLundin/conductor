@@ -2474,10 +2474,7 @@ async fn a_killed_claude_session_continues_its_conversation() {
     .await;
     let _ = send(&link, message("sheep?")).await;
     let first = events_until(&mut updates, Until::TurnEnd).await;
-    assert_eq!(
-        send(&link, continued()).await,
-        CommandResult::Rejected(Rejection::SessionOpen)
-    );
+    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
     let _ = send(&link, message("count")).await;
     let killed = events_until(&mut updates, Until::Closed).await;
     assert_eq!(

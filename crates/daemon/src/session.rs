@@ -439,7 +439,8 @@ impl SessionActor {
                 self.start(launch).await?;
                 Ok(CommandResult::Accepted)
             }
-            (Order::Start(_), _, _) => Ok(CommandResult::Rejected(Rejection::SessionOpen)),
+            // Continue is idempotent: the agent already runs.
+            (Order::Start(_), _, _) => Ok(CommandResult::Accepted),
             (_, _, Agent::Down) => Ok(CommandResult::Rejected(Rejection::SessionClosed)),
             (Order::Send { text, by }, Turn::Idle, _) => {
                 self.emit(EventKind::UserMessage {

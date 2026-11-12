@@ -412,6 +412,7 @@ pub enum CommandBody {
     },
     /// Starts a closed session's agent again, resuming its conversation
     /// with the provider's own resume. `SessionReady` follows in the log.
+    /// On a session whose agent runs it is `Accepted` and does nothing.
     Continue {
         session: SessionId,
     },
@@ -474,8 +475,6 @@ pub enum Rejection {
     },
     UnknownSession,
     SessionClosed,
-    /// `Continue` for a session whose agent still runs or is starting.
-    SessionOpen,
     /// The host doesn't offer that model or effort, for this reason.
     NotOffered {
         reason: String,
@@ -510,7 +509,6 @@ impl Rejection {
             }
             Rejection::UnknownSession => String::from("no session with that id"),
             Rejection::SessionClosed => String::from("the session has closed"),
-            Rejection::SessionOpen => String::from("the session is still open"),
             Rejection::NotOffered { reason } => reason.clone(),
             Rejection::TurnInProgress => String::from("a turn is already running"),
             Rejection::NoTurnRunning => String::from("no turn is running"),

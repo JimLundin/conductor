@@ -92,8 +92,9 @@ so one UI and one set of commands work for both agents.
   that conversation with the provider's resume (Claude's `--resume <id>` in
   the private home, Codex's `thread/resume` on a new app-server), with the
   same model and effort and the provider's current credential, and logs
-  `SessionReady`. The session keeps its id and its log. `Continue` on a
-  session whose agent runs is refused as `SessionOpen`. A session closed
+  `SessionReady`. The session keeps its id and its log. `Continue` is
+  idempotent: on a session whose agent runs it answers `Accepted` and does
+  nothing, so a double tap or a second phone ends in the same state. A session closed
   before its first turn starts its CLI afresh, since there is nothing to
   resume yet. Continue covers CLI restarts within a running host only: a
   host restart loses the in-memory log and the session's conversation id
