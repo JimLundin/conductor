@@ -25,7 +25,11 @@ cargo build -q -p daemon --bin conductord
 
 python3 -m http.server "$port" --bind 127.0.0.1 --directory "$site" >/dev/null 2>&1 &
 server=$!
-scratch=$(mktemp -d)
+# Fixed session paths, which the screenshots show, so a rerun that changes
+# nothing redraws nothing. Two runs at once would share it.
+scratch=/tmp/conductor-e2e
+rm -rf "$scratch"
+mkdir -p "$scratch"
 trap 'kill "$server" 2>/dev/null || true; rm -rf "$site" "$scratch"' EXIT
 
 # session <dir> <recording> [filter...]: a directory holding the recording,
