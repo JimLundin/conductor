@@ -15,6 +15,6 @@ keep the license; the repository `NOTICE` records that they were modified.
 
 ## Later: into the subset
 
-These crates are outside the Conductor Rust subset (`docs/subset.md`) for
+These crates are outside the Conductor Rust subset (`JimLundin/subset`) for
 now. When they are rewritten into it, each moves out of `vendor/` into its
 own crate under `crates/`, and this directory goes away.

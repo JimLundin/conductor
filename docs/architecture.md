@@ -1,9 +1,8 @@
 # Conductor: architecture sketch (draft for review)
 
 Status: the original design sketch from 2026-11-10, kept as the reference
-for the overall system. **What is built and what is in progress is on the
-generated architecture page** (`https://jimlundin.github.io/conductor/architecture/`,
-from `docs/status.toml`); the current plan for the host is `docs/p1/design.md`.
+for the overall system. **What is built and what comes next is in
+`docs/roadmap.md`**; the current plan for the host is `docs/p1/design.md`.
 Where this document and those disagree, they win: the crate list in §6 and the
 build order in §12 are the original sketch, not the current state.
 

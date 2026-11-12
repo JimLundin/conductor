@@ -1,4 +1,4 @@
-name: Deploy the web app, the subset report and the architecture page to GitHub Pages
+name: Deploy the web app to GitHub Pages
 
 on:
   push:
@@ -19,9 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The report's history scores past commits.
-          fetch-depth: 0
 
       # rust-toolchain.toml pins nightly; rustup installs it on first use.
       - name: Install the toolchain and the wasm target
@@ -42,22 +39,6 @@ jobs:
         run: |
           clang --version
           dx build --platform web --release
-
-      # The app routes with the URL hash under /conductor/, so the report's
-      # own path, /conductor/report/, never reaches the app.
-      - name: Generate the subset report at /conductor/report/
-        run: >
-          cargo run --release -p subset -- report-html
-          --out target/dx/app/release/web/public/report
-          --compare tools --compare vendor --history 30
-
-      # A static page beside report/, at /conductor/architecture/; the app's
-      # hash routing never sees it. Reuses the subset binary built above.
-      - name: Generate the architecture page at /conductor/architecture/
-        run: >
-          python3 tools/archmap/archmap.py
-          --out target/dx/app/release/web/public/architecture
-          --subset target/release/subset
 
       - uses: actions/upload-pages-artifact@v3
         with:

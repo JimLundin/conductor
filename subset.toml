@@ -1,7 +1,7 @@
 # The Conductor Rust subset: the constructs code may use. `tools/subset check`
 # rejects anything not listed here in the files under `include`. The list
-# grows only through accepted proposals in docs/subset/proposals/. Each id is
-# documented in docs/subset.md.
+# grows only through accepted proposals in JimLundin/subset (docs/proposals/). Each id is
+# documented in docs/subset.md there.
 
 version = 8
 
@@ -225,7 +225,7 @@ rule = "`#[tokio::main]` only in a native binary (proposal 0006)"
 paths = ["crates/*/src/main.rs", "crates/*/src/bin/*.rs", "crates/*/examples/*.rs"]
 allowed = ["attr.tokio::main"]
 
-# The weighted score (`subset score`, docs/subset.md "Weights"): each token
+# The weighted score (`subset score`, docs/subset.md "Weights" in JimLundin/subset): each token
 # costs the weight of the tier of the innermost construct that contains it.
 # A violation costs `outside` whatever its id, and a construct whose shape an
 # item we don't define fixes costs `boundary`. An allowed id missing from

@@ -5,8 +5,6 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 WASM_CRATES=(proto client)
 cargo fmt --check
-# docs/status.toml feeds the Pages deploy; a malformed unit fails it there.
-python3 tools/archmap/archmap.py --check
 # Run records name the host's public address; it must never be committed.
 python3 tools/scrub-ips.py --check $(git ls-files 'docs/**/*.txt' 'docs/**/*.log' 'docs/**/NOTES.md')
 cargo clippy --workspace --all-targets -- -D warnings
@@ -19,9 +17,8 @@ if [ -d crates/app ]; then
   cargo clippy -p app --features web --target wasm32-unknown-unknown -- -D warnings
 fi
 cargo test --workspace
-# The existing code fails the subset until the bootstrap round rewrites it
-# (docs/subset.md), so this step runs only with SUBSET=1. Drop the flag and
-# run it unconditionally once `subset check` passes on all of crates/.
-if [ "${SUBSET:-0}" = 1 ]; then
-  cargo run -q -p subset -- check
+# The subset checker, pinned in tools/subset. SUBSET=0 skips it (it builds
+# the checker on first use, which needs the network).
+if [ "${SUBSET:-1}" = 1 ]; then
+  tools/subset check
 fi

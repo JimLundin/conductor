@@ -2,26 +2,28 @@
 
 A Rust orchestrator for Claude Code and Codex sessions across several hosts,
 with a desktop app and an iPhone web app. The design is in
-`docs/architecture.md`.
+`docs/architecture.md`; what is built and what is next is in
+`docs/roadmap.md`.
 
 ## Writing code
 
 - **All code is subset code.** Everything under `crates/` is written in the
-  Conductor Rust subset (`docs/subset.md`), through the pair loop
-  (`.claude/skills/pair/SKILL.md`). Code from before the subset is being
-  rewritten into it, starting with the bootstrap round in `docs/subset.md`.
-- **The subset grows only by accepted proposals.** When the subset makes
-  code long, log the friction point and write it the long way. Only the
-  owner adds constructs.
-- **Gate.** `tools/check.sh` (fmt, clippy for native and wasm, tests) passes
-  on every commit. `SUBSET=1 tools/check.sh` also runs `tools/subset check`,
-  which becomes mandatory once the rewrite makes `crates/` clean.
+  Conductor Rust subset, through the pair loop
+  (`.claude/skills/pair/SKILL.md`). The subset, its checker and its
+  proposals live in their own repository, `JimLundin/subset`
+  (`docs/subset.md` there); `subset.toml` here is Conductor's allowlist,
+  and `tools/subset` runs the checker at the pinned revision.
+- **The subset grows only by accepted proposals**, made in the subset
+  repository. When the subset makes code long, log the friction point and
+  write it the long way. Only the owner adds constructs.
+- **Gate.** `tools/check.sh` (fmt, clippy for native and wasm, tests,
+  `tools/subset check`) passes on every commit.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo
   can then silently build one worktree against another branch's sources.
   Find the directory with `tools/target-dir` (for example
-  `"$(tools/target-dir)"/debug/subset`). Dev builds carry line tables only
+  `"$(tools/target-dir)"/debug/conductord`). Dev builds carry line tables only
   (`Cargo.toml` `[profile.dev]`) to keep each `target/` small.
 - **Worktrees are temporary.** Create one per task beside the main
   checkout (`git worktree add ../conductor-<task> -b <branch>`), and remove

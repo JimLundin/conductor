@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Runs the subset checker (https://github.com/JimLundin/subset) at the
+# revision Conductor pins, building it into this checkout's target dir once.
+# Usage: tools/subset check | score [paths...] | measure <paths...> | ...
+set -euo pipefail
+cd "$(dirname "$0")/.."
+REPO=https://github.com/JimLundin/subset
+REV=ece845d2ef337af2a17dfaa60cff29684e9e22a8
+root="$(tools/target-dir)/subset-$REV"
+if [ ! -x "$root/bin/subset" ]; then
+  cargo install --quiet --locked --git "$REPO" --rev "$REV" --root "$root" subset
+fi
+exec "$root/bin/subset" "$@"
