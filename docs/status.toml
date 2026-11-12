@@ -195,6 +195,13 @@ purpose = "Proposals 0040 (one-comparison match guard) and 0041 (for loops for s
 done_when = "subset.toml says version 7, the review's adversarial inputs fail their tests, and crates/ checks clean."
 touches = ["subset"]
 [[phase.unit]]
+id = "subset-v8"
+name = "Subset checker v8"
+status = "done"
+purpose = "Proposal 0042 (static str fields in scan tables), the tuple-table ruling, and the range-by-name hole."
+done_when = "subset.toml says version 8, the review's adversarial inputs fail their tests, and crates/ checks clean."
+touches = ["subset"]
+[[phase.unit]]
 id = "archmap"
 name = "Architecture page"
 status = "done"
