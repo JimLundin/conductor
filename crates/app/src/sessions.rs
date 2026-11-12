@@ -1,6 +1,6 @@
 //! The session list and the form that starts a session.
 
-use client::host_view::{Attention, HostView, SessionStatus, SessionView};
+use client::host_view::{Attention, HostView, SessionView};
 use client::new_session::{Attempt, PROVIDERS, Refusal, label};
 use dioxus::prelude::*;
 use proto::{Availability, CommandBody, CommandResult, HostPath, Provider, Providers, SessionId};
@@ -60,16 +60,14 @@ fn SessionRow(
     screen: Screen,
     on_select: EventHandler<Screen>,
 ) -> Element {
-    let (status, text, badge) = match (&session.status, session.attention()) {
-        (SessionStatus::Closed(_), _) | (_, Attention::Quiet) => {
-            (session.status.word(), session.status.word(), String::new())
-        }
-        (_, Attention::Requests(1)) => (
+    let (status, text, badge) = match session.attention() {
+        Attention::Quiet => (session.status.word(), session.status.word(), String::new()),
+        Attention::Requests(1) => (
             String::from("approval"),
             String::from("needs approval"),
             String::from("1"),
         ),
-        (_, Attention::Requests(open)) => (
+        Attention::Requests(open) => (
             String::from("approval"),
             format!("{open} need approval"),
             format!("{open}"),

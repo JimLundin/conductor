@@ -115,6 +115,7 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                 ToolState::Finished(ToolOutcome::Succeeded) => "succeeded",
                 ToolState::Finished(ToolOutcome::Failed) => "failed",
                 ToolState::Finished(ToolOutcome::Declined) => "declined",
+                ToolState::Stopped => "stopped",
             };
             match approval {
                 Approval::NotAsked => rsx! { ToolLine { tool, state } },

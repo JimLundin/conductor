@@ -65,6 +65,8 @@ pub enum ReplyState {
 pub enum ToolState {
     Running,
     Finished(ToolOutcome),
+    /// The turn or the session ended before the call finished.
+    Stopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +90,9 @@ enum Change {
     Ask(ToolCallId, RequestId),
     Resolve(RequestId, Resolution),
     Finish(ToolCallId, ToolOutcome),
+    /// The host ended the turn or the session: nothing still running will
+    /// finish, and nothing still open will be answered.
+    End,
 }
 
 impl SessionStatus {
@@ -236,7 +241,9 @@ impl SessionView {
         match kind {
             EventKind::SessionCreated { .. } => self,
             EventKind::SessionReady => self.status(SessionStatus::Idle),
-            EventKind::SessionClosed { reason } => self.status(SessionStatus::Closed(reason)),
+            EventKind::SessionClosed { reason } => self
+                .change(Change::End)
+                .status(SessionStatus::Closed(reason)),
             EventKind::UserMessage { text, by } => self
                 .status(SessionStatus::Running)
                 .push(Item::User { text, by }),
@@ -265,6 +272,7 @@ impl SessionView {
                 resolution,
             } => self.change(Change::Resolve(request, resolution)),
             EventKind::TurnCompleted { outcome } => self
+                .change(Change::End)
                 .status(SessionStatus::Idle)
                 .push(Item::TurnCompleted(outcome)),
             EventKind::Error { message } => self.push(Item::Error(message)),
@@ -376,12 +384,13 @@ impl Item {
 
 impl ToolState {
     fn changed(self, call: &ToolCallId, change: &Change) -> ToolState {
-        match change {
-            Change::Finish(id, outcome) => match call.eq(id).then_some(outcome).copied() {
+        match (self, change) {
+            (state, Change::Finish(id, outcome)) => match call.eq(id).then_some(outcome).copied() {
                 Some(outcome) => ToolState::Finished(outcome),
-                None => self,
+                None => state,
             },
-            Change::Ask(_, _) | Change::Resolve(_, _) => self,
+            (ToolState::Running, Change::End) => ToolState::Stopped,
+            (state, Change::Ask(_, _) | Change::Resolve(_, _) | Change::End) => state,
         }
     }
 }
@@ -405,7 +414,17 @@ impl Approval {
                     request,
                 }
             }
-            (approval, Change::Resolve(_, _) | Change::Finish(_, _)) => approval,
+            (
+                Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                },
+                Change::End,
+            ) => Approval::Asked {
+                request,
+                state: RequestState::Resolved(Resolution::Withdrawn),
+            },
+            (approval, Change::Resolve(_, _) | Change::Finish(_, _) | Change::End) => approval,
         }
     }
 }
@@ -582,7 +601,7 @@ mod tests {
                                 tool: ToolKind::Command {
                                     command: text("rm"),
                                 },
-                                state: ToolState::Running,
+                                state: ToolState::Stopped,
                                 approval: Approval::Asked {
                                     request: RequestId(2),
                                     state: RequestState::Resolved(Resolution::Withdrawn),
@@ -631,6 +650,102 @@ mod tests {
                 command: text("ls"),
             },
         }
+    }
+
+    fn started(call: &str) -> EventKind {
+        EventKind::ToolCall {
+            call: ToolCallId(text(call)),
+            phase: ToolPhase::Started {
+                tool: ToolKind::Command {
+                    command: text("ls"),
+                },
+            },
+        }
+    }
+
+    fn asked(call: &str, request: u64, state: ToolState, approval: RequestState) -> Item {
+        Item::Tool {
+            call: ToolCallId(text(call)),
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
+            state,
+            approval: Approval::Asked {
+                request: RequestId(request),
+                state: approval,
+            },
+        }
+    }
+
+    #[test]
+    fn the_end_of_a_turn_or_session_stops_its_tools_and_withdraws_its_requests() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, started("toolu_1")),
+            (1, opened(1)),
+            (1, started("toolu_2")),
+            (
+                1,
+                EventKind::ToolCall {
+                    call: ToolCallId(text("toolu_2")),
+                    phase: ToolPhase::Finished {
+                        outcome: ToolOutcome::Succeeded,
+                    },
+                },
+            ),
+            (
+                1,
+                EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Interrupted,
+                },
+            ),
+            (2, created("/b")),
+            (2, opened(3)),
+            (
+                2,
+                EventKind::SessionClosed {
+                    reason: CloseReason::Exited { status: text("1") },
+                },
+            ),
+        ]));
+        assert_eq!(
+            view.sessions
+                .values()
+                .map(|session| session.items.clone())
+                .collect::<Vec<Vec<Item>>>(),
+            Vec::from([
+                Vec::from([
+                    asked(
+                        "toolu_1",
+                        1,
+                        ToolState::Stopped,
+                        RequestState::Resolved(Resolution::Withdrawn)
+                    ),
+                    Item::Tool {
+                        call: ToolCallId(text("toolu_2")),
+                        tool: ToolKind::Command {
+                            command: text("ls"),
+                        },
+                        state: ToolState::Finished(ToolOutcome::Succeeded),
+                        approval: Approval::NotAsked,
+                    },
+                    Item::TurnCompleted(TurnOutcome::Interrupted),
+                ]),
+                Vec::from([asked(
+                    "toolu_3",
+                    3,
+                    ToolState::Stopped,
+                    RequestState::Resolved(Resolution::Withdrawn)
+                )]),
+            ])
+        );
+        assert_eq!(
+            view.sessions
+                .values()
+                .map(SessionView::attention)
+                .collect::<Vec<Attention>>(),
+            Vec::from([Attention::Quiet, Attention::Quiet])
+        );
     }
 
     #[test]

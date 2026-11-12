@@ -374,7 +374,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .tool[data-state="succeeded"] .tool-mark::before { content: "✓"; color: var(--green); }
 .tool[data-state="failed"] .tool-mark::before { content: "✕"; color: var(--red); }
-.tool[data-state="declined"] .tool-mark::before { content: "–"; color: var(--faint); }
+.tool[data-state="declined"] .tool-mark::before,
+.tool[data-state="stopped"] .tool-mark::before { content: "–"; color: var(--faint); }
 .tool[data-state="running"] .tool-mark::before {
   content: "";
   display: inline-block;
