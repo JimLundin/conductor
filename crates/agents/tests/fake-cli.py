@@ -19,6 +19,12 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
   process stays up 1 s after the recording ends, so the failure isn't an exit.
 
 Markers are never printed. Once stdin closes, nothing waits.
+
+At start it records the environment variables its arguments name, those
+set, as `NAME=value` lines in `env.txt`, and copies `$CODEX_HOME/config.toml`
+to `codex-config.toml`, for tests of what a host passes its CLIs. A value
+without `conductor-test` in it is the environment's own, maybe a real
+credential, so it is written as `<inherited>`.
 """
 
 import json
@@ -26,6 +32,15 @@ import os
 import sys
 import threading
 import time
+
+with open("env.txt", "w") as env:
+    for name in sorted(n for n in sys.argv[1:] if n in os.environ):
+        value = os.environ[name]
+        env.write(f"{name}={value if 'conductor-test' in value else '<inherited>'}\n")
+config = os.path.join(os.environ.get("CODEX_HOME", ""), "config.toml")
+if "CODEX_HOME" in os.environ and os.path.exists(config):
+    with open(config) as source, open("codex-config.toml", "w") as copy:
+        copy.write(source.read())
 
 recording = open("stdout.jsonl").read().splitlines()
 hang_up = next((m["after"] for m in map(json.loads, recording) if m.get("fake") == "hang_up"), None)

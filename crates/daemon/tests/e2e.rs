@@ -18,17 +18,19 @@ use client::host_view::{
 use client::{Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
+use daemon::credentials::Store;
 use daemon::log::Log;
-use daemon::registry::{Launcher, Launchers, Registry};
+use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    AuthToken, Availability, Change, ClientName, CloseReason, CommandBody, CommandResult, Decision,
-    Epoch, Event, EventKind, FileChange, HostPath, HostSeq, Provider, Providers, Rejection,
-    RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Auth, AuthToken, Availability, Change, ClaudeCredential, ClientName, CloseReason,
+    CodexCredential, CommandBody, CommandResult, Credential, Decision, Epoch, Event, EventKind,
+    FileChange, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
+    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome, WireApi,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -65,11 +67,15 @@ fn fake_codex() -> PathBuf {
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fixture {
     host_of(Launchers {
-        claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
-            claude_path,
-            home: Home::User,
-            model: None,
-        })),
+        claude: Launcher::Ready {
+            launch: Launch::Claude(ClaudeLaunch {
+                claude_path,
+                home: Home::User,
+                credential: None,
+                model: None,
+            }),
+            own: OwnSignIn::Unmanaged,
+        },
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     })
     .await
@@ -82,21 +88,42 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
     let hub = CodexHub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home: Home::User,
+        credential: None,
         cwd: server.clone(),
         stdout_log: None,
     });
     let fixture = host_of(Launchers {
         claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        codex: Launcher::Ready(Launch::Codex(CodexLaunch { hub, model: None })),
+        codex: Launcher::Ready {
+            launch: Launch::Codex(CodexLaunch { hub, model: None }),
+            own: OwnSignIn::Unmanaged,
+        },
     })
     .await;
     (fixture, server)
 }
 
+/// A host with a data dir of its own.
 async fn host_of(launchers: Launchers) -> Fixture {
-    let log = Log::spawn(String::from("test-host"), Epoch(11), launchers.providers());
-    let registry = Registry::spawn(log.clone(), launchers);
     let endpoint = endpoint().await;
+    let data = data_dir(&endpoint.id().to_string());
+    serve(endpoint, launchers, &data)
+}
+
+/// An empty data dir for a host. Its name has `conductor-test` in it, so
+/// the fake CLIs show the paths under it (fake-cli.py).
+fn data_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("conductor-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A host on `endpoint`, keeping its credentials in `data`.
+fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
+    let (store, credentials) = Store::open(data).unwrap();
+    let log = Log::spawn(String::from("test-host"), Epoch(11));
+    let registry = Registry::spawn(log.clone(), launchers, store, credentials);
     let target = Target {
         addr: endpoint.addr(),
         token: AuthToken::from_bytes(TOKEN),
@@ -253,7 +280,9 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
     assert_eq!(
         link.status().providers,
         Some(Providers {
-            claude: Availability::Available,
+            claude: Availability::Available {
+                auth: Auth::Unmanaged,
+            },
             codex: Availability::Unavailable {
                 reason: String::from(UNAVAILABLE),
             },
@@ -1328,8 +1357,8 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
     );
 }
 
-/// Sends this thread's logs to a file named after `test`. A `tokio::test`
-/// runs on one thread, so they include the host's.
+/// Sends this thread's logs, at debug and above, to a file named after
+/// `test`. A `tokio::test` runs on one thread, so they include the host's.
 fn capture_log(test: &str) -> (PathBuf, tracing::subscriber::DefaultGuard) {
     let path =
         std::env::temp_dir().join(format!("conductor-e2e-{test}-{}.log", std::process::id()));
@@ -1337,6 +1366,7 @@ fn capture_log(test: &str) -> (PathBuf, tracing::subscriber::DefaultGuard) {
     let guard = tracing::subscriber::set_default(
         tracing_subscriber::fmt()
             .with_writer(Arc::new(log))
+            .with_max_level(tracing::Level::DEBUG)
             .with_ansi(false)
             .finish(),
     );
@@ -1348,4 +1378,295 @@ fn captured(path: &Path) -> String {
     let logged = std::fs::read_to_string(path).unwrap();
     std::fs::remove_file(path).unwrap();
     logged
+}
+
+const GATEWAY: &str = "https://conductor-test.invalid/gateway";
+const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
+const NO_CREDENTIAL: &str = "no credential configured";
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap()
+}
+
+/// How many times `text` is in the file at `path`.
+fn count(path: &Path, text: &str) -> usize {
+    std::fs::read(path)
+        .unwrap()
+        .windows(text.len())
+        .filter(|window| window == &text.as_bytes())
+        .count()
+}
+
+/// A host on `data` whose Claude is the fake in a private home, with no
+/// sign-in of its own, and whose Codex is unavailable.
+async fn claude_host_in(data: &Path) -> Fixture {
+    let homes = daemon::homes(data).unwrap();
+    let launchers = Launchers {
+        claude: Launcher::Ready {
+            launch: Launch::Claude(ClaudeLaunch {
+                claude_path: fake_claude(),
+                home: homes.claude,
+                credential: None,
+                model: None,
+            }),
+            own: OwnSignIn::Missing,
+        },
+        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+    };
+    serve(endpoint().await, launchers, data)
+}
+
+fn with_claude(claude: Availability) -> Providers {
+    Providers {
+        claude,
+        codex: Availability::Unavailable {
+            reason: String::from(UNAVAILABLE),
+        },
+    }
+}
+
+fn gateway() -> Availability {
+    Availability::Available {
+        auth: Auth::Gateway {
+            base_url: String::from(GATEWAY),
+        },
+    }
+}
+
+fn no_credential() -> Availability {
+    Availability::Unavailable {
+        reason: String::from(NO_CREDENTIAL),
+    }
+}
+
+fn refused_for_no_credential() -> CommandResult {
+    CommandResult::Rejected(Rejection::ProviderUnavailable {
+        reason: String::from(NO_CREDENTIAL),
+    })
+}
+
+fn claude_gateway() -> CommandBody {
+    CommandBody::SetCredential {
+        credential: Credential::Claude(ClaudeCredential::Gateway {
+            base_url: String::from(GATEWAY),
+            token: String::from(CLAUDE_TOKEN),
+        }),
+    }
+}
+
+/// A fresh link to `fx`, live, and the providers its `Welcome` reported.
+async fn live(fx: &Fixture) -> (HostLink, mpsc::Receiver<Update>, Option<Providers>) {
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let providers = link.status().providers;
+    (link, updates, providers)
+}
+
+#[tokio::test]
+async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
+    let data = data_dir("claude-gateway");
+    let (log, logging) = capture_log("claude-gateway");
+    let dir = scratch("claude-gateway", "claude-approve.jsonl");
+    let fx = claude_host_in(&data).await;
+    let (link, mut updates, welcomed) = live(&fx).await;
+    assert_eq!(welcomed, Some(with_claude(no_credential())));
+    assert_eq!(
+        send(&link, start(Provider::Claude, &dir)).await,
+        refused_for_no_credential()
+    );
+    assert_eq!(
+        send(&link, claude_gateway()).await,
+        CommandResult::Providers(with_claude(gateway()))
+    );
+    assert_eq!(link.status().providers, Some(with_claude(gateway())));
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let events = events_until(&mut updates, Until::Ready).await;
+    assert_eq!(
+        read(&dir.join("env.txt")),
+        format!(
+            "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\nCLAUDE_CONFIG_DIR={}\n",
+            data.join("home/claude").display()
+        )
+    );
+    assert_eq!(count(&data.join("credentials"), CLAUDE_TOKEN), 0);
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+
+    let fx = claude_host_in(&data).await;
+    let (link, _updates, welcomed) = live(&fx).await;
+    assert_eq!(welcomed, Some(with_claude(gateway())));
+    assert_eq!(
+        send(
+            &link,
+            CommandBody::ClearCredential {
+                provider: Provider::Claude
+            }
+        )
+        .await,
+        CommandResult::Providers(with_claude(no_credential()))
+    );
+    assert_eq!(
+        send(&link, start(Provider::Claude, &dir)).await,
+        refused_for_no_credential()
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+
+    let fx = claude_host_in(&data).await;
+    let (link, _updates, welcomed) = live(&fx).await;
+    assert_eq!(welcomed, Some(with_claude(no_credential())));
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+    drop(logging);
+    let logged = captured(&log);
+    assert_eq!(
+        (
+            logged.matches("stored a credential change").count(),
+            logged.matches(CLAUDE_TOKEN).count(),
+            format!("{events:?}").matches(CLAUDE_TOKEN).count(),
+        ),
+        (2, 0, 0)
+    );
+}
+
+fn with_codex(codex: Availability) -> Providers {
+    Providers {
+        claude: Availability::Unavailable {
+            reason: String::from(UNAVAILABLE),
+        },
+        codex,
+    }
+}
+
+fn codex_provider(key: &str) -> CommandBody {
+    CommandBody::SetCredential {
+        credential: Credential::Codex(CodexCredential::Provider {
+            name: String::from("Conductor test"),
+            base_url: String::from(GATEWAY),
+            wire_api: WireApi::Responses,
+            key: String::from(key),
+            model: String::from("conductor-test-model"),
+        }),
+    }
+}
+
+#[tokio::test]
+async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
+    const FIRST_KEY: &str = "conductor-test-first-key";
+    const SECOND_KEY: &str = "conductor-test-second-key";
+    let data = data_dir("codex-provider");
+    let (log, logging) = capture_log("codex-provider");
+    let server = scratch("codex-provider", "codex-interrupt.jsonl");
+    let homes = daemon::homes(&data).unwrap();
+    let hub = CodexHub::spawn(ServerOptions {
+        codex_path: fake_codex(),
+        home: homes.codex,
+        credential: None,
+        cwd: server.clone(),
+        stdout_log: None,
+    });
+    let launchers = Launchers {
+        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
+        codex: Launcher::Ready {
+            launch: Launch::Codex(CodexLaunch { hub, model: None }),
+            own: OwnSignIn::Missing,
+        },
+    };
+    let fx = serve(endpoint().await, launchers, &data);
+    let (link, mut updates, welcomed) = live(&fx).await;
+    assert_eq!(welcomed, Some(with_codex(no_credential())));
+    assert_eq!(
+        send(&link, codex_provider(FIRST_KEY)).await,
+        CommandResult::Providers(with_codex(gateway()))
+    );
+    let _ = send(&link, start(Provider::Codex, &server)).await;
+    let first = events_until(&mut updates, Until::Ready).await;
+    let home = data.join("home/codex");
+    assert_eq!(
+        read(&server.join("env.txt")),
+        format!(
+            "CODEX_HOME={}\nCONDUCTOR_CODEX_KEY={FIRST_KEY}\n",
+            home.display()
+        )
+    );
+    assert_eq!(
+        read(&server.join("codex-config.toml")),
+        format!(
+            "check_for_update_on_startup = false\nmodel_provider = \"conductor\"\nmodel = \"conductor-test-model\"\n\n[model_providers.conductor]\nname = \"Conductor test\"\nbase_url = \"{GATEWAY}\"\nenv_key = \"CONDUCTOR_CODEX_KEY\"\nwire_api = \"responses\"\n"
+        )
+    );
+    assert_eq!(
+        send(&link, codex_provider(SECOND_KEY)).await,
+        CommandResult::Providers(with_codex(gateway()))
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Closed).await,
+        [EventKind::SessionClosed {
+            reason: CloseReason::Exited {
+                status: String::from("unknown exit (stopped for a new Codex credential)"),
+            },
+        }]
+    );
+    let _ = send(&link, start(Provider::Codex, &server)).await;
+    let second = events_until(&mut updates, Until::Ready).await;
+    assert_eq!(
+        read(&server.join("env.txt")),
+        format!(
+            "CODEX_HOME={}\nCONDUCTOR_CODEX_KEY={SECOND_KEY}\n",
+            home.display()
+        )
+    );
+    assert_eq!(count(&home.join("config.toml"), FIRST_KEY), 0);
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+    drop(logging);
+    let logged = captured(&log);
+    assert_eq!(
+        (
+            logged
+                .matches("stopped the codex app-server for a new credential")
+                .count(),
+            logged.matches(FIRST_KEY).count(),
+            logged.matches(SECOND_KEY).count(),
+            format!("{first:?}{second:?}").matches("-key").count(),
+        ),
+        (1, 0, 0, 0)
+    );
+}
+
+#[tokio::test]
+async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
+    let data = data_dir("unauthenticated");
+    let fx = claude_host_in(&data).await;
+    let endpoint = endpoint().await;
+    let conn = endpoint
+        .connect(fx.target.addr.clone(), proto::ALPN)
+        .await
+        .unwrap();
+    let (mut send_half, mut recv_half) = conn.open_bi().await.unwrap();
+    proto::wire::write(
+        &mut send_half,
+        &proto::Open::Command(proto::Command {
+            id: proto::CommandId(1),
+            body: claude_gateway(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        proto::wire::read::<proto::HelloReply>(&mut recv_half)
+            .await
+            .unwrap(),
+        Some(proto::HelloReply::Refused {
+            reason: String::from("the first stream must be a hello"),
+        })
+    );
+    endpoint.close().await;
+    let (link, _updates, welcomed) = live(&fx).await;
+    assert_eq!(
+        (welcomed, data.join("credentials").exists()),
+        (Some(with_claude(no_credential())), false)
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
 }

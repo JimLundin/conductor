@@ -241,7 +241,11 @@ pub(crate) fn run_command(
 ) {
     spawn(async move {
         notice.set(match send(link(), body).await {
-            Ok(CommandResult::Accepted | CommandResult::Started { .. }) => None,
+            Ok(
+                CommandResult::Accepted
+                | CommandResult::Started { .. }
+                | CommandResult::Providers(_),
+            ) => None,
             Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
             Err(err) => Some(err),
         });

@@ -5,14 +5,15 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 
 use proto::{
-    Availability, ClientName, CommandResult, EventKind, HostPath, Provider, Providers, Rejection,
-    SessionId,
+    Auth, Availability, ClientName, CommandResult, Credential, Credentials, EventKind, HostPath,
+    Provider, Providers, Rejection, SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
+use crate::credentials::Store;
 use crate::log::Log;
-use crate::session::{Launch, Session};
+use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -23,35 +24,39 @@ pub struct Launchers {
 
 #[derive(Debug, Clone)]
 pub enum Launcher {
-    Ready(Launch),
+    /// The CLI runs, and signs in as `own` says when the host stores no
+    /// credential for it.
+    Ready { launch: Launch, own: OwnSignIn },
     /// The host can't run this provider's sessions, for this reason.
     Unavailable(String),
 }
 
-impl Launchers {
-    /// What `Welcome` tells a client the host can run.
-    pub fn providers(&self) -> Providers {
-        Providers {
-            claude: self.claude.availability(),
-            codex: self.codex.availability(),
-        }
-    }
+/// What a CLI signs in with when the host stores no credential for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnSignIn {
+    /// The private home is signed in (`conductord login`).
+    SignedIn,
+    /// A CLI given on the command line, signed in however it is.
+    Unmanaged,
+    /// Nothing: the provider is unavailable until it gets a credential.
+    Missing,
+}
 
-    fn of(&self, provider: Provider) -> &Launcher {
-        match provider {
-            Provider::Claude => &self.claude,
-            Provider::Codex => &self.codex,
+impl OwnSignIn {
+    fn auth(self) -> Result<Auth, String> {
+        match self {
+            OwnSignIn::SignedIn => Ok(Auth::SignedIn),
+            OwnSignIn::Unmanaged => Ok(Auth::Unmanaged),
+            OwnSignIn::Missing => Err(String::from("no credential configured")),
         }
     }
 }
 
-impl Launcher {
-    fn availability(&self) -> Availability {
-        match self {
-            Launcher::Ready(_) => Availability::Available,
-            Launcher::Unavailable(reason) => Availability::Unavailable {
-                reason: reason.clone(),
-            },
+impl Launchers {
+    fn of(&self, provider: Provider) -> &Launcher {
+        match provider {
+            Provider::Claude => &self.claude,
+            Provider::Codex => &self.codex,
         }
     }
 }
@@ -72,21 +77,42 @@ enum RegistryMsg {
         session: SessionId,
         reply: oneshot::Sender<Option<Session>>,
     },
+    Providers {
+        reply: oneshot::Sender<Providers>,
+    },
+    SetCredential {
+        credential: Credential,
+        reply: oneshot::Sender<CommandResult>,
+    },
+    ClearCredential {
+        provider: Provider,
+        reply: oneshot::Sender<CommandResult>,
+    },
 }
 
 struct RegistryActor {
     log: Log,
     launchers: Launchers,
+    store: Store,
+    credentials: Credentials,
     sessions: BTreeMap<SessionId, Session>,
     last: SessionId,
 }
 
 impl Registry {
-    pub fn spawn(log: Log, launchers: Launchers) -> Registry {
+    /// `credentials` is what `store` holds.
+    pub fn spawn(
+        log: Log,
+        launchers: Launchers,
+        store: Store,
+        credentials: Credentials,
+    ) -> Registry {
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
             launchers,
+            store,
+            credentials,
             sessions: BTreeMap::new(),
             last: SessionId(0),
         };
@@ -116,6 +142,23 @@ impl Registry {
         self.ask(|reply| RegistryMsg::Find { session, reply }).await
     }
 
+    /// What `Welcome` tells a client the host can run.
+    pub async fn providers(&self) -> Result<Providers, Stopped> {
+        self.ask(|reply| RegistryMsg::Providers { reply }).await
+    }
+
+    /// Stores the credential and answers with the providers it changes. A
+    /// new Codex credential restarts the shared app-server.
+    pub async fn set_credential(&self, credential: Credential) -> Result<CommandResult, Stopped> {
+        self.ask(|reply| RegistryMsg::SetCredential { credential, reply })
+            .await
+    }
+
+    pub async fn clear_credential(&self, provider: Provider) -> Result<CommandResult, Stopped> {
+        self.ask(|reply| RegistryMsg::ClearCredential { provider, reply })
+            .await
+    }
+
     async fn ask<T>(
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> RegistryMsg,
@@ -130,6 +173,18 @@ impl Registry {
 }
 
 impl RegistryActor {
+    /// A Claude session gets the stored credential when it starts; Codex's
+    /// app-server already has it.
+    fn with_credential(&self, launch: Launch) -> Launch {
+        match launch {
+            Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
+                credential: self.credentials.claude.clone(),
+                ..claude
+            }),
+            Launch::Codex(codex) => Launch::Codex(codex),
+        }
+    }
+
     async fn run(
         mut self,
         mut messages: mpsc::Receiver<RegistryMsg>,
@@ -154,8 +209,74 @@ impl RegistryActor {
             RegistryMsg::Find { session, reply } => {
                 let _ = reply.send(self.sessions.get(&session).cloned());
             }
+            RegistryMsg::Providers { reply } => {
+                let _ = reply.send(self.providers());
+            }
+            RegistryMsg::SetCredential { credential, reply } => {
+                let provider = credential.provider();
+                let next = self.credentials.clone().set(credential);
+                let _ = reply.send(self.store(provider, next).await?);
+            }
+            RegistryMsg::ClearCredential { provider, reply } => {
+                let next = self.credentials.clone().clear(provider);
+                let _ = reply.send(self.store(provider, next).await?);
+            }
         }
         Ok(())
+    }
+
+    /// Saves `next`, which changes `provider`'s credential only, then uses
+    /// it. A Codex change restarts the app-server, the only way the key in
+    /// its environment changes.
+    async fn store(
+        &mut self,
+        provider: Provider,
+        next: Credentials,
+    ) -> Result<CommandResult, Stopped> {
+        match self.store.save(&next) {
+            Err(err) => Ok(CommandResult::Rejected(Rejection::CredentialNotSaved {
+                reason: format!("{err:#}"),
+            })),
+            Ok(()) => {
+                tracing::info!(?provider, "stored a credential change");
+                if let (
+                    Provider::Codex,
+                    Launcher::Ready {
+                        launch: Launch::Codex(CodexLaunch { hub, .. }),
+                        ..
+                    },
+                ) = (provider, self.launchers.of(provider))
+                {
+                    hub.configure(next.codex.clone()).await?;
+                }
+                self.credentials = next;
+                Ok(CommandResult::Providers(self.providers()))
+            }
+        }
+    }
+
+    fn providers(&self) -> Providers {
+        Providers {
+            claude: self.availability(Provider::Claude),
+            codex: self.availability(Provider::Codex),
+        }
+    }
+
+    fn availability(&self, provider: Provider) -> Availability {
+        match self.ready(provider) {
+            Ok((_, auth)) => Availability::Available { auth },
+            Err(reason) => Availability::Unavailable { reason },
+        }
+    }
+
+    /// How `provider` runs and signs in, or why it can't: a stored
+    /// credential comes first, then the CLI's own sign-in.
+    fn ready(&self, provider: Provider) -> Result<(&Launch, Auth), String> {
+        match (self.launchers.of(provider), self.credentials.auth(provider)) {
+            (Launcher::Unavailable(reason), _) => Err(reason.clone()),
+            (Launcher::Ready { launch, .. }, Some(auth)) => Ok((launch, auth)),
+            (Launcher::Ready { launch, own }, None) => own.auth().map(|auth| (launch, auth)),
+        }
     }
 
     async fn start(
@@ -165,17 +286,15 @@ impl RegistryActor {
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         // `read_dir` fails for a missing path and for a file alike.
-        match (
-            std::fs::read_dir(&directory.0),
-            self.launchers.of(provider).clone(),
-        ) {
+        let ready = self
+            .ready(provider)
+            .map(|(launch, _)| self.with_credential(launch.clone()));
+        match (std::fs::read_dir(&directory.0), ready) {
             (Err(_), _) => Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)),
-            (Ok(_), Launcher::Unavailable(reason)) => {
-                Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
-                    reason,
-                }))
-            }
-            (Ok(_), Launcher::Ready(launch)) => {
+            (Ok(_), Err(reason)) => Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
+                reason,
+            })),
+            (Ok(_), Ok(launch)) => {
                 let id = self.last.next();
                 self.last = id;
                 let created = EventKind::SessionCreated {

@@ -14,8 +14,8 @@ use agents::codex::{
     ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadOptions, TurnId,
 };
 use proto::{
-    ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath, Rejection, RequestId,
-    Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    ClaudeCredential, ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath,
+    Rejection, RequestId, Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -29,6 +29,9 @@ use crate::mapping::{self, NativeRequest, NativeTurn, Step};
 pub struct ClaudeLaunch {
     pub claude_path: PathBuf,
     pub home: Home,
+    /// The stored credential, which the registry puts in when it starts a
+    /// session.
+    pub credential: Option<ClaudeCredential>,
     /// `None` leaves the CLI's default model.
     pub model: Option<String>,
 }
@@ -206,11 +209,13 @@ async fn start(directory: HostPath, launch: Launch) -> Result<Agent, AgentError>
         Launch::Claude(ClaudeLaunch {
             claude_path,
             home,
+            credential,
             model,
         }) => {
             let (session, events) = ClaudeSession::spawn(ClaudeOptions {
                 claude_path,
                 home,
+                credential,
                 cwd: PathBuf::from(directory.0),
                 model,
                 permission_mode: PermissionMode::Default,

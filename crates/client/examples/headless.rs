@@ -262,9 +262,11 @@ impl Session {
         self.log(format!("start {:?} -> {result:?}", self.directory.0))?;
         match result {
             CommandResult::Started { session } => Ok(session),
-            CommandResult::Accepted | CommandResult::Rejected(_) => Err(anyhow::Error::msg(
-                format!("the host did not start a session: {result:?}"),
-            )),
+            CommandResult::Accepted | CommandResult::Providers(_) | CommandResult::Rejected(_) => {
+                Err(anyhow::Error::msg(format!(
+                    "the host did not start a session: {result:?}"
+                )))
+            }
         }
     }
 

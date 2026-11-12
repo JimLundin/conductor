@@ -415,6 +415,7 @@ async fn spawn(codex: &Path, stdout_log: Option<PathBuf>) -> Result<Live> {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: PathBuf::from(codex),
         home: Home::User,
+        credential: None,
         cwd: PathBuf::from(SCRATCH),
         stdout_log,
     })

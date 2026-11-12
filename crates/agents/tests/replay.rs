@@ -53,6 +53,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
     ClaudeOptions {
         claude_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-claude.sh"),
         home: Home::User,
+        credential: None,
         cwd: claude.dir.clone(),
         model: None,
         permission_mode: PermissionMode::Default,

@@ -258,6 +258,7 @@ fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>
     ClaudeOptions {
         claude_path: PathBuf::from(claude),
         home: Home::User,
+        credential: None,
         cwd: PathBuf::from(SCRATCH),
         model: Some(String::from("haiku")),
         permission_mode: PermissionMode::Default,

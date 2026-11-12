@@ -132,6 +132,11 @@ enum Request {
         body: CommandBody,
         reply: oneshot::Sender<Result<CommandResult, SendError>>,
     },
+    /// What the host runs now, from a command's answer.
+    Adopt {
+        providers: Providers,
+        reply: oneshot::Sender<()>,
+    },
     Reconnect,
     Stop {
         reply: oneshot::Sender<()>,
@@ -186,8 +191,15 @@ impl HostLink {
 
     /// Runs one command on its own stream. Fails fast while not connected;
     /// the caller decides whether to retry.
+    /// A `Providers` answer is in the status by the time this returns.
     pub async fn send(&self, body: CommandBody) -> Result<CommandResult, SendError> {
-        self.ask(|reply| Request::Send { body, reply }).await?
+        let result = self.ask(|reply| Request::Send { body, reply }).await??;
+        if let CommandResult::Providers(providers) = &result {
+            let providers = providers.clone();
+            self.ask(|reply| Request::Adopt { providers, reply })
+                .await?;
+        }
+        Ok(result)
     }
 
     /// Drops the current connection and connects again at once, as after a
@@ -333,6 +345,11 @@ impl Link {
                 let _ = reply.send(Err(SendError::NotConnected));
                 Ok(idle)
             }
+            (idle, Input::Request(Some(Request::Adopt { providers, reply }))) => {
+                self.outbox.providers(providers).await?;
+                let _ = reply.send(());
+                Ok(idle)
+            }
             (_, Input::Request(Some(Request::Stop { reply }))) => Err(self.stop(reply).await),
             (_, Input::Request(None)) => Err(Stopped {}),
             (idle, Input::Frame(_)) => Ok(idle),
@@ -433,6 +450,11 @@ impl Link {
         match input {
             Input::Request(None) => Err(Lost::Stopped(Stopped {})),
             Input::Request(Some(Request::Reconnect)) => Err(Lost::Reconnect),
+            Input::Request(Some(Request::Adopt { providers, reply })) => {
+                self.outbox.providers(providers).await?;
+                let _ = reply.send(());
+                Ok(connected)
+            }
             Input::Request(Some(Request::Stop { reply })) => Err(self.stop(reply).await.into()),
             Input::Request(Some(Request::Send { body, reply })) => {
                 let command = Command {
@@ -539,6 +561,15 @@ impl Outbox {
         self.publish(Status {
             state: LinkState::Disconnected,
             error,
+            ..current
+        })
+        .await
+    }
+
+    async fn providers(&self, providers: Providers) -> Result<(), Stopped> {
+        let current = self.current();
+        self.publish(Status {
+            providers: Some(providers),
             ..current
         })
         .await

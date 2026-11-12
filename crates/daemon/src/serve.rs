@@ -90,7 +90,7 @@ impl Conductor {
         };
         match admitted {
             Ok(hello) => {
-                wire::write(&mut send, &HelloReply::Welcome(self.log.welcome().await?)).await?;
+                wire::write(&mut send, &HelloReply::Welcome(self.welcome().await?)).await?;
                 send.finish()?;
                 Ok(Some(hello.client))
             }
@@ -105,6 +105,11 @@ impl Conductor {
                 Ok(None)
             }
         }
+    }
+
+    async fn welcome(&self) -> Result<Welcome, Stopped> {
+        let providers = self.registry.providers().await?;
+        self.log.welcome(providers).await
     }
 
     async fn streams(&self, conn: &Connection, client: &ClientName) -> ConnectionError {
@@ -171,6 +176,12 @@ impl Conductor {
                 };
                 self.order(session, order).await
             }
+            CommandBody::SetCredential { credential } => {
+                self.registry.set_credential(credential).await
+            }
+            CommandBody::ClearCredential { provider } => {
+                self.registry.clear_credential(provider).await
+            }
         }
     }
 
@@ -190,7 +201,7 @@ impl Conductor {
         mut send: SendStream,
         subscribe: Subscribe,
     ) -> Result<(), StreamError> {
-        match self.log.welcome().await? {
+        match self.welcome().await? {
             Welcome { epoch, .. } if epoch == subscribe.epoch => {
                 let subscription = self.log.subscribe(subscribe.after_seq).await?;
                 tracing::info!(

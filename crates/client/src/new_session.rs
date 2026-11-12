@@ -28,8 +28,10 @@ pub fn note(provider: Provider, availability: Option<&Availability>) -> Provider
         (_, Some(Availability::Unavailable { reason })) => {
             ProviderNote::Unavailable(reason.clone())
         }
-        (Provider::Codex, Some(Availability::Available) | None) => ProviderNote::WritesUnasked,
-        (Provider::Claude, Some(Availability::Available) | None) => ProviderNote::Nothing,
+        (Provider::Codex, Some(Availability::Available { .. }) | None) => {
+            ProviderNote::WritesUnasked
+        }
+        (Provider::Claude, Some(Availability::Available { .. }) | None) => ProviderNote::Nothing,
     }
 }
 
@@ -53,7 +55,11 @@ impl Attempt {
     /// The host's answer to `StartSession`, or the reason it never arrived.
     pub fn answered(answer: Result<CommandResult, String>) -> Attempt {
         match answer {
-            Ok(CommandResult::Accepted | CommandResult::Started { .. }) => Attempt::Editing,
+            Ok(
+                CommandResult::Accepted
+                | CommandResult::Started { .. }
+                | CommandResult::Providers(_),
+            ) => Attempt::Editing,
             Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
                 Attempt::Refused(Refusal::Directory)
             }
@@ -70,7 +76,7 @@ impl Attempt {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Availability, CommandResult, Provider, Rejection};
+    use proto::{Auth, Availability, CommandResult, Provider, Rejection};
 
     use super::{Attempt, ProviderNote, Refusal, note};
 
@@ -79,13 +85,16 @@ mod tests {
         let unavailable = Availability::Unavailable {
             reason: String::from("codex is not on PATH"),
         };
+        let available = Availability::Available {
+            auth: Auth::SignedIn,
+        };
         assert_eq!(
             [
                 (Provider::Codex, Some(&unavailable)),
                 (Provider::Claude, Some(&unavailable)),
-                (Provider::Codex, Some(&Availability::Available)),
+                (Provider::Codex, Some(&available)),
                 (Provider::Codex, None),
-                (Provider::Claude, Some(&Availability::Available)),
+                (Provider::Claude, Some(&available)),
             ]
             .map(|(provider, availability)| note(provider, availability)),
             [

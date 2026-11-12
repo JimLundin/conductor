@@ -2,6 +2,7 @@
 //! host serves every thread. `protocol` reads and writes the few messages we use;
 //! this module owns the process and maps the protocol into Conductor's types.
 
+mod config;
 mod protocol;
 mod server;
 
@@ -10,4 +11,4 @@ pub use protocol::{
     ItemPhase, ModelInfo, PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId,
     TurnOutcome,
 };
-pub use server::{CodexServer, CodexThread, Error, ServerOptions, cli, login};
+pub use server::{CodexServer, CodexThread, Error, ServerOptions, cli, login, login_status};

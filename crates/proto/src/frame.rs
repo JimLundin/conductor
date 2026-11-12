@@ -52,9 +52,10 @@ pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
 mod tests {
     use super::{HEADER_LEN, body_len, decode, encode};
     use crate::{
-        AuthToken, Availability, ClientName, Command, CommandBody, CommandId, CommandResult,
-        Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers, Rejection,
-        RequestId, Resolution, SessionId, Subscribe, TurnOutcome, Welcome,
+        Auth, AuthToken, Availability, ClientName, CodexCredential, Command, CommandBody,
+        CommandId, CommandResult, Credential, Decision, Epoch, Event, EventKind, Hello, HelloReply,
+        HostSeq, Open, Providers, Rejection, RequestId, Resolution, SessionId, Subscribe,
+        TurnOutcome, Welcome, WireApi,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -82,6 +83,30 @@ mod tests {
         let (header, body) = bytes.split_first_chunk::<HEADER_LEN>().unwrap();
         assert_eq!(body_len(header.to_owned()).unwrap(), 7);
         assert_eq!(decode::<Open>(body).unwrap(), open);
+    }
+
+    #[test]
+    fn a_credential_goes_out_whole_and_debugs_as_its_kind() {
+        let open = Open::Command(Command {
+            id: CommandId(1),
+            body: CommandBody::SetCredential {
+                credential: Credential::Codex(CodexCredential::Provider {
+                    name: String::from("n"),
+                    base_url: String::from("u"),
+                    wire_api: WireApi::Responses,
+                    key: String::from("k"),
+                    model: String::from("m"),
+                }),
+            },
+        });
+        assert_eq!(
+            encode(&open).unwrap(),
+            frame(b"\x02\x01\x04\x01\x00\x01n\x01u\x00\x01k\x01m")
+        );
+        assert_eq!(
+            format!("{open:?}"),
+            "Command(Command { id: CommandId(1), body: SetCredential { credential: Codex(Provider) } })"
+        );
     }
 
     #[test]
@@ -113,14 +138,18 @@ mod tests {
                 epoch: Epoch(1),
                 head_seq: HostSeq(0),
                 providers: Providers {
-                    claude: Availability::Available,
+                    claude: Availability::Available {
+                        auth: Auth::Gateway {
+                            base_url: String::from("u"),
+                        },
+                    },
                     codex: Availability::Unavailable {
                         reason: String::from("no"),
                     },
                 },
             }))
             .unwrap(),
-            frame(b"\x00\x04desk\x01\x00\x00\x01\x02no")
+            frame(b"\x00\x04desk\x01\x00\x00\x00\x01u\x01\x02no")
         );
         assert_eq!(
             encode(&Event {
@@ -155,7 +184,7 @@ mod tests {
                 reason: String::from("no codex"),
             }))
             .unwrap(),
-            frame(b"\x02\x01\x08no codex")
+            frame(b"\x03\x01\x08no codex")
         );
         assert_eq!(
             encode(&CommandResult::Started {

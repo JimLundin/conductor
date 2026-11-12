@@ -279,6 +279,7 @@ async fn spawn(name: &str) -> Recorder {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
         home: Home::User,
+        credential: None,
         cwd: fake_codex_dir(&fixture(name)),
         stdout_log: None,
     })

@@ -6,6 +6,10 @@
 //! `SessionClosed` and ends, and forgets the server. The next thread start
 //! runs a new one, so a crash costs the sessions that were open, not the
 //! host's Codex.
+//!
+//! A new credential stops the server the same way. Its key is in the
+//! server's environment, which is fixed at start, so the next thread runs a
+//! server that has it.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -14,6 +18,7 @@ use agents::Exit;
 use agents::codex::{
     CodexEvent, CodexServer, CodexThread, ServerOptions, ThreadEvent, ThreadId, ThreadOptions,
 };
+use proto::CodexCredential;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
@@ -32,10 +37,19 @@ pub enum HubError {
     Stopped(#[from] Stopped),
 }
 
-/// A request to start a thread, answered with the thread and its events.
-struct HubMsg {
-    options: ThreadOptions,
-    reply: oneshot::Sender<Result<(CodexThread, mpsc::Receiver<CodexEvent>), agents::codex::Error>>,
+enum HubMsg {
+    /// Starts a thread, answered with the thread and its events.
+    Start {
+        options: ThreadOptions,
+        reply: oneshot::Sender<
+            Result<(CodexThread, mpsc::Receiver<CodexEvent>), agents::codex::Error>,
+        >,
+    },
+    /// Runs the next server with this credential, stopping the current one.
+    Configure {
+        credential: Option<CodexCredential>,
+        reply: oneshot::Sender<()>,
+    },
 }
 
 enum Server {
@@ -54,7 +68,7 @@ struct HubActor {
 }
 
 enum HubInput {
-    Start(HubMsg),
+    Msg(HubMsg),
     Codex(CodexEvent),
     /// Every handle was dropped.
     Closed,
@@ -79,7 +93,17 @@ impl CodexHub {
         &self,
         options: ThreadOptions,
     ) -> Result<(CodexThread, mpsc::Receiver<CodexEvent>), HubError> {
-        Ok(self.ask(|reply| HubMsg { options, reply }).await??)
+        Ok(self.ask(|reply| HubMsg::Start { options, reply }).await??)
+    }
+
+    /// Takes a new credential. The running server stops, and its sessions
+    /// close, saying why.
+    pub(crate) async fn configure(
+        &self,
+        credential: Option<CodexCredential>,
+    ) -> Result<(), Stopped> {
+        self.ask(|reply| HubMsg::Configure { credential, reply })
+            .await
     }
 
     async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> HubMsg) -> Result<T, Stopped> {
@@ -109,7 +133,7 @@ impl HubActor {
     async fn run(mut self, mut inbox: mpsc::Receiver<HubMsg>) -> Result<Infallible, Stopped> {
         loop {
             let input = tokio::select! {
-                msg = inbox.recv() => msg.map_or(HubInput::Closed, HubInput::Start),
+                msg = inbox.recv() => msg.map_or(HubInput::Closed, HubInput::Msg),
                 event = self.server.next() => HubInput::Codex(event),
             };
             self.on(input).await?;
@@ -118,9 +142,25 @@ impl HubActor {
 
     async fn on(&mut self, input: HubInput) -> Result<(), Stopped> {
         match input {
-            HubInput::Start(HubMsg { options, reply }) => {
+            HubInput::Msg(HubMsg::Start { options, reply }) => {
                 let started = self.start(options).await;
                 let _ = reply.send(started);
+                Ok(())
+            }
+            HubInput::Msg(HubMsg::Configure { credential, reply }) => {
+                self.options.credential = credential;
+                if let Server::Up { server, .. } = &self.server {
+                    let stopped = server.shutdown().await;
+                    tracing::info!(
+                        ?stopped,
+                        "stopped the codex app-server for a new credential"
+                    );
+                    self.server = Server::Down;
+                    self.close_all(Exit::Unknown(String::from(
+                        "stopped for a new Codex credential",
+                    )));
+                }
+                let _ = reply.send(());
                 Ok(())
             }
             HubInput::Codex(CodexEvent::Thread { thread, event }) => {
@@ -130,10 +170,7 @@ impl HubActor {
             HubInput::Codex(CodexEvent::Exited { status }) => {
                 tracing::warn!(status = %status.describe(), "the codex app-server exited");
                 self.server = Server::Down;
-                let exited = CodexEvent::Exited { status };
-                for (_, route) in self.routes.drain() {
-                    let _ = route.try_send(exited.clone());
-                }
+                self.close_all(status);
                 Ok(())
             }
             HubInput::Codex(CodexEvent::Unknown(frame)) => {
@@ -141,6 +178,14 @@ impl HubActor {
                 Ok(())
             }
             HubInput::Closed => Err(Stopped {}),
+        }
+    }
+
+    /// Tells every session the server has gone, and forgets their routes.
+    fn close_all(&mut self, status: Exit) {
+        let exited = CodexEvent::Exited { status };
+        for (_, route) in self.routes.drain() {
+            let _ = route.try_send(exited.clone());
         }
     }
 

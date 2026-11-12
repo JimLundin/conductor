@@ -32,6 +32,7 @@ enum LogMsg {
         kind: EventKind,
     },
     Welcome {
+        providers: Providers,
         reply: oneshot::Sender<Welcome>,
     },
     Subscribe {
@@ -43,19 +44,17 @@ enum LogMsg {
 struct LogActor {
     name: String,
     epoch: Epoch,
-    providers: Providers,
     events: Vec<Event>,
     live: broadcast::Sender<Event>,
 }
 
 impl Log {
-    pub fn spawn(name: String, epoch: Epoch, providers: Providers) -> Log {
+    pub fn spawn(name: String, epoch: Epoch) -> Log {
         let (inbox, messages) = mpsc::channel(64);
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let actor = LogActor {
             name,
             epoch,
-            providers,
             events: Vec::new(),
             live,
         };
@@ -72,8 +71,10 @@ impl Log {
             .map_err(|_| Stopped {})
     }
 
-    pub async fn welcome(&self) -> Result<Welcome, Stopped> {
-        self.ask(|reply| LogMsg::Welcome { reply }).await
+    /// The log's head as of now, for a client the registry says can run
+    /// `providers`.
+    pub async fn welcome(&self, providers: Providers) -> Result<Welcome, Stopped> {
+        self.ask(|reply| LogMsg::Welcome { providers, reply }).await
     }
 
     pub async fn subscribe(&self, after: HostSeq) -> Result<Subscription, Stopped> {
@@ -121,12 +122,12 @@ impl LogActor {
                 // No receivers is fine: nobody is subscribed yet.
                 let _ = self.live.send(event);
             }
-            LogMsg::Welcome { reply } => {
+            LogMsg::Welcome { providers, reply } => {
                 let _ = reply.send(Welcome {
                     host: self.name.clone(),
                     epoch: self.epoch,
                     head_seq: self.head(),
-                    providers: self.providers.clone(),
+                    providers,
                 });
             }
             LogMsg::Subscribe { after, reply } => {
@@ -150,7 +151,7 @@ impl LogActor {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Availability, Epoch, EventKind, HostSeq, Providers, SessionId, Welcome};
+    use proto::{Auth, Availability, Epoch, EventKind, HostSeq, Providers, SessionId, Welcome};
 
     use super::Log;
 
@@ -168,7 +169,9 @@ mod tests {
 
     fn providers() -> Providers {
         Providers {
-            claude: Availability::Available,
+            claude: Availability::Available {
+                auth: Auth::SignedIn,
+            },
             codex: Availability::Unavailable {
                 reason: String::from("no codex"),
             },
@@ -177,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn deltas_go_live_with_the_last_seq_and_are_never_replayed() {
-        let log = Log::spawn(String::from("test"), Epoch(5), providers());
+        let log = Log::spawn(String::from("test"), Epoch(5));
         let mut live = log.subscribe(HostSeq(0)).await.unwrap().live;
         log.append(SessionId(1), EventKind::SessionReady)
             .await
@@ -185,7 +188,7 @@ mod tests {
         log.append(SessionId(1), delta("a")).await.unwrap();
         log.append(SessionId(1), message("a")).await.unwrap();
         assert_eq!(
-            log.welcome().await.unwrap(),
+            log.welcome(providers()).await.unwrap(),
             Welcome {
                 host: String::from("test"),
                 epoch: Epoch(5),

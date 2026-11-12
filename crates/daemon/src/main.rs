@@ -6,14 +6,15 @@ use agents::install::{Cli, install};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use daemon::codex_hub::CodexHub;
+use daemon::credentials::Store;
 use daemon::log::Log;
-use daemon::registry::{Launcher, Launchers, Registry};
+use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::Ticket;
+use proto::{Credentials, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 
@@ -100,28 +101,34 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let data_dir = data_dir_or_default(data_dir)?;
             let homes = daemon::homes(&data_dir)?;
+            let (store, credentials) = Store::open(&data_dir)?;
             let claude = match cli_path(Cli::Claude, claude_path, &data_dir).await {
-                Ok(claude_path) => {
+                Ok((claude_path, origin)) => {
+                    let status = agents::claude::auth_status(&claude_path, &homes.claude);
                     launcher(
                         agents::claude::cli(&claude_path, &homes.claude),
                         Launch::Claude(ClaudeLaunch {
                             claude_path,
                             home: homes.claude,
+                            credential: None,
                             model: claude_model,
                         }),
+                        own_sign_in(origin, status).await,
                     )
                     .await
                 }
                 Err(reason) => unavailable(reason),
             };
             let codex = match cli_path(Cli::Codex, codex_path, &data_dir).await {
-                Ok(codex_path) => {
+                Ok((codex_path, origin)) => {
+                    let version = agents::codex::cli(&codex_path, &homes.codex);
+                    let status = agents::codex::login_status(&codex_path, &homes.codex);
                     // The app-server's own working directory is the data dir;
                     // each thread runs in its session's directory.
-                    let version = agents::codex::cli(&codex_path, &homes.codex);
                     let hub = CodexHub::spawn(ServerOptions {
                         codex_path,
                         home: homes.codex,
+                        credential: credentials.codex.clone(),
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
@@ -131,13 +138,14 @@ async fn main() -> anyhow::Result<()> {
                             hub,
                             model: codex_model,
                         }),
+                        own_sign_in(origin, status).await,
                     )
                     .await
                 }
                 Err(reason) => unavailable(reason),
             };
             let launchers = Launchers { claude, codex };
-            let router = host(data_dir, web_url, name, launchers).await?;
+            let router = host(data_dir, web_url, name, launchers, store, credentials).await?;
             tokio::signal::ctrl_c().await?;
             router.shutdown().await?;
             Ok(())
@@ -174,14 +182,37 @@ fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     }
 }
 
+/// Where the CLI the host runs came from.
+enum Origin {
+    Given,
+    Pinned,
+}
+
 /// The CLI to run: the one given, or else the pinned one, installed into the
 /// data dir if it isn't there yet.
-async fn cli_path(cli: Cli, given: Option<PathBuf>, data_dir: &Path) -> Result<PathBuf, String> {
+async fn cli_path(
+    cli: Cli,
+    given: Option<PathBuf>,
+    data_dir: &Path,
+) -> Result<(PathBuf, Origin), String> {
     match given {
-        Some(path) => Ok(path),
+        Some(path) => Ok((path, Origin::Given)),
         None => install(cli, data_dir)
             .await
+            .map(|path| (path, Origin::Pinned))
             .map_err(|err| format!("installing the pinned {}: {err}", cli.name())),
+    }
+}
+
+/// A given CLI signs in however it does. A pinned one is signed in when
+/// `status`, its own sign-in check against the private home, succeeds.
+async fn own_sign_in(origin: Origin, mut status: tokio::process::Command) -> OwnSignIn {
+    match origin {
+        Origin::Given => OwnSignIn::Unmanaged,
+        Origin::Pinned => match status.output().await.map(|output| output.status.code()) {
+            Ok(Some(0)) => OwnSignIn::SignedIn,
+            Ok(_) | Err(_) => OwnSignIn::Missing,
+        },
     }
 }
 
@@ -190,6 +221,8 @@ async fn host(
     web_url: String,
     name: String,
     launchers: Launchers,
+    store: Store,
+    credentials: Credentials,
 ) -> anyhow::Result<Router> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
@@ -204,10 +237,10 @@ async fn host(
         .cloned()
         .context("online, but no home relay")?;
     let token = daemon::random_token();
-    let log = Log::spawn(name, daemon::random_epoch(), launchers.providers());
+    let log = Log::spawn(name, daemon::random_epoch());
     let conductor = Conductor {
         log: log.clone(),
-        registry: Registry::spawn(log, launchers),
+        registry: Registry::spawn(log, launchers, store, credentials),
         token,
     };
     let ticket = Ticket {
@@ -222,15 +255,15 @@ async fn host(
     Ok(router)
 }
 
-/// A provider is available when `<cli> --version` runs and succeeds.
-async fn launcher(mut cli: tokio::process::Command, launch: Launch) -> Launcher {
+/// A provider's CLI is ready when `<cli> --version` runs and succeeds.
+async fn launcher(mut cli: tokio::process::Command, launch: Launch, own: OwnSignIn) -> Launcher {
     let path = cli.as_std().get_program().display().to_string();
     match cli.arg("--version").output().await {
         Ok(output) => match output.status.code() {
             Some(0) => {
                 let version = String::from_utf8_lossy(&output.stdout);
-                tracing::info!(%path, version = %version.trim(), "available");
-                Launcher::Ready(launch)
+                tracing::info!(%path, version = %version.trim(), ?own, "ready");
+                Launcher::Ready { launch, own }
             }
             status => unavailable(format!("{path} --version exited with {status:?}")),
         },

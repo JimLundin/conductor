@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use proto::CodexCredential;
 use serde_json::Value;
 
 use crate::{Exit, Home};
@@ -18,6 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
+use super::config;
 use super::protocol::{
     AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, INITIALIZE, Inbound,
     ModelInfo, Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer, encode,
@@ -30,6 +32,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct ServerOptions {
     pub codex_path: PathBuf,
     pub home: Home,
+    /// A private home's model provider; `None` leaves the home's own
+    /// sign-in. Codex takes it at start only, since the key is in its
+    /// environment.
+    pub credential: Option<CodexCredential>,
     /// The app-server's own working directory; each thread sets its `cwd`.
     pub cwd: PathBuf,
     /// Append every raw stdout line to this file.
@@ -101,6 +107,9 @@ impl CodexServer {
                     .open(path)
             })
             .transpose()?;
+        if let Home::Private(dir) = &opts.home {
+            config::write(dir, opts.credential.as_ref())?;
+        }
         let mut child = command(&opts).spawn()?;
         let ((stdin, stdout), stderr) = child
             .stdin
@@ -241,8 +250,16 @@ pub fn cli(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(codex_path);
     if let Home::Private(dir) = home {
         cmd.env_remove("CODEX_HOME");
+        cmd.env_remove(config::KEY_VAR);
         cmd.env("CODEX_HOME", dir);
     }
+    cmd
+}
+
+/// `codex login status`, which succeeds when `home` is signed in.
+pub fn login_status(codex_path: &Path, home: &Home) -> Command {
+    let mut cmd = cli(codex_path, home);
+    cmd.args(["login", "status"]);
     cmd
 }
 
@@ -256,6 +273,12 @@ pub fn login(codex_path: &Path, home: &Home) -> Command {
 
 pub(crate) fn command(opts: &ServerOptions) -> Command {
     let mut cmd = cli(&opts.codex_path, &opts.home);
+    match &opts.credential {
+        Some(CodexCredential::Provider { key, .. }) => {
+            cmd.env(config::KEY_VAR, key);
+        }
+        None => {}
+    }
     cmd.args(["app-server", "--listen", "stdio://"])
         .current_dir(&opts.cwd)
         .stdin(Stdio::piped())
@@ -615,6 +638,7 @@ mod tests {
         let cmd = command(&ServerOptions {
             codex_path: "/opt/codex".into(),
             home: Home::User,
+            credential: None,
             cwd: "/tmp".into(),
             stdout_log: None,
         });

@@ -257,7 +257,7 @@ fn begin(
 /// The provider's state in one word, for the form's text and `data-available`.
 fn word(availability: Option<&Availability>) -> String {
     String::from(match availability {
-        Some(Availability::Available) => "available",
+        Some(Availability::Available { .. }) => "available",
         Some(Availability::Unavailable { .. }) => "unavailable",
         None => "unknown",
     })

@@ -2,6 +2,7 @@
 //! over iroh (`conductord host`).
 
 pub mod codex_hub;
+pub mod credentials;
 pub mod log;
 mod mapping;
 pub mod registry;
@@ -24,19 +25,26 @@ pub struct Stopped {}
 /// Loads the host's iroh key from `<data_dir>/host.key`, creating it on first
 /// run. The key's public half is the host's address, so it must persist.
 pub fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
-    let path = data_dir.join("host.key");
+    Ok(SecretKey::from_bytes(&load_or_create_secret(
+        data_dir, "host.key",
+    )?))
+}
+
+/// Loads 32 secret bytes from `<data_dir>/<name>` as hex, creating them on
+/// first run, readable by the owner only.
+fn load_or_create_secret(data_dir: &Path, name: &str) -> anyhow::Result<[u8; 32]> {
+    let path = data_dir.join(name);
     match std::fs::read_to_string(&path) {
         Ok(text) => data_encoding::HEXLOWER
             .decode(text.trim().as_bytes())
             .ok()
             .and_then(|bytes| bytes.try_into().ok())
-            .map(|bytes| SecretKey::from_bytes(&bytes))
             .with_context(|| format!("{} is not 64 hex digits", path.display())),
         Err(err) => match err.kind() {
             ErrorKind::NotFound => {
-                let key = SecretKey::from_bytes(&random_key());
+                let key = random_key();
                 std::fs::create_dir_all(data_dir)?;
-                write_private(&path, &data_encoding::HEXLOWER.encode(&key.to_bytes()))?;
+                write_private(&path, data_encoding::HEXLOWER.encode(&key).as_bytes())?;
                 Ok(key)
             }
             _ => Err(err).with_context(|| format!("reading {}", path.display())),
@@ -86,19 +94,21 @@ fn write_once(path: &Path, contents: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Writes a file only its owner can read: mode 0600 when it is created.
 #[cfg(unix)]
-fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .write(true)
-        .create_new(true)
+        .create(true)
+        .truncate(true)
         .mode(0o600)
         .open(path)?
-        .write_all(contents.as_bytes())
+        .write_all(contents)
 }
 
 #[cfg(not(unix))]
-fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, contents)
 }
 

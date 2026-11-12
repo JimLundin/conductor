@@ -30,7 +30,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/5";
+pub const ALPN: &[u8] = b"conductor/6";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -91,7 +91,7 @@ pub struct Welcome {
     pub providers: Providers,
 }
 
-/// Whether the host can run each provider, fixed when it starts.
+/// Whether the host can run each provider, and how it signs in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Providers {
     pub claude: Availability,
@@ -100,11 +100,150 @@ pub struct Providers {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Availability {
-    Available,
+    Available {
+        auth: Auth,
+    },
     /// The host can't run this provider's sessions, for this reason.
     Unavailable {
         reason: String,
     },
+}
+
+/// How the host's CLI for a provider reaches its model. It names the kind
+/// and never carries a secret: credentials are write-only (§6.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Auth {
+    /// A gateway credential the host stores, at this base URL.
+    Gateway { base_url: String },
+    /// The CLI's own sign-in in the host's private home (`conductord login`).
+    SignedIn,
+    /// A CLI the host was started with (`--claude-path`, `--codex-path`),
+    /// which signs in however it does.
+    Unmanaged,
+}
+
+/// The credentials a host stores, one per provider. This is the unit the
+/// fleet config (§6.5) carries to every host. Other kinds, an API key and
+/// the Claude subscription token, become variants of each provider's enum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credentials {
+    pub claude: Option<ClaudeCredential>,
+    pub codex: Option<CodexCredential>,
+}
+
+/// One provider's credential, as `SetCredential` carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Credential {
+    Claude(ClaudeCredential),
+    Codex(CodexCredential),
+}
+
+/// Its `Debug` shows only the kind, so no value reaches a log.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClaudeCredential {
+    /// Claude Code's `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
+    Gateway { base_url: String, token: String },
+}
+
+/// Its `Debug` shows only the kind, so no value reaches a log.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CodexCredential {
+    /// A custom model provider: Codex's `[model_providers.<id>]` with
+    /// `name`, `base_url` and `wire_api`, selected with `model`. The key
+    /// reaches Codex in the environment variable the section's `env_key`
+    /// names, never in its config.
+    Provider {
+        name: String,
+        base_url: String,
+        wire_api: WireApi,
+        key: String,
+        model: String,
+    },
+}
+
+/// The wire protocols a Codex model provider can speak. Codex 0.166 knows
+/// only `responses` (`model-provider-info`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireApi {
+    Responses,
+}
+
+impl std::fmt::Debug for ClaudeCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClaudeCredential::Gateway { .. } => write!(f, "Gateway"),
+        }
+    }
+}
+
+impl std::fmt::Debug for CodexCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CodexCredential::Provider { .. } => write!(f, "Provider"),
+        }
+    }
+}
+
+impl Credentials {
+    pub fn none() -> Credentials {
+        Credentials {
+            claude: None,
+            codex: None,
+        }
+    }
+
+    /// These credentials with `credential` in its provider's place.
+    pub fn set(self, credential: Credential) -> Credentials {
+        match credential {
+            Credential::Claude(claude) => Credentials {
+                claude: Some(claude),
+                ..self
+            },
+            Credential::Codex(codex) => Credentials {
+                codex: Some(codex),
+                ..self
+            },
+        }
+    }
+
+    pub fn clear(self, provider: Provider) -> Credentials {
+        match provider {
+            Provider::Claude => Credentials {
+                claude: None,
+                ..self
+            },
+            Provider::Codex => Credentials {
+                codex: None,
+                ..self
+            },
+        }
+    }
+
+    /// What `Welcome` may say about a provider's credential: its kind and
+    /// base URL.
+    pub fn auth(&self, provider: Provider) -> Option<Auth> {
+        match provider {
+            Provider::Claude => self.claude.as_ref().map(|claude| match claude {
+                ClaudeCredential::Gateway { base_url, .. } => Auth::Gateway {
+                    base_url: base_url.clone(),
+                },
+            }),
+            Provider::Codex => self.codex.as_ref().map(|codex| match codex {
+                CodexCredential::Provider { base_url, .. } => Auth::Gateway {
+                    base_url: base_url.clone(),
+                },
+            }),
+        }
+    }
+}
+
+impl Credential {
+    pub fn provider(&self) -> Provider {
+        match self {
+            Credential::Claude(_) => Provider::Claude,
+            Credential::Codex(_) => Provider::Codex,
+        }
+    }
 }
 
 impl Providers {
@@ -181,6 +320,16 @@ pub enum CommandBody {
         request: RequestId,
         decision: Decision,
     },
+    /// Stores a provider's credential on the host, replacing any it had.
+    /// The host never sends it back. Like every command it needs a client
+    /// admitted by the ticket's token, which device certificates replace
+    /// with the fleet (§6.1).
+    SetCredential {
+        credential: Credential,
+    },
+    ClearCredential {
+        provider: Provider,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,19 +345,30 @@ pub enum CommandResult {
     Started {
         session: SessionId,
     },
+    /// The answer to `SetCredential` and `ClearCredential`: what the host
+    /// runs now. Another client learns it from its next `Welcome`.
+    Providers(Providers),
     Rejected(Rejection),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rejection {
     NoSuchDirectory,
-    ProviderUnavailable { reason: String },
+    ProviderUnavailable {
+        reason: String,
+    },
     UnknownSession,
     SessionClosed,
     TurnInProgress,
     NoTurnRunning,
     UnknownRequest,
-    AlreadyResolved { by: ClientName },
+    AlreadyResolved {
+        by: ClientName,
+    },
+    /// The host could not store the credential, and kept the one it had.
+    CredentialNotSaved {
+        reason: String,
+    },
 }
 
 impl Rejection {
@@ -225,6 +385,9 @@ impl Rejection {
             Rejection::NoTurnRunning => String::from("no turn is running"),
             Rejection::UnknownRequest => String::from("no request with that id"),
             Rejection::AlreadyResolved { by } => format!("already resolved by {}", by.0),
+            Rejection::CredentialNotSaved { reason } => {
+                format!("the host could not store the credential: {reason}")
+            }
         }
     }
 }

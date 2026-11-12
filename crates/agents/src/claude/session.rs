@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use proto::ClaudeCredential;
 use serde_json::Value;
 
 use crate::{Exit, Home};
@@ -54,6 +55,8 @@ pub enum VersionPolicy {
 pub struct ClaudeOptions {
     pub claude_path: PathBuf,
     pub home: Home,
+    /// Passed in the environment; `None` leaves the home's own sign-in.
+    pub credential: Option<ClaudeCredential>,
     pub cwd: PathBuf,
     pub model: Option<String>,
     pub permission_mode: PermissionMode,
@@ -288,6 +291,13 @@ pub fn cli(claude_path: &Path, home: &Home) -> Command {
     cmd
 }
 
+/// `claude auth status`, which succeeds when `home` is signed in.
+pub fn auth_status(claude_path: &Path, home: &Home) -> Command {
+    let mut cmd = cli(claude_path, home);
+    cmd.args(["auth", "status"]);
+    cmd
+}
+
 /// The subscription sign-in, `claude auth login --claudeai`, into `home`. It
 /// stores the credential there itself.
 pub fn login(claude_path: &Path, home: &Home) -> Command {
@@ -298,6 +308,13 @@ pub fn login(claude_path: &Path, home: &Home) -> Command {
 
 pub(crate) fn command(opts: &ClaudeOptions) -> Command {
     let mut cmd = cli(&opts.claude_path, &opts.home);
+    match &opts.credential {
+        Some(ClaudeCredential::Gateway { base_url, token }) => {
+            cmd.env("ANTHROPIC_BASE_URL", base_url)
+                .env("ANTHROPIC_AUTH_TOKEN", token);
+        }
+        None => {}
+    }
     cmd.args([
         "--print",
         "--verbose",
@@ -621,6 +638,7 @@ mod tests {
         let cmd = command(&ClaudeOptions {
             claude_path: "/opt/claude".into(),
             home: Home::Private(PathBuf::from("/srv/conductor/home/claude")),
+            credential: None,
             cwd: "/tmp".into(),
             model: Some(String::from("haiku")),
             permission_mode: PermissionMode::Default,
