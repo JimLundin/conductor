@@ -1213,3 +1213,24 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
 - **`s2` step 1 runs under `ApprovalPolicy::Untrusted` with a writable
   workspace**, so Codex itself asks before every command and the step no
   longer depends on the model.
+
+## 12. Owner decisions from the unit 4 and unit 6 reviews (2026-11-12)
+
+- **Provider availability travels in `Welcome`.** `Providers { claude, codex }`
+  and `Availability` move to `proto`; the host fills them from its registry,
+  and the New Session screen shows them before the user tries. ALPN bump.
+- **`RequestOpened` is typed and carries the tool call id**:
+  `RequestOpened { request, call, tool: ToolKind, details }`, so the app joins
+  an approval to its tool card. Same ALPN bump as `Welcome`.
+- **The client ends leftover state when the host says the turn or the CLI
+  ended.** On `TurnCompleted` or `SessionClosed`, the `HostView` fold turns a
+  `Running` tool into `Stopped` and an `Open` request into
+  `Resolved(Withdrawn)`. Display only: a client disconnecting never stops or
+  closes a session; the host keeps running it and a reconnecting client
+  replays the log.
+- **Proposal 0040 accepted, amended**: the `Some(x).filter(..)` lift stays when
+  the predicate combines library booleans.
+- **Proposal 0041 accepted, amended**: `for` is the form for a loop whose body
+  only performs awaited side effects; every other loop stays adapters.
+- **The fixture is gone from `crates/`**; unit 7 regenerates the screenshots
+  from the real host running the fake CLIs.

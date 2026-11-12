@@ -107,7 +107,7 @@ touches = ["proto", "client", "daemon", "app"]
 [[phase.unit]]
 id = "p1-4"
 name = "Unit 4: Claude sessions"
-status = "in_progress"
+status = "done"
 branch = "p1-u4-claude"
 purpose = "Session actor and the Claude half of mapping; the first real session runs."
 done_when = "The Claude e2e tests pass."
