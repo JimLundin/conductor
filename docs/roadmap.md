@@ -36,11 +36,14 @@ Each item ends in something to try. The fleet design is
    approve-for-session, per-session model and effort, resume. Resume runs
    against the private homes from item 1. *Try:* restart a session's CLI
    and continue it.
-3. **Sign in from the app** (§6.3), on one host. API keys, the Claude
-   `setup-token` token and the Codex device-code sign-in, entered on the
-   phone; secrets only in flight in the browser and encrypted under the
-   host key on the host. `Welcome` reports each
-   provider's sign-in state. *Try:* on a fresh host, sign in to Claude and
+3. **Sign in from the app** (§6.3), on one host. Built first, on
+   `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
+   `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
+   app's credentials screen and stored encrypted under `<data>/store.key`;
+   `tools/live-host.sh --register` runs the pinned CLIs on them. Next: API
+   keys, the Claude `setup-token` token and the Codex device-code sign-in,
+   entered on the phone, and the platform keystores for the host key.
+   `Welcome` reports each provider's sign-in kind. *Try:* on a fresh host, sign in to Claude and
    Codex from the iPhone without touching the host's keyboard.
 4. **Durability.** The log, receipts and open requests survive a host
    restart (redb + postcard); clients resume from their cursors. Session

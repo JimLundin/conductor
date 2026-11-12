@@ -60,7 +60,8 @@ models=(--claude-model haiku --codex-model gpt-6-luna)
 "$target"/debug/conductord host --data-dir "$data_dir" "${models[@]}" \
   >"$logs/host.out" 2>"$logs/host.log" &
 host_pid=$!
-trap 'kill $host_pid 2>/dev/null || true; [ -z "$cleanup" ] || rm -rf "$cleanup"' EXIT
+# SIGINT lets the host stop its CLIs, which keep writing in the data dir.
+trap 'kill -INT $host_pid 2>/dev/null || true; wait $host_pid 2>/dev/null || true; [ -z "$cleanup" ] || rm -rf "$cleanup"' EXIT
 # The first start in a data dir downloads the pinned CLIs.
 for _ in $(seq 600); do
   grep -q '^ticket:' "$logs/host.out" && break

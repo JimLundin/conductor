@@ -400,8 +400,10 @@ private home set, because `codex --version` writes helper binaries into
 Until the app can sign in (§6.3), `conductord login claude|codex` runs the
 sign-in on the host's terminal against the private home: `claude auth login
 --claudeai`, §6.3's per-host mode, which stores its own credential, and
-`codex login --device-auth`. The shared `setup-token` token needs the
-credential store of §6.3, which comes with sign-in from the app.
+`codex login --device-auth`. A private home signed in this way counts as
+configured (`Auth::SignedIn`, §6.3). The credential store of §6.3 exists
+now, with gateway credentials as its first kind; the shared `setup-token`
+token becomes another kind in it.
 
 ### 6.3 Credentials, entered in the app
 
@@ -417,6 +419,44 @@ The browser flow, `account/login/start { type: "chatgpt" }`, returns an
 `authUrl` whose callback is the app-server's listener on the host's
 `localhost:1455` ([codex-app-server], [codex-src], verified). A phone can't
 reach that, so it is not offered.
+
+#### Built first: gateway credentials
+
+The owner reaches both models through a gateway today, so that kind is the
+first one built. The others in the table become variants of the same
+types.
+
+- **Claude:** `ClaudeCredential::Gateway { base_url, token }`. A Claude
+  session gets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in its
+  environment when it starts. The private home already scrubs both from
+  the host's environment (§6.2), so only the stored values reach it. A
+  change applies to the next session; a running one keeps what it started
+  with.
+- **Codex:** `CodexCredential::Provider { name, base_url, wire_api, key,
+  model }`. Before the app-server starts, the host writes
+  `[model_providers.conductor]` (`name`, `base_url`, `env_key =
+  "CONDUCTOR_CODEX_KEY"`, `wire_api`) and `model_provider` and `model` into
+  the private `config.toml`, keeping the rest of the file, and passes the
+  key in `CONDUCTOR_CODEX_KEY`. The key is never in the file. Codex 0.166
+  knows only `wire_api = "responses"`, so `WireApi` has that one variant
+  (`model-provider-info` in [codex-src], verified). The app-server reloads
+  `config.toml` for each `thread/start` (`thread_processor.rs` in
+  [codex-src], verified), but the key is in its environment, which is fixed
+  when it starts. So a change stops the shared app-server, its sessions
+  close with "stopped for a new Codex credential", and the next thread
+  starts a server with the new key.
+- **Protocol:** `SetCredential { credential }` and `ClearCredential {
+  provider }` answer `Providers`, what the host runs now, and the client's
+  status takes it at once. Another client sees the change at its next
+  `Welcome`. Like every command they need a client admitted by the ticket's
+  token, which the device certificates of §6.1 replace.
+- **Write-only:** `Availability::Available { auth }` reports `Gateway {
+  base_url }`, `SignedIn` or `Unmanaged` (a `--claude-path` or
+  `--codex-path` CLI), and never a token or key. The credentials' `Debug`
+  prints only their kind, so no command log line carries a value. A
+  provider with no credential, no signed-in private home and no
+  development CLI is `Unavailable { reason: "no credential configured" }`.
+  A stored credential takes precedence over the home's sign-in.
 
 #### Claude: one subscription token for the fleet, by owner decision
 
@@ -499,10 +539,11 @@ They are not events in the log, are never written to the store, and appear
 in no trace output. The Claude token goes from the host that minted it to
 the root host on `conductor-fleet` and never reaches the browser.
 
-`Welcome.providers` grows from "can this host run the provider" to "and is
-it signed in, and how": `Availability::Available { auth: ApiKey |
-Subscription }`, or `Unavailable { reason }` with "not signed in" as one
-reason. The sidebar shows a host that needs a sign-in, with the button.
+`Welcome.providers` says whether the host can run each provider and how it
+signs in: `Availability::Available { auth }`, built with `Gateway`,
+`SignedIn` and `Unmanaged` and growing `ApiKey` and `Subscription`, or
+`Unavailable { reason }`. The sidebar shows a host that needs a sign-in,
+with the button.
 
 #### The browser holds a secret only in flight
 
@@ -511,7 +552,9 @@ the value on the encrypted iroh link, clears the field, and never writes it
 to IndexedDB, local storage, the URL or a log. Under the field the app says
 so: "Sent to desk-wsl over the encrypted link. This app doesn't keep it." A
 pasted Claude code gets the same treatment. The app never reads a secret
-back; the host reports only that a key is set, and its last four characters.
+back; the host reports only which kind is set, with a gateway's base URL.
+The credentials screen built first does this for a gateway token and a
+Codex provider key.
 
 #### Storage on the host
 
@@ -522,8 +565,14 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
 
 - On macOS the host key lives in the login Keychain, on Windows it is
   sealed with DPAPI for the user, and on Linux it goes in the Secret Service
-  when a session bus offers one. Otherwise it is `<data>/host.key` with
-  mode 0600.
+  when a session bus offers one. Otherwise it is `<data>/store.key` with
+  mode 0600. (`<data>/host.key` holds the iroh key until the store holds
+  it.) Built so far: the file variant on every platform; the platform
+  keystores are follow-up work.
+- The credentials are one value, `proto::Credentials`, one optional
+  credential per provider: postcard sealed with a fresh 24-byte nonce in
+  `<data>/credentials`, replaced by rename. It is the `credentials` field
+  of the fleet config (§6.5), so sharing it is a copy.
 - Most hosts here are WSL or headless Linux, where there is no Secret
   Service. There the encryption protects copies of the store (a backup, a
   store attached to a bug report) and not the running host, because the key
