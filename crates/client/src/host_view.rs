@@ -330,6 +330,7 @@ impl SessionView {
             },
             EventKind::SessionClosed { reason } => self
                 .change(Change::End)
+                .settle()
                 .status(SessionStatus::Closed(reason)),
             EventKind::UserMessage { text, by } => self
                 .status(SessionStatus::Running)
@@ -431,14 +432,19 @@ impl SessionView {
         SessionView { items, ..self }
     }
 
-    /// Adds an item after closing a reply or reasoning that was still
-    /// streaming.
-    fn push(self, item: Item) -> SessionView {
+    /// Closes a reply or reasoning that was still streaming.
+    fn settle(self) -> SessionView {
         let mut items = self.items;
         let last = items.pop().map(Item::settled);
         items.extend(last);
-        items.push(item);
         SessionView { items, ..self }
+    }
+
+    fn push(self, item: Item) -> SessionView {
+        let view = self.settle();
+        let mut items = view.items;
+        items.push(item);
+        SessionView { items, ..view }
     }
 
     /// A request joins its tool call's card. A request for a call this view
@@ -999,6 +1005,49 @@ mod tests {
                 Resume::Hidden,
             ))
         );
+    }
+
+    #[test]
+    fn a_close_settles_the_reasoning_or_reply_that_was_streaming() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (1, reasoned("Look")),
+            closed(1),
+            (2, created("/b")),
+            (2, EventKind::SessionReady),
+            (2, delta("Hel")),
+            closed(2),
+        ]));
+        assert_eq!(
+            (
+                view.sessions
+                    .get(&SessionId(1))
+                    .map(|session| session.items.clone()),
+                view.sessions
+                    .get(&SessionId(2))
+                    .map(|session| session.items.clone()),
+            ),
+            (
+                Some(Vec::from([Item::Reasoning {
+                    text: text("Look"),
+                    state: ReplyState::Done,
+                }])),
+                Some(Vec::from([Item::Reply {
+                    text: text("Hel"),
+                    state: ReplyState::Done,
+                }])),
+            )
+        );
+    }
+
+    fn closed(session: u64) -> (u64, EventKind) {
+        (
+            session,
+            EventKind::SessionClosed {
+                reason: CloseReason::Exited { status: text("9") },
+            },
+        )
     }
 
     /// The events after a session starts, and whether it then shows that
