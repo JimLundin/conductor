@@ -17,10 +17,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # CI keeps ./target: .cargo/config.toml points local checkouts at a
-    # shared directory beside them, and this overrides it.
-    env:
-      CARGO_TARGET_DIR: target
     steps:
       - uses: actions/checkout@v4
         with:
