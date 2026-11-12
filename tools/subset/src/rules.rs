@@ -119,21 +119,45 @@ pub const GUARD: Rule = rule(
     "expr.match.guard",
     "a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `||` or `!` (proposal 0040)",
 );
+pub const GUARD_BOUND: Rule = rule(
+    "expr.match.guard",
+    "a guard tests a value its arm's pattern bound; a guard on nothing the pattern bound is an `if` (proposal 0040)",
+);
+pub const GUARD_PATTERN: Rule = rule(
+    "expr.match.guard",
+    "a guard that compares with a literal, a variant or a constant, or a `matches!` on a place, is a pattern: write it in the arm (proposal 0040, bootstrap review §A3, §A4)",
+);
 pub const GUARD_FALLBACK: Rule = rule(
     "expr.match.guard",
     "a guarded arm needs a later arm with no guard whose pattern covers the guarded one, so the otherwise case is written out (proposal 0040)",
 );
+pub const MATCHES_FORM: Rule = rule(
+    "macro.matches",
+    "`matches!` takes a place or a call and a pattern with no `if` and no `true` / `false`, so no boolean rides through it (proposals 0028, 0040)",
+);
 pub const LIFT_FILTER: Rule = rule(
     "expr.method_call",
-    "`Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)",
+    "`Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)",
+);
+pub const LIFT_MATCHED: Rule = rule(
+    "expr.method_call",
+    "a `filter` of one comparison matched at once is a match guard: `Some(x) if a == b => ..` with an unguarded arm for the rest (proposal 0040)",
 );
 pub const LIFT_EQ: Rule = rule(
     "expr.method_call",
-    "`a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)",
+    "a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)",
 );
 pub const FOR_BODY: Rule = rule(
     "expr.for",
-    "a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)",
+    "a `for` body holds only calls, as `f(item);`, `f(item)?;`, `x.m(item).await?;` or `let _ = f(item);`, each building nothing; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)",
+);
+pub const FOR_ITER: Rule = rule(
+    "expr.for",
+    "a `for` iterates a list built before it or by adapters, with no block, assignment or branch in its iterator expression (proposal 0041)",
+);
+pub const FOR_EACH: Rule = rule(
+    "expr.method_call",
+    "a loop whose body performs side effects is `for item in list { .. }`, not `for_each` or `try_for_each` (proposal 0041)",
 );
 pub const STREAM_EFFECTS: Rule = rule(
     "expr.method_call",
@@ -294,10 +318,16 @@ pub const RULES: &[&Rule] = &[
     &PREDICATE_NOT,
     &COUNT,
     &GUARD,
+    &GUARD_BOUND,
+    &GUARD_PATTERN,
     &GUARD_FALLBACK,
+    &MATCHES_FORM,
     &LIFT_FILTER,
+    &LIFT_MATCHED,
     &LIFT_EQ,
     &FOR_BODY,
+    &FOR_ITER,
+    &FOR_EACH,
     &STREAM_EFFECTS,
     &IMPL_TRAIT,
     &LIFETIME_PARAM,

@@ -222,12 +222,12 @@ impl Run {
                 let turn = self.turns.get(&thread).with_context(|| {
                     format!("event for a thread with no turn running: {}", thread.0)
                 })?;
-                match event_turn(&event).filter(|got| got != &&turn.id) {
-                    Some(got) => Err(anyhow::Error::msg(format!(
+                match event_turn(&event) {
+                    Some(got) if got != &turn.id => Err(anyhow::Error::msg(format!(
                         "event for turn {} during turn {}",
                         got.0, turn.id.0
                     ))),
-                    None => Ok(()),
+                    Some(_) | None => Ok(()),
                 }?;
                 self.react(&thread, &event).await?;
                 self.turns
@@ -558,8 +558,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     .await?;
     let resume = report(
         "5 resume in a new process",
-        match (s.turn.text.find("a.txt"), &s.turn.outcome) {
-            (Some(_), Some(TurnOutcome::Completed)) if resumed.id == a.id => Verdict::Pass,
+        match (&resumed.id, s.turn.text.find("a.txt"), &s.turn.outcome) {
+            (id, Some(_), Some(TurnOutcome::Completed)) if id == &a.id => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(

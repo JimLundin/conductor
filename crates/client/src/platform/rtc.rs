@@ -617,9 +617,12 @@ pub(crate) struct ChannelSend {
 impl ChannelSend {
     pub(crate) fn write(&self, frame: &[u8]) -> Result<(), String> {
         match self.channel.dc.ready_state() {
-            RtcDataChannelState::Open => frame
-                .chunks(proto::CHUNK_LEN)
-                .try_for_each(|chunk| self.channel.dc.send_with_u8_array(chunk).map_err(js)),
+            RtcDataChannelState::Open => {
+                for chunk in frame.chunks(proto::CHUNK_LEN) {
+                    self.channel.dc.send_with_u8_array(chunk).map_err(js)?;
+                }
+                Ok(())
+            }
             _ => Err(String::from("the data channel closed")),
         }
     }

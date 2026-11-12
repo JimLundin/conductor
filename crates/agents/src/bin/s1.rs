@@ -4,7 +4,6 @@
 //! Usage: s1 [FIXTURE_DIR]
 //! Writes raw CLI stdout per step to FIXTURE_DIR/<step>.jsonl when given.
 
-use std::cmp::Ordering;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -347,18 +346,12 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let a = scratch.join("a.txt");
     let approve = report(
         "1 approve",
-        match (
-            t.permissions.cmp(&Vec::from([String::from("Write")])),
-            presence(&a),
-            t.result(),
-            t.streamed.cmp(&t.text),
-        ) {
-            (
-                Ordering::Equal,
-                Presence::Present,
-                Some(("success", Outcome::Succeeded)),
-                Ordering::Equal,
-            ) => Verdict::Pass,
+        match (presence(&a), t.result(), (&t.permissions, &t.streamed)) {
+            (Presence::Present, Some(("success", Outcome::Succeeded)), seen)
+                if seen == (&Vec::from([String::from("Write")]), &t.text) =>
+            {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(

@@ -164,6 +164,7 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) ->
         in_let: false,
         predicates: HashSet::new(),
         predicate_macros: HashSet::new(),
+        in_predicate: 0,
         out: Vec::new(),
         boundary: Vec::new(),
     };
@@ -255,8 +256,10 @@ struct FnCtx {
     assigned: BTreeSet<String>,
     /// Each parameter bound to a plain name, with its type's last segment.
     params: HashMap<String, String>,
-    /// The awaited tail of a body whose fn returns `Result<(), _>`.
-    unit_tail: Option<*const Expr>,
+    /// Names bound by `let name = Some(..)`, an `Option` built in place.
+    some_bindings: BTreeSet<String>,
+    /// Names bound to a stream that starts at `stream::iter`.
+    stream_bindings: BTreeSet<String>,
 }
 
 /// The rules of proposals 0038 and 0039 at one kind of position.
@@ -379,6 +382,8 @@ struct Checker<'a> {
     /// predicate closure's body (proposal 0028).
     predicates: HashSet<*const Expr>,
     predicate_macros: HashSet<*const syn::Macro>,
+    /// How many predicate closure bodies enclose the node being visited.
+    in_predicate: usize,
     out: Vec<Finding>,
     boundary: Vec<Mark>,
 }
@@ -461,7 +466,8 @@ impl Checker<'_> {
                 .unwrap_or_default(),
             assigned: assigned_names(block),
             params: param_types(sig),
-            unit_tail: unit_tail(sig, block).map(std::ptr::from_ref),
+            some_bindings: bound_to(block, |init, _| some_call(init)),
+            stream_bindings: bound_to(block, stream_root),
         });
         if let Some(FnArg::Receiver(r)) = sig.inputs.first() {
             self.check_receiver(r);
@@ -1140,6 +1146,13 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                         ours: false,
                     },
                 };
+                if callee.path.len() >= 2
+                    && COMPARE_TRAITS.contains(&callee.path[callee.path.len() - 2].as_str())
+                    && (COMPARE_METHODS.contains(&callee.last()) || callee.last() == "cmp")
+                    && self.in_predicate == 0
+                {
+                    self.flag(e.func.span(), &rules::LIFT_EQ);
+                }
                 let drop = matches!(&*e.func, Expr::Path(p) if is_drop(&p.path));
                 let named =
                     matches!(e.args.first(), Some(Expr::Path(p)) if p.path.get_ident().is_some());
@@ -1160,29 +1173,44 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 {
                     self.flag(e.method.span(), &rules::COUNT);
                 }
-                if e.method == "filter"
-                    && some_call(&e.receiver)
+                let some_bindings = self
+                    .fns
+                    .last()
+                    .map(|f| f.some_bindings.clone())
+                    .unwrap_or_default();
+                if ["filter", "find"].contains(&e.method.to_string().as_str())
+                    && built_option(&e.receiver, &some_bindings)
                     && matches!(e.args.first(), Some(Expr::Closure(c)) if comparison(&c.body))
                 {
                     self.flag(e.method.span(), &rules::LIFT_FILTER);
                 }
-                if (e.method == "then_some" || e.method == "then")
-                    && matches!(&*e.receiver, Expr::MethodCall(m) if (m.method == "eq" || m.method == "ne") && m.args.len() == 1)
-                {
+                let by_name =
+                    COMPARE_METHODS.contains(&e.method.to_string().as_str()) && e.args.len() == 1;
+                let ordering = ORDERING_TESTS.contains(&e.method.to_string().as_str())
+                    && matches!(&*e.receiver, Expr::MethodCall(m) if m.method == "cmp" || m.method == "partial_cmp");
+                if (by_name || ordering) && self.in_predicate == 0 {
                     self.flag(e.method.span(), &rules::LIFT_EQ);
                 }
-                if e.method == "try_collect" && stream_then(&e.receiver) {
-                    let unit = match &e.turbofish {
-                        Some(turbofish) => names_unit(turbofish),
-                        None => self
-                            .fns
-                            .last()
-                            .and_then(|f| f.unit_tail)
-                            .is_some_and(|tail| std::ptr::eq(tail, expr)),
-                    };
-                    if unit {
-                        self.flag(e.method.span(), &rules::STREAM_EFFECTS);
-                    }
+                if e.method == "for_each" || e.method == "try_for_each" {
+                    self.flag(e.method.span(), &rules::FOR_EACH);
+                }
+                let streams = self
+                    .fns
+                    .last()
+                    .map(|f| f.stream_bindings.clone())
+                    .unwrap_or_default();
+                let kept = e
+                    .turbofish
+                    .as_ref()
+                    .is_some_and(|turbofish| !names_unit(turbofish));
+                if e.method == "try_collect" && stream_root(&e.receiver, &streams) && !kept {
+                    self.flag(e.method.span(), &rules::STREAM_EFFECTS);
+                }
+                if e.method == "map"
+                    && matches!(e.args.first(), Some(Expr::Closure(c)) if matches!(&*c.body, Expr::Tuple(t) if t.elems.is_empty()))
+                    && matches!(&*e.receiver, Expr::Await(a) if matches!(&*a.base, Expr::MethodCall(m) if m.method == "try_collect" && stream_root(&m.receiver, &streams)))
+                {
+                    self.flag(e.method.span(), &rules::STREAM_EFFECTS);
                 }
                 let on_self = matches!(&*e.receiver, Expr::Path(p) if p.path.is_ident("self"));
                 for arg in &e.args {
@@ -1227,6 +1255,14 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                     self.flag(e.span(), &rules::CLOSURE);
                 }
                 self.set_expr(&e.body, Slot::ClosureBody(Box::new(slot.clone())));
+                if let Slot::MethodArg { method, .. } = &slot
+                    && self.lists.predicate(method)
+                {
+                    self.in_predicate += 1;
+                    visit::visit_expr(self, expr);
+                    self.in_predicate -= 1;
+                    return;
+                }
             }
             Expr::Async(e) => {
                 let placed = match &slot {
@@ -1305,9 +1341,18 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 self.loops.pop();
                 return;
             }
+            Expr::Match(e) if filtered_once(&e.expr) => {
+                self.flag(e.match_token.span, &rules::LIFT_MATCHED);
+            }
+            Expr::If(e) if matches!(&*e.cond, Expr::Let(l) if filtered_once(&l.expr)) => {
+                self.flag(e.if_token.span, &rules::LIFT_MATCHED);
+            }
             Expr::ForLoop(e) => {
-                if e.body.stmts.is_empty() || !e.body.stmts.iter().all(awaited_try) {
+                if e.body.stmts.is_empty() || !e.body.stmts.iter().all(effect_stmt) {
                     self.flag(e.for_token.span, &rules::FOR_BODY);
+                }
+                if !value_free(&e.expr, ValueFree::Iterator) {
+                    self.flag(e.for_token.span, &rules::FOR_ITER);
                 }
                 self.loops.push(false);
                 visit::visit_expr(self, expr);
@@ -1345,12 +1390,27 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             let Some((token, guard)) = &arm.guard else {
                 continue;
             };
+            let bound = pattern_bindings(&arm.pat);
             match guard.as_ref() {
                 Expr::Binary(e) if comparison_op(&e.op) => {
                     self.predicates.insert(std::ptr::from_ref(guard.as_ref()));
+                    if !(rooted_in(&e.left, &bound) || rooted_in(&e.right, &bound)) {
+                        self.flag(token.span, &rules::GUARD_BOUND);
+                    }
+                    if constant(&e.left) || constant(&e.right) {
+                        self.flag(token.span, &rules::GUARD_PATTERN);
+                    }
                 }
                 Expr::Macro(e) if e.mac.path.is_ident("matches") => {
                     self.predicate_macros.insert(std::ptr::from_ref(&e.mac));
+                    if let Some(parsed) = parse_matches(&e.mac) {
+                        if !rooted_in(&parsed.scrutinee, &bound) {
+                            self.flag(token.span, &rules::GUARD_BOUND);
+                        }
+                        if !calls(&parsed.scrutinee) {
+                            self.flag(token.span, &rules::GUARD_PATTERN);
+                        }
+                    }
                 }
                 _ => self.flag(token.span, &rules::GUARD),
             }
@@ -1371,6 +1431,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
         if mac.path.is_ident("matches") && !self.predicate_macros.contains(&std::ptr::from_ref(mac))
         {
             self.flag(mac.path.span(), &rules::PREDICATE_MATCHES);
+        }
+        if mac.path.is_ident("matches")
+            && self.predicate_macros.contains(&std::ptr::from_ref(mac))
+            && !parse_matches(mac).is_some_and(|m| m.plain())
+        {
+            self.flag(mac.path.span(), &rules::MATCHES_FORM);
         }
         visit::visit_macro(self, mac);
     }
@@ -1444,11 +1510,12 @@ fn comparison_op(op: &syn::BinOp) -> bool {
     )
 }
 
-/// A closure body that is one comparison, through parentheses and a block
-/// holding only its tail.
+/// A closure body that is one comparison, through parentheses, `!` and a
+/// block holding only its tail.
 fn comparison(body: &Expr) -> bool {
     match body {
         Expr::Paren(e) => comparison(&e.expr),
+        Expr::Unary(e) if matches!(e.op, syn::UnOp::Not(_)) => comparison(&e.expr),
         Expr::Block(e) if e.label.is_none() => {
             matches!(e.block.stmts.as_slice(), [syn::Stmt::Expr(tail, None)] if comparison(tail))
         }
@@ -1457,18 +1524,84 @@ fn comparison(body: &Expr) -> bool {
     }
 }
 
-/// `Some(x)`, an `Option` built at the call (proposal 0040).
+/// Methods that compare by name, as `a.eq(&b)` (proposal 0040).
+const COMPARE_METHODS: &[&str] = &["eq", "ne", "lt", "le", "gt", "ge"];
+/// `Ordering`'s tests, as in `a.cmp(&b).is_eq()`.
+const ORDERING_TESTS: &[&str] = &["is_eq", "is_ne", "is_lt", "is_le", "is_gt", "is_ge"];
+const COMPARE_TRAITS: &[&str] = &["PartialEq", "PartialOrd", "Ord"];
+
+/// `Some(x)`, an `Option` built at the call, by any path (proposal 0040).
 fn some_call(expr: &Expr) -> bool {
     matches!(expr, Expr::Call(c) if matches!(&*c.func, Expr::Path(p)
-        if p.path.segments.len() <= 2
-            && p.path.segments.last().is_some_and(|s| s.ident == "Some")))
+        if p.path.segments.last().is_some_and(|s| s.ident == "Some")))
 }
 
-/// `stream::iter(..).then(..)`, a stream of awaited steps (proposal 0041).
-fn stream_then(expr: &Expr) -> bool {
-    matches!(expr, Expr::MethodCall(then) if then.method == "then"
-        && matches!(&*then.receiver, Expr::Call(c) if matches!(&*c.func, Expr::Path(p)
-            if segments(&p.path).ends_with(&["stream".to_string(), "iter".to_string()]))))
+/// An `Option` built only to ask one question: `Some(x)`, a name bound to
+/// one in this fn, or either through `into_iter()` or `iter()`.
+fn built_option(expr: &Expr, some_bindings: &BTreeSet<String>) -> bool {
+    match expr {
+        Expr::MethodCall(m) if m.method == "into_iter" || m.method == "iter" => {
+            built_option(&m.receiver, some_bindings)
+        }
+        Expr::Path(p) => p
+            .path
+            .get_ident()
+            .is_some_and(|i| some_bindings.contains(&i.to_string())),
+        Expr::Paren(e) => built_option(&e.expr, some_bindings),
+        other => some_call(other),
+    }
+}
+
+/// `opt.filter(|x| <one comparison>)` as a `match` or `if let` scrutinee:
+/// the owner's ruling makes it a lift too.
+fn filtered_once(expr: &Expr) -> bool {
+    matches!(expr, Expr::MethodCall(m) if m.method == "filter"
+        && matches!(m.args.first(), Some(Expr::Closure(c)) if comparison(&c.body)))
+}
+
+/// A chain of method calls that starts at `stream::iter(..)`, a bare `iter(..)`
+/// imported from a stream module, or a name bound to such a chain.
+fn stream_root(expr: &Expr, streams: &BTreeSet<String>) -> bool {
+    match expr {
+        Expr::MethodCall(m) => stream_root(&m.receiver, streams),
+        Expr::Await(a) => stream_root(&a.base, streams),
+        Expr::Paren(e) => stream_root(&e.expr, streams),
+        Expr::Call(c) => matches!(&*c.func, Expr::Path(p) if {
+            let path = segments(&p.path);
+            path.ends_with(&["stream".to_string(), "iter".to_string()]) || path == ["iter"]
+        }),
+        Expr::Path(p) => p
+            .path
+            .get_ident()
+            .is_some_and(|i| streams.contains(&i.to_string())),
+        _ => false,
+    }
+}
+
+/// The names a fn body binds with `let name = <init>` where `test` holds for
+/// the init, in order, so a later binding can build on an earlier one.
+fn bound_to(block: &syn::Block, test: fn(&Expr, &BTreeSet<String>) -> bool) -> BTreeSet<String> {
+    struct Finder {
+        test: fn(&Expr, &BTreeSet<String>) -> bool,
+        names: BTreeSet<String>,
+    }
+    impl<'ast> Visit<'ast> for Finder {
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if let (syn::Pat::Ident(p), Some(init)) = (&local.pat, &local.init)
+                && (self.test)(&init.expr, &self.names)
+            {
+                self.names.insert(p.ident.to_string());
+            }
+            visit::visit_local(self, local);
+        }
+        fn visit_item(&mut self, _: &'ast Item) {}
+    }
+    let mut finder = Finder {
+        test,
+        names: BTreeSet::new(),
+    };
+    finder.visit_block(block);
+    finder.names
 }
 
 /// A turbofish that names `()`, as in `try_collect::<()>()` or
@@ -1486,32 +1619,208 @@ fn names_unit(turbofish: &syn::AngleBracketedGenericArguments) -> bool {
     unit.0
 }
 
-/// The expression a fn returning `Result<(), _>` awaits as its tail, as in
-/// `stream.try_collect().await`.
-fn unit_tail<'b>(sig: &syn::Signature, block: &'b syn::Block) -> Option<&'b Expr> {
-    let ReturnType::Type(_, ty) = &sig.output else {
-        return None;
-    };
-    let Type::Path(path) = &**ty else {
-        return None;
-    };
-    let last = path.path.segments.last()?;
-    let PathArguments::AngleBracketed(args) = &last.arguments else {
-        return None;
-    };
-    let unit_ok = last.ident == "Result"
-        && matches!(args.args.first(), Some(GenericArgument::Type(Type::Tuple(t))) if t.elems.is_empty());
-    match block.stmts.last() {
-        Some(syn::Stmt::Expr(Expr::Await(tail), None)) if unit_ok => Some(&tail.base),
-        _ => None,
+/// One statement of a `for` body (proposal 0041 and the owner's ruling): a
+/// call, optionally `.await` and `?`, as `f(x);`, `f(x)?;` or
+/// `x.m(..).await?;`, or a call discarded with `let _ =` (0025). An `.await`
+/// is always followed by `?`, and the call builds no value on the way.
+fn effect_stmt(stmt: &syn::Stmt) -> bool {
+    match stmt {
+        syn::Stmt::Expr(e, Some(_)) => effect_call(e),
+        syn::Stmt::Local(local) => {
+            matches!(local.pat, syn::Pat::Wild(_))
+                && local
+                    .init
+                    .as_ref()
+                    .is_some_and(|init| init.diverge.is_none() && effect_call(&init.expr))
+        }
+        _ => false,
     }
 }
 
-/// A statement `f(..).await?;` or `x.method(..).await?;`, the one statement a
-/// `for` body holds (proposal 0041).
-fn awaited_try(stmt: &syn::Stmt) -> bool {
-    matches!(stmt, syn::Stmt::Expr(Expr::Try(t), Some(_))
-        if matches!(&*t.expr, Expr::Await(a) if matches!(&*a.base, Expr::Call(_) | Expr::MethodCall(_))))
+fn effect_call(expr: &Expr) -> bool {
+    let call = match expr {
+        Expr::Try(t) => match &*t.expr {
+            Expr::Await(a) => &*a.base,
+            other => other,
+        },
+        other => other,
+    };
+    matches!(call, Expr::Call(_) | Expr::MethodCall(_)) && value_free(call, ValueFree::Call)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ValueFree {
+    /// An effect call: no `.await` inside it either, so one call is one step.
+    Call,
+    /// A `for`'s iterator expression.
+    Iterator,
+}
+
+/// No block with statements, assignment, `let`, `if`, `match` or loop in
+/// `expr`, outside the bodies of the closures it passes to adapters, and no
+/// assignment even there.
+fn value_free(expr: &Expr, kind: ValueFree) -> bool {
+    struct Finder {
+        kind: ValueFree,
+        closures: usize,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Finder {
+        fn visit_expr(&mut self, e: &'ast Expr) {
+            let building = match e {
+                Expr::Assign(_) | Expr::Let(_) => true,
+                Expr::Block(_)
+                | Expr::If(_)
+                | Expr::Match(_)
+                | Expr::Loop(_)
+                | Expr::While(_)
+                | Expr::ForLoop(_)
+                | Expr::Async(_) => self.closures == 0,
+                Expr::Await(_) => self.kind == ValueFree::Call,
+                _ => false,
+            };
+            self.found |= building;
+            if let Expr::Closure(c) = e {
+                self.closures += 1;
+                self.visit_expr(&c.body);
+                self.closures -= 1;
+                return;
+            }
+            visit::visit_expr(self, e);
+        }
+        fn visit_item(&mut self, _: &'ast Item) {}
+    }
+    let mut finder = Finder {
+        kind,
+        closures: 0,
+        found: false,
+    };
+    finder.visit_expr(expr);
+    !finder.found
+}
+
+/// The names a pattern binds.
+fn pattern_bindings(pat: &syn::Pat) -> BTreeSet<String> {
+    struct Finder(BTreeSet<String>);
+    impl<'ast> Visit<'ast> for Finder {
+        fn visit_pat_ident(&mut self, p: &'ast syn::PatIdent) {
+            if binds(&p.ident) {
+                self.0.insert(p.ident.to_string());
+            }
+            visit::visit_pat_ident(self, p);
+        }
+    }
+    let mut finder = Finder(BTreeSet::new());
+    finder.visit_pat(pat);
+    finder.0
+}
+
+/// Whether `expr` is a place or call chain whose root is one of `names`, as
+/// `hello.token`, `&call` or `item.kind()`.
+fn rooted_in(expr: &Expr, names: &BTreeSet<String>) -> bool {
+    match expr {
+        Expr::Path(p) => p
+            .path
+            .get_ident()
+            .is_some_and(|i| names.contains(&i.to_string())),
+        Expr::Field(e) => rooted_in(&e.base, names),
+        Expr::MethodCall(e) => rooted_in(&e.receiver, names),
+        Expr::Reference(e) => rooted_in(&e.expr, names),
+        Expr::Paren(e) => rooted_in(&e.expr, names),
+        Expr::Unary(e) if matches!(e.op, syn::UnOp::Deref(_)) => rooted_in(&e.expr, names),
+        _ => false,
+    }
+}
+
+/// A value a pattern can name: a literal, a unit variant or constant, or a
+/// constructor of such values (bootstrap review §A3, §A4).
+fn constant(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) => true,
+        Expr::Path(p) => p
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident.to_string().starts_with(char::is_uppercase)),
+        Expr::Reference(e) => constant(&e.expr),
+        Expr::Paren(e) => constant(&e.expr),
+        Expr::Call(c) => constant(&c.func) && c.args.iter().all(constant),
+        Expr::Tuple(t) => !t.elems.is_empty() && t.elems.iter().all(constant),
+        Expr::Struct(s) => s.rest.is_none() && s.fields.iter().all(|f| constant(&f.expr)),
+        _ => false,
+    }
+}
+
+/// Whether a call happens in `expr`: what a pattern can't express.
+fn calls(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(_) | Expr::MethodCall(_) => true,
+        Expr::Field(e) => calls(&e.base),
+        Expr::Reference(e) => calls(&e.expr),
+        Expr::Paren(e) => calls(&e.expr),
+        _ => false,
+    }
+}
+
+/// The parts of `matches!(scrutinee, pattern if guard)`.
+struct Matches {
+    scrutinee: Expr,
+    pattern: syn::Pat,
+    guard: Option<Expr>,
+}
+
+impl Matches {
+    /// No inner guard, no `true` / `false` pattern and a scrutinee that is a
+    /// place or a call: nothing carries a boolean through the macro
+    /// (proposals 0028, 0040).
+    fn plain(&self) -> bool {
+        struct BoolPat(bool);
+        impl<'ast> Visit<'ast> for BoolPat {
+            fn visit_lit_bool(&mut self, _: &'ast syn::LitBool) {
+                self.0 = true;
+            }
+        }
+        let mut bools = BoolPat(false);
+        bools.visit_pat(&self.pattern);
+        self.guard.is_none() && !bools.0 && place_or_call(&self.scrutinee)
+    }
+}
+
+fn parse_matches(mac: &syn::Macro) -> Option<Matches> {
+    use syn::parse::Parser;
+    let parser = |input: syn::parse::ParseStream| {
+        let scrutinee: Expr = input.parse()?;
+        input.parse::<syn::Token![,]>()?;
+        let pattern = syn::Pat::parse_multi_with_leading_vert(input)?;
+        let guard = match input.parse::<Option<syn::Token![if]>>()? {
+            Some(_) => Some(input.parse::<Expr>()?),
+            None => None,
+        };
+        let _ = input.parse::<Option<syn::Token![,]>>()?;
+        Ok(Matches {
+            scrutinee,
+            pattern,
+            guard,
+        })
+    };
+    parser.parse2(mac.tokens.clone()).ok()
+}
+
+/// A place, a literal or a call whose receiver and arguments are such, or a
+/// closure passed to one: no operator, block or branch.
+fn place_or_call(expr: &Expr) -> bool {
+    match expr {
+        Expr::Path(_) | Expr::Closure(_) => true,
+        Expr::Tuple(t) => t.elems.iter().all(place_or_call),
+        Expr::Lit(l) => !matches!(l.lit, Lit::Bool(_)),
+        Expr::Field(e) => place_or_call(&e.base),
+        Expr::Reference(e) => place_or_call(&e.expr),
+        Expr::Paren(e) => place_or_call(&e.expr),
+        Expr::Unary(e) if matches!(e.op, syn::UnOp::Deref(_)) => place_or_call(&e.expr),
+        Expr::MethodCall(e) => place_or_call(&e.receiver) && e.args.iter().all(place_or_call),
+        Expr::Call(e) => place_or_call(&e.func) && e.args.iter().all(place_or_call),
+        _ => false,
+    }
 }
 
 /// Whether every value `specific` matches, `general` matches too, judged by

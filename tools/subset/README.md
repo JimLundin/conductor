@@ -188,10 +188,16 @@ A list that is given replaces its default. To extend a default, copy it.
 | `expr.unary.not` | a boolean expression (`matches!`, a comparison, `&&`, `\|\|`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040) |
 | `expr.method_call` | count matching items with `filter(\|x\| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028) |
 | `expr.match.guard` | a match guard is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `\|\|` or `!` (proposal 0040) |
+| `expr.match.guard` | a guard tests a value its arm's pattern bound; a guard on nothing the pattern bound is an `if` (proposal 0040) |
+| `expr.match.guard` | a guard that compares with a literal, a variant or a constant, or a `matches!` on a place, is a pattern: write it in the arm (proposal 0040, bootstrap review §A3, §A4) |
 | `expr.match.guard` | a guarded arm needs a later arm with no guard whose pattern covers the guarded one, so the otherwise case is written out (proposal 0040) |
-| `expr.method_call` | `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040) |
-| `expr.method_call` | `a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040) |
-| `expr.for` | a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041) |
+| `macro.matches` | `matches!` takes a place or a call and a pattern with no `if` and no `true` / `false`, so no boolean rides through it (proposals 0028, 0040) |
+| `expr.method_call` | `Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040) |
+| `expr.method_call` | a `filter` of one comparison matched at once is a match guard: `Some(x) if a == b => ..` with an unguarded arm for the rest (proposal 0040) |
+| `expr.method_call` | a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040) |
+| `expr.for` | a `for` body holds only calls, as `f(item);`, `f(item)?;`, `x.m(item).await?;` or `let _ = f(item);`, each building nothing; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041) |
+| `expr.for` | a `for` iterates a list built before it or by adapters, with no block, assignment or branch in its iterator expression (proposal 0041) |
+| `expr.method_call` | a loop whose body performs side effects is `for item in list { .. }`, not `for_each` or `try_for_each` (proposal 0041) |
 | `expr.method_call` | awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041) |
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
@@ -554,13 +560,43 @@ commit whose files don't parse is left out, with a note on stderr.
   an or-pattern covers when one of its cases does, and anything else covers
   only when it is written the same way. A fallback split across several
   arms, or one behind `..` in a tuple, isn't seen and is flagged.
+- **0040's guard is checked by syntax.** A guard must have an operand, or
+  a `matches!` scrutinee, that is a place or call chain rooted in a name
+  the arm's pattern binds. A comparison operand that is a literal, an
+  uppercase path (a unit variant or a constant) or a constructor of such
+  values, and a `matches!` scrutinee with no call in it, are patterns and
+  are flagged. The checker can't see types, so these are left to review:
+  `Some(v) if v.is_empty() == w.is_empty()`, two library booleans compared
+  under a bound name; a constant written in lowercase; and `match
+  a.cmp(&b)` with only `Ordering::Equal` and a catch-all, an equality
+  written as an ordering.
+- **Lifts are matched by name and shape.** `eq`, `ne`, `lt`, `le`, `gt` and
+  `ge` with one argument, an `Ordering` test on `cmp` or `partial_cmp`, and
+  `PartialEq::eq`, `PartialOrd::lt` and the like as paths are flagged
+  anywhere outside a predicate closure, so a method of ours with one of
+  those names is flagged too. `filter` or `find` with one comparison (under
+  any `!`) is flagged on `Some(..)` by any path, on `Some(..).iter()` or
+  `.into_iter()`, on a name bound with `let x = Some(..)` anywhere in the
+  same fn, and on any receiver when the call is a `match` or `if let`
+  scrutinee. A filter result bound first and matched later, or an `Option`
+  built through a helper fn, is left to review.
+- **`matches!` is parsed.** In a guard or a predicate closure, its
+  arguments must parse as a scrutinee, a pattern and no `if`. The
+  scrutinee is a place, a call, a tuple of these or a closure argument of
+  one, with no operator or block, and the pattern holds no `true` or
+  `false`. A macro that doesn't parse that way is flagged.
 - **0041 recognises effects by shape.** A `for` body is checked statement
-  by statement. `stream::iter(..).then(..)` is flagged only when it ends in
-  `try_collect` into `()`: a turbofish that names `()`, or no turbofish in
-  the awaited tail of a fn that returns `Result<(), _>`. A `collect` into
-  `Vec<Result<(), E>>` that is then checked for errors runs effects too,
-  but syntax can't tell it from a list of results that is kept, so it is a
-  review check.
+  by statement: a call, then optionally `.await` and `?`, or `let _ =` a
+  call. The call, its receiver and its arguments, and the `for`'s iterator
+  expression, may hold no block, assignment, `let`, branch or loop outside
+  the closures passed to adapters, and no assignment inside them; the call
+  holds no second `.await`. `for_each` and `try_for_each` are flagged by
+  name. A `try_collect` on a chain that starts at `stream::iter`, a bare
+  `iter(..)` or a name bound to such a chain in the same fn is flagged
+  unless its turbofish names a list type with no `()` in it. A `collect`
+  into `Vec<Result<(), E>>` that is then checked for errors runs effects
+  too, but syntax can't tell it from a list of results that is kept, so it
+  is a review check, as is a stream built by a helper fn.
 - **`pat.wild` is allowed everywhere.** The rule in `subset.toml` that
   limits `_` to the positions clippy's wildcard lints allow is left to
   clippy.

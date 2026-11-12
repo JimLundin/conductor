@@ -707,9 +707,9 @@ impl Link {
     /// Keeps the cursor if the host's log is the one it points into;
     /// otherwise starts over from the beginning of the new epoch.
     async fn adopt(&mut self, welcome: &Welcome) -> Result<(), Stopped> {
-        match self.cursor.filter(|cursor| cursor.epoch == welcome.epoch) {
-            Some(_) => Ok(()),
-            None => {
+        match self.cursor {
+            Some(Cursor { epoch, .. }) if epoch == welcome.epoch => Ok(()),
+            Some(_) | None => {
                 self.cursor = Some(Cursor {
                     epoch: welcome.epoch,
                     seq: HostSeq(0),

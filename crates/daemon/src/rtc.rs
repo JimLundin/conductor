@@ -84,12 +84,12 @@ impl RtcOptions {
 
     /// Fires the drop knob once per host, in the first session to reach it.
     fn fate(&self, frames_out: Count) -> Fate {
-        match self.drop_after.filter(|after| after == &frames_out) {
-            Some(_) => match self.drop_knob.send_replace(Knob::Spent) {
+        match self.drop_after {
+            Some(after) if after == frames_out => match self.drop_knob.send_replace(Knob::Spent) {
                 Knob::Armed => Fate::Drop,
                 Knob::Spent => Fate::Live,
             },
-            None => Fate::Live,
+            Some(_) | None => Fate::Live,
         }
     }
 }
@@ -254,9 +254,9 @@ pub(crate) async fn accept(
         .iter()
         .map(|socket| Candidate::host(socket.addr, "udp"))
         .collect::<Result<Vec<Candidate>, str0m::error::IceError>>()?;
-    candidates.into_iter().for_each(|candidate| {
+    for candidate in candidates {
         let _ = rtc.add_local_candidate(candidate);
-    });
+    }
     let offer = SdpOffer::from_sdp_string(&offer.sdp).context("parsing the browser's offer")?;
     let answer = rtc.sdp_api().accept_offer(offer)?;
     tracing::info!(
@@ -274,9 +274,9 @@ pub(crate) async fn accept(
         .await?;
 
     let (packets_tx, packets) = mpsc::channel(256);
-    sockets.iter().cloned().for_each(|socket| {
+    for socket in sockets.iter().cloned() {
         tokio::spawn(read_socket(socket, packets_tx.clone()));
-    });
+    }
     let (signals_tx, signals) = mpsc::channel(16);
     tokio::spawn(read_signals(RecvHalf::Iroh(signal_recv), signals_tx));
     let (out_tx, out) = mpsc::channel(256);
@@ -807,8 +807,9 @@ impl Driver {
             "webrtc test knob: dropping the connection"
         );
         let ids = self.inbound.keys().copied().collect::<Vec<ChannelId>>();
-        ids.into_iter()
-            .for_each(|id| self.rtc.direct_api().close_data_channel(id));
+        for id in ids {
+            self.rtc.direct_api().close_data_channel(id);
+        }
         self.phase = Phase::Dropping;
     }
 

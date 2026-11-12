@@ -1051,6 +1051,7 @@ fn boolean_expressions_only_in_predicate_closures() {
          crates/daemon/src/a_fail.rs:7:8: expr.let: `let` inside a condition chain\n\
          crates/daemon/src/a_fail.rs:7:31: expr.binary.and: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
          crates/daemon/src/a_fail.rs:7:34: macro.matches: a boolean expression (`matches!`, a comparison, `&&`, `||`, `!`) only as the body of a closure passed straight to a method in `predicate_adapters` (proposals 0028, 0037), or one comparison or `matches!` as a match guard (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:14:17: expr.match.guard: a guard that compares with a literal, a variant or a constant, or a `matches!` on a place, is a pattern: write it in the arm (proposal 0040, bootstrap review §A3, §A4)\n\
          crates/daemon/src/a_fail.rs:20:30: expr.lit.bool: `true` / `false` only as an argument or field value of a fn, method or struct we don't define (proposal 0023)\n\
          crates/daemon/src/a_fail.rs:27:8: expr.method_call: count matching items with `filter(|x| matches!(x, ..)).count()`, not `filter_map(..).count()` (proposal 0028)\n"
     );
@@ -1887,7 +1888,7 @@ fn a_match_guard_is_one_comparison_with_an_unguarded_arm_after() {
 fn label(item: Item, change: &Change) -> Label {
     match (item, change) {
         (Item::Tool { call, .. }, Change::Finish(id)) if &call == id => Label::Done,
-        (Item::Request { kind, .. }, _) if matches!(kind, Kind::Write) => Label::Write,
+        (request, _) if matches!(request.kind(), Kind::Write) => Label::Write,
         (item, _) => item.label(),
     }
 }
@@ -1961,19 +1962,25 @@ fn changed(status: &Status, next: &Status) -> Option<Change> {
 }
 "#,
         ),
-        "crates/daemon/src/a_fail.rs:2:17: expr.method_call: `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
-         crates/daemon/src/a_fail.rs:6:17: expr.method_call: `a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
-         crates/daemon/src/a_fail.rs:10:21: expr.method_call: `a.eq(b).then_some(..)` is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n"
+        "crates/daemon/src/a_fail.rs:2:17: expr.method_call: `Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:6:10: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:10:12: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n"
     );
 }
 
 #[test]
-fn a_for_body_holds_only_awaited_calls_with_try() {
+fn a_for_body_holds_only_calls_with_await_then_try() {
     assert_eq!(
         rule_case(
             "for",
             "crates/daemon/src/a.rs",
-            r#"impl Session {
+            r#"fn record(sizes: Vec<Size>, meter: &Meter) {
+    for size in sizes {
+        meter.record(size);
+    }
+}
+
+impl Session {
     async fn apply(&self, steps: Vec<Step>) -> Result<(), Stopped> {
         for step in steps {
             self.step(step).await?;
@@ -1990,13 +1997,7 @@ async fn append(log: &Log, kinds: Vec<EventKind>) -> Result<(), Stopped> {
     Ok(())
 }
 "#,
-            r#"fn record(sizes: Vec<Size>, meter: &Meter) {
-    for size in sizes {
-        meter.record(size);
-    }
-}
-
-async fn emit(log: &Log, kinds: Vec<EventKind>) {
+            r#"async fn emit(log: &Log, kinds: Vec<EventKind>) {
     for kind in kinds {
         let _ = log.append(kind).await;
     }
@@ -2023,9 +2024,304 @@ impl Session {
 }
 "#,
         ),
-        "crates/daemon/src/a_fail.rs:2:5: expr.for: a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
-         crates/daemon/src/a_fail.rs:8:5: expr.for: a `for` body holds only awaited calls with `?`, as in `f(item).await?;`; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
-         crates/daemon/src/a_fail.rs:17:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
-         crates/daemon/src/a_fail.rs:24:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n"
+        "crates/daemon/src/a_fail.rs:2:5: expr.for: a `for` body holds only calls, as `f(item);`, `f(item)?;`, `x.m(item).await?;` or `let _ = f(item);`, each building nothing; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:11:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:18:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:22:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n"
+    );
+}
+
+#[test]
+fn a_guard_tests_a_bound_value_that_no_pattern_can_name() {
+    assert_eq!(
+        rule_case(
+            "guard-bound",
+            "crates/daemon/src/a.rs",
+            r#"fn write(item: Option<Item>) -> Label {
+    match item {
+        Some(item) if matches!(item.kind(), Kind::Write) => Label::Write,
+        Some(_) | None => Label::Other,
+    }
+}
+
+fn changed(current: Status, next: Status) -> Change {
+    match current {
+        current if current != next => Change::Yes,
+        _ => Change::No,
+    }
+}
+
+fn paired(events: &[Event]) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!((e.kind(), e.seq()), (Kind::Done, Some(_))))
+        .count()
+}
+"#,
+            r#"fn pick(x: Item, a: Seq, b: Seq) -> Label {
+    match x {
+        _ if a == b => Label::Same,
+        _ => Label::Other,
+    }
+}
+
+fn smuggle(v: Option<Item>, w: Item) -> Label {
+    match v {
+        Some(v) if matches!(v.is_empty() && w.is_empty(), true) => Label::Same,
+        Some(_) => Label::Other,
+        None => Label::None,
+    }
+}
+
+fn inner(v: Option<Item>, w: Item) -> Label {
+    match v {
+        Some(v) if matches!(v.kind(), Kind::A if w.is_empty() || !v.is_empty()) => Label::Same,
+        Some(_) | None => Label::Other,
+    }
+}
+
+fn write(item: Option<Item>) -> Label {
+    match item {
+        Some(Item::Request { kind, .. }) if matches!(kind, Kind::Write) => Label::Write,
+        Some(_) | None => Label::Other,
+    }
+}
+
+fn first(seq: Option<Seq>) -> Label {
+    match seq {
+        Some(seq) if seq == Seq(0) => Label::First,
+        Some(_) | None => Label::Other,
+    }
+}
+
+fn live(events: &[Event], b: Seq) -> usize {
+    events
+        .iter()
+        .filter(|x| matches!(x.seq == b && x.live(), true))
+        .count()
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:3:11: expr.match.guard: a guard tests a value its arm's pattern bound; a guard on nothing the pattern bound is an `if` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:10:17: expr.match.guard: a guard tests a value its arm's pattern bound; a guard on nothing the pattern bound is an `if` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:10:17: expr.match.guard: a guard that compares with a literal, a variant or a constant, or a `matches!` on a place, is a pattern: write it in the arm (proposal 0040, bootstrap review §A3, §A4)\n\
+         crates/daemon/src/a_fail.rs:10:20: macro.matches: `matches!` takes a place or a call and a pattern with no `if` and no `true` / `false`, so no boolean rides through it (proposals 0028, 0040)\n\
+         crates/daemon/src/a_fail.rs:18:20: macro.matches: `matches!` takes a place or a call and a pattern with no `if` and no `true` / `false`, so no boolean rides through it (proposals 0028, 0040)\n\
+         crates/daemon/src/a_fail.rs:25:42: expr.match.guard: a guard that compares with a literal, a variant or a constant, or a `matches!` on a place, is a pattern: write it in the arm (proposal 0040, bootstrap review §A3, §A4)\n\
+         crates/daemon/src/a_fail.rs:32:19: expr.match.guard: a guard that compares with a literal, a variant or a constant, or a `matches!` on a place, is a pattern: write it in the arm (proposal 0040, bootstrap review §A3, §A4)\n\
+         crates/daemon/src/a_fail.rs:40:21: macro.matches: `matches!` takes a place or a call and a pattern with no `if` and no `true` / `false`, so no boolean rides through it (proposals 0028, 0040)\n"
+    );
+}
+
+#[test]
+fn a_lift_is_caught_however_it_is_spelled() {
+    assert_eq!(
+        rule_case(
+            "lift-spelled",
+            "crates/daemon/src/a.rs",
+            r#"async fn lost(mut peer: watch::Receiver<Peer>) -> Result<(), Lost> {
+    let _ = peer.wait_for(|p| Peer::Lost.eq(p)).await.map_err(Lost::from_watch)?;
+    Ok(())
+}
+
+fn probe(probes: &Probes, trans: Trans, source: SocketAddr) -> Option<&Probe> {
+    let probe = probes.get(&trans).filter(|probe| probe.addr == source)?;
+    Some(probe)
+}
+
+fn both(x: Event, b: Seq, d: Name) -> Option<Event> {
+    Some(x).filter(|x| x.seq == b && x.name == d)
+}
+
+fn origin(ours: Option<Ours>, event: &Event) -> Option<Ordering> {
+    ours.filter(|ours| ours.session == event.session)
+        .map(|ours| event.seq.cmp(&ours.after))
+}
+"#,
+            r#"fn bound(h: Hello, t: Token) -> Option<Hello> {
+    let lifted = Some(h);
+    lifted.filter(|h| h.token == t)
+}
+
+fn full(h: Hello, t: Token) -> Option<Hello> {
+    std::option::Option::Some(h).filter(|h| h.token == t)
+}
+
+fn found(h: Hello, t: Token) -> Option<Hello> {
+    Some(h).into_iter().find(|h| h.token == t)
+}
+
+fn negated(h: Hello, t: Token) -> Option<Hello> {
+    Some(h).filter(|h| !(h.token != t))
+}
+
+fn less(a: Seq, b: Seq, x: X) -> Option<X> {
+    a.lt(&b).then_some(x)
+}
+
+fn at_most(a: Seq, b: Seq, x: X) -> Option<X> {
+    a.le(&b).then_some(x)
+}
+
+fn ordered(a: Seq, b: Seq, x: X) -> Option<X> {
+    a.cmp(&b).is_eq().then_some(x)
+}
+
+fn path(a: Seq, b: Seq, x: X) -> Option<X> {
+    PartialEq::eq(&a, &b).then_some(x)
+}
+
+fn paren(a: Seq, b: Seq, x: X) -> Option<X> {
+    (a.eq(&b)).then_some(x)
+}
+
+fn named(a: Seq, b: Seq, x: X) -> Option<X> {
+    let same = a.eq(&b);
+    same.then_some(x)
+}
+
+fn adopt(cursor: Option<Cursor>, epoch: Epoch) -> Keep {
+    match cursor.filter(|c| c.epoch == epoch) {
+        Some(_) => Keep::Yes,
+        None => Keep::No,
+    }
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:3:12: expr.method_call: `Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:7:34: expr.method_call: `Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:11:25: expr.method_call: `Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:15:13: expr.method_call: `Some(x).filter(..)` or `.find(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:19:7: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:23:7: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:27:15: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:31:5: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:35:8: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:39:18: expr.method_call: a comparison by name (`a.eq(&b)`, `a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) is a `bool` outside a predicate; write a match guard `pat if a == b => ..` (proposal 0040)\n\
+         crates/daemon/src/a_fail.rs:44:5: expr.method_call: a `filter` of one comparison matched at once is a match guard: `Some(x) if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n"
+    );
+}
+
+#[test]
+fn a_for_and_its_list_build_no_value_and_effects_have_one_form() {
+    assert_eq!(
+        rule_case(
+            "for-effects",
+            "crates/daemon/src/a.rs",
+            r#"fn close(rtc: &Rtc, ids: Vec<ChannelId>) {
+    for id in ids {
+        rtc.close_data_channel(id);
+    }
+}
+
+fn exited(pending: Pending) {
+    for (_, reply) in pending.drain() {
+        let _ = reply.send(Err(Error::Exited));
+    }
+}
+
+fn write(channel: &Channel, frame: &[u8]) -> Result<(), String> {
+    for chunk in frame.chunks(CHUNK_LEN) {
+        channel.send(chunk).map_err(js)?;
+    }
+    Ok(())
+}
+
+async fn live(log: &Log, kinds: Vec<Kind>) -> Result<(), Stopped> {
+    for kind in kinds.into_iter().filter(|k| matches!(k, Kind::Live)) {
+        log.append(kind).await?;
+    }
+    Ok(())
+}
+
+async fn kept(log: &Log, kinds: Vec<Kind>) -> Result<Vec<Seq>, Stopped> {
+    n0_future::stream::iter(kinds)
+        .then(|kind| log.append(kind))
+        .try_collect::<Vec<Seq>>()
+        .await
+}
+"#,
+            r#"use n0_future::stream::iter;
+
+impl SessionActor {
+    async fn settled(&self, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+        for kind in kinds {
+            self.emit({
+                self.turn = Turn::Idle;
+                kind
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn idle(&self, calls: Vec<Call>) -> Result<(), Stopped> {
+        for call in {
+            self.turn = Turn::Idle;
+            calls
+        } {
+            self.emit(call).await?;
+        }
+        Ok(())
+    }
+
+    async fn chained(&self, keys: Vec<Key>) -> Result<(), Stopped> {
+        for key in keys {
+            self.lookup(key.clone()).await?.store(key).await?;
+        }
+        Ok(())
+    }
+
+    async fn each(&self, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+        n0_future::stream::iter(kinds)
+            .map(Ok)
+            .try_for_each(|kind| self.emit(kind))
+            .await
+    }
+
+    async fn unit(&self, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+        let () = n0_future::stream::iter(kinds)
+            .then(|kind| self.emit(kind))
+            .try_collect()
+            .await?;
+        Ok(())
+    }
+
+    async fn imported(&self, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+        iter(kinds).then(|kind| self.emit(kind)).try_collect().await
+    }
+
+    async fn through(&self, kinds: Vec<EventKind>) -> Result<(), Stopped> {
+        let steps = n0_future::stream::iter(kinds).then(|kind| self.emit(kind));
+        steps.try_collect().await
+    }
+
+    async fn mapped(&self, kinds: Vec<EventKind>) -> Result<(), Lost> {
+        n0_future::stream::iter(kinds)
+            .then(|kind| self.emit(kind))
+            .try_collect::<Vec<Done>>()
+            .await
+            .map(|_| ())
+            .map_err(Lost::from)
+    }
+
+    fn close(&self, ids: Vec<ChannelId>) {
+        ids.into_iter().for_each(|id| self.rtc.close_data_channel(id));
+    }
+}
+"#,
+        ),
+        "crates/daemon/src/a_fail.rs:5:9: expr.for: a `for` body holds only calls, as `f(item);`, `f(item)?;`, `x.m(item).await?;` or `let _ = f(item);`, each building nothing; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:7:27: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:16:9: expr.for: a `for` iterates a list built before it or by adapters, with no block, assignment or branch in its iterator expression (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:17:23: expr.assign: assignment only to `self.field` in a `&mut self` method, or to the loop's state binding (proposal 0008)\n\
+         crates/daemon/src/a_fail.rs:26:9: expr.for: a `for` body holds only calls, as `f(item);`, `f(item)?;`, `x.m(item).await?;` or `let _ = f(item);`, each building nothing; build or select values with the adapters (`map`, `filter`, `fold`, `try_fold`, ..) (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:35:14: expr.method_call: a loop whose body performs side effects is `for item in list { .. }`, not `for_each` or `try_for_each` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:42:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:48:50: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:53:15: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:61:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
+         crates/daemon/src/a_fail.rs:61:22: expr.unit: `()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023)\n\
+         crates/daemon/src/a_fail.rs:66:25: expr.method_call: a loop whose body performs side effects is `for item in list { .. }`, not `for_each` or `try_for_each` (proposal 0041)\n"
     );
 }

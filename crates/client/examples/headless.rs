@@ -298,14 +298,16 @@ impl Session {
                 if let (When::FirstDelta, 1) = (self.interrupt, self.deltas) {
                     self.interrupt(event.session).await?;
                 }
-                let due = self.reconnect_after.filter(|after| after == &self.deltas);
-                if let (Some(_), Reconnected::No) = (due, self.reconnected) {
-                    self.reconnected = Reconnected::Yes;
-                    self.log(format!(
-                        "dropping the connection mid-turn at seq {}",
-                        event.seq.0
-                    ))?;
-                    self.link.reconnect().await;
+                match (self.reconnect_after, self.reconnected) {
+                    (Some(after), Reconnected::No) if after == self.deltas => {
+                        self.reconnected = Reconnected::Yes;
+                        self.log(format!(
+                            "dropping the connection mid-turn at seq {}",
+                            event.seq.0
+                        ))?;
+                        self.link.reconnect().await;
+                    }
+                    _ => {}
                 }
                 Ok(Flow::Next)
             }

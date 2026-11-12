@@ -502,9 +502,9 @@ impl Actor {
             Process::Running(running) => {
                 let status = running.stop().await;
                 self.process = Process::Exited(status.clone());
-                self.pending.drain().for_each(|(_, Pending { reply, .. })| {
+                for (_, Pending { reply, .. }) in self.pending.drain() {
                     let _ = reply.send(Err(Error::Exited));
-                });
+                }
                 self.open_permissions.clear();
                 self.emit(ClaudeEvent::Exited {
                     status: status.clone(),
