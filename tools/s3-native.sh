@@ -28,4 +28,5 @@ ticket=$(awk '/^ticket:/ {print $2}' "$host_log")
   echo "## Host log"
   sed -E 's/^[0-9TZ:.-]+ +//' "$host_log" | grep -v '^data dir:'
 } >"$out" 2>&1
+python3 tools/scrub-ips.py "$out"
 cat "$out"

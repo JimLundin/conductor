@@ -176,6 +176,7 @@ set +e
   run chromium screens docs/p1/screens "$scratch/screens"
 ) >"$out" 2>&1
 status=$?
+python3 tools/scrub-ips.py "$out"
 set -e
 cat "$out"
 exit $status

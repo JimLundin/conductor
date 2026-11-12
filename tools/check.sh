@@ -7,6 +7,8 @@ WASM_CRATES=(proto client)
 cargo fmt --check
 # docs/status.toml feeds the Pages deploy; a malformed unit fails it there.
 python3 tools/archmap/archmap.py --check
+# Run records name the host's public address; it must never be committed.
+python3 tools/scrub-ips.py --check $(git ls-files 'docs/**/*.txt' 'docs/**/*.log' 'docs/**/NOTES.md')
 cargo clippy --workspace --all-targets -- -D warnings
 for crate in "${WASM_CRATES[@]}"; do
   if [ -d "crates/$crate" ]; then
