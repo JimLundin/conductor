@@ -457,14 +457,19 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   font-weight: 500;
 }
 
+/* iOS keeps the home indicator's inset while the keyboard covers it, which
+   left a band between the composer and the keyboard. A focused composer
+   has the keyboard up on a phone, and no inset on a desktop. */
 .composer {
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
   display: flex;
   align-items: flex-end;
   gap: 0.5rem;
-  padding: 0.5rem max(0.75rem, env(safe-area-inset-right, 0px)) calc(0.5rem + env(safe-area-inset-bottom, 0px)) max(0.75rem, env(safe-area-inset-left, 0px));
+  padding: 0.5rem max(0.75rem, env(safe-area-inset-right, 0px)) calc(0.5rem + var(--inset-bottom)) max(0.75rem, env(safe-area-inset-left, 0px));
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
+.composer:focus-within { --inset-bottom: 0px; }
 .composer textarea {
   flex: 1;
   min-height: 44px;

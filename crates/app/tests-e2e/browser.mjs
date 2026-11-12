@@ -195,6 +195,14 @@ if (scenario === 'upgrade') {
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
 
+  // Playwright can neither open the keyboard nor give the page a home
+  // indicator, so the inset is set by hand; the reload below drops it.
+  await page.addStyleTag({ content: '.composer { --inset-bottom: 34px; }' });
+  const padding = () => pane.locator('.composer').evaluate((el) => getComputedStyle(el).paddingBottom);
+  check((await padding()) === '42px', 'the composer keeps the home indicator inset with the keyboard down');
+  await pane.locator('.composer textarea').tap();
+  check((await padding()) === '8px', 'the composer drops the inset while it has focus, as with the keyboard up');
+
   const reloaded = Date.now();
   await page.goto(joinUrl.replace(/#join=.*/, ''));
   await waitFor('header.status[data-state="Live"]', 60_000);
