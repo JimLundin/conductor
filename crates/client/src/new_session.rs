@@ -17,13 +17,19 @@ pub enum ProviderNote {
     Nothing,
     /// The host can't run it, for this reason.
     Unavailable(String),
+    /// Codex's sandbox (`WorkspaceWrite`, asking `OnRequest`) lets it run
+    /// commands and write in the session's directory and `/tmp` unasked.
+    WritesUnasked,
 }
 
 /// `availability` is `None` until the host has said.
-pub fn note(availability: Option<&Availability>) -> ProviderNote {
-    match availability {
-        Some(Availability::Unavailable { reason }) => ProviderNote::Unavailable(reason.clone()),
-        Some(Availability::Available) | None => ProviderNote::Nothing,
+pub fn note(provider: Provider, availability: Option<&Availability>) -> ProviderNote {
+    match (provider, availability) {
+        (_, Some(Availability::Unavailable { reason })) => {
+            ProviderNote::Unavailable(reason.clone())
+        }
+        (Provider::Codex, Some(Availability::Available) | None) => ProviderNote::WritesUnasked,
+        (Provider::Claude, Some(Availability::Available) | None) => ProviderNote::Nothing,
     }
 }
 
@@ -64,24 +70,29 @@ impl Attempt {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Availability, CommandResult, Rejection};
+    use proto::{Availability, CommandResult, Provider, Rejection};
 
     use super::{Attempt, ProviderNote, Refusal, note};
 
     #[test]
-    fn an_unavailable_provider_shows_its_reason() {
+    fn the_form_says_why_a_provider_is_unavailable_and_that_codex_writes_unasked() {
+        let unavailable = Availability::Unavailable {
+            reason: String::from("codex is not on PATH"),
+        };
         assert_eq!(
             [
-                Some(Availability::Unavailable {
-                    reason: String::from("codex is not on PATH"),
-                }),
-                Some(Availability::Available),
-                None,
+                (Provider::Codex, Some(&unavailable)),
+                (Provider::Claude, Some(&unavailable)),
+                (Provider::Codex, Some(&Availability::Available)),
+                (Provider::Codex, None),
+                (Provider::Claude, Some(&Availability::Available)),
             ]
-            .map(|availability| note(availability.as_ref())),
+            .map(|(provider, availability)| note(provider, availability)),
             [
                 ProviderNote::Unavailable(String::from("codex is not on PATH")),
-                ProviderNote::Nothing,
+                ProviderNote::Unavailable(String::from("codex is not on PATH")),
+                ProviderNote::WritesUnasked,
+                ProviderNote::WritesUnasked,
                 ProviderNote::Nothing,
             ]
         );

@@ -264,6 +264,13 @@ if (scenario === 'upgrade') {
   // each; the first asks to run a command and is approved, the second is
   // declined.
   const [first, second] = [`${dir}/first`, `${dir}/second`];
+  await page.getByRole('button', { name: 'New session' }).click();
+  await page.locator('.segment', { hasText: 'Codex' }).click();
+  check(
+    (await page.locator('.providers .hint').innerText()) ===
+      'Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else.',
+    'choosing Codex says what it does without asking',
+  );
   await startSession('Codex', first);
   await startSession('Codex', second);
   await openRow('first');

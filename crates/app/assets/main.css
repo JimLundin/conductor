@@ -553,6 +553,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .field input[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .hint { margin-top: 0.45rem; font-size: 0.875rem; }
 .hint.error { color: var(--red); }
+.hint.muted { color: var(--muted); }
 
 .suggestions ul {
   margin: 0;

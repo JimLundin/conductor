@@ -125,12 +125,18 @@ pub(crate) fn NewSession(
     };
     let provider_note = match (
         provider_error,
-        note(providers.as_ref().map(|providers| providers.of(provider()))),
+        note(
+            provider(),
+            providers.as_ref().map(|providers| providers.of(provider())),
+        ),
     ) {
         (Some(error), _) => Note::Error(error),
         (None, ProviderNote::Unavailable(reason)) => Note::Error(format!(
             "{} can't run on this host: {reason}",
             label(provider())
+        )),
+        (None, ProviderNote::WritesUnasked) => Note::Muted(String::from(
+            "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else.",
         )),
         (None, ProviderNote::Nothing) => Note::Nothing,
     };
@@ -166,6 +172,7 @@ pub(crate) fn NewSession(
                     }
                     match provider_note {
                         Note::Error(error) => rsx! { Hint { error } },
+                        Note::Muted(text) => rsx! { p { class: "hint muted", "{text}" } },
                         Note::Nothing => rsx! {},
                     }
                 }
@@ -225,6 +232,7 @@ pub(crate) fn NewSession(
 /// What shows under the provider.
 enum Note {
     Nothing,
+    Muted(String),
     Error(String),
 }
 
