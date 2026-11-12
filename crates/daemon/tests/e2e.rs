@@ -1324,10 +1324,10 @@ fn captured(path: &Path) -> String {
     logged
 }
 
-/// A host with no agents whose WebRTC sockets bind in `ports`. It has no
-/// STUN servers, so the test needs no network.
-async fn rtc_host(ports: &str) -> Fixture {
-    let ports = RtcPorts::Range(PortRange::parse(ports).unwrap());
+/// A host with no agents whose WebRTC sockets bind in `first..=last`. It
+/// has no STUN servers, so the test needs no network.
+async fn rtc_host(first: u16, last: u16) -> Fixture {
+    let ports = RtcPorts::Range(PortRange::parse(&format!("{first}-{last}")).unwrap());
     let launchers = Launchers {
         claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
@@ -1337,6 +1337,31 @@ async fn rtc_host(ports: &str) -> Fixture {
         Some(Arc::new(RtcOptions::new(Vec::new(), None, None, ports))),
     )
     .await
+}
+
+/// A UDP port that no socket holds now, picked by the OS, so the test
+/// never depends on a fixed port or on another copy of itself.
+fn free_port() -> u16 {
+    std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// The first of two adjacent free UDP ports. The OS picks the first; a few
+/// tries find one whose neighbour is free too.
+fn free_pair() -> u16 {
+    std::iter::repeat_n(Ipv4Addr::UNSPECIFIED, 20)
+        .find_map(adjacent_free)
+        .expect("two adjacent free UDP ports within 20 tries")
+}
+
+fn adjacent_free(ip: Ipv4Addr) -> Option<u16> {
+    let first = std::net::UdpSocket::bind((ip, 0)).ok()?;
+    let port = first.local_addr().ok()?.port();
+    let _second = std::net::UdpSocket::bind((ip, port.checked_add(1)?)).ok()?;
+    Some(port)
 }
 
 /// An authenticated iroh connection without a link, for the raw streams a
@@ -1458,14 +1483,16 @@ async fn command(conn: &Connection, body: CommandBody) -> Option<CommandResult> 
 
 #[tokio::test]
 async fn concurrent_webrtc_sessions_take_distinct_ports_in_the_range() {
-    let fx = rtc_host("31311-31312").await;
+    let first_port = free_pair();
+    let second_port = first_port.checked_add(1).unwrap();
+    let fx = rtc_host(first_port, second_port).await;
     let endpoint = endpoint().await;
     let conn = said_hello(&endpoint, &fx.target).await;
     let first = offer(&conn).await;
     let second = offer(&conn).await;
     assert_eq!(
         (host_ports(&first), host_ports(&second)),
-        (Vec::from([31311]), Vec::from([31312]))
+        (Vec::from([first_port]), Vec::from([second_port]))
     );
     hang_up(first).await;
     hang_up(second).await;
@@ -1476,7 +1503,8 @@ async fn concurrent_webrtc_sessions_take_distinct_ports_in_the_range() {
 #[tokio::test]
 async fn a_full_range_refuses_the_upgrade_and_iroh_keeps_serving() {
     let (log_path, _logging) = capture_log("full-range");
-    let fx = rtc_host("31321-31321").await;
+    let port = free_port();
+    let fx = rtc_host(port, port).await;
     let endpoint = endpoint().await;
     let conn = said_hello(&endpoint, &fx.target).await;
     let holder = offer(&conn).await;
@@ -1489,7 +1517,7 @@ async fn a_full_range_refuses_the_upgrade_and_iroh_keeps_serving() {
         (
             None,
             Some(CommandResult::Rejected(Rejection::UnknownSession)),
-            Vec::from([31321])
+            Vec::from([port])
         )
     );
     hang_up(after).await;
@@ -1498,7 +1526,9 @@ async fn a_full_range_refuses_the_upgrade_and_iroh_keeps_serving() {
     let logged = captured(&log_path);
     assert_eq!(
         logged
-            .matches("every UDP port in --rtc-ports 31321-31321 is taken")
+            .matches(&format!(
+                "every UDP port in --rtc-ports {port}-{port} is taken"
+            ))
             .count(),
         1,
         "{logged}"

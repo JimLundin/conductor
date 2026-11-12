@@ -366,11 +366,14 @@ host's WebRTC sockets take random ports, so no narrow rule can open them.
    clients with room to spare.
 
 2. In an administrator PowerShell on Windows, allow inbound UDP to that range for WSL
-   only:
+   only, on private networks only:
 
    ```powershell
-   New-NetFirewallHyperVRule -Name ConductorWebRTC -DisplayName "Conductor WebRTC" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 50000-50099 -Action Allow
+   New-NetFirewallHyperVRule -Name ConductorWebRTC -DisplayName "Conductor WebRTC" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 50000-50099 -Profiles Private -Action Allow
    ```
+
+   `-Profiles Private` keeps the ports closed when Windows is on a network it marks as
+   public, such as café Wi-Fi.
 
    `{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}` is WSL's `VMCreatorId`. Check the current
    default with `Get-NetFirewallHyperVVMSetting -PolicyStore ActiveStore -Name

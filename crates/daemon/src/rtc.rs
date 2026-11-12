@@ -585,8 +585,9 @@ struct Driver {
     frames_out: Count,
     datagrams_in: Count,
     datagrams_out: Count,
-    /// After every field that holds a socket, so the ports are free by the
-    /// time dropping it closes the signaling stream.
+    /// Last but one, so it drops after `sockets` and `stun`, which close
+    /// their sockets as they drop. The reader tasks' sockets are closed
+    /// earlier, by `end`.
     signal_send: SendHalf,
     /// Dropped when the driver ends, which resolves [`Session::closed`].
     _ended: watch::Sender<()>,
