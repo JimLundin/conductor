@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "vendor/claude-codes", "vendor/codex-codes"]
+members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
@@ -13,14 +13,13 @@ getrandom = "0.4"
 iroh = { version = "1.4.1", default-features = false }
 iroh-base = { version = "1.4.1", default-features = false, features = ["key"] }
 n0-future = "0.3.2"
-claude-codes = { path = "vendor/claude-codes", default-features = false, features = ["cli"] }
-codex-codes = { path = "vendor/codex-codes", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["process", "io-util", "sync", "macros", "rt-multi-thread", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1.29.2", features = ["v4"] }
 
 # Debug info is most of a dev build's size. Line tables keep panics and
 # backtraces readable for our code; dependencies carry none.

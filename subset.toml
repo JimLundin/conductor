@@ -5,8 +5,8 @@
 
 version = 8
 
-# All of our code is written in the subset. tools/ (the checker itself) and
-# vendor/ are outside it for now.
+# All of our code is written in the subset. tools/ (the checker itself) is
+# outside it.
 include = ["crates/**/*.rs"]
 
 # Core: data as structs and enums, branching as `match`, iteration as adapters.

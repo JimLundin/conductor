@@ -32,9 +32,9 @@ Home Screen. The design is in
   ../conductor-<task>` and `git branch -d <branch>`. Scratch worktrees
   outside `~/projects/apps/` get their own `../conductor-target`, so delete
   them and that directory when done.
-- **Vendored crates.** `vendor/claude-codes` and `vendor/codex-codes` are
-  our own code now. Fix bugs in place and never contribute upstream
-  (`vendor/README.md`).
+- **Provider wire types.** `crates/agents/src/{claude,codex}/protocol.rs`
+  model only the frames and fields we read or write; everything else stays
+  `Unknown`. What the CLIs send is in each adapter's `PROTOCOL.md`.
 - **Live checks.** `cargo run --bin s1` (Claude) and `cargo run --bin s2`
   (Codex) drive the real CLIs. Run them after changing an adapter.
 - **Commits.** End each commit message with

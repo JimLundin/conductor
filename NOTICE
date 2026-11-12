@@ -1,7 +1,0 @@
-Conductor
-
-This product includes software from rust-code-agent-sdks
-(https://github.com/meawoppl/rust-code-agent-sdks), licensed under the
-Apache License, Version 2.0. See vendor/LICENSE-APACHE-rust-code-agent-sdks.
-The vendored copies in vendor/claude-codes and vendor/codex-codes have been
-modified.

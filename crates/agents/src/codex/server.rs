@@ -11,8 +11,6 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use codex_codes::protocol::methods;
-use codex_codes::{AppServerBuilder, RequestId};
 use serde_json::Value;
 
 use crate::Exit;
@@ -21,9 +19,9 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::protocol::{
-    AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, Inbound, ModelInfo, Outbound,
-    ThreadEvent, ThreadId, ThreadOptions, TurnId, answer, encode, models, parse_line, thread_id,
-    turn_id, user_agent,
+    AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, INITIALIZE, Inbound,
+    ModelInfo, Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, TurnId, answer, encode,
+    models, parse_line, thread_id, turn_id, user_agent,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -102,7 +100,7 @@ impl CodexServer {
                     .open(path)
             })
             .transpose()?;
-        let mut child = command(&opts)?.spawn()?;
+        let mut child = command(&opts).spawn()?;
         let ((stdin, stdout), stderr) = child
             .stdin
             .take()
@@ -237,18 +235,15 @@ async fn ask<T>(
     answer.await.map_err(|_| Error::Exited)
 }
 
-pub(crate) fn command(opts: &ServerOptions) -> Result<Command, Error> {
-    let std = AppServerBuilder::new()
-        .command(&opts.codex_path)
-        .working_directory(&opts.cwd)
-        .build_command()
-        .map_err(|e| Error::Command(e.to_string()))?;
-    let mut cmd = Command::from(std);
-    cmd.stdin(Stdio::piped())
+pub(crate) fn command(opts: &ServerOptions) -> Command {
+    let mut cmd = Command::new(&opts.codex_path);
+    cmd.args(["app-server", "--listen", "stdio://"])
+        .current_dir(&opts.cwd)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    Ok(cmd)
+    cmd
 }
 
 async fn log_stderr(stderr: ChildStderr) -> std::io::Result<()> {
@@ -429,12 +424,12 @@ impl Actor {
         };
         match pending {
             Some(Pending { method, reply }) => {
-                if let (methods::INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
+                if let (INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
                     self.initialized().await;
                 }
                 let _ = reply.send(outcome.map_err(|message| Error::Rpc { method, message }));
             }
-            None => tracing::warn!("response for unknown request {id}"),
+            None => tracing::warn!("response for unknown request {id:?}"),
         }
     }
 
@@ -553,12 +548,11 @@ mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::path::Path;
 
-    use codex_codes::RequestId;
     use tokio::sync::mpsc;
 
     use super::{
-        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Open, Process, ServerOptions,
-        ThreadId, command,
+        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Open, Process, RequestId,
+        ServerOptions, ThreadId, command,
     };
 
     #[tokio::test]
@@ -603,8 +597,7 @@ mod tests {
             codex_path: "/opt/codex".into(),
             cwd: "/tmp".into(),
             stdout_log: None,
-        })
-        .unwrap();
+        });
         let std = cmd.as_std();
         let args = std
             .get_args()
