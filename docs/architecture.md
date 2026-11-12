@@ -401,7 +401,10 @@ Until the app can sign in (§6.3), `conductord login claude|codex` runs the
 sign-in on the host's terminal against the private home: `claude auth login
 --claudeai`, §6.3's per-host mode, which stores its own credential, and
 `codex login --device-auth`. A private home signed in this way counts as
-configured (`Auth::SignedIn`, §6.3). The credential store of §6.3 exists
+configured (`Auth::SignedIn`, §6.3). The host checks it once, when it
+starts, with `claude auth status` and `codex login status` (15 s at most
+each), so a sign-in made while the host runs, or one that expires, shows
+only after a restart. The credential store of §6.3 exists
 now, with gateway credentials as its first kind; the shared `setup-token`
 token becomes another kind in it.
 
@@ -429,22 +432,37 @@ types.
 - **Claude:** `ClaudeCredential::Gateway { base_url, token }`. A Claude
   session gets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in its
   environment when it starts. The private home already scrubs both from
-  the host's environment (§6.2), so only the stored values reach it. A
-  change applies to the next session; a running one keeps what it started
-  with.
-- **Codex:** `CodexCredential::Provider { name, base_url, wire_api, key,
-  model }`. Before the app-server starts, the host writes
+  the host's environment (§6.2), so only the stored values reach it. It
+  also gets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, so the commands, hooks
+  and MCP servers Claude starts don't inherit the token ([env-vars],
+  verified; the scrub matches a credential by name or by the shape of its
+  value, from 2.1.251). The live canary in `tools/live-host.sh` counts
+  `ANTHROPIC_AUTH_TOKEN` 0 and `ANTHROPIC_BASE_URL` 1 in a command's
+  environment (observed): the base URL is not scrubbed. On Linux the
+  scrub runs every command in Claude's sandbox, which needs `bubblewrap`
+  and `socat` ([sandboxing], verified). Without them every Bash command
+  fails (observed). Whether to keep the scrub at that cost is open with the
+  owner. A change applies to the next session. Clearing a Claude credential
+  doesn't stop the sessions already running on it, unlike Codex below; to
+  cut off a leaked token, revoke it at the gateway.
+- **Codex:** `CodexCredential::Provider { name, base_url, key, model }`.
+  Before the app-server starts, the host writes
   `[model_providers.conductor]` (`name`, `base_url`, `env_key =
-  "CONDUCTOR_CODEX_KEY"`, `wire_api`) and `model_provider` and `model` into
-  the private `config.toml`, keeping the rest of the file, and passes the
-  key in `CONDUCTOR_CODEX_KEY`. The key is never in the file. Codex 0.166
-  knows only `wire_api = "responses"`, so `WireApi` has that one variant
-  (`model-provider-info` in [codex-src], verified). The app-server reloads
+  "CONDUCTOR_CODEX_KEY"`, `wire_api = "responses"`, the only one Codex
+  0.166 knows) and `model_provider` and `model` into the private
+  `config.toml`, keeping the rest of the file, and passes the key in
+  `CONDUCTOR_CODEX_KEY`. The key is never in the file. Codex 0.166 passes
+  variables named like a key to the commands it runs
+  (`ignore_default_excludes` defaults to true in
+  `config/src/shell_environment_policy.rs` at `rust-v0.166.0`, verified),
+  so the config also gets `[shell_environment_policy.filters]
+  CONDUCTOR_CODEX_KEY = "exclude"`; the live canary counts it 0 in a
+  command's environment (observed). The app-server reloads
   `config.toml` for each `thread/start` (`thread_processor.rs` in
   [codex-src], verified), but the key is in its environment, which is fixed
   when it starts. So a change stops the shared app-server, its sessions
-  close with "stopped for a new Codex credential", and the next thread
-  starts a server with the new key.
+  close with `CloseReason::Stopped { reason: "new Codex credential" }`,
+  and the next thread starts a server with the new key.
 - **Protocol:** `SetCredential { credential }` and `ClearCredential {
   provider }` answer `Providers`, what the host runs now, and the client's
   status takes it at once. Another client sees the change at its next
@@ -456,7 +474,9 @@ types.
   prints only their kind, so no command log line carries a value. A
   provider with no credential, no signed-in private home and no
   development CLI is `Unavailable { reason: "no credential configured" }`.
-  A stored credential takes precedence over the home's sign-in.
+  A stored credential takes precedence over the home's sign-in. A base URL
+  with a user, a password, a query or a fragment is refused, since it is
+  shown to every client and written into Codex's config.
 
 #### Claude: one subscription token for the fleet, by owner decision
 
@@ -547,10 +567,12 @@ with the button.
 
 #### The browser holds a secret only in flight
 
-The key field is `type="password"` with `autocomplete="off"`. The app sends
+The key field is `type="password"` with `autocomplete="new-password"`,
+since password managers ignore `off` there. The app sends
 the value on the encrypted iroh link, clears the field, and never writes it
 to IndexedDB, local storage, the URL or a log. Under the field the app says
-so: "Sent to desk-wsl over the encrypted link. This app doesn't keep it." A
+so: "Sent to desk-wsl over the encrypted link. This app doesn't keep it;
+your browser may offer to save it." A
 pasted Claude code gets the same treatment. The app never reads a secret
 back; the host reports only which kind is set, with a gateway's base URL.
 The credentials screen built first does this for a gateway token and a
@@ -565,14 +587,28 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
 
 - On macOS the host key lives in the login Keychain, on Windows it is
   sealed with DPAPI for the user, and on Linux it goes in the Secret Service
-  when a session bus offers one. Otherwise it is `<data>/store.key` with
-  mode 0600. (`<data>/host.key` holds the iroh key until the store holds
-  it.) Built so far: the file variant on every platform; the platform
-  keystores are follow-up work.
+  when a session bus offers one. Otherwise it is `<data>/store.key`, with
+  mode 0600 on Unix. On Windows the file gets the data dir's ACL, which is
+  the user's own under the default profile directory and may be wider
+  under a `--data-dir` elsewhere. (`<data>/host.key` holds the iroh key
+  until the store holds it.) Built so far: the file variant on every
+  platform; the platform keystores are follow-up work. A new key is
+  written whole and then linked to its name, so two first starts agree on
+  one key.
 - The credentials are one value, `proto::Credentials`, one optional
-  credential per provider: postcard sealed with a fresh 24-byte nonce in
-  `<data>/credentials`, replaced by rename. It is the `credentials` field
-  of the fleet config (§6.5), so sharing it is a copy.
+  credential per provider, in `<data>/credentials`: a format byte, a fresh
+  24-byte nonce and the postcard sealed with the format and the file's
+  purpose as associated data. A save writes and syncs a new file and
+  renames it over the old one, then syncs the directory (Unix). It is the
+  `credentials` field of the fleet config (§6.5), so sharing it is a copy.
+- A store that doesn't open (corrupt, or sealed under a lost key) leaves
+  the host running with both providers `Unavailable` for that reason,
+  since it may hold a credential that would come before a sign-in.
+  `SetCredential` is refused then, so nothing overwrites it. A
+  `ClearCredential` for either provider moves it to
+  `<data>/credentials.unreadable` and starts an empty store, which is the
+  recovery from the phone. Only a `store.key` that can't be read stops the
+  host.
 - Most hosts here are WSL or headless Linux, where there is no Secret
   Service. There the encryption protects copies of the store (a backup, a
   store attached to a bug report) and not the running host, because the key
@@ -901,6 +937,7 @@ The owner settled these on 2026-11-12.
 
 [setup]: https://code.claude.com/docs/en/setup
 [env-vars]: https://code.claude.com/docs/en/env-vars.md
+[sandboxing]: https://code.claude.com/docs/en/sandboxing.md
 [authentication]: https://code.claude.com/docs/en/authentication
 [troubleshoot]: https://code.claude.com/docs/en/troubleshoot-install.md
 [sessions]: https://code.claude.com/docs/en/sessions.md
