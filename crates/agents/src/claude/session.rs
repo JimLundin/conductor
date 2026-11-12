@@ -257,6 +257,14 @@ const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
+/// Credentials the host's own environment may carry, which a private home
+/// must not pick up: they take precedence over its sign-in.
+const INHERITED_CREDENTIALS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+];
+
 /// `claude` with what every run of it gets: its home, and its own updates
 /// off, since the host installs the version it runs.
 pub fn cli(claude_path: &Path, home: &Home) -> Command {
@@ -264,6 +272,9 @@ pub fn cli(claude_path: &Path, home: &Home) -> Command {
     cmd.env("DISABLE_UPDATES", "1");
     if let Home::Private(dir) = home {
         cmd.env("CLAUDE_CONFIG_DIR", dir);
+        for var in INHERITED_CREDENTIALS {
+            cmd.env_remove(var);
+        }
     }
     for var in PARENT_SESSION_VARS {
         cmd.env_remove(var);
@@ -643,7 +654,7 @@ mod tests {
         let env = std
             .get_envs()
             .filter_map(|(key, value)| match (key.to_str(), value) {
-                (Some("CLAUDECODE"), None) => Some((key, None)),
+                (Some("CLAUDECODE" | "CLAUDE_CODE_OAUTH_TOKEN"), None) => Some((key, None)),
                 (Some("CLAUDE_CODE_SESSION_ID"), None) => Some((key, None)),
                 (Some("CLAUDE_CONFIG_DIR" | "DISABLE_UPDATES"), Some(value)) => {
                     Some((key, value.to_str()))
@@ -656,6 +667,7 @@ mod tests {
             env,
             [
                 ("CLAUDECODE", None),
+                ("CLAUDE_CODE_OAUTH_TOKEN", None),
                 ("CLAUDE_CODE_SESSION_ID", None),
                 ("CLAUDE_CONFIG_DIR", Some("/srv/conductor/home/claude")),
                 ("DISABLE_UPDATES", Some("1")),
