@@ -646,6 +646,51 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
     fx.router.shutdown().await.unwrap();
 }
 
+/// The CLI withdraws the open request when the turn is interrupted, and the
+/// tool call it asked about fails.
+#[tokio::test]
+async fn an_interrupt_withdraws_the_open_request() {
+    let fx = host().await;
+    let dir = scratch("withdraw", "claude-withdraw.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = send(&link, message("create d.txt")).await;
+    let call = "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq";
+    assert_eq!(
+        kinds_until(&mut updates, Until::Request).await,
+        [
+            opening(&dir),
+            Vec::from([user("create d.txt")]),
+            write_asked(call, "/tmp/s1-scratch/d.txt"),
+        ]
+        .concat()
+    );
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            EventKind::RequestResolved {
+                request: RequestId(1),
+                resolution: Resolution::Withdrawn,
+            },
+            EventKind::ToolCall {
+                call: ToolCallId(String::from(call)),
+                phase: ToolPhase::Finished {
+                    outcome: ToolOutcome::Failed,
+                },
+            },
+            turn_end(TurnOutcome::Interrupted),
+        ]
+    );
+    assert_eq!(
+        send(&link, resolve(1, Decision::Approve)).await,
+        CommandResult::Rejected(Rejection::UnknownRequest)
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
 /// The stand-in stops reading after `initialize`, so the message can't
 /// reach it. The turn must end, or every client shows it running forever.
 #[tokio::test]

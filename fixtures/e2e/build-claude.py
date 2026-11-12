@@ -7,7 +7,10 @@ by rule, so every gate matches what a session writes:
 - each turn's `system/init` waits for a user message, and in the recordings
   listed in `RELEASED` also for the test's `release` file;
 - a `can_use_tool` request is followed by a wait for our `control_response`;
-- any later `control_response` (an interrupt's ack) waits for a `control_request`.
+- any later `control_response` (an interrupt's ack) waits for a `control_request`;
+- in the recordings listed in `WITHDRAWN`, nothing waits for an answer to
+  `can_use_tool`, and the `control_cancel_request` waits for the interrupt
+  in place of the ack after it.
 
 Acks are renumbered `req_1`, `req_2`, ... in order, because the session that
 replays a recording numbers its control requests from 1.
@@ -28,6 +31,7 @@ RECORDINGS = {
     "claude-deny-interrupt.jsonl": [1, 4, 5],
     "claude-held-interrupt.jsonl": [2],
     "claude-hang-up.jsonl": [],
+    "claude-withdraw.jsonl": [8],
 }
 
 # The turn starts only once the test has sent its interrupt, so the session
@@ -37,21 +41,26 @@ RELEASED = {"claude-held-interrupt.jsonl"}
 # The stand-in stops reading after `initialize`, so the first message fails.
 HUNG_UP = {"claude-hang-up.jsonl"}
 
+# The test never answers the request. Its interrupt makes the CLI withdraw it.
+WITHDRAWN = {"claude-withdraw.jsonl"}
+
 
 def wait(match):
     return json.dumps({"fake": "await", "match": match})
 
 
-def gated(line, released):
+def gated(line, released, withdrawn):
     msg = json.loads(line)
     kind = (msg.get("type"), msg.get("subtype"))
-    if kind == ("control_response", None):
+    if kind == ("control_cancel_request", None):
         return [wait({"type": "control_request"}), line]
+    if kind == ("control_response", None):
+        return [line] if withdrawn else [wait({"type": "control_request"}), line]
     if kind == ("system", "init"):
         release = [json.dumps({"fake": "release", "file": "release"})] if released else []
         return [wait({"type": "user"})] + release + [line]
     if kind == ("control_request", None) and msg["request"]["subtype"] == "can_use_tool":
-        return [line, wait({"type": "control_response"})]
+        return [line] if withdrawn else [line, wait({"type": "control_response"})]
     return [line]
 
 
@@ -72,5 +81,6 @@ initialize, played = turns(SOURCE.read_text().splitlines())
 for name, picked in RECORDINGS.items():
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
     hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
-    out = hang_up + [m for line in lines for m in gated(line, name in RELEASED)]
+    turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN)]
+    out = hang_up + gated(lines[0], False, False) + turn
     (HERE / name).write_text("\n".join(out) + "\n")
