@@ -6,9 +6,12 @@ use std::convert::Infallible;
 use std::path::PathBuf;
 
 use agents::claude::{
-    ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode, SettingSource, VersionPolicy,
+    ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode, PermissionRequestId, SettingSource,
+    VersionPolicy,
 };
-use agents::codex::{ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadOptions};
+use agents::codex::{
+    ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadOptions, TurnId,
+};
 use proto::{
     ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath, Rejection, RequestId,
     Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
@@ -380,16 +383,9 @@ impl SessionActor {
     }
 
     async fn interrupt(&self, turn: &NativeTurn) -> Result<(), AgentError> {
-        match (&self.agent, turn) {
-            (Agent::Claude { session, .. }, NativeTurn::Claude) => Ok(session.interrupt().await?),
-            (Agent::Codex { thread, .. }, NativeTurn::Codex(turn)) => {
-                Ok(thread.interrupt(turn.clone()).await?)
-            }
-            (Agent::Claude { .. }, NativeTurn::Codex(_))
-            | (Agent::Codex { .. }, NativeTurn::Claude) => {
-                tracing::error!(session = self.id.0, "a turn of the other provider");
-                Ok(())
-            }
+        match &self.agent {
+            Agent::Claude { session, .. } => Ok(session.interrupt().await?),
+            Agent::Codex { thread, .. } => Ok(thread.interrupt(TurnId(turn.0.clone())).await?),
         }
     }
 
@@ -399,18 +395,16 @@ impl SessionActor {
         decision: Decision,
         by: &ClientName,
     ) -> Result<(), AgentError> {
-        match (&self.agent, native) {
-            (Agent::Claude { session, .. }, NativeRequest::Claude(id)) => Ok(session
-                .respond(id, mapping::claude_answer(decision, by))
+        match &self.agent {
+            Agent::Claude { session, .. } => Ok(session
+                .respond(
+                    PermissionRequestId(native.0),
+                    mapping::claude_answer(decision, by),
+                )
                 .await?),
-            (Agent::Codex { thread, .. }, NativeRequest::Codex(id)) => {
-                Ok(thread.respond(id, mapping::codex_answer(decision)).await?)
-            }
-            (Agent::Claude { .. }, NativeRequest::Codex(_))
-            | (Agent::Codex { .. }, NativeRequest::Claude(_)) => {
-                tracing::error!(session = self.id.0, "a request of the other provider");
-                Ok(())
-            }
+            Agent::Codex { thread, .. } => Ok(thread
+                .respond(ApprovalId(native.0), mapping::codex_answer(decision))
+                .await?),
         }
     }
 

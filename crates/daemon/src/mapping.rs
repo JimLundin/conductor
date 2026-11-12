@@ -2,32 +2,26 @@
 //! session applies out. Request ids and the turn belong to the session.
 
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionRequestId, Role,
-    ToolDetail,
+    AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, Role, ToolDetail,
 };
 use agents::codex::{
-    self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk,
-    ThreadEvent, TurnId,
+    self, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk, ThreadEvent,
 };
 use proto::{
     Change, ClientName, CloseReason, Decision, EventKind, FileChange, ToolCallId, ToolKind,
     ToolOutcome, ToolPhase, TurnOutcome,
 };
 
-/// The provider's own id for an open request, which `agents` answers.
+/// An open request's id as the provider gave it. Only the session's own
+/// agent reads it, as its provider's id, so it can't name another
+/// provider's request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum NativeRequest {
-    Claude(PermissionRequestId),
-    Codex(ApprovalId),
-}
+pub(crate) struct NativeRequest(pub(crate) String);
 
-/// What the provider needs to interrupt the running turn: Claude interrupts
-/// the session, Codex the turn by its id.
+/// The running turn as the provider interrupts it, by the provider's id:
+/// Claude's session, Codex's turn. Read like [`NativeRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum NativeTurn {
-    Claude,
-    Codex(TurnId),
-}
+pub(crate) struct NativeTurn(pub(crate) String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Step {
@@ -59,7 +53,9 @@ pub(crate) enum Step {
 
 pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
     match event {
-        ClaudeEvent::TurnStarted { .. } => Vec::from([Step::TurnStarted(NativeTurn::Claude)]),
+        ClaudeEvent::TurnStarted { session_id } => {
+            Vec::from([Step::TurnStarted(NativeTurn(session_id.0))])
+        }
         ClaudeEvent::Message { role, content } => content
             .into_iter()
             .filter_map(|block| claude_block(role, block))
@@ -73,14 +69,12 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             detail,
             tool_use_id,
         } => Vec::from([Step::Open {
-            native: NativeRequest::Claude(id),
+            native: NativeRequest(id.0),
             call: ToolCallId(tool_use_id),
             tool: tool_kind(tool_name, detail),
             reason: None,
         }]),
-        ClaudeEvent::PermissionCancelled { id } => {
-            Vec::from([Step::Withdraw(NativeRequest::Claude(id))])
-        }
+        ClaudeEvent::PermissionCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
         ClaudeEvent::TurnFinished {
             subtype,
             outcome,
@@ -181,9 +175,7 @@ pub(crate) fn codex_steps(event: CodexEvent) -> Vec<Step> {
 fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
     match event {
         ThreadEvent::Started => Vec::new(),
-        ThreadEvent::TurnStarted { turn } => {
-            Vec::from([Step::TurnStarted(NativeTurn::Codex(turn))])
-        }
+        ThreadEvent::TurnStarted { turn } => Vec::from([Step::TurnStarted(NativeTurn(turn.0))]),
         ThreadEvent::AgentDelta { text, .. } => {
             Vec::from([Step::Emit(EventKind::AssistantDelta { text })])
         }
@@ -205,7 +197,7 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         }]),
         ThreadEvent::ApprovalRequested { id, item, kind, .. } => match approval_tool(kind) {
             Some((tool, reason)) => Vec::from([Step::Open {
-                native: NativeRequest::Codex(id),
+                native: NativeRequest(id.0),
                 call: ToolCallId(item),
                 tool,
                 reason,
@@ -216,9 +208,7 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
                 ),
             })]),
         },
-        ThreadEvent::ApprovalCancelled { id } => {
-            Vec::from([Step::Withdraw(NativeRequest::Codex(id))])
-        }
+        ThreadEvent::ApprovalCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
         ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(match outcome {
             codex::TurnOutcome::Completed => TurnOutcome::Completed,
             codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
@@ -417,9 +407,7 @@ mod tests {
                 got: claude_steps(ClaudeEvent::PermissionCancelled {
                     id: PermissionRequestId(String::from("p1")),
                 }),
-                want: Vec::from([Step::Withdraw(NativeRequest::Claude(PermissionRequestId(
-                    String::from("p1"),
-                )))]),
+                want: Vec::from([Step::Withdraw(NativeRequest(String::from("p1")))]),
             },
             Case {
                 got: claude_steps(finished(Outcome::Failed, Some("aborted_tools"))),
@@ -495,7 +483,7 @@ mod tests {
                     options: Vec::new(),
                 }),
                 want: Vec::from([Step::Open {
-                    native: NativeRequest::Codex(ApprovalId(String::from("1"))),
+                    native: NativeRequest(String::from("1")),
                     call: ToolCallId(String::from("exec-2")),
                     tool: ToolKind::Command {
                         command: String::from("touch ~/b.txt"),
@@ -521,7 +509,7 @@ mod tests {
                     options: Vec::new(),
                 }),
                 want: Vec::from([Step::Open {
-                    native: NativeRequest::Codex(ApprovalId(String::from("2"))),
+                    native: NativeRequest(String::from("2")),
                     call: ToolCallId(String::from("exec-3")),
                     tool: ToolKind::Other {
                         name: String::from("permissions"),
