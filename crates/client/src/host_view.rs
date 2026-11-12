@@ -74,6 +74,8 @@ pub enum Approval {
     NotAsked,
     Asked {
         request: RequestId,
+        /// The agent's own words for why it asks, if it gave any.
+        reason: Option<String>,
         state: RequestState,
     },
 }
@@ -87,7 +89,7 @@ pub enum RequestState {
 /// An in-place change to an earlier tool call. Asking, resolving and
 /// finishing are the same shape, so they are one `map` over the items.
 enum Change {
-    Ask(ToolCallId, RequestId),
+    Ask(ToolCallId, RequestId, Option<String>),
     Resolve(RequestId, Resolution),
     Finish(ToolCallId, ToolOutcome),
     /// The host ended the turn or the session: nothing still running will
@@ -266,7 +268,8 @@ impl SessionView {
                 request,
                 call,
                 tool,
-            } => self.ask(call, request, tool),
+                reason,
+            } => self.ask(call, request, tool, reason),
             EventKind::RequestResolved {
                 request,
                 resolution,
@@ -322,20 +325,27 @@ impl SessionView {
 
     /// A request joins its tool call's card. A request for a call this view
     /// never saw started gets a card of its own.
-    fn ask(self, call: ToolCallId, request: RequestId, tool: ToolKind) -> SessionView {
+    fn ask(
+        self,
+        call: ToolCallId,
+        request: RequestId,
+        tool: ToolKind,
+        reason: Option<String>,
+    ) -> SessionView {
         match self
             .items
             .iter()
             .filter_map(Item::call)
             .find(|seen| seen.0 == call.0)
         {
-            Some(_) => self.change(Change::Ask(call, request)),
+            Some(_) => self.change(Change::Ask(call, request, reason)),
             None => self.push(Item::Tool {
                 call,
                 tool,
                 state: ToolState::Running,
                 approval: Approval::Asked {
                     request,
+                    reason,
                     state: RequestState::Open,
                 },
             }),
@@ -391,7 +401,7 @@ impl ToolState {
             (ToolState::Running, Change::End) => ToolState::Stopped,
             (
                 state,
-                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+                Change::Ask(_, _, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
             ) => state,
         }
     }
@@ -400,31 +410,36 @@ impl ToolState {
 impl Approval {
     fn changed(self, call: &ToolCallId, change: &Change) -> Approval {
         match (self, change) {
-            (_, Change::Ask(id, request)) if call == id => Approval::Asked {
+            (_, Change::Ask(id, request, reason)) if call == id => Approval::Asked {
                 request: request.to_owned(),
+                reason: reason.clone(),
                 state: RequestState::Open,
             },
-            (Approval::Asked { request, .. }, Change::Resolve(id, resolution))
-                if &request == id =>
-            {
+            (
                 Approval::Asked {
-                    request,
-                    state: RequestState::Resolved(resolution.clone()),
-                }
-            }
+                    request, reason, ..
+                },
+                Change::Resolve(id, resolution),
+            ) if &request == id => Approval::Asked {
+                request,
+                reason,
+                state: RequestState::Resolved(resolution.clone()),
+            },
             (
                 Approval::Asked {
                     request,
+                    reason,
                     state: RequestState::Open,
                 },
                 Change::End,
             ) => Approval::Asked {
                 request,
+                reason,
                 state: RequestState::Resolved(Resolution::Withdrawn),
             },
             (
                 approval,
-                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+                Change::Ask(_, _, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
             ) => approval,
         }
     }
@@ -505,6 +520,7 @@ mod tests {
                     tool: ToolKind::Command {
                         command: text("ls"),
                     },
+                    reason: Some(text("to list")),
                 },
             ),
             (
@@ -515,6 +531,7 @@ mod tests {
                     tool: ToolKind::Command {
                         command: text("rm"),
                     },
+                    reason: None,
                 },
             ),
             (
@@ -591,6 +608,7 @@ mod tests {
                                 state: ToolState::Finished(ToolOutcome::Succeeded),
                                 approval: Approval::Asked {
                                     request: RequestId(1),
+                                    reason: Some(text("to list")),
                                     state: RequestState::Resolved(Resolution::Decided {
                                         decision: Decision::Approve,
                                         by: ClientName(text("phone")),
@@ -605,6 +623,7 @@ mod tests {
                                 state: ToolState::Stopped,
                                 approval: Approval::Asked {
                                     request: RequestId(2),
+                                    reason: None,
                                     state: RequestState::Resolved(Resolution::Withdrawn),
                                 },
                             },
@@ -650,6 +669,7 @@ mod tests {
             tool: ToolKind::Command {
                 command: text("ls"),
             },
+            reason: None,
         }
     }
 
@@ -673,6 +693,7 @@ mod tests {
             state,
             approval: Approval::Asked {
                 request: RequestId(request),
+                reason: None,
                 state: approval,
             },
         }

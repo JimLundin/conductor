@@ -13,7 +13,7 @@ once, and how the whole thing feels.
 ## Setup
 
 - [ ] `main` is pushed, and the Pages deploy for that commit is green, so the
-      phone runs the same protocol as the host (ALPN `conductor/2`).
+      phone runs the same protocol as the host (ALPN `conductor/3`).
 - [ ] Make a scratch git repo: `mkdir -p /tmp/smoke && cd /tmp/smoke && git init`.
 - [ ] Start the host from the checkout, with cheap models:
 

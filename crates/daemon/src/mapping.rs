@@ -38,6 +38,7 @@ pub(crate) enum Step {
         /// The tool call the request asks about.
         call: ToolCallId,
         tool: ToolKind,
+        reason: Option<String>,
     },
     /// The session logs the call finished, as `Declined` if it failed after
     /// the user denied it.
@@ -74,6 +75,7 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             native: NativeRequest::Claude(id),
             call: ToolCallId(tool_use_id),
             tool: tool_kind(tool_name, detail),
+            reason: None,
         }]),
         ClaudeEvent::PermissionCancelled { id } => {
             Vec::from([Step::Withdraw(NativeRequest::Claude(id))])
@@ -196,10 +198,11 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             outcome: codex_outcome(&status),
         }]),
         ThreadEvent::ApprovalRequested { id, item, kind, .. } => match approval_tool(kind) {
-            Some(tool) => Vec::from([Step::Open {
+            Some((tool, reason)) => Vec::from([Step::Open {
                 native: NativeRequest::Codex(id),
                 call: ToolCallId(item),
                 tool,
+                reason,
             }]),
             None => Vec::from([Step::Emit(EventKind::Error {
                 message: String::from(
@@ -249,18 +252,29 @@ fn codex_outcome(status: &str) -> ToolOutcome {
     }
 }
 
-/// The tool an approval asks about. A question asks about none.
-fn approval_tool(kind: ApprovalKind) -> Option<ToolKind> {
+/// The tool an approval asks about, and Codex's reason for asking. A
+/// question asks about none.
+fn approval_tool(kind: ApprovalKind) -> Option<(ToolKind, Option<String>)> {
     match kind {
-        ApprovalKind::Command { command, .. } => Some(ToolKind::Command {
-            command: command.unwrap_or_default(),
-        }),
+        ApprovalKind::Command {
+            command, reason, ..
+        } => Some((
+            ToolKind::Command {
+                command: command.unwrap_or_default(),
+            },
+            reason,
+        )),
         // The request names no paths; the tool card the item started has them.
-        ApprovalKind::FileChange { .. } => Some(ToolKind::FileChange { paths: Vec::new() }),
-        ApprovalKind::Permissions { reason, .. } => Some(ToolKind::Other {
-            name: String::from("permissions"),
-            detail: reason.unwrap_or_default(),
-        }),
+        ApprovalKind::FileChange { reason, .. } => {
+            Some((ToolKind::FileChange { paths: Vec::new() }, reason))
+        }
+        ApprovalKind::Permissions { reason, requested } => Some((
+            ToolKind::Other {
+                name: String::from("permissions"),
+                detail: requested.to_string(),
+            },
+            reason,
+        )),
         ApprovalKind::UserInput { .. } => None,
     }
 }
@@ -400,6 +414,27 @@ mod tests {
                         paths: Vec::from([String::from("a.txt")]),
                     },
                 )]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("1")),
+                    turn: turn(),
+                    item: String::from("exec-2"),
+                    kind: ApprovalKind::Command {
+                        command: Some(String::from("touch ~/b.txt")),
+                        cwd: None,
+                        reason: Some(String::from("needs to write outside the workspace")),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest::Codex(ApprovalId(String::from("1"))),
+                    call: ToolCallId(String::from("exec-2")),
+                    tool: ToolKind::Command {
+                        command: String::from("touch ~/b.txt"),
+                    },
+                    reason: Some(String::from("needs to write outside the workspace")),
+                }]),
             },
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {

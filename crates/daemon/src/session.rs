@@ -439,7 +439,12 @@ impl SessionActor {
     async fn step(&mut self, step: Step) -> Result<(), Stopped> {
         match step {
             Step::Emit(kind) => self.emit(kind).await,
-            Step::Open { native, call, tool } => {
+            Step::Open {
+                native,
+                call,
+                tool,
+                reason,
+            } => {
                 let request = self.last_request.next();
                 self.last_request = request;
                 self.requests.insert(
@@ -453,6 +458,7 @@ impl SessionActor {
                     request,
                     call,
                     tool,
+                    reason,
                 })
                 .await
             }

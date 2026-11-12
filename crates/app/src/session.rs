@@ -121,11 +121,13 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                 Approval::NotAsked => rsx! { ToolLine { tool, state } },
                 Approval::Asked {
                     request,
+                    reason,
                     state: RequestState::Open,
                 } => rsx! {
                     section { class: "request", "data-open": true,
                         p { class: "request-title", "Allow this?" }
                         ToolLine { tool, state }
+                        Reason { reason }
                         div { class: "actions",
                             button { class: "deny", onclick: move |_| on_decide((request, Decision::Deny)), "Deny" }
                             button { class: "approve", onclick: move |_| on_decide((request, Decision::Approve)), "Approve" }
@@ -133,11 +135,13 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                     }
                 },
                 Approval::Asked {
+                    reason,
                     state: RequestState::Resolved(resolution),
                     ..
                 } => rsx! {
                     section { class: "request", "data-open": false,
                         ToolLine { tool, state }
+                        Reason { reason }
                         p { class: "resolved",
                             match resolution {
                                 Resolution::Decided { decision: Decision::Approve, by } => format!("Approved by {}", by.0),
@@ -185,6 +189,15 @@ fn ToolLine(tool: ToolKind, state: String) -> Element {
                 },
             }
         }
+    }
+}
+
+/// Why the agent asks, in its own words.
+#[component]
+fn Reason(reason: Option<String>) -> Element {
+    match reason {
+        Some(reason) => rsx! { p { class: "request-reason", "{reason}" } },
+        None => rsx! {},
     }
 }
 

@@ -545,6 +545,7 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
             tool: ToolKind::FileChange {
                 paths: Vec::from([String::from(path)]),
             },
+            reason: None,
         },
     ])
 }
@@ -589,6 +590,7 @@ fn codex_tool(call: &str, command: &str, decision: Decision, outcome: ToolOutcom
         state: ToolState::Finished(outcome),
         approval: Approval::Asked {
             request: RequestId(1),
+            reason: None,
             state: RequestState::Resolved(Resolution::Decided {
                 decision,
                 by: test_client(),
@@ -1034,6 +1036,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
                     request: RequestId(1),
                     call,
                     tool,
+                    reason: None,
                 },
             ]),
         ]
