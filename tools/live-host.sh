@@ -8,8 +8,9 @@
 #
 # The host runs the pinned CLIs in its private homes, so it needs a sign-in
 # there: run `conductord login claude|codex --data-dir DIR` once and pass the
-# same --data-dir, which is kept. Without --data-dir, a temp dir is used and
-# removed.
+# same --data-dir, which is kept. Without --data-dir, a scratch dir under the
+# target dir is used and removed; not under /tmp, where Codex refuses to
+# create its helper binaries in CODEX_HOME.
 #
 # Prints one RESULT line. Exits non-zero on a failed check. Each run's output
 # and the host's own log are kept in log-dir (default: a temp dir).
@@ -43,7 +44,7 @@ rm -rf "$scratch"
 mkdir -p "$scratch"
 cleanup=
 if [ -z "$data_dir" ]; then
-  data_dir=$(mktemp -d)
+  data_dir=$(mktemp -d "$target/live-host.XXXXXX")
   cleanup=$data_dir
 fi
 "$target"/debug/conductord host --data-dir "$data_dir" --claude-model haiku --codex-model gpt-6-luna \

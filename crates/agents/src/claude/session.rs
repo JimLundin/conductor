@@ -257,12 +257,18 @@ const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
-/// Credentials the host's own environment may carry, which a private home
-/// must not pick up: they take precedence over its sign-in.
-const INHERITED_CREDENTIALS: &[&str] = &[
+/// What the host's own environment may carry that would take a private home
+/// off its own sign-in: credentials, which take precedence over it, the
+/// cloud providers and another endpoint, and another home.
+const INHERITED_LOGIN: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CONFIG_DIR",
 ];
 
 /// `claude` with what every run of it gets: its home, and its own updates
@@ -271,10 +277,10 @@ pub fn cli(claude_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(claude_path);
     cmd.env("DISABLE_UPDATES", "1");
     if let Home::Private(dir) = home {
-        cmd.env("CLAUDE_CONFIG_DIR", dir);
-        for var in INHERITED_CREDENTIALS {
+        for var in INHERITED_LOGIN {
             cmd.env_remove(var);
         }
+        cmd.env("CLAUDE_CONFIG_DIR", dir);
     }
     for var in PARENT_SESSION_VARS {
         cmd.env_remove(var);
@@ -654,7 +660,17 @@ mod tests {
         let env = std
             .get_envs()
             .filter_map(|(key, value)| match (key.to_str(), value) {
-                (Some("CLAUDECODE" | "CLAUDE_CODE_OAUTH_TOKEN"), None) => Some((key, None)),
+                (
+                    Some(
+                        "CLAUDECODE"
+                        | "CLAUDE_CODE_OAUTH_TOKEN"
+                        | "CLAUDE_CODE_USE_BEDROCK"
+                        | "CLAUDE_CODE_USE_VERTEX"
+                        | "CLAUDE_CODE_USE_FOUNDRY"
+                        | "ANTHROPIC_BASE_URL",
+                    ),
+                    None,
+                ) => Some((key, None)),
                 (Some("CLAUDE_CODE_SESSION_ID"), None) => Some((key, None)),
                 (Some("CLAUDE_CONFIG_DIR" | "DISABLE_UPDATES"), Some(value)) => {
                     Some((key, value.to_str()))
@@ -666,9 +682,13 @@ mod tests {
         assert_eq!(
             env,
             [
+                ("ANTHROPIC_BASE_URL", None),
                 ("CLAUDECODE", None),
                 ("CLAUDE_CODE_OAUTH_TOKEN", None),
                 ("CLAUDE_CODE_SESSION_ID", None),
+                ("CLAUDE_CODE_USE_BEDROCK", None),
+                ("CLAUDE_CODE_USE_FOUNDRY", None),
+                ("CLAUDE_CODE_USE_VERTEX", None),
                 ("CLAUDE_CONFIG_DIR", Some("/srv/conductor/home/claude")),
                 ("DISABLE_UPDATES", Some("1")),
             ]

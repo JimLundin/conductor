@@ -19,9 +19,10 @@ use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, re
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
-/// Where the pinned CLIs are installed for the live checks. They run with the
+/// Where the pinned CLIs are installed for the live checks, under this
+/// checkout's `target/` rather than the `/tmp` tmpfs. They run with the
 /// user's own homes, so the user's existing logins.
-const LIVE_DATA: &str = "/tmp/conductor-live";
+const LIVE_DATA: &str = "target/conductor-live";
 const SCRATCH: &str = "/tmp/s1-scratch";
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -344,7 +345,13 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let scratch = Path::new(SCRATCH);
     fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
     let fixtures = fixtures.as_deref();
-    let claude = install(Cli::Claude, Path::new(LIVE_DATA)).await?;
+    let claude = install(
+        Cli::Claude,
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(LIVE_DATA),
+    )
+    .await?;
 
     let live = spawn(&claude, None, log_path(fixtures, "session1")).await?;
     let t = Turn::start(

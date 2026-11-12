@@ -292,14 +292,22 @@ against the recorded hash.
 2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
    is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
    package unpacked whole, with `bin/codex`. It downloads to a temporary
-   file, checks the SHA-256, and renames it into place (the package is
-   unpacked with the system `tar` beside it first, then the directory is
-   renamed), so a crash leaves either nothing or a verified install. A wrong
-   hash, or a download that fails, makes the provider `Unavailable` with the
-   reason, as a missing CLI does today. On Linux it takes Claude's glibc
+   file, checks the SHA-256 of that file as written to disk, and renames it
+   into place (the package is unpacked with the system `tar` beside it
+   first, then the directory is renamed), so a crash leaves either nothing
+   or a verified install. It holds a lock on `<data>/cli/<provider>/lock`
+   throughout, so a second process on the same data dir, such as
+   `conductord login` during a first start, waits and then finds the CLI
+   installed. A wrong hash, or a download that fails, makes the provider
+   `Unavailable` with the reason, as a missing CLI does today. A connection
+   gets 15 s and a stalled download 30 s, so a dead network doesn't hold
+   up the host's start for long. On Linux it takes Claude's glibc
    build; Codex publishes only musl builds for Linux. A musl host such as
    Alpine is not handled yet.
-3. The previous version stays on disk until no session uses it.
+3. In the same step, under the same lock, it deletes everything else in
+   `<data>/cli/<provider>/`: older versions, and any download or unpack a
+   crash left. This runs at start, before any session, so no session is
+   using an older version.
 
 This keeps OpenPGP and Sigstore out of the daemon. The trust is in the
 developer's `tools/pin` run, which upstream's signatures back, and in the
@@ -315,7 +323,7 @@ that:
 
 1. runs `tools/pin` for the new version;
 2. runs `s1` or `s2` against the pinned binary, which installs it into
-   `/tmp/conductor-live` with the same installer and runs it with the
+   `target/conductor-live` with the same installer and runs it with the
    user's own homes and logins, and re-records `fixtures/claude` or
    `fixtures/codex`;
 3. widens `SUPPORTED_VERSIONS` and `check_version`
@@ -375,11 +383,17 @@ Two consequences for how sessions start (§5.2):
 false`) on first run only, because the CLIs edit their own config too. Every
 `claude` it starts gets `DISABLE_UPDATES=1`, `s1` included, so a live check
 can't update the user's own install either. In a private home it also loses
-any `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
-from the host's environment, which would otherwise take precedence over the
-home's sign-in (observed: a shell inside Claude Code carries
-`CLAUDE_CODE_OAUTH_TOKEN`, and `claude auth status` then reports a login in
-an empty home). Even `--version` runs with the
+these variables from the host's environment, each of which takes it off the
+home's own sign-in: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
+`CLAUDE_CODE_OAUTH_TOKEN` take precedence over it,
+`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and
+`CLAUDE_CODE_USE_FOUNDRY` switch to a cloud account, `ANTHROPIC_BASE_URL`
+sends requests elsewhere, and `CLAUDE_CONFIG_DIR` names another home.
+Codex loses an inherited `CODEX_HOME`. Observed: a shell inside Claude Code
+carries `CLAUDE_CODE_OAUTH_TOKEN`, and `claude auth status` then reports a
+login in an empty home; with `CLAUDE_CODE_USE_BEDROCK=1` it reports
+`"apiProvider": "bedrock"`. With the scrub, each one leaves `"loggedIn":
+false`. Even `--version` runs with the
 private home set, because `codex --version` writes helper binaries into
 `CODEX_HOME/tmp` (observed).
 

@@ -23,9 +23,10 @@ use n0_future::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-/// Where the pinned CLIs are installed for the live checks. They run with the
+/// Where the pinned CLIs are installed for the live checks, under this
+/// checkout's `target/` rather than the `/tmp` tmpfs. They run with the
 /// user's own homes, so the user's existing logins.
-const LIVE_DATA: &str = "/tmp/conductor-live";
+const LIVE_DATA: &str = "target/conductor-live";
 const SCRATCH: &str = "/tmp/s2-scratch";
 const TURN_TIMEOUT: Duration = Duration::from_secs(240);
 
@@ -427,7 +428,13 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
     let fixtures = fixtures.as_deref();
 
-    let codex = install(Cli::Codex, Path::new(LIVE_DATA)).await?;
+    let codex = install(
+        Cli::Codex,
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(LIVE_DATA),
+    )
+    .await?;
     let live = spawn(&codex, log_path(fixtures, "server1")).await?;
     let models = live.server.list_models().await?;
     let model = models

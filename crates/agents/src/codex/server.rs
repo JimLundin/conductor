@@ -240,6 +240,7 @@ async fn ask<T>(
 pub fn cli(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(codex_path);
     if let Home::Private(dir) = home {
+        cmd.env_remove("CODEX_HOME");
         cmd.env("CODEX_HOME", dir);
     }
     cmd
