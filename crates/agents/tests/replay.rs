@@ -99,6 +99,17 @@ fn summary(event: &ClaudeEvent) -> String {
             tool_use_id,
             ..
         } => format!("permission {tool_name} {detail:?} for {tool_use_id:?}"),
+        ClaudeEvent::QuestionAsked {
+            questions,
+            tool_use_id,
+            ..
+        } => format!(
+            "question {:?} for {tool_use_id:?}",
+            questions
+                .iter()
+                .map(|question| question.text.as_str())
+                .collect::<Vec<&str>>()
+        ),
         ClaudeEvent::StreamDelta { text } => format!("delta {text:?}"),
         ClaudeEvent::PermissionCancelled { .. } => String::from("permission_cancelled"),
         ClaudeEvent::TurnFinished {
@@ -419,6 +430,54 @@ async fn resume_and_accept_edits_recording() {
         ])
     );
     assert_eq!(replayed.second, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn questions_and_session_approval_recording() {
+    let replayed = replay(
+        "session3-questions.jsonl",
+        Vec::from([PermissionDecision::AllowForSession]),
+    )
+    .await;
+    // 7 a question answered, 8 a command allowed for the session and run
+    // again without a request, 9 a question the interrupt withdrew. Nothing
+    // answers a question here, as the recording doesn't wait for it.
+    assert_eq!(
+        replayed.events,
+        [
+            "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
+            "assistant: tool_use AskUserQuestion Text(\"{\\\"questions\\\":[{\\\"header\\\":\\\"Color\\\",\\\"multiSelect\\\":false,\\\"options\\\":[{\\\"description\\\":\\\"Choose red as your preferred color.\\\",\\\"label\\\":\\\"Red\\\"},{\\\"description\\\":\\\"Choose blue as your preferred color.\\\",\\\"label\\\":\\\"Blue\\\"}],\\\"question\\\":\\\"Which color do you prefer?\\\"}]}\")",
+            "question [\"Which color do you prefer?\"] for \"toolu_bdrk_01CcDpZHC4vQ3AZi8neyebkS\"",
+            "user: tool_result error=false",
+            "streams [\"Blue\"]",
+            "assistant: text \"Blue\"",
+            "finished success is_error=false Some(\"completed\")",
+            "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
+            "assistant: tool_use Bash Command(\"touch t1.txt\")",
+            "permission Bash Command(\"touch t1.txt\") for \"toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf\"",
+            "user: tool_result error=false",
+            "streams [\"Ran `touch t1.\", \"txt`. It completed with\", \" no output.\"]",
+            "assistant: text \"Ran `touch t1.txt`. It completed with no output.\"",
+            "finished success is_error=false Some(\"completed\")",
+            "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
+            "assistant: tool_use Bash Command(\"touch t1.txt\")",
+            "user: tool_result error=false",
+            "streams [\"Ran `touch t1\", \".txt` again. It complet\", \"ed with no output.\", \" Since `touch` only\", \" updates the\", \" timestamp on\", \" an\", \" existing file, the\", \" file's\", \" contents are unchanged.\"]",
+            "assistant: text \"Ran `touch t1.txt` again. It completed with no output. Since `touch` only updates the timestamp on an existing file, the file's contents are unchanged.\"",
+            "finished success is_error=false Some(\"completed\")",
+            "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
+            "assistant: tool_use AskUserQuestion Text(\"{\\\"questions\\\":[{\\\"header\\\":\\\"Fruit\\\",\\\"multiSelect\\\":false,\\\"options\\\":[{\\\"description\\\":\\\"Choose apple as your preferred fruit.\\\",\\\"label\\\":\\\"Apple\\\"},{\\\"description\\\":\\\"Choose pear as your preferred fruit.\\\",\\\"label\\\":\\\"Pear\\\"}],\\\"question\\\":\\\"Which fruit do you prefer?\\\"}]}\")",
+            "question [\"Which fruit do you prefer?\"] for \"toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa\"",
+            "permission_cancelled",
+            "user: tool_result error=true",
+            "user: text \"[Request interrupted by user for tool use]\"",
+            "finished error_during_execution is_error=true Some(\"aborted_tools\")",
+        ]
+    );
+    assert_eq!(
+        replayed.second,
+        ["no open permission request with id fcc171e0-5399-4cb7-a65a-14d1ecabf519",]
+    );
 }
 
 /// Writes `lines` to a fresh recording and returns its path.

@@ -1,7 +1,7 @@
 //! S2 live checklist: drives the real `codex app-server` through approve,
 //! decline, interrupt, interrupt with an approval open, two concurrent
-//! threads on one process, resume in a new process and an unknown approval
-//! id, printing PASS/FAIL per step.
+//! threads on one process, resume in a new process, an unknown approval
+//! id, questions and approval for the session, printing PASS/FAIL per step.
 //!
 //! Usage: s2 [FIXTURE_DIR]
 //! Writes raw app-server stdout per process to FIXTURE_DIR/<name>.jsonl when given.
@@ -20,6 +20,7 @@ use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
+use proto::Answer;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -50,14 +51,32 @@ struct Live {
 #[derive(Clone, Copy)]
 enum Policy {
     Approve,
+    ApproveForSession,
     Decline,
 }
 
 impl Policy {
-    fn decision(self) -> Decision {
-        match self {
-            Policy::Approve => Decision::Accept,
-            Policy::Decline => Decision::Decline,
+    /// The answer to a request: a question gets each one's last option.
+    fn decision(self, kind: &ApprovalKind) -> Decision {
+        match (self, kind) {
+            (_, ApprovalKind::UserInput { questions }) => Decision::Answer(
+                questions
+                    .iter()
+                    .map(|question| {
+                        Answer(
+                            question
+                                .options
+                                .last()
+                                .map(|option| option.label.clone())
+                                .into_iter()
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            ),
+            (Policy::Approve, _) => Decision::Accept,
+            (Policy::ApproveForSession, _) => Decision::AcceptForSession,
+            (Policy::Decline, _) => Decision::Decline,
         }
     }
 }
@@ -161,7 +180,7 @@ fn approval_label(id: &ApprovalId, kind: ApprovalKind, options: &[Value]) -> Str
         ApprovalKind::Command { command, .. } => format!("command {command:?}"),
         ApprovalKind::FileChange { reason, .. } => format!("fileChange {reason:?}"),
         ApprovalKind::Permissions { asks, .. } => format!("permissions {asks:?}"),
-        ApprovalKind::UserInput { questions } => format!("userInput {questions}"),
+        ApprovalKind::UserInput { questions } => format!("userInput {questions:?}"),
     };
     // An option is a bare string or a one-key object such as
     // `{"acceptWithExecpolicyAmendment": ...}`.
@@ -264,10 +283,10 @@ impl Run {
             ThreadEvent::TurnStarted { .. } => self.cue(thread, Cue::Start).await?,
             ThreadEvent::AgentDelta { .. } => self.cue(thread, Cue::Delta).await?,
             ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
-            ThreadEvent::ApprovalRequested { id, .. } => match &self.plan {
+            ThreadEvent::ApprovalRequested { id, kind, .. } => match &self.plan {
                 Plan::Interrupt(Cue::Approval) => self.cue(thread, Cue::Approval).await?,
                 Plan::Answer(policy) => {
-                    let decision = policy.decision();
+                    let decision = policy.decision(kind);
                     self.live.server.respond(id.clone(), decision).await?;
                 }
                 Plan::Interrupt(_) => {
@@ -421,6 +440,128 @@ async fn spawn(codex: &Path, stdout_log: Option<PathBuf>) -> Result<Live> {
     })
     .await?;
     Ok(Live { server, events })
+}
+
+/// Steps 7 to 9, on a third process: a question answered, a command
+/// accepted for the session and then run again without asking, and a
+/// question withdrawn by an interrupt.
+async fn questions(
+    codex: &Path,
+    scratch: &Path,
+    fixtures: Option<&Path>,
+    thread_opts: ThreadOptions,
+) -> Result<(Verdict, Verdict, Verdict)> {
+    let live = spawn(codex, log_path(fixtures, "server3-questions")).await?;
+    let a = live.server.start_thread(thread_opts).await?;
+    let s = single(
+        live,
+        &a,
+        "Use the request_user_input tool to ask me one question: which color do I prefer, with the options Red and Blue. Then reply with only the color I chose.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let t = &s.turn;
+    let question = report(
+        "7 question",
+        match (
+            t.approvals.len(),
+            t.approvals
+                .iter()
+                .filter(|label| label.contains("userInput"))
+                .count(),
+            t.text.find("Blue"),
+            &t.outcome,
+        ) {
+            (1, 1, Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "approvals={:?} items={:?} outcome={:?} reply={:?}",
+            t.approvals, t.items, t.outcome, t.text
+        ),
+    )?;
+
+    let s = single(
+        s.live,
+        &a,
+        "Run exactly this shell command and nothing else: touch t1.txt",
+        Plan::Answer(Policy::ApproveForSession),
+    )
+    .await?;
+    let first = s.turn.approvals.clone();
+    let again = single(
+        s.live,
+        &a,
+        "Run exactly this shell command again, and nothing else: touch t1.txt",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let for_session = report(
+        "8 accept for session",
+        match (
+            first.len(),
+            presence(&scratch.join("t1.txt")),
+            again.turn.approvals.first(),
+            &again.turn.outcome,
+        ) {
+            (1, Presence::Present, None, Some(TurnOutcome::Completed)) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "first approvals={first:?} t1.txt {:?}; again approvals={:?} items={:?} outcome={:?}",
+            presence(&scratch.join("t1.txt")),
+            again.turn.approvals,
+            again.turn.items,
+            again.turn.outcome
+        ),
+    )?;
+
+    let s = single(
+        again.live,
+        &a,
+        "Use the request_user_input tool to ask me one question: which fruit do I prefer, with the options Apple and Pear. Then reply with only the fruit I chose.",
+        Plan::Interrupt(Cue::Approval),
+    )
+    .await?;
+    let t = &s.turn;
+    let Live { server, mut events } = s.live;
+    let cancelled = tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
+    let late = match t.answered.first() {
+        Some(id) => Some(
+            server
+                .respond(
+                    id.clone(),
+                    Decision::Answer(Vec::from([Answer(Vec::from([String::from("Pear")]))])),
+                )
+                .await,
+        ),
+        None => None,
+    };
+    let withdrawn = report(
+        "9 question withdrawn by interrupt",
+        match (
+            t.approvals
+                .iter()
+                .filter(|label| label.contains("userInput"))
+                .count(),
+            &s.interrupted,
+            &cancelled,
+            &late,
+            &t.outcome,
+        ) {
+            (1, Some(Ok(())), Ok(Some(_)), Some(Err(_)), Some(TurnOutcome::Interrupted)) => {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "approvals={:?} interrupt()={:?} outcome={:?} after the turn={cancelled:?} respond-after={late:?}",
+            t.approvals, s.interrupted, t.outcome
+        ),
+    )?;
+    let status = server.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((question, for_session, withdrawn))
 }
 
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
@@ -670,6 +811,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
 
     let status = server.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    let (question, for_session, withdrawn) =
+        questions(&codex, scratch, fixtures, thread_opts).await?;
     let failed = Vec::from([
         approve,
         decline,
@@ -680,6 +823,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         two_threads,
         resume,
         ids,
+        question,
+        for_session,
+        withdrawn,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

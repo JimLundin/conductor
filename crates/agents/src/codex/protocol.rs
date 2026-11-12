@@ -3,8 +3,10 @@
 //! we write is built here. Methods and fields we do not model are ignored or
 //! passed on as `Unknown`.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use proto::{Answer, Question, QuestionOption, Selection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -161,8 +163,8 @@ pub enum ApprovalKind {
         reason: Option<String>,
         asks: Vec<PermissionAsk>,
     },
-    /// `item/tool/requestUserInput`; answer it with [`Decision::Raw`].
-    UserInput { questions: Value },
+    /// `item/tool/requestUserInput`; answer it with [`Decision::Answer`].
+    UserInput { questions: Vec<Question> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -230,9 +232,10 @@ pub enum Decision {
     Decline,
     /// Declines and also ends the turn.
     Cancel,
-    /// Sent verbatim as the JSON-RPC `result`, for a native option or a
-    /// user-input answer.
+    /// Sent verbatim as the JSON-RPC `result`, for a native option.
     Raw(Value),
+    /// The answer to a user-input request, one per question.
+    Answer(Vec<Answer>),
 }
 
 /// What an answer to an open request has to look like.
@@ -242,7 +245,8 @@ pub(crate) enum AnswerShape {
     FileChange,
     /// Holds the requested profile, which an accept grants back.
     Permissions(Value),
-    UserInput,
+    /// Holds the questions' ids, which key the answers.
+    UserInput(Vec<String>),
 }
 
 /// What one stdout line means to the server actor.
@@ -309,7 +313,17 @@ enum ServerRequest {
         permissions: Value,
     },
     #[serde(rename = "item/tool/requestUserInput")]
-    UserInput { questions: Value },
+    UserInput { questions: Vec<WireQuestion> },
+}
+
+/// A user-input question. Codex lets every question take typed text
+/// (`isOther`), and offers no multiple choice.
+#[derive(Deserialize)]
+struct WireQuestion {
+    id: String,
+    header: String,
+    question: String,
+    options: Option<Vec<QuestionOption>>,
 }
 
 /// Where a server request belongs, common to every request we serve.
@@ -639,8 +653,23 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
             options: Vec::new(),
         },
         ServerRequest::UserInput { questions } => Asked {
-            shape: AnswerShape::UserInput,
-            kind: ApprovalKind::UserInput { questions },
+            shape: AnswerShape::UserInput(
+                questions
+                    .iter()
+                    .map(|question| question.id.clone())
+                    .collect(),
+            ),
+            kind: ApprovalKind::UserInput {
+                questions: questions
+                    .into_iter()
+                    .map(|question| Question {
+                        header: question.header,
+                        text: question.question,
+                        options: question.options.unwrap_or_default(),
+                        selection: Selection::One,
+                    })
+                    .collect(),
+            },
             options: Vec::new(),
         },
     })
@@ -842,13 +871,27 @@ struct ThreadParams {
     sandbox: Sandbox,
     cwd: String,
     model: Option<String>,
-    config: Option<EffortConfig>,
+    config: Value,
 }
 
-/// The `config` override that sets the reasoning effort.
-#[derive(Serialize)]
-struct EffortConfig {
-    model_reasoning_effort: String,
+/// The `config` overrides of every thread: the reasoning effort, if set,
+/// and the feature that lets the model ask the user questions outside plan
+/// mode, which Codex 0.166 marks under development.
+fn thread_config(effort: Option<String>) -> Value {
+    let features = serde_json::Map::from_iter([(
+        String::from("default_mode_request_user_input"),
+        Value::Bool(true),
+    )]);
+    Value::Object(
+        std::iter::once((String::from("features"), Value::Object(features)))
+            .chain(effort.map(|effort| {
+                (
+                    String::from("model_reasoning_effort"),
+                    Value::String(effort),
+                )
+            }))
+            .collect(),
+    )
 }
 
 #[derive(Serialize)]
@@ -916,9 +959,7 @@ fn thread_params(thread_id: Option<String>, opts: &ThreadOptions) -> serde_json:
         sandbox: opts.sandbox,
         cwd: opts.cwd.display().to_string(),
         model: opts.model.clone(),
-        config: opts.effort.clone().map(|effort| EffortConfig {
-            model_reasoning_effort: effort,
-        }),
+        config: thread_config(opts.effort.clone()),
     })?;
     Ok(match params {
         Value::Object(fields) => Value::Object(
@@ -1046,7 +1087,19 @@ enum PlainDecision {
 pub(crate) fn answer(shape: &AnswerShape, decision: Decision) -> Result<Value, AnswerError> {
     match (shape, decision) {
         (_, Decision::Raw(result)) => Ok(result),
-        (AnswerShape::UserInput, _) => Err(AnswerError::NotApplicable),
+        (AnswerShape::UserInput(ids), Decision::Answer(answers)) => encoded(UserInputAnswer {
+            answers: ids
+                .iter()
+                .cloned()
+                .zip(answers)
+                .map(|(id, answer)| (id, QuestionAnswer { answers: answer.0 }))
+                .collect(),
+        }),
+        (AnswerShape::UserInput(_), _)
+        | (
+            AnswerShape::Command | AnswerShape::FileChange | AnswerShape::Permissions(_),
+            Decision::Answer(_),
+        ) => Err(AnswerError::NotApplicable),
         (AnswerShape::Command | AnswerShape::FileChange, decision) => encoded(PlainAnswer {
             decision: plain(decision),
         }),
@@ -1073,8 +1126,19 @@ fn plain(decision: Decision) -> PlainDecision {
         Decision::Accept => PlainDecision::Accept,
         Decision::AcceptForSession => PlainDecision::AcceptForSession,
         Decision::Decline => PlainDecision::Decline,
-        Decision::Cancel | Decision::Raw(_) => PlainDecision::Cancel,
+        Decision::Cancel | Decision::Raw(_) | Decision::Answer(_) => PlainDecision::Cancel,
     }
+}
+
+/// The answer to a user-input request: each question's id to its answers.
+#[derive(Serialize)]
+struct UserInputAnswer {
+    answers: BTreeMap<String, QuestionAnswer>,
+}
+
+#[derive(Serialize)]
+struct QuestionAnswer {
+    answers: Vec<String>,
 }
 
 /// Declining a permissions request grants an empty profile.
@@ -1149,6 +1213,7 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use proto::{Answer, Question, QuestionOption, Selection};
     use serde_json::Value;
 
     use super::{
@@ -1203,7 +1268,8 @@ mod tests {
             json(
                 r#"{"id": 7, "method": "thread/start", "params": {
                 "approvalPolicy": "on-request", "sandbox": "read-only", "cwd": "/tmp/s2-scratch",
-                "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low"}}}"#
+                "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low",
+                "features": {"default_mode_request_user_input": true}}}}"#
             )
         );
         assert_eq!(
@@ -1212,7 +1278,8 @@ mod tests {
                 r#"{"id": 7, "method": "thread/resume", "params": {
                 "threadId": "th_1", "approvalPolicy": "on-request", "sandbox": "read-only",
                 "cwd": "/tmp/s2-scratch", "model": "gpt-6-luna",
-                "config": {"model_reasoning_effort": "low"}}}"#
+                "config": {"model_reasoning_effort": "low",
+                "features": {"default_mode_request_user_input": true}}}}"#
             )
         );
     }
@@ -1314,10 +1381,54 @@ mod tests {
         );
     }
 
+    /// Recorded from codex-cli 0.166.0 (probe, 2026-11-12).
+    const USER_INPUT: &str = r#"{"method": "item/tool/requestUserInput", "id": 0, "params": {"threadId": "th_1", "turnId": "tu_1", "itemId": "call_1", "questions": [{"id": "preferred_color", "header": "Color", "question": "Which color do you prefer?", "isOther": true, "isSecret": false, "options": [{"label": "Red", "description": "Choose Red."}, {"label": "Blue", "description": "Choose Blue."}]}], "isBlocking": false, "autoResolutionMs": null}}"#;
+
     #[test]
-    fn user_input_needs_a_raw_answer() {
+    fn user_input_is_a_question_answered_by_question_id() {
+        let (shape, event) = match parse_line(USER_INPUT).unwrap() {
+            Inbound::Approval { shape, event, .. } => Some((shape, event)),
+            Inbound::Event(_)
+            | Inbound::Response { .. }
+            | Inbound::Resolved { .. }
+            | Inbound::Unsupported { .. } => None,
+        }
+        .unwrap();
         assert_eq!(
-            match answer(&AnswerShape::UserInput, Decision::Accept) {
+            event,
+            ThreadEvent::ApprovalRequested {
+                id: ApprovalId(String::from("0")),
+                turn: TurnId(String::from("tu_1")),
+                item: String::from("call_1"),
+                kind: ApprovalKind::UserInput {
+                    questions: Vec::from([Question {
+                        header: String::from("Color"),
+                        text: String::from("Which color do you prefer?"),
+                        options: Vec::from([
+                            QuestionOption {
+                                label: String::from("Red"),
+                                description: String::from("Choose Red."),
+                            },
+                            QuestionOption {
+                                label: String::from("Blue"),
+                                description: String::from("Choose Blue."),
+                            },
+                        ]),
+                        selection: Selection::One,
+                    }]),
+                },
+                options: Vec::new(),
+            }
+        );
+        assert_eq!(
+            answered(
+                &shape,
+                Decision::Answer(Vec::from([Answer(Vec::from([String::from("Blue")]))]))
+            ),
+            json(r#"{"id": 0, "result": {"answers": {"preferred_color": {"answers": ["Blue"]}}}}"#)
+        );
+        assert_eq!(
+            match answer(&shape, Decision::Accept) {
                 Err(AnswerError::NotApplicable) => "not applicable",
                 Err(AnswerError::Encode(_)) => "encode",
                 Ok(_) => "answered",

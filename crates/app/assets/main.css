@@ -436,6 +436,78 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .actions .deny { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
 .resolved { color: var(--muted); font-size: 0.875rem; }
 
+/* The session-wide approval sits under the two answers for this call, full
+   width, with what it allows spelled out. */
+.request .for-session {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 0.6rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--amber-line);
+  text-align: left;
+}
+.for-session-allows {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.question[data-open="true"] {
+  border-color: var(--amber-line);
+  background: var(--amber-bg);
+  animation: arrive 260ms var(--ease-out);
+}
+.question[data-open="true"] .request-title { margin: 0; color: var(--amber); font-size: 1.0625rem; }
+.question-field { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.question-text { padding: 0; font-weight: 600; overflow-wrap: anywhere; }
+.question-header {
+  display: inline-block;
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--amber);
+  font-size: 0.75rem;
+  font-weight: 650;
+  vertical-align: 0.1em;
+}
+.question-hint { color: var(--muted); font-size: 0.8125rem; }
+.question-answer { color: var(--ink); overflow-wrap: anywhere; }
+.question:not([data-open="true"]) { gap: 0.3rem; }
+.options { display: flex; flex-direction: column; gap: 0.45rem; }
+.option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  min-height: 52px;
+  padding: 0.55rem 0.9rem;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+  text-align: left;
+}
+.option[aria-pressed="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+.option-description { color: var(--muted); font-size: 0.8125rem; font-weight: 400; overflow-wrap: anywhere; }
+.question .other { min-height: 48px; padding: 0 0.9rem; }
+.send-answer { min-height: 48px; }
+
 .turn-end {
   display: flex;
   align-items: center;

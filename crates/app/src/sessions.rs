@@ -64,12 +64,12 @@ fn SessionRow(
         Attention::Quiet => (session.status.word(), session.status.word(), String::new()),
         Attention::Requests(1) => (
             String::from("approval"),
-            String::from("needs approval"),
+            String::from("needs you"),
             String::from("1"),
         ),
         Attention::Requests(open) => (
             String::from("approval"),
-            format!("{open} need approval"),
+            format!("{open} requests need you"),
             format!("{open}"),
         ),
     };

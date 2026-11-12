@@ -30,7 +30,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/6";
+pub const ALPN: &[u8] = b"conductor/7";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -51,7 +51,8 @@ pub struct Epoch(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CommandId(pub u64);
 
-/// An approval request, assigned by the host per session, in order.
+/// An approval request or a question, assigned by the host per session, in
+/// order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RequestId(pub u64);
 
@@ -337,6 +338,13 @@ pub enum CommandBody {
         request: RequestId,
         decision: Decision,
     },
+    /// Answers a question, one [`Answer`] per question in the order asked.
+    /// Like `Resolve`, the first reply wins.
+    Answer {
+        session: SessionId,
+        request: RequestId,
+        answers: Vec<Answer>,
+    },
     /// Stores a provider's credential on the host, replacing any it had.
     /// The host never sends it back. Like every command it needs a client
     /// admitted by the ticket's token, which device certificates replace
@@ -352,8 +360,16 @@ pub enum CommandBody {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Decision {
     Approve,
+    /// Approves this call and the calls the request's `for_session` names,
+    /// until the session ends.
+    ApproveForSession,
     Deny,
 }
+
+/// The answer to one question: the labels of the options chosen, and any
+/// text the user typed instead, in that order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answer(pub Vec<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandResult {
@@ -382,6 +398,10 @@ pub enum Rejection {
     AlreadyResolved {
         by: ClientName,
     },
+    /// The reply doesn't fit the request, for this reason.
+    WrongReply {
+        reason: String,
+    },
     /// The host could not store the credential, and kept the one it had.
     CredentialNotSaved {
         reason: String,
@@ -406,6 +426,7 @@ impl Rejection {
             Rejection::NoTurnRunning => String::from("no turn is running"),
             Rejection::UnknownRequest => String::from("no request with that id"),
             Rejection::AlreadyResolved { by } => format!("already resolved by {}", by.0),
+            Rejection::WrongReply { reason } => reason.clone(),
             Rejection::CredentialNotSaved { reason } => {
                 format!("the host could not store the credential: {reason}")
             }
@@ -462,11 +483,21 @@ pub enum EventKind {
     /// An approval the tool call `call` waits on. `tool` repeats what the
     /// call's `Started` said, so a client can show the request on its own.
     /// `reason` is the agent's own words for why it asks, when it gives any.
+    /// `for_session` names what `ApproveForSession` would allow, in the
+    /// agent's words (`Bash(git status)`, or the command), when it offers
+    /// that.
     RequestOpened {
         request: RequestId,
         call: ToolCallId,
         tool: ToolKind,
         reason: Option<String>,
+        for_session: Option<String>,
+    },
+    /// The agent asks the user one or more questions and waits for an
+    /// `Answer`. `RequestResolved` closes it, as it does an approval.
+    QuestionAsked {
+        request: RequestId,
+        questions: Vec<Question>,
     },
     RequestResolved {
         request: RequestId,
@@ -479,6 +510,30 @@ pub enum EventKind {
     Error {
         message: String,
     },
+}
+
+/// One question. Both agents take any typed text as an answer, so every
+/// question also allows one besides its options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Question {
+    /// A short label for the question, such as "Color".
+    pub header: String,
+    pub text: String,
+    pub options: Vec<QuestionOption>,
+    pub selection: Selection,
+}
+
+/// How many options the user may choose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Selection {
+    One,
+    Many,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -521,6 +576,11 @@ pub enum ToolOutcome {
 pub enum Resolution {
     Decided {
         decision: Decision,
+        by: ClientName,
+    },
+    /// A question's answers, one per question.
+    Answered {
+        answers: Vec<Answer>,
         by: ClientName,
     },
     /// The agent withdrew the request before anyone answered.

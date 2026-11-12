@@ -100,7 +100,7 @@ mod tests {
         });
         assert_eq!(
             encode(&open).unwrap(),
-            frame(b"\x02\x01\x04\x01\x00\x01n\x01u\x01k\x01m")
+            frame(b"\x02\x01\x05\x01\x00\x01n\x01u\x01k\x01m")
         );
         assert_eq!(
             format!("{open:?}"),
@@ -163,7 +163,7 @@ mod tests {
                 },
             })
             .unwrap(),
-            frame(b"\x03\x01\x08\x02\x00\x00\x05phone")
+            frame(b"\x03\x01\x09\x02\x00\x00\x05phone")
         );
         assert_eq!(
             encode(&Event {
@@ -176,7 +176,7 @@ mod tests {
                 },
             })
             .unwrap(),
-            frame(b"\x04\x01\x09\x02\x04boom")
+            frame(b"\x04\x01\x0a\x02\x04boom")
         );
         assert_eq!(
             encode(&CommandResult::Rejected(Rejection::ProviderUnavailable {

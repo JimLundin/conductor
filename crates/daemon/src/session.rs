@@ -14,8 +14,9 @@ use agents::codex::{
     ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadOptions, TurnId,
 };
 use proto::{
-    ClaudeCredential, ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath,
-    Rejection, RequestId, Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    Answer, ClaudeCredential, ClientName, CloseReason, CommandResult, Decision, EventKind,
+    HostPath, Rejection, RequestId, Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase,
+    TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -65,11 +66,19 @@ pub enum Order {
         by: ClientName,
     },
     Interrupt,
-    Resolve {
+    Reply {
         request: RequestId,
-        decision: Decision,
+        reply: Reply,
         by: ClientName,
     },
+}
+
+/// A reply to an open request: a decision for an approval, answers for a
+/// question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reply {
+    Decide(Decision),
+    Answer(Vec<Answer>),
 }
 
 #[derive(Debug)]
@@ -119,11 +128,21 @@ enum Turn {
 /// resolution, so a late answer is told who made the first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Pending {
-    Open {
-        native: NativeRequest,
-        call: ToolCallId,
-    },
+    Open { native: NativeRequest, asked: Asked },
     Resolved(Resolution),
+}
+
+/// What an open request waits for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Asked {
+    /// A decision on tool call `call`. `for_session` is what approving for
+    /// the session allows, if the agent offers it.
+    Approval {
+        call: ToolCallId,
+        for_session: Option<String>,
+    },
+    /// One answer for each of `count` questions.
+    Question { count: usize },
 }
 
 struct SessionActor {
@@ -172,6 +191,31 @@ impl Session {
             .await
             .map_err(|_| Stopped {})?;
         answer.await.map_err(|_| Stopped {})
+    }
+}
+
+/// Whether `reply` answers what the request asked, and if not, why.
+fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
+    match (asked, reply) {
+        (
+            Asked::Approval {
+                for_session: None, ..
+            },
+            Reply::Decide(Decision::ApproveForSession),
+        ) => Err(String::from(
+            "the agent offers no approval for the session here",
+        )),
+        (Asked::Approval { .. }, Reply::Decide(_)) => Ok(()),
+        (Asked::Approval { .. }, Reply::Answer(_)) => {
+            Err(String::from("an approval takes a decision, not answers"))
+        }
+        (Asked::Question { .. }, Reply::Decide(_)) => {
+            Err(String::from("a question takes answers, not a decision"))
+        }
+        (Asked::Question { count }, Reply::Answer(answers)) if &answers.len() == count => Ok(()),
+        (Asked::Question { count }, Reply::Answer(answers)) => {
+            Err(format!("{} answers for {count} questions", answers.len()))
+        }
     }
 }
 
@@ -350,51 +394,55 @@ impl SessionActor {
                 self.note(sent).await?;
                 Ok(CommandResult::Accepted)
             }
-            (
-                Order::Resolve {
-                    request,
-                    decision,
-                    by,
-                },
-                _,
-            ) => self.resolve(request, decision, by).await,
+            (Order::Reply { request, reply, by }, _) => self.reply(request, reply, by).await,
         }
     }
 
-    async fn resolve(
+    async fn reply(
         &mut self,
         request: RequestId,
-        decision: Decision,
+        reply: Reply,
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         match self.requests.get(&request).cloned() {
             None | Some(Pending::Resolved(Resolution::Withdrawn)) => {
                 Ok(CommandResult::Rejected(Rejection::UnknownRequest))
             }
-            Some(Pending::Resolved(Resolution::Decided { by: first, .. })) => {
-                Ok(CommandResult::Rejected(Rejection::AlreadyResolved {
-                    by: first,
-                }))
-            }
-            Some(Pending::Open { native, call }) => {
-                if let Decision::Deny = decision {
-                    self.declined.insert(call);
+            Some(Pending::Resolved(
+                Resolution::Decided { by: first, .. } | Resolution::Answered { by: first, .. },
+            )) => Ok(CommandResult::Rejected(Rejection::AlreadyResolved {
+                by: first,
+            })),
+            Some(Pending::Open { native, asked }) => match fits(&asked, &reply) {
+                Err(reason) => Ok(CommandResult::Rejected(Rejection::WrongReply { reason })),
+                Ok(()) => {
+                    if let (Asked::Approval { call, .. }, Reply::Decide(Decision::Deny)) =
+                        (asked, &reply)
+                    {
+                        self.declined.insert(call);
+                    }
+                    let resolution = match reply.clone() {
+                        Reply::Decide(decision) => Resolution::Decided {
+                            decision,
+                            by: by.clone(),
+                        },
+                        Reply::Answer(answers) => Resolution::Answered {
+                            answers,
+                            by: by.clone(),
+                        },
+                    };
+                    self.requests
+                        .insert(request, Pending::Resolved(resolution.clone()));
+                    self.emit(EventKind::RequestResolved {
+                        request,
+                        resolution,
+                    })
+                    .await?;
+                    let sent = self.answer(native, reply, &by).await;
+                    self.note(sent).await?;
+                    Ok(CommandResult::Accepted)
                 }
-                let resolution = Resolution::Decided {
-                    decision,
-                    by: by.clone(),
-                };
-                self.requests
-                    .insert(request, Pending::Resolved(resolution.clone()));
-                self.emit(EventKind::RequestResolved {
-                    request,
-                    resolution,
-                })
-                .await?;
-                let sent = self.answer(native, decision, &by).await;
-                self.note(sent).await?;
-                Ok(CommandResult::Accepted)
-            }
+            },
         }
     }
 
@@ -420,18 +468,18 @@ impl SessionActor {
     async fn answer(
         &self,
         native: NativeRequest,
-        decision: Decision,
+        reply: Reply,
         by: &ClientName,
     ) -> Result<(), AgentError> {
         match &self.agent {
             Agent::Claude { session, .. } => Ok(session
                 .respond(
                     PermissionRequestId(native.0),
-                    mapping::claude_answer(decision, by),
+                    mapping::claude_answer(reply, by),
                 )
                 .await?),
             Agent::Codex { thread, .. } => Ok(thread
-                .respond(ApprovalId(native.0), mapping::codex_answer(decision))
+                .respond(ApprovalId(native.0), mapping::codex_answer(reply))
                 .await?),
         }
     }
@@ -466,23 +514,29 @@ impl SessionActor {
                 call,
                 tool,
                 reason,
+                for_session,
             } => {
-                let request = self.last_request.next();
-                self.last_request = request;
-                self.requests.insert(
-                    request,
-                    Pending::Open {
-                        native,
-                        call: call.clone(),
-                    },
-                );
+                let asked = Asked::Approval {
+                    call: call.clone(),
+                    for_session: for_session.clone(),
+                };
+                let request = self.open(native, asked);
                 self.emit(EventKind::RequestOpened {
                     request,
                     call,
                     tool,
                     reason,
+                    for_session,
                 })
                 .await
+            }
+            Step::Ask { native, questions } => {
+                let asked = Asked::Question {
+                    count: questions.len(),
+                };
+                let request = self.open(native, asked);
+                self.emit(EventKind::QuestionAsked { request, questions })
+                    .await
             }
             Step::ToolFinished { call, outcome } => {
                 let outcome = match (outcome, self.declined.take(&call)) {
@@ -536,6 +590,15 @@ impl SessionActor {
         }
     }
 
+    /// Stores a new request open under the next id.
+    fn open(&mut self, native: NativeRequest, asked: Asked) -> RequestId {
+        let request = self.last_request.next();
+        self.last_request = request;
+        self.requests
+            .insert(request, Pending::Open { native, asked });
+        request
+    }
+
     async fn withdraw(&mut self, native: NativeRequest) -> Result<(), Stopped> {
         let found = self
             .requests
@@ -561,5 +624,45 @@ impl SessionActor {
 
     async fn emit(&self, kind: EventKind) -> Result<(), Stopped> {
         self.log.append(self.id, kind).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proto::{Answer, Decision, ToolCallId};
+
+    use super::{Asked, Reply, fits};
+
+    fn approval(for_session: Option<&str>) -> Asked {
+        Asked::Approval {
+            call: ToolCallId(String::from("toolu_1")),
+            for_session: for_session.map(String::from),
+        }
+    }
+
+    #[test]
+    fn a_reply_must_fit_what_the_request_asked() {
+        let one = Vec::from([Answer(Vec::from([String::from("Blue")]))]);
+        assert_eq!(
+            [
+                fits(&approval(None), &Reply::Decide(Decision::ApproveForSession)),
+                fits(
+                    &approval(Some("Bash(ls)")),
+                    &Reply::Decide(Decision::ApproveForSession)
+                ),
+                fits(&approval(None), &Reply::Answer(one.clone())),
+                fits(&Asked::Question { count: 1 }, &Reply::Answer(one)),
+                fits(&Asked::Question { count: 2 }, &Reply::Answer(Vec::new())),
+            ],
+            [
+                Err(String::from(
+                    "the agent offers no approval for the session here"
+                )),
+                Ok(()),
+                Err(String::from("an approval takes a decision, not answers")),
+                Ok(()),
+                Err(String::from("0 answers for 2 questions")),
+            ]
+        );
     }
 }

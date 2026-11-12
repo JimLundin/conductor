@@ -5,8 +5,8 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use proto::{
-    ClientName, CloseReason, Event, EventKind, HostPath, HostSeq, Provider, RequestId, Resolution,
-    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    ClientName, CloseReason, Event, EventKind, HostPath, HostSeq, Provider, Question, RequestId,
+    Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +50,12 @@ pub enum Item {
         state: ToolState,
         approval: Approval,
     },
+    /// Questions the agent asked, and their answers once given.
+    Question {
+        request: RequestId,
+        questions: Vec<Question>,
+        state: RequestState,
+    },
     TurnCompleted(TurnOutcome),
     Error(String),
 }
@@ -76,6 +82,8 @@ pub enum Approval {
         request: RequestId,
         /// The agent's own words for why it asks, if it gave any.
         reason: Option<String>,
+        /// What approving for the session allows, if the agent offers it.
+        for_session: Option<String>,
         state: RequestState,
     },
 }
@@ -86,10 +94,10 @@ pub enum RequestState {
     Resolved(Resolution),
 }
 
-/// An in-place change to an earlier tool call. Asking, resolving and
-/// finishing are the same shape, so they are one `map` over the items.
+/// An in-place change to an earlier item. Asking, resolving and finishing
+/// are the same shape, so they are one `map` over the items.
 enum Change {
-    Ask(ToolCallId, RequestId, Option<String>),
+    Ask(ToolCallId, Approval),
     Resolve(RequestId, Resolution),
     Finish(ToolCallId, ToolOutcome),
     /// The host ended the turn or the session: nothing still running will
@@ -263,6 +271,9 @@ impl SessionView {
                             ..
                         },
                         ..
+                    } | Item::Question {
+                        state: RequestState::Open,
+                        ..
                     }
                 )
             })
@@ -303,7 +314,22 @@ impl SessionView {
                 call,
                 tool,
                 reason,
-            } => self.ask(call, request, tool, reason),
+                for_session,
+            } => self.ask(
+                call,
+                tool,
+                Approval::Asked {
+                    request,
+                    reason,
+                    for_session,
+                    state: RequestState::Open,
+                },
+            ),
+            EventKind::QuestionAsked { request, questions } => self.push(Item::Question {
+                request,
+                questions,
+                state: RequestState::Open,
+            }),
             EventKind::RequestResolved {
                 request,
                 resolution,
@@ -359,29 +385,19 @@ impl SessionView {
 
     /// A request joins its tool call's card. A request for a call this view
     /// never saw started gets a card of its own.
-    fn ask(
-        self,
-        call: ToolCallId,
-        request: RequestId,
-        tool: ToolKind,
-        reason: Option<String>,
-    ) -> SessionView {
+    fn ask(self, call: ToolCallId, tool: ToolKind, approval: Approval) -> SessionView {
         match self
             .items
             .iter()
             .filter_map(Item::call)
             .find(|seen| seen.0 == call.0)
         {
-            Some(_) => self.change(Change::Ask(call, request, reason)),
+            Some(_) => self.change(Change::Ask(call, approval)),
             None => self.push(Item::Tool {
                 call,
                 tool,
                 state: ToolState::Running,
-                approval: Approval::Asked {
-                    request,
-                    reason,
-                    state: RequestState::Open,
-                },
+                approval,
             }),
         }
     }
@@ -402,9 +418,11 @@ impl Item {
     fn call(&self) -> Option<&ToolCallId> {
         match self {
             Item::Tool { call, .. } => Some(call),
-            Item::User { .. } | Item::Reply { .. } | Item::TurnCompleted(_) | Item::Error(_) => {
-                None
-            }
+            Item::User { .. }
+            | Item::Reply { .. }
+            | Item::Question { .. }
+            | Item::TurnCompleted(_)
+            | Item::Error(_) => None,
         }
     }
 
@@ -421,6 +439,15 @@ impl Item {
                 call,
                 tool,
             },
+            Item::Question {
+                request,
+                questions,
+                state,
+            } => Item::Question {
+                state: state.changed(&request, change),
+                request,
+                questions,
+            },
             item => item,
         }
     }
@@ -435,7 +462,7 @@ impl ToolState {
             (ToolState::Running, Change::End) => ToolState::Stopped,
             (
                 state,
-                Change::Ask(_, _, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
             ) => state,
         }
     }
@@ -444,37 +471,38 @@ impl ToolState {
 impl Approval {
     fn changed(self, call: &ToolCallId, change: &Change) -> Approval {
         match (self, change) {
-            (_, Change::Ask(id, request, reason)) if call == id => Approval::Asked {
-                request: request.to_owned(),
-                reason: reason.clone(),
-                state: RequestState::Open,
-            },
-            (
-                Approval::Asked {
-                    request, reason, ..
-                },
-                Change::Resolve(id, resolution),
-            ) if &request == id => Approval::Asked {
-                request,
-                reason,
-                state: RequestState::Resolved(resolution.clone()),
-            },
-            (
+            (_, Change::Ask(id, approval)) if call == id => approval.clone(),
+            (approval, change) => match approval {
                 Approval::Asked {
                     request,
                     reason,
-                    state: RequestState::Open,
+                    for_session,
+                    state,
+                } => Approval::Asked {
+                    state: state.changed(&request, change),
+                    request,
+                    reason,
+                    for_session,
                 },
-                Change::End,
-            ) => Approval::Asked {
-                request,
-                reason,
-                state: RequestState::Resolved(Resolution::Withdrawn),
+                Approval::NotAsked => Approval::NotAsked,
             },
+        }
+    }
+}
+
+impl RequestState {
+    /// A request's answer, or its withdrawal when the turn or session ends
+    /// with it still open.
+    fn changed(self, request: &RequestId, change: &Change) -> RequestState {
+        match (self, change) {
+            (_, Change::Resolve(id, resolution)) if request == id => {
+                RequestState::Resolved(resolution.clone())
+            }
+            (RequestState::Open, Change::End) => RequestState::Resolved(Resolution::Withdrawn),
             (
-                approval,
-                Change::Ask(_, _, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
-            ) => approval,
+                state,
+                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+            ) => state,
         }
     }
 }
@@ -484,9 +512,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use proto::{
-        ClientName, CloseReason, Decision, Event, EventKind, HostPath, HostSeq, Provider,
-        RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-        TurnOutcome,
+        Answer, ClientName, CloseReason, Decision, Event, EventKind, HostPath, HostSeq, Provider,
+        Question, QuestionOption, RequestId, Resolution, Selection, SessionId, ToolCallId,
+        ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     };
 
     use super::{
@@ -555,6 +583,7 @@ mod tests {
                         command: text("ls"),
                     },
                     reason: Some(text("to list")),
+                    for_session: None,
                 },
             ),
             (
@@ -566,6 +595,7 @@ mod tests {
                         command: text("rm"),
                     },
                     reason: None,
+                    for_session: None,
                 },
             ),
             (
@@ -643,6 +673,7 @@ mod tests {
                                 approval: Approval::Asked {
                                     request: RequestId(1),
                                     reason: Some(text("to list")),
+                                    for_session: None,
                                     state: RequestState::Resolved(Resolution::Decided {
                                         decision: Decision::Approve,
                                         by: ClientName(text("phone")),
@@ -658,6 +689,7 @@ mod tests {
                                 approval: Approval::Asked {
                                     request: RequestId(2),
                                     reason: None,
+                                    for_session: None,
                                     state: RequestState::Resolved(Resolution::Withdrawn),
                                 },
                             },
@@ -712,6 +744,7 @@ mod tests {
                 command: text("ls"),
             },
             reason: None,
+            for_session: None,
         }
     }
 
@@ -736,6 +769,7 @@ mod tests {
             approval: Approval::Asked {
                 request: RequestId(request),
                 reason: None,
+                for_session: None,
                 state: approval,
             },
         }
@@ -991,6 +1025,103 @@ mod tests {
                 .map(SessionView::attention)
                 .collect::<Vec<Attention>>(),
             Vec::from([Attention::Requests(2), Attention::Quiet])
+        );
+    }
+
+    fn question(request: u64) -> EventKind {
+        EventKind::QuestionAsked {
+            request: RequestId(request),
+            questions: Vec::from([Question {
+                header: text("Color"),
+                text: text("Which color?"),
+                options: Vec::from([QuestionOption {
+                    label: text("Blue"),
+                    description: text("Cool"),
+                }]),
+                selection: Selection::One,
+            }]),
+        }
+    }
+
+    fn questions(view: &HostView, session: u64) -> Vec<(RequestId, RequestState)> {
+        view.sessions
+            .get(&SessionId(session))
+            .map(|session| {
+                session
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        Item::Question { request, state, .. } => {
+                            Some((request.to_owned(), state.clone()))
+                        }
+                        Item::User { .. }
+                        | Item::Reply { .. }
+                        | Item::Tool { .. }
+                        | Item::TurnCompleted(_)
+                        | Item::Error(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_question_waits_on_a_person_until_answered_or_the_turn_ends() {
+        let answered = Resolution::Answered {
+            answers: Vec::from([Answer(Vec::from([text("Blue")]))]),
+            by: ClientName(text("phone")),
+        };
+        let open = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::UserMessage {
+                    text: text("ask me"),
+                    by: ClientName(text("desk")),
+                },
+            ),
+            (1, question(1)),
+            (1, question(2)),
+            (1, opened(3)),
+        ]));
+        let later = fold(Vec::from([
+            (1, created("/a")),
+            (1, question(1)),
+            (1, question(2)),
+            (
+                1,
+                EventKind::RequestResolved {
+                    request: RequestId(1),
+                    resolution: answered.clone(),
+                },
+            ),
+            (
+                1,
+                EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Interrupted,
+                },
+            ),
+        ]));
+        assert_eq!(
+            (
+                open.sessions.get(&SessionId(1)).map(SessionView::attention),
+                open.sessions.get(&SessionId(1)).map(SessionView::working),
+                questions(&later, 1),
+                later
+                    .sessions
+                    .get(&SessionId(1))
+                    .map(SessionView::attention),
+            ),
+            (
+                Some(Attention::Requests(3)),
+                Some(Working::Hidden),
+                Vec::from([
+                    (RequestId(1), RequestState::Resolved(answered)),
+                    (RequestId(2), RequestState::Resolved(Resolution::Withdrawn)),
+                ]),
+                Some(Attention::Quiet),
+            )
         );
     }
 }

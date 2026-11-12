@@ -1,5 +1,6 @@
 //! One session: its header, transcript and composer.
 
+use client::answers::Draft;
 use client::host_view::{
     self, Approval, Interrupt, Item, ReplyState, RequestState, SessionStatus, SessionView,
     ToolState, Working,
@@ -7,8 +8,8 @@ use client::host_view::{
 use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
-    Change, CloseReason, CommandBody, Decision, RequestId, Resolution, SessionId, ToolKind,
-    ToolOutcome, TurnOutcome,
+    Answer, Change, CloseReason, CommandBody, Decision, Question, RequestId, Resolution, Selection,
+    SessionId, ToolKind, ToolOutcome, TurnOutcome,
 };
 
 use crate::sessions::short;
@@ -58,9 +59,14 @@ pub(crate) fn SessionPane(
                         None => rsx! {},
                     }
                     for (i, item) in session.items.into_iter().enumerate() {
-                        TranscriptItem { key: "{i}", item, on_decide: move |(request, decision)| {
-                            run_command(link, notice, CommandBody::Resolve { session: id, request, decision })
-                        } }
+                        TranscriptItem { key: "{i}", item,
+                            on_decide: move |(request, decision)| {
+                                run_command(link, notice, CommandBody::Resolve { session: id, request, decision })
+                            },
+                            on_answer: move |(request, answers)| {
+                                run_command(link, notice, CommandBody::Answer { session: id, request, answers })
+                            },
+                        }
                     }
                     match working {
                         Working::Shown => rsx! { p { class: "working", role: "status", "Thinking…" } },
@@ -99,7 +105,11 @@ fn closed(reason: &CloseReason) -> String {
 }
 
 #[component]
-fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) -> Element {
+fn TranscriptItem(
+    item: Item,
+    on_decide: EventHandler<(RequestId, Decision)>,
+    on_answer: EventHandler<(RequestId, Vec<Answer>)>,
+) -> Element {
     match item {
         Item::User { text, by } => rsx! {
             div { class: "user",
@@ -128,6 +138,7 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                 Approval::Asked {
                     request,
                     reason,
+                    for_session,
                     state: RequestState::Open,
                 } => rsx! {
                     section { class: "request", "data-open": true,
@@ -137,6 +148,15 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                         div { class: "actions",
                             button { class: "deny", onclick: move |_| on_decide((request, Decision::Deny)), "Deny" }
                             button { class: "approve", onclick: move |_| on_decide((request, Decision::Approve)), "Approve" }
+                        }
+                        match for_session {
+                            Some(allows) => rsx! {
+                                button { class: "for-session", onclick: move |_| on_decide((request, Decision::ApproveForSession)),
+                                    span { class: "for-session-title", "Allow for this session" }
+                                    span { class: "for-session-allows", "Allows {allows} until the session ends" }
+                                }
+                            },
+                            None => rsx! {},
                         }
                     }
                 },
@@ -151,12 +171,49 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                         p { class: "resolved",
                             match resolution {
                                 Resolution::Decided { decision: Decision::Approve, by } => format!("Approved by {}", by.0),
+                                Resolution::Decided { decision: Decision::ApproveForSession, by } => {
+                                    format!("Allowed for this session by {}", by.0)
+                                }
                                 Resolution::Decided { decision: Decision::Deny, by } => format!("Denied by {}", by.0),
+                                Resolution::Answered { by, .. } => format!("Answered by {}", by.0),
                                 Resolution::Withdrawn => String::from("Withdrawn"),
                             }
                         }
                     }
                 },
+            }
+        }
+        Item::Question {
+            request,
+            questions,
+            state: RequestState::Open,
+        } => rsx! { QuestionCard { request, questions, on_answer } },
+        Item::Question {
+            questions,
+            state: RequestState::Resolved(resolution),
+            ..
+        } => {
+            let (answers, outcome) = match resolution {
+                Resolution::Answered { answers, by } => (answers, format!("Answered by {}", by.0)),
+                Resolution::Decided { by, .. } => (Vec::new(), format!("Answered by {}", by.0)),
+                Resolution::Withdrawn => (Vec::new(), String::from("Withdrawn")),
+            };
+            let answered = questions
+                .into_iter()
+                .zip(answers.into_iter().map(Some).chain(std::iter::repeat(None)))
+                .map(|(question, answer)| (question.text, answer.map(|answer| answer.0.join(", "))))
+                .collect::<Vec<(String, Option<String>)>>();
+            rsx! {
+                section { class: "question", "data-open": false,
+                    for (text, answer) in answered {
+                        p { class: "question-text", "{text}" }
+                        match answer {
+                            Some(answer) => rsx! { p { class: "question-answer", "{answer}" } },
+                            None => rsx! {},
+                        }
+                    }
+                    p { class: "resolved", "{outcome}" }
+                }
             }
         }
         Item::TurnCompleted(outcome) => {
@@ -168,6 +225,95 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
             rsx! { p { class: "turn-end", "data-outcome": attr, "{text}" } }
         }
         Item::Error(message) => rsx! { p { class: "error", "{message}" } },
+    }
+}
+
+/// An open question: each one's options as buttons and a field for any
+/// other answer, sent together once each question has an answer.
+#[component]
+fn QuestionCard(
+    request: RequestId,
+    questions: Vec<Question>,
+    on_answer: EventHandler<(RequestId, Vec<Answer>)>,
+) -> Element {
+    let draft = use_signal(|| Draft::new(&questions));
+    let answers = draft.read().answers();
+    rsx! {
+        section { class: "question", "data-open": true,
+            p { class: "request-title", "A question for you" }
+            for (index, question) in questions.into_iter().enumerate() {
+                QuestionField { key: "{index}", index, question, draft }
+            }
+            button {
+                class: "approve send-answer",
+                disabled: answers.is_none(),
+                onclick: move |_| {
+                    if let Some(answers) = draft.read().answers() {
+                        on_answer((request, answers));
+                    }
+                },
+                "Send answer"
+            }
+        }
+    }
+}
+
+#[component]
+fn QuestionField(index: usize, question: Question, draft: Signal<Draft>) -> Element {
+    let selection = question.selection;
+    let hint = match selection {
+        Selection::One => "Choose one, or write your own",
+        Selection::Many => "Choose any, and add your own",
+    };
+    let chosen = draft.read().chosen(index);
+    let typed = draft.read().typed(index);
+    rsx! {
+        fieldset { class: "question-field",
+            legend { class: "question-text",
+                span { class: "question-header", "{question.header}" }
+                "{question.text}"
+            }
+            p { class: "question-hint", "{hint}" }
+            div { class: "options", role: "group",
+                for option in question.options {
+                    OptionButton {
+                        key: "{option.label}",
+                        chosen: chosen.clone(),
+                        label: option.label.clone(),
+                        description: option.description,
+                        on_pick: move |label| draft.set(draft().pick(index, label, selection)),
+                    }
+                }
+            }
+            input {
+                class: "other",
+                r#type: "text",
+                placeholder: "Other answer",
+                "aria-label": "Other answer",
+                autocomplete: "off",
+                value: "{typed}",
+                oninput: move |event| draft.set(draft().r#type(index, &event.value(), selection)),
+            }
+        }
+    }
+}
+
+#[component]
+fn OptionButton(
+    chosen: Vec<String>,
+    label: String,
+    description: String,
+    on_pick: EventHandler<String>,
+) -> Element {
+    rsx! {
+        button {
+            class: "option",
+            r#type: "button",
+            "aria-pressed": chosen.iter().any(|seen| seen == &label),
+            onclick: move |_| on_pick(label.clone()),
+            span { class: "option-label", "{label}" }
+            span { class: "option-description", "{description}" }
+        }
     }
 }
 

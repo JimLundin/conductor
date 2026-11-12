@@ -28,10 +28,11 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    Auth, AuthToken, Availability, Change, ClaudeCredential, ClientName, CloseReason,
+    Answer, Auth, AuthToken, Availability, Change, ClaudeCredential, ClientName, CloseReason,
     CodexCredential, CommandBody, CommandResult, Credential, Decision, Epoch, Event, EventKind,
-    FileChange, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
-    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    FileChange, HostPath, HostSeq, Provider, Providers, Question, QuestionOption, Rejection,
+    RequestId, Resolution, Selection, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -460,6 +461,7 @@ fn scratch(name: &str, recording: &str) -> PathBuf {
 enum Until {
     Ready,
     Request,
+    Question,
     Resolved,
     Delta,
     TurnEnd,
@@ -475,6 +477,7 @@ fn reached(until: &Until, kind: &EventKind) -> Reached {
     match (until, kind) {
         (Until::Ready, EventKind::SessionReady)
         | (Until::Request, EventKind::RequestOpened { .. })
+        | (Until::Question, EventKind::QuestionAsked { .. })
         | (Until::Resolved, EventKind::RequestResolved { .. })
         | (Until::Delta, EventKind::AssistantDelta { .. })
         | (Until::TurnEnd, EventKind::TurnCompleted { .. })
@@ -609,6 +612,7 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
                 }]),
             },
             reason: None,
+            for_session: Some(String::from("acceptEdits mode")),
         },
     ])
 }
@@ -654,6 +658,7 @@ fn codex_tool(call: &str, command: &str, decision: Decision, outcome: ToolOutcom
         approval: Approval::Asked {
             request: RequestId(1),
             reason: None,
+            for_session: Some(String::from(command)),
             state: RequestState::Resolved(Resolution::Decided {
                 decision,
                 by: test_client(),
@@ -879,6 +884,445 @@ async fn an_interrupt_withdraws_the_open_request() {
     fx.router.shutdown().await.unwrap();
 }
 
+fn answer(request: u64, words: &[&str]) -> CommandBody {
+    CommandBody::Answer {
+        session: SessionId(1),
+        request: RequestId(request),
+        answers: Vec::from([Answer(words.iter().copied().map(String::from).collect())]),
+    }
+}
+
+/// A question with the options `s1` and `s2` asked for, as the model
+/// described them.
+fn asked(header: &str, text: &str, options: &[(&str, &str)]) -> EventKind {
+    EventKind::QuestionAsked {
+        request: RequestId(1),
+        questions: Vec::from([Question {
+            header: String::from(header),
+            text: String::from(text),
+            options: options
+                .iter()
+                .map(|(label, description)| QuestionOption {
+                    label: label.to_string(),
+                    description: description.to_string(),
+                })
+                .collect(),
+            selection: Selection::One,
+        }]),
+    }
+}
+
+fn answered_blue() -> EventKind {
+    EventKind::RequestResolved {
+        request: RequestId(1),
+        resolution: Resolution::Answered {
+            answers: Vec::from([Answer(Vec::from([String::from("Blue")]))]),
+            by: test_client(),
+        },
+    }
+}
+
+fn started(call: &str, tool: &ToolKind) -> EventKind {
+    EventKind::ToolCall {
+        call: ToolCallId(String::from(call)),
+        phase: ToolPhase::Started { tool: tool.clone() },
+    }
+}
+
+fn finished(call: &str, outcome: ToolOutcome) -> EventKind {
+    EventKind::ToolCall {
+        call: ToolCallId(String::from(call)),
+        phase: ToolPhase::Finished { outcome },
+    }
+}
+
+/// What the session asked and did, without the text it streamed.
+fn calls_and_requests(kinds: Vec<EventKind>) -> Vec<EventKind> {
+    kinds
+        .into_iter()
+        .filter(|kind| {
+            !matches!(
+                kind,
+                EventKind::AssistantDelta { .. } | EventKind::AssistantMessage { .. }
+            )
+        })
+        .collect()
+}
+
+/// What the session wrote to the stand-in's stdin.
+fn sent_to_agent(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join("stdin.jsonl")).unwrap()
+}
+
+/// Claude asks with `AskUserQuestion`. The first client's answer goes back
+/// in the tool's input; a second client, a decision and the wrong number of
+/// answers are refused.
+#[tokio::test]
+async fn a_claude_question_is_answered_once_by_the_first_client() {
+    let fx = host().await;
+    let dir = scratch("question", "claude-question.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = send(&link, message("ask me")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Question).await,
+        [
+            opening(Provider::Claude, &dir),
+            Vec::from([
+                user("ask me"),
+                asked(
+                    "Color",
+                    "Which color do you prefer?",
+                    &[
+                        ("Red", "Choose red as your preferred color."),
+                        ("Blue", "Choose blue as your preferred color."),
+                    ],
+                ),
+            ]),
+        ]
+        .concat()
+    );
+    let desk = LinkOptions {
+        network: Network::Local,
+        ..LinkOptions::new(ClientName(String::from("desk")))
+    };
+    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await.unwrap();
+    until_live(&mut at_desk).await;
+    assert_eq!(
+        [
+            send(&link, resolve(1, Decision::Approve)).await,
+            send(
+                &link,
+                CommandBody::Answer {
+                    session: SessionId(1),
+                    request: RequestId(1),
+                    answers: Vec::new(),
+                }
+            )
+            .await,
+            send(&link, answer(1, &["Blue"])).await,
+            send(&desk, answer(1, &["Red"])).await,
+        ],
+        [
+            CommandResult::Rejected(Rejection::WrongReply {
+                reason: String::from("a question takes answers, not a decision"),
+            }),
+            CommandResult::Rejected(Rejection::WrongReply {
+                reason: String::from("0 answers for 1 questions"),
+            }),
+            CommandResult::Accepted,
+            CommandResult::Rejected(Rejection::AlreadyResolved { by: test_client() }),
+        ]
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            answered_blue(),
+            finished(
+                "toolu_bdrk_01CcDpZHC4vQ3AZi8neyebkS",
+                ToolOutcome::Succeeded
+            ),
+            delta("Blue"),
+            reply("Blue"),
+            turn_end(TurnOutcome::Completed),
+        ]
+    );
+    assert_eq!(
+        sent_to_agent(&dir)
+            .matches(r#""answers":{"Which color do you prefer?":"Blue"}"#)
+            .count(),
+        1
+    );
+    link.stop().await.unwrap();
+    desk.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// Codex asks with `requestUserInput`, answered as an RPC result keyed by
+/// the question's id, which the stand-in waits for.
+#[tokio::test]
+async fn a_codex_question_is_answered_by_its_question_id() {
+    let (fx, dir) = codex_host("codex-question.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let _ = send(&link, message("ask me")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Question).await,
+        [
+            opening(Provider::Codex, &dir),
+            Vec::from([
+                user("ask me"),
+                asked(
+                    "Color",
+                    "Which color do you prefer?",
+                    &[("Red", "Choose Red."), ("Blue", "Choose Blue.")],
+                ),
+            ]),
+        ]
+        .concat()
+    );
+    assert_eq!(
+        send(&link, answer(1, &["Blue"])).await,
+        CommandResult::Accepted
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            answered_blue(),
+            delta("Blue"),
+            reply("Blue"),
+            turn_end(TurnOutcome::Completed),
+        ]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// Approving for the session adds the CLI's suggested rule for the session
+/// only, so the same command runs again without a request.
+#[tokio::test]
+async fn a_claude_call_approved_for_the_session_runs_again_without_asking() {
+    let fx = host().await;
+    let dir = scratch("for-session", "claude-for-session.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = send(&link, message("touch t1.txt")).await;
+    let (first, again) = (
+        "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
+        "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
+    );
+    let touch = ToolKind::Command {
+        command: String::from("touch t1.txt"),
+    };
+    assert_eq!(
+        kinds_until(&mut updates, Until::Request).await,
+        [
+            opening(Provider::Claude, &dir),
+            Vec::from([
+                user("touch t1.txt"),
+                started(first, &touch),
+                EventKind::RequestOpened {
+                    request: RequestId(1),
+                    call: ToolCallId(String::from(first)),
+                    tool: touch.clone(),
+                    reason: None,
+                    for_session: Some(String::from("Bash(touch t1.txt)")),
+                },
+            ]),
+        ]
+        .concat()
+    );
+    assert_eq!(
+        send(&link, resolve(1, Decision::ApproveForSession)).await,
+        CommandResult::Accepted
+    );
+    let first_turn = kinds_until(&mut updates, Until::TurnEnd).await;
+    let _ = send(&link, message("again")).await;
+    let second_turn = kinds_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        (
+            calls_and_requests(first_turn),
+            calls_and_requests(second_turn)
+        ),
+        (
+            Vec::from([
+                EventKind::RequestResolved {
+                    request: RequestId(1),
+                    resolution: Resolution::Decided {
+                        decision: Decision::ApproveForSession,
+                        by: test_client(),
+                    },
+                },
+                finished(first, ToolOutcome::Succeeded),
+                turn_end(TurnOutcome::Completed),
+            ]),
+            Vec::from([
+                user("again"),
+                started(again, &touch),
+                finished(again, ToolOutcome::Succeeded),
+                turn_end(TurnOutcome::Completed),
+            ]),
+        )
+    );
+    assert_eq!(
+        sent_to_agent(&dir)
+            .matches(r#""updatedPermissions":[{"behavior":"allow","destination":"session","rules":[{"ruleContent":"touch t1.txt","toolName":"Bash"}],"type":"addRules"}]"#)
+            .count(),
+        1
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// Codex takes `acceptForSession` for a command, which the stand-in waits
+/// for, and runs the same command again without a request.
+#[tokio::test]
+async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
+    let (fx, dir) = codex_host("codex-for-session.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let _ = send(&link, message("touch t1.txt")).await;
+    let command = "/usr/bin/zsh -c 'touch t1.txt'";
+    let (first, again) = (
+        "exec-6a70037b-22b5-482b-955f-e442841e7e21",
+        "exec-0e77cebc-6940-4892-b90c-558be7ccb2b4",
+    );
+    let touch = ToolKind::Command {
+        command: String::from(command),
+    };
+    let asked = calls_and_requests(kinds_until(&mut updates, Until::Request).await);
+    assert_eq!(
+        send(&link, resolve(1, Decision::ApproveForSession)).await,
+        CommandResult::Accepted
+    );
+    let first_turn = kinds_until(&mut updates, Until::TurnEnd).await;
+    let _ = send(&link, message("again")).await;
+    let second_turn = kinds_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        (
+            asked,
+            calls_and_requests(first_turn),
+            calls_and_requests(second_turn)
+        ),
+        (
+            [
+                opening(Provider::Codex, &dir),
+                Vec::from([
+                    user("touch t1.txt"),
+                    started(first, &touch),
+                    EventKind::RequestOpened {
+                        request: RequestId(1),
+                        call: ToolCallId(String::from(first)),
+                        tool: touch.clone(),
+                        reason: None,
+                        for_session: Some(String::from(command)),
+                    },
+                ]),
+            ]
+            .concat(),
+            Vec::from([
+                EventKind::RequestResolved {
+                    request: RequestId(1),
+                    resolution: Resolution::Decided {
+                        decision: Decision::ApproveForSession,
+                        by: test_client(),
+                    },
+                },
+                finished(first, ToolOutcome::Succeeded),
+                turn_end(TurnOutcome::Completed),
+            ]),
+            Vec::from([
+                user("again"),
+                started(again, &touch),
+                finished(again, ToolOutcome::Succeeded),
+                turn_end(TurnOutcome::Completed),
+            ]),
+        )
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// An interrupt withdraws an open question, as it does an approval: Claude
+/// cancels it, Codex withdraws it after the turn ends, and either way the
+/// view shows it withdrawn and a late answer is refused.
+#[tokio::test]
+async fn an_interrupt_withdraws_an_open_question() {
+    let fx = host().await;
+    let dir = scratch("question-withdraw", "claude-question-withdraw.jsonl");
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = send(&link, message("ask me")).await;
+    let mut events = events_until(&mut updates, Until::Question).await;
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    events.extend(events_until(&mut updates, Until::TurnEnd).await);
+    assert_eq!(
+        events
+            .iter()
+            .skip(3)
+            .map(|event| event.kind.clone())
+            .collect::<Vec<EventKind>>(),
+        [
+            asked(
+                "Fruit",
+                "Which fruit do you prefer?",
+                &[
+                    ("Apple", "Choose apple as your preferred fruit."),
+                    ("Pear", "Choose pear as your preferred fruit."),
+                ],
+            ),
+            EventKind::RequestResolved {
+                request: RequestId(1),
+                resolution: Resolution::Withdrawn,
+            },
+            finished("toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa", ToolOutcome::Failed),
+            turn_end(TurnOutcome::Interrupted),
+        ]
+    );
+    assert_eq!(
+        send(&link, answer(1, &["Pear"])).await,
+        CommandResult::Rejected(Rejection::UnknownRequest)
+    );
+    let questions = items(&fold(events), 1)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Question { state, .. } => Some(state),
+            Item::User { .. }
+            | Item::Reply { .. }
+            | Item::Tool { .. }
+            | Item::TurnCompleted(_)
+            | Item::Error(_) => None,
+        })
+        .collect::<Vec<RequestState>>();
+    assert_eq!(questions, [RequestState::Resolved(Resolution::Withdrawn)]);
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end() {
+    let (fx, dir) = codex_host("codex-question-withdraw.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let _ = send(&link, message("ask me")).await;
+    let question = kinds_until(&mut updates, Until::Question).await;
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        (
+            question.last().cloned(),
+            kinds_until(&mut updates, Until::Resolved).await
+        ),
+        (
+            Some(asked(
+                "Fruit",
+                "Which fruit do you prefer?",
+                &[("Apple", "Choose Apple."), ("Pear", "Choose Pear.")],
+            )),
+            Vec::from([
+                turn_end(TurnOutcome::Interrupted),
+                EventKind::RequestResolved {
+                    request: RequestId(1),
+                    resolution: Resolution::Withdrawn,
+                },
+            ]),
+        )
+    );
+    assert_eq!(
+        send(&link, answer(1, &["Pear"])).await,
+        CommandResult::Rejected(Rejection::UnknownRequest)
+    );
+    std::fs::write(dir.join("release"), "").unwrap();
+    assert_eq!(sent_to_agent(&dir).matches("\"answers\"").count(), 0);
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
 /// The stand-in stops reading after `initialize`, so the message can't
 /// reach it. The turn must end, or every client shows it running forever.
 #[tokio::test]
@@ -1100,6 +1544,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
                     call,
                     tool,
                     reason: None,
+                    for_session: Some(String::from("/usr/bin/zsh -lc 'printf %s d > d.txt'")),
                 },
             ]),
         ]

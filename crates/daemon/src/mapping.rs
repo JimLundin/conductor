@@ -8,9 +8,11 @@ use agents::codex::{
     self, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk, ThreadEvent,
 };
 use proto::{
-    Change, ClientName, CloseReason, Decision, EventKind, FileChange, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome,
+    Change, ClientName, CloseReason, Decision, EventKind, FileChange, Question, ToolCallId,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
+
+use crate::session::Reply;
 
 /// An open request's id as the provider gave it. The type doesn't say which
 /// provider: a session's steps come only from its own agent's events
@@ -34,6 +36,14 @@ pub(crate) enum Step {
         call: ToolCallId,
         tool: ToolKind,
         reason: Option<String>,
+        /// What approving for the session allows, if the agent offers it.
+        for_session: Option<String>,
+    },
+    /// The session assigns the `RequestId`, stores the question open and
+    /// logs `QuestionAsked`.
+    Ask {
+        native: NativeRequest,
+        questions: Vec<Question>,
     },
     /// The session logs the call finished, as `Declined` if it failed after
     /// the user denied it.
@@ -68,11 +78,17 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             tool_name,
             detail,
             tool_use_id,
+            for_session,
         } => Vec::from([Step::Open {
             native: NativeRequest(id.0),
             call: ToolCallId(tool_use_id),
             tool: tool_kind(tool_name, detail),
             reason: None,
+            for_session,
+        }]),
+        ClaudeEvent::QuestionAsked { id, questions, .. } => Vec::from([Step::Ask {
+            native: NativeRequest(id.0),
+            questions,
         }]),
         ClaudeEvent::PermissionCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
         ClaudeEvent::TurnFinished {
@@ -99,19 +115,23 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
     }
 }
 
+/// A question's `AskUserQuestion` call is not shown as a tool call: its
+/// `QuestionAsked` shows it. Its result then finishes a call no client saw
+/// start, which a client ignores.
 fn claude_block(role: Role, block: Block) -> Option<Step> {
     match (role, block) {
         (Role::Assistant, Block::Text(text)) => {
             Some(Step::Emit(EventKind::AssistantMessage { text }))
         }
-        (Role::Assistant, Block::ToolUse { id, name, detail }) => {
-            Some(Step::Emit(EventKind::ToolCall {
+        (Role::Assistant, Block::ToolUse { id, name, detail }) => match name.as_str() {
+            ASK_USER_QUESTION => None,
+            name => Some(Step::Emit(EventKind::ToolCall {
                 call: ToolCallId(id),
                 phase: ToolPhase::Started {
-                    tool: tool_kind(name, detail),
+                    tool: tool_kind(String::from(name), detail),
                 },
-            }))
-        }
+            })),
+        },
         (
             Role::User,
             Block::ToolResult {
@@ -132,6 +152,8 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
     }
 }
 
+const ASK_USER_QUESTION: &str = "AskUserQuestion";
+
 fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
     match (name.as_str(), detail) {
         ("Write", ToolDetail::Path(path)) => one_file(path, Change::Write),
@@ -149,13 +171,15 @@ fn one_file(path: String, change: Change) -> ToolKind {
     }
 }
 
-pub(crate) fn claude_answer(decision: Decision, by: &ClientName) -> PermissionDecision {
-    match decision {
-        Decision::Approve => PermissionDecision::Allow,
-        Decision::Deny => PermissionDecision::Deny {
+pub(crate) fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
+    match reply {
+        Reply::Decide(Decision::Approve) => PermissionDecision::Allow,
+        Reply::Decide(Decision::ApproveForSession) => PermissionDecision::AllowForSession,
+        Reply::Decide(Decision::Deny) => PermissionDecision::Deny {
             message: format!("Denied by {}", by.0),
             then: AfterDeny::Continue,
         },
+        Reply::Answer(answers) => PermissionDecision::Answer(answers),
     }
 }
 
@@ -195,19 +219,9 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             call: ToolCallId(id),
             outcome: codex_outcome(&status),
         }]),
-        ThreadEvent::ApprovalRequested { id, item, kind, .. } => match approval_tool(kind) {
-            Some((tool, reason)) => Vec::from([Step::Open {
-                native: NativeRequest(id.0),
-                call: ToolCallId(item),
-                tool,
-                reason,
-            }]),
-            None => Vec::from([Step::Emit(EventKind::Error {
-                message: String::from(
-                    "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
-                ),
-            })]),
-        },
+        ThreadEvent::ApprovalRequested { id, item, kind, .. } => {
+            Vec::from([approval_step(NativeRequest(id.0), ToolCallId(item), kind)])
+        }
         ThreadEvent::ApprovalCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
         ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(match outcome {
             codex::TurnOutcome::Completed => TurnOutcome::Completed,
@@ -258,45 +272,65 @@ fn codex_outcome(status: &str) -> ToolOutcome {
     }
 }
 
-/// The tool an approval asks about, and Codex's reason for asking. A
-/// question asks about none.
-fn approval_tool(kind: ApprovalKind) -> Option<(ToolKind, Option<String>)> {
+/// A server request: a question, or an approval with the tool it asks
+/// about, Codex's reason, and what `acceptForSession` allows. Codex takes
+/// `acceptForSession` for every kind of approval, though
+/// `availableDecisions` omits it (PROTOCOL.md).
+fn approval_step(native: NativeRequest, call: ToolCallId, kind: ApprovalKind) -> Step {
     match kind {
         ApprovalKind::Command {
             command, reason, ..
-        } => Some((
-            ToolKind::Command {
-                command: command.unwrap_or_default(),
-            },
-            reason,
-        )),
-        // The request names no paths; the tool card the item started has them.
-        ApprovalKind::FileChange { reason, .. } => {
-            Some((ToolKind::FileChange { files: Vec::new() }, reason))
+        } => {
+            let command = command.unwrap_or_default();
+            Step::Open {
+                native,
+                call,
+                tool: ToolKind::Command {
+                    command: command.clone(),
+                },
+                reason,
+                for_session: Some(command),
+            }
         }
-        ApprovalKind::Permissions { reason, asks } => Some((
-            ToolKind::Other {
-                name: String::from("permissions"),
-                detail: asks
-                    .into_iter()
-                    .map(|ask| match ask {
-                        PermissionAsk::Network => String::from("network access"),
-                        PermissionAsk::Read(places) => format!("read {}", places.join(", ")),
-                        PermissionAsk::Write(places) => format!("write to {}", places.join(", ")),
-                    })
-                    .collect::<Vec<String>>()
-                    .join("; "),
-            },
+        // The request names no paths; the tool card the item started has them.
+        ApprovalKind::FileChange { reason, .. } => Step::Open {
+            native,
+            call,
+            tool: ToolKind::FileChange { files: Vec::new() },
             reason,
-        )),
-        ApprovalKind::UserInput { .. } => None,
+            for_session: Some(String::from("changes to these files")),
+        },
+        ApprovalKind::Permissions { reason, asks } => {
+            let detail = asks
+                .into_iter()
+                .map(|ask| match ask {
+                    PermissionAsk::Network => String::from("network access"),
+                    PermissionAsk::Read(places) => format!("read {}", places.join(", ")),
+                    PermissionAsk::Write(places) => format!("write to {}", places.join(", ")),
+                })
+                .collect::<Vec<String>>()
+                .join("; ");
+            Step::Open {
+                native,
+                call,
+                tool: ToolKind::Other {
+                    name: String::from("permissions"),
+                    detail: detail.clone(),
+                },
+                reason,
+                for_session: Some(detail),
+            }
+        }
+        ApprovalKind::UserInput { questions } => Step::Ask { native, questions },
     }
 }
 
-pub(crate) fn codex_answer(decision: Decision) -> codex::Decision {
-    match decision {
-        Decision::Approve => codex::Decision::Accept,
-        Decision::Deny => codex::Decision::Decline,
+pub(crate) fn codex_answer(reply: Reply) -> codex::Decision {
+    match reply {
+        Reply::Decide(Decision::Approve) => codex::Decision::Accept,
+        Reply::Decide(Decision::ApproveForSession) => codex::Decision::AcceptForSession,
+        Reply::Decide(Decision::Deny) => codex::Decision::Decline,
+        Reply::Answer(answers) => codex::Decision::Answer(answers),
     }
 }
 
@@ -304,15 +338,20 @@ pub(crate) fn codex_answer(decision: Decision) -> codex::Decision {
 mod tests {
     use agents::Exit;
     use agents::claude::{
-        Block, ClaudeEvent, Outcome, PermissionRequestId, Role, SessionId, ToolDetail,
+        AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionRequestId, Role,
+        SessionId, ToolDetail,
     };
     use agents::codex::{
         self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
         PermissionAsk, ThreadEvent, ThreadId, TurnId,
     };
-    use proto::{Change, CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
+    use proto::{
+        Answer, Change, ClientName, CloseReason, Decision, EventKind, Question, QuestionOption,
+        Selection, ToolCallId, ToolKind, ToolPhase, TurnOutcome,
+    };
 
-    use super::{NativeRequest, Step, claude_steps, codex_steps};
+    use super::{NativeRequest, Step, claude_answer, claude_steps, codex_answer, codex_steps};
+    use crate::session::Reply;
 
     /// The steps one provider event maps to, and the steps it should.
     struct Case {
@@ -353,6 +392,58 @@ mod tests {
 
     fn turn() -> TurnId {
         TurnId(String::from("tu_1"))
+    }
+
+    fn color() -> Question {
+        Question {
+            header: String::from("Color"),
+            text: String::from("Which color?"),
+            options: Vec::from([QuestionOption {
+                label: String::from("Blue"),
+                description: String::from("Cool"),
+            }]),
+            selection: Selection::One,
+        }
+    }
+
+    #[test]
+    fn each_reply_maps_to_each_providers_answer() {
+        let by = ClientName(String::from("phone"));
+        let answers = Vec::from([Answer(Vec::from([String::from("Blue")]))]);
+        let replies = Vec::from([
+            Reply::Decide(Decision::Approve),
+            Reply::Decide(Decision::ApproveForSession),
+            Reply::Decide(Decision::Deny),
+            Reply::Answer(answers.clone()),
+        ]);
+        assert_eq!(
+            replies
+                .iter()
+                .cloned()
+                .map(|reply| claude_answer(reply, &by))
+                .collect::<Vec<PermissionDecision>>(),
+            Vec::from([
+                PermissionDecision::Allow,
+                PermissionDecision::AllowForSession,
+                PermissionDecision::Deny {
+                    message: String::from("Denied by phone"),
+                    then: AfterDeny::Continue,
+                },
+                PermissionDecision::Answer(answers.clone()),
+            ])
+        );
+        assert_eq!(
+            replies
+                .into_iter()
+                .map(codex_answer)
+                .collect::<Vec<codex::Decision>>(),
+            Vec::from([
+                codex::Decision::Accept,
+                codex::Decision::AcceptForSession,
+                codex::Decision::Decline,
+                codex::Decision::Answer(answers),
+            ])
+        );
     }
 
     #[test]
@@ -489,6 +580,7 @@ mod tests {
                         command: String::from("touch ~/b.txt"),
                     },
                     reason: Some(String::from("needs to write outside the workspace")),
+                    for_session: Some(String::from("touch ~/b.txt")),
                 }]),
             },
             Case {
@@ -516,6 +608,9 @@ mod tests {
                         detail: String::from("network access; write to /home/u/.cargo, /tmp"),
                     },
                     reason: Some(String::from("to fetch the crate")),
+                    for_session: Some(String::from(
+                        "network access; write to /home/u/.cargo, /tmp",
+                    )),
                 }]),
             },
             Case {
@@ -524,15 +619,53 @@ mod tests {
                     turn: turn(),
                     item: String::from("exec-1"),
                     kind: ApprovalKind::UserInput {
-                        questions: serde_json::Value::Null,
+                        questions: Vec::from([color()]),
                     },
                     options: Vec::new(),
                 }),
-                want: Vec::from([Step::Emit(EventKind::Error {
-                    message: String::from(
-                        "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
-                    ),
-                })]),
+                want: Vec::from([Step::Ask {
+                    native: NativeRequest(String::from("0")),
+                    questions: Vec::from([color()]),
+                }]),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::Message {
+                    role: Role::Assistant,
+                    content: Vec::from([tool_use(
+                        "AskUserQuestion",
+                        ToolDetail::Text(String::from("{}")),
+                    )]),
+                }),
+                want: Vec::new(),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::QuestionAsked {
+                    id: PermissionRequestId(String::from("p2")),
+                    questions: Vec::from([color()]),
+                    tool_use_id: String::from("toolu_2"),
+                }),
+                want: Vec::from([Step::Ask {
+                    native: NativeRequest(String::from("p2")),
+                    questions: Vec::from([color()]),
+                }]),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::PermissionRequested {
+                    id: PermissionRequestId(String::from("p3")),
+                    tool_name: String::from("Bash"),
+                    detail: ToolDetail::Command(String::from("touch t1.txt")),
+                    tool_use_id: String::from("toolu_3"),
+                    for_session: Some(String::from("Bash(touch t1.txt)")),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest(String::from("p3")),
+                    call: ToolCallId(String::from("toolu_3")),
+                    tool: ToolKind::Command {
+                        command: String::from("touch t1.txt"),
+                    },
+                    reason: None,
+                    for_session: Some(String::from("Bash(touch t1.txt)")),
+                }]),
             },
             Case {
                 got: on_thread(ThreadEvent::TurnCompleted {

@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 use crate::Stopped;
 use crate::log::Log;
 use crate::registry::Registry;
-use crate::session::Order;
+use crate::session::{Order, Reply};
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
@@ -172,9 +172,21 @@ impl Conductor {
                 request,
                 decision,
             } => {
-                let order = Order::Resolve {
+                let order = Order::Reply {
                     request,
-                    decision,
+                    reply: Reply::Decide(decision),
+                    by: client,
+                };
+                self.order(session, order).await
+            }
+            CommandBody::Answer {
+                session,
+                request,
+                answers,
+            } => {
+                let order = Order::Reply {
+                    request,
+                    reply: Reply::Answer(answers),
                     by: client,
                 };
                 self.order(session, order).await

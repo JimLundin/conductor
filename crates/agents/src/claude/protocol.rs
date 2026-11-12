@@ -2,6 +2,7 @@
 //! and mapped into our own types here, and every line we write is built here.
 //! Frames and fields we do not model are ignored or passed on as `Unknown`.
 
+use proto::{Answer, Question, QuestionOption, Selection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -52,6 +53,11 @@ pub enum AfterDeny {
 pub enum PermissionDecision {
     /// Run the tool with the input the CLI proposed.
     Allow,
+    /// Allow, and add the request's session grant (`for_session`) to the
+    /// session's permissions. A request with no grant is allowed once.
+    AllowForSession,
+    /// Answer an `AskUserQuestion` request, one answer per question.
+    Answer(Vec<Answer>),
     Deny {
         message: String,
         then: AfterDeny,
@@ -135,6 +141,17 @@ pub enum ClaudeEvent {
         detail: ToolDetail,
         /// The `ToolUse` block this asks about.
         tool_use_id: String,
+        /// What `AllowForSession` adds, in the CLI's rule syntax
+        /// (`Bash(git status)`), when the CLI suggests a rule or a mode.
+        for_session: Option<String>,
+    },
+    /// A `can_use_tool` request for `AskUserQuestion`. Answer it with
+    /// [`PermissionDecision::Answer`]; the CLI's `PermissionCancelled`
+    /// withdraws it like any request.
+    QuestionAsked {
+        id: PermissionRequestId,
+        questions: Vec<Question>,
+        tool_use_id: String,
     },
     /// The CLI withdrew a permission request; answering it is now an error.
     PermissionCancelled {
@@ -158,13 +175,12 @@ pub enum ClaudeEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Inbound {
     Event(ClaudeEvent),
-    /// A `can_use_tool` request. The actor keeps `input`, which `allow`
-    /// echoes, and emits `PermissionRequested`.
+    /// A `can_use_tool` request. The actor keeps `open` for the answer and
+    /// emits `event`, a `PermissionRequested` or a `QuestionAsked`.
     Permission {
         id: PermissionRequestId,
-        tool_name: String,
-        input: Value,
-        tool_use_id: String,
+        open: Open,
+        event: ClaudeEvent,
     },
     /// Answer to a control request we sent.
     ControlResponse {
@@ -247,7 +263,146 @@ enum ControlRequest {
         tool_name: String,
         input: Value,
         tool_use_id: Option<String>,
+        permission_suggestions: Option<Value>,
     },
+}
+
+/// What an answer to an open `can_use_tool` request needs.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Open {
+    /// The CLI's proposed input, which `allow` echoes as `updatedInput`.
+    input: Value,
+    grant: Option<Grant>,
+}
+
+/// The CLI's suggestion to allow calls like this one, made session-wide.
+#[derive(Debug, Clone, PartialEq)]
+struct Grant {
+    label: String,
+    update: Update,
+}
+
+/// An entry of `permission_suggestions`. Rules are suggested for
+/// `localSettings`, which would outlive the session, so a grant keeps only
+/// their rules, verbatim, and sends them for `session`.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum Suggestion {
+    AddRules { rules: Value, behavior: Behavior },
+    SetMode { mode: String },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum Behavior {
+    Allow,
+    Deny,
+    Ask,
+}
+
+/// A permission rule, read only to name it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Rule {
+    tool_name: String,
+    rule_content: Option<String>,
+}
+
+/// One entry of `updatedPermissions`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum Update {
+    AddRules {
+        rules: Value,
+        behavior: String,
+        destination: String,
+    },
+    SetMode {
+        mode: String,
+        destination: String,
+    },
+}
+
+/// `AskUserQuestion`'s input, as far as we read it.
+#[derive(Deserialize)]
+struct AskInput {
+    questions: Vec<Asked>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Asked {
+    question: String,
+    header: String,
+    options: Vec<QuestionOption>,
+    multi_select: Option<bool>,
+}
+
+const ASK_USER_QUESTION: &str = "AskUserQuestion";
+
+impl Rule {
+    /// The rule as the CLI writes it in settings: `Bash(git status)`.
+    fn label(&self) -> String {
+        match &self.rule_content {
+            Some(content) => format!("{}({content})", self.tool_name),
+            None => self.tool_name.clone(),
+        }
+    }
+}
+
+/// The session grant the CLI's suggestions offer: its allow rules, or else
+/// the mode it suggests. Suggestions of other kinds are skipped.
+fn grant(suggestions: Option<Value>) -> Option<Grant> {
+    let suggestions = suggestions
+        .and_then(|value| serde_json::from_value::<Vec<Value>>(value).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| serde_json::from_value::<Suggestion>(value).ok())
+        .collect::<Vec<Suggestion>>();
+    let rules = suggestions
+        .iter()
+        .filter_map(|suggestion| match suggestion {
+            Suggestion::AddRules {
+                rules,
+                behavior: Behavior::Allow,
+            } => serde_json::from_value::<Vec<Value>>(rules.clone()).ok(),
+            Suggestion::AddRules { .. } | Suggestion::SetMode { .. } => None,
+        })
+        .flatten()
+        .collect::<Vec<Value>>();
+    let mode = suggestions
+        .into_iter()
+        .find_map(|suggestion| match suggestion {
+            Suggestion::SetMode { mode } => Some(mode),
+            Suggestion::AddRules { .. } => None,
+        });
+    match (rules.first(), mode) {
+        (Some(_), _) => Some(Grant {
+            label: rules
+                .iter()
+                .filter_map(|rule| serde_json::from_value::<Rule>(rule.clone()).ok())
+                .map(|rule| rule.label())
+                .collect::<Vec<String>>()
+                .join(", "),
+            update: Update::AddRules {
+                rules: Value::Array(rules),
+                behavior: String::from("allow"),
+                destination: String::from("session"),
+            },
+        }),
+        (None, Some(mode)) => Some(Grant {
+            label: format!("{mode} mode"),
+            update: Update::SetMode {
+                mode,
+                destination: String::from("session"),
+            },
+        }),
+        (None, None) => None,
+    }
+}
+
+fn questions(input: &Value) -> serde_json::Result<Vec<Asked>> {
+    serde_json::from_value::<AskInput>(input.clone()).map(|ask| ask.questions)
 }
 
 #[derive(Deserialize)]
@@ -366,12 +521,53 @@ fn control_request(request_id: String, request: Value) -> Inbound {
             tool_name,
             input,
             tool_use_id: Some(tool_use_id),
-        }) => Inbound::Permission {
-            id: PermissionRequestId(request_id),
-            tool_name,
-            input,
-            tool_use_id,
-        },
+            permission_suggestions,
+        }) => {
+            let id = PermissionRequestId(request_id);
+            let (event, grant) = match (tool_name.as_str(), questions(&input)) {
+                (ASK_USER_QUESTION, Ok(asked)) => (
+                    ClaudeEvent::QuestionAsked {
+                        id: id.clone(),
+                        questions: asked
+                            .into_iter()
+                            .map(|asked| Question {
+                                header: asked.header,
+                                text: asked.question,
+                                options: asked.options,
+                                selection: match asked
+                                    .multi_select
+                                    .unwrap_or(false)
+                                    .then_some(Selection::Many)
+                                {
+                                    Some(many) => many,
+                                    None => Selection::One,
+                                },
+                            })
+                            .collect(),
+                        tool_use_id,
+                    },
+                    None,
+                ),
+                (_, _) => {
+                    let grant = grant(permission_suggestions);
+                    (
+                        ClaudeEvent::PermissionRequested {
+                            id: id.clone(),
+                            detail: tool_detail(&tool_name, &input),
+                            tool_name,
+                            tool_use_id,
+                            for_session: grant.as_ref().map(|grant| grant.label.clone()),
+                        },
+                        grant,
+                    )
+                }
+            };
+            Inbound::Permission {
+                id,
+                open: Open { input, grant },
+                event,
+            }
+        }
         // Conductor shows a request on its tool call, so a request that names
         // none is refused like an unknown subtype.
         Ok(ControlRequest::CanUseTool {
@@ -482,8 +678,7 @@ pub(crate) enum Outbound {
     Permission {
         id: PermissionRequestId,
         decision: PermissionDecision,
-        /// The CLI's proposed input; `allow` echoes it back as `updatedInput`.
-        input: Value,
+        open: Open,
     },
     /// Reply to a control request we do not serve.
     ControlError {
@@ -544,6 +739,13 @@ enum Verdict {
         #[serde(rename = "updatedInput")]
         updated_input: Value,
     },
+    #[serde(rename = "allow")]
+    AllowWithUpdates {
+        #[serde(rename = "updatedInput")]
+        updated_input: Value,
+        #[serde(rename = "updatedPermissions")]
+        updated_permissions: Vec<Update>,
+    },
     Deny {
         message: String,
     },
@@ -576,14 +778,10 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
                 },
             },
         },
-        Outbound::Permission {
-            id,
-            decision,
-            input,
-        } => Line::ControlResponse {
+        Outbound::Permission { id, decision, open } => Line::ControlResponse {
             response: Reply::Success {
                 request_id: id.0,
-                response: serde_json::to_value(verdict(decision, input))?,
+                response: serde_json::to_value(verdict(decision, open)?)?,
             },
         },
         Outbound::ControlError {
@@ -598,10 +796,17 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
     })
 }
 
-fn verdict(decision: PermissionDecision, input: Value) -> Verdict {
-    match decision {
+fn verdict(decision: PermissionDecision, open: Open) -> serde_json::Result<Verdict> {
+    Ok(match decision {
         PermissionDecision::Allow => Verdict::Allow {
-            updated_input: input,
+            updated_input: open.input,
+        },
+        PermissionDecision::AllowForSession => Verdict::AllowWithUpdates {
+            updated_input: open.input,
+            updated_permissions: open.grant.into_iter().map(|grant| grant.update).collect(),
+        },
+        PermissionDecision::Answer(answers) => Verdict::Allow {
+            updated_input: answered(open.input, answers)?,
         },
         PermissionDecision::Deny {
             message,
@@ -614,16 +819,38 @@ fn verdict(decision: PermissionDecision, input: Value) -> Verdict {
             message,
             interrupt: Value::Bool(true),
         },
-    }
+    })
+}
+
+/// `AskUserQuestion`'s input with `answers` added: each question's text to
+/// its answer, the chosen labels joined with ", " as the CLI's own prompt
+/// joins them.
+fn answered(input: Value, answers: Vec<Answer>) -> serde_json::Result<Value> {
+    let answers = questions(&input)?
+        .into_iter()
+        .zip(answers)
+        .map(|(asked, answer)| (asked.question, Value::String(answer.0.join(", "))))
+        .collect::<serde_json::Map<String, Value>>();
+    Ok(match input {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .chain([(String::from("answers"), Value::Object(answers))])
+                .collect(),
+        ),
+        other => other,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
 
+    use proto::{Answer, Question, QuestionOption, Selection};
+
     use super::{
-        AfterDeny, ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
-        PermissionRequestId, ToolDetail, encode, parse_line, tool_detail,
+        AfterDeny, ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision,
+        PermissionMode, PermissionRequestId, ToolDetail, encode, parse_line, tool_detail,
     };
 
     fn json(text: &str) -> Value {
@@ -634,30 +861,158 @@ mod tests {
         json(&encode(msg).unwrap())
     }
 
+    /// A `can_use_tool` request as the CLI prints it, read: what the actor
+    /// emits, and what it keeps for the answer.
+    fn asked(line: &str) -> (ClaudeEvent, Open) {
+        match parse_line(line).unwrap() {
+            Inbound::Permission { open, event, .. } => Some((event, open)),
+            Inbound::Event(_)
+            | Inbound::ControlResponse { .. }
+            | Inbound::UnsupportedControlRequest { .. } => None,
+        }
+        .unwrap()
+    }
+
+    /// The `response` of our answer to the request on `line`.
+    fn answered(line: &str, decision: PermissionDecision) -> (ClaudeEvent, Value) {
+        let (event, open) = asked(line);
+        let sent = sent(Outbound::Permission {
+            id: PermissionRequestId(String::from("r1")),
+            decision,
+            open,
+        });
+        let response = sent
+            .get("response")
+            .and_then(|reply| reply.get("response"))
+            .cloned()
+            .unwrap();
+        (event, response)
+    }
+
+    /// Recorded from Claude Code 2.1.316 (`s1`, 2026-11-12).
+    const BASH: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"touch t1.txt","description":"Create empty file t1.txt"},"description":"Create empty file t1.txt","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch t1.txt"}],"behavior":"allow","destination":"localSettings"},{"type":"addDirectories","directories":["/tmp/s1-scratch"],"destination":"session"},{"type":"setMode","mode":"acceptEdits","destination":"session"}],"blocked_path":"/tmp/s1-scratch/t1.txt","tool_use_id":"toolu_1"}}"#;
+
+    const WRITE: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/a.txt","content":"hi"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_2"}}"#;
+
+    const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","display_name":"AskUserQuestion","input":{"questions":[{"question":"Which fruits do you like?","header":"Fruits","options":[{"label":"Apple","description":"Crisp"},{"label":"Pear","description":"Soft"}],"multiSelect":true},{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false}]},"tool_use_id":"toolu_3","requires_user_interaction":true}}"#;
+
     #[test]
     fn allow_echoes_the_proposed_input_as_updated_input() {
-        let line = sent(Outbound::Permission {
-            id: PermissionRequestId(String::from("r1")),
-            decision: PermissionDecision::Allow,
-            input: json(r#"{"file_path": "/tmp/a.txt", "content": "hi"}"#),
-        });
         assert_eq!(
-            line,
+            answered(WRITE, PermissionDecision::Allow).1,
             json(
-                r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r1",
-                "response": {"behavior": "allow", "updatedInput": {"file_path": "/tmp/a.txt", "content": "hi"}}}}"#
+                r#"{"behavior": "allow", "updatedInput": {"file_path": "/tmp/a.txt", "content": "hi"}}"#
+            )
+        );
+    }
+
+    #[test]
+    fn allow_for_session_adds_the_suggested_rules_for_the_session_only() {
+        let (event, response) = answered(BASH, PermissionDecision::AllowForSession);
+        assert_eq!(
+            event,
+            ClaudeEvent::PermissionRequested {
+                id: PermissionRequestId(String::from("r1")),
+                tool_name: String::from("Bash"),
+                detail: ToolDetail::Command(String::from("touch t1.txt")),
+                tool_use_id: String::from("toolu_1"),
+                for_session: Some(String::from("Bash(touch t1.txt)")),
+            }
+        );
+        assert_eq!(
+            response,
+            json(
+                r#"{"behavior": "allow",
+                "updatedInput": {"command": "touch t1.txt", "description": "Create empty file t1.txt"},
+                "updatedPermissions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "touch t1.txt"}],
+                    "behavior": "allow", "destination": "session"}]}"#
+            )
+        );
+    }
+
+    #[test]
+    fn without_a_rule_the_session_grant_is_the_suggested_mode() {
+        let (event, response) = answered(WRITE, PermissionDecision::AllowForSession);
+        assert_eq!(
+            event,
+            ClaudeEvent::PermissionRequested {
+                id: PermissionRequestId(String::from("r1")),
+                tool_name: String::from("Write"),
+                detail: ToolDetail::Path(String::from("/tmp/a.txt")),
+                tool_use_id: String::from("toolu_2"),
+                for_session: Some(String::from("acceptEdits mode")),
+            }
+        );
+        assert_eq!(
+            response.get("updatedPermissions"),
+            Some(&json(
+                r#"[{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]"#
+            ))
+        );
+    }
+
+    fn option(label: &str, description: &str) -> QuestionOption {
+        QuestionOption {
+            label: String::from(label),
+            description: String::from(description),
+        }
+    }
+
+    #[test]
+    fn ask_user_question_is_a_question_answered_in_its_input() {
+        let (event, response) = answered(
+            ASK,
+            PermissionDecision::Answer(Vec::from([
+                Answer(Vec::from([String::from("Apple"), String::from("Pear")])),
+                Answer(Vec::from([String::from("Green, really")])),
+            ])),
+        );
+        assert_eq!(
+            event,
+            ClaudeEvent::QuestionAsked {
+                id: PermissionRequestId(String::from("r1")),
+                questions: Vec::from([
+                    Question {
+                        header: String::from("Fruits"),
+                        text: String::from("Which fruits do you like?"),
+                        options: Vec::from([option("Apple", "Crisp"), option("Pear", "Soft")]),
+                        selection: Selection::Many,
+                    },
+                    Question {
+                        header: String::from("Color"),
+                        text: String::from("Which color do you prefer?"),
+                        options: Vec::from([option("Red", "Warm"), option("Blue", "Cool")]),
+                        selection: Selection::One,
+                    },
+                ]),
+                tool_use_id: String::from("toolu_3"),
+            }
+        );
+        assert_eq!(
+            (
+                response.get("behavior"),
+                response
+                    .get("updatedInput")
+                    .and_then(|input| input.get("answers"))
+            ),
+            (
+                Some(&json(r#""allow""#)),
+                Some(&json(
+                    r#"{"Which fruits do you like?": "Apple, Pear", "Which color do you prefer?": "Green, really"}"#
+                ))
             )
         );
     }
 
     fn denied(then: AfterDeny) -> Value {
+        let (_, open) = asked(WRITE);
         sent(Outbound::Permission {
             id: PermissionRequestId(String::from("r2")),
             decision: PermissionDecision::Deny {
                 message: String::from("not b.txt"),
                 then,
             },
-            input: json("{}"),
+            open,
         })
     }
 

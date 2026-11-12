@@ -1,4 +1,4 @@
-"""Builds the gated Codex e2e recordings from the live `s2` recording.
+"""Builds the gated Codex e2e recordings from the live `s2` recordings.
 
 Run from anywhere: `python3 -I fixtures/e2e/build-codex.py`. Each recording
 is the `initialize` answer, one `thread/start` answer per session, then whole
@@ -11,7 +11,7 @@ lines are Codex's own; only ids change, and markers go in by rule:
 - Codex's own requests are renumbered from 0, as Codex numbers them per
   process, with the `requestId` of their `serverRequest/resolved`;
 - a `serverRequest/resolved` for a request the session answers waits for that
-  answer, with the decision `s2` gave;
+  answer, with the decision or the answers `s2` gave;
 - an interrupt step waits for our `turn/interrupt`: after the first delta
   (mid-stream), on `turn/started` once the test's `release` file exists
   (held), or before Codex withdraws the open request (withdrawn), which
@@ -24,11 +24,16 @@ import pathlib
 
 HERE = pathlib.Path(__file__).parent
 SOURCE = HERE.parent / "codex" / "server1-u5.jsonl"
+QUESTIONS = HERE.parent / "codex" / "server3-questions.jsonl"
 
 # `s2`'s turns on its first thread, by step: 1 approve, 2 decline, 3
 # interrupt at start, pong, 3c interrupt mid-stream, pong, 3d interrupt at
 # send, pong, 3b interrupt with an approval open.
 APPROVE, DECLINE, AT_START, _, MID_STREAM, PONG, _, _, WITHDRAW = range(9)
+# `s2`'s third process: 7 a question, 8 a command accepted for the session,
+# the same command again with no request, 9 a question withdrawn by an
+# interrupt.
+QUESTION, FOR_SESSION, AGAIN, QUESTION_WITHDRAWN = range(4)
 
 
 def wait(match):
@@ -52,13 +57,15 @@ def segments(lines):
     return lines[: starts[0]], [lines[s:e] for s, e in zip(cuts, cuts[1:])]
 
 
-def answered(turn, decision):
-    """Waits for our answer before Codex resolves the request."""
+def answered(turn, result):
+    """Waits for our answer, a decision or a result to match, before Codex
+    resolves the request."""
+    result = {"decision": result} if isinstance(result, str) else result
     out = []
     for line in turn:
         msg = json.loads(line)
         if msg.get("method") == "serverRequest/resolved":
-            out.append(wait({"id": msg["params"]["requestId"], "result": {"decision": decision}}))
+            out.append(wait({"id": msg["params"]["requestId"], "result": result}))
         out.append(line)
     return out
 
@@ -119,12 +126,20 @@ def thread_of(start):
     return json.loads(start[0])["result"]["thread"]["id"]
 
 
-before, parts = segments(SOURCE.read_text().splitlines())
-# The hub asks for no model list, so only the `initialize` answer stays.
-head = [line for line in before if "userAgent" in line or "result" not in json.loads(line)]
-threads = [p for p in parts if "thread" in json.loads(p[0])["result"]]
-turns = [p for p in parts if "turn" in json.loads(p[0])["result"]]
+def split(source):
+    """The head, the thread starts and the turns of one `s2` process."""
+    before, parts = segments(source.read_text().splitlines())
+    # The hub asks for no model list, so only the `initialize` answer stays.
+    head = [line for line in before if "userAgent" in line or "result" not in json.loads(line)]
+    threads = [p for p in parts if "thread" in json.loads(p[0])["result"]]
+    turns = [p for p in parts if "turn" in json.loads(p[0])["result"]]
+    return head, threads, turns
+
+
+head, threads, turns = split(SOURCE)
 first, second = threads[0], threads[1]
+q_head, q_threads, q_turns = split(QUESTIONS)
+q_first = q_threads[0]
 a, b = thread_of(first), thread_of(second)
 
 approve_asked, approve_rest = until_asked(turns[APPROVE])
@@ -143,6 +158,14 @@ RECORDINGS = {
     "codex-withdraw.jsonl": head + first + withdrawn(turns[WITHDRAW]) + turns[PONG],
     # The stand-in stops reading once both threads have started, then exits.
     "codex-exit.jsonl": [json.dumps({"fake": "hang_up", "after": 4})] + head + first + second,
+    "codex-question.jsonl": q_head
+    + q_first
+    + answered(q_turns[QUESTION], {"answers": {"color": {"answers": ["Blue"]}}}),
+    "codex-for-session.jsonl": q_head
+    + q_first
+    + answered(q_turns[FOR_SESSION], "acceptForSession")
+    + q_turns[AGAIN],
+    "codex-question-withdraw.jsonl": q_head + q_first + withdrawn(q_turns[QUESTION_WITHDRAWN]),
 }
 
 for name, lines in RECORDINGS.items():

@@ -14,8 +14,9 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandBody, CommandResult,
-    Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId, Ticket,
+    Answer, Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandBody,
+    CommandResult, Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId,
+    Ticket,
 };
 use tokio::sync::mpsc;
 
@@ -389,6 +390,29 @@ impl Session {
                     })
                     .await?;
                 self.log(format!("resolve {request:?} {decision:?} -> {result:?}"))?;
+                Ok(Flow::Next)
+            }
+            // Each question gets its first option, or "yes" if it has none.
+            EventKind::QuestionAsked { request, questions } => {
+                let answers = questions
+                    .into_iter()
+                    .map(|question| {
+                        Answer(Vec::from([question
+                            .options
+                            .into_iter()
+                            .next()
+                            .map_or_else(|| String::from("yes"), |option| option.label)]))
+                    })
+                    .collect::<Vec<Answer>>();
+                let result = self
+                    .link
+                    .send(CommandBody::Answer {
+                        session: event.session,
+                        request,
+                        answers: answers.clone(),
+                    })
+                    .await?;
+                self.log(format!("answer {request:?} {answers:?} -> {result:?}"))?;
                 Ok(Flow::Next)
             }
             EventKind::TurnCompleted { .. } => {

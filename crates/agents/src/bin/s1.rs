@@ -1,5 +1,6 @@
 //! S1 live checklist: drives the real `claude` CLI through approve, deny,
-//! interrupt, resume and set_permission_mode, printing PASS/FAIL per step.
+//! interrupt, resume, set_permission_mode, questions and approval for the
+//! session, printing PASS/FAIL per step.
 //!
 //! Usage: s1 [FIXTURE_DIR]
 //! Writes raw CLI stdout per step to FIXTURE_DIR/<step>.jsonl when given.
@@ -17,6 +18,7 @@ use agents::claude::{
 use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
+use proto::{Answer, Question};
 use tokio::sync::mpsc;
 
 /// Where the pinned CLIs are installed for the live checks, under this
@@ -45,6 +47,7 @@ struct Live {
 /// How a turn answers permission requests.
 enum Policy {
     Approve,
+    ApproveForSession,
     Deny(String),
 }
 
@@ -52,6 +55,7 @@ impl Policy {
     fn decision(&self) -> PermissionDecision {
         match self {
             Policy::Approve => PermissionDecision::Allow,
+            Policy::ApproveForSession => PermissionDecision::AllowForSession,
             Policy::Deny(message) => PermissionDecision::Deny {
                 message: message.clone(),
                 then: AfterDeny::Continue,
@@ -65,7 +69,8 @@ enum Plan {
     Answer(Policy),
     /// Interrupt at the cue; deny any permission request.
     Interrupt(Cue),
-    /// Leave the first permission request open and interrupt; deny any later one.
+    /// Leave the first permission request or question open and interrupt;
+    /// deny any later one.
     InterruptOnPermission,
 }
 
@@ -93,6 +98,9 @@ struct Turn {
     live: Live,
     plan: Plan,
     permissions: Vec<String>,
+    /// What each permission request offered to allow for the session.
+    for_session: Vec<Option<String>>,
+    questions: Vec<Vec<Question>>,
     cancelled_permissions: usize,
     text: String,
     /// The text of every `StreamDelta`, joined.
@@ -112,6 +120,8 @@ impl Turn {
             live,
             plan,
             permissions: Vec::new(),
+            for_session: Vec::new(),
+            questions: Vec::new(),
             cancelled_permissions: 0,
             text: String::new(),
             streamed: String::new(),
@@ -161,9 +171,34 @@ impl Turn {
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Message { .. } | ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
-            ClaudeEvent::PermissionRequested { id, tool_name, .. } => {
+            ClaudeEvent::PermissionRequested {
+                id,
+                tool_name,
+                for_session,
+                ..
+            } => {
                 self.permissions.push(tool_name);
-                self.on_permission(id).await?;
+                self.for_session.push(for_session);
+                self.on_permission(id, None).await?;
+                Ok(Progress::Playing)
+            }
+            // A question is answered with each one's last option.
+            ClaudeEvent::QuestionAsked { id, questions, .. } => {
+                let answers = questions
+                    .iter()
+                    .map(|question| {
+                        Answer(
+                            question
+                                .options
+                                .last()
+                                .map(|option| option.label.clone())
+                                .into_iter()
+                                .collect(),
+                        )
+                    })
+                    .collect::<Vec<Answer>>();
+                self.questions.push(questions);
+                self.on_permission(id, Some(answers)).await?;
                 Ok(Progress::Playing)
             }
             ClaudeEvent::PermissionCancelled { .. } => {
@@ -217,7 +252,13 @@ impl Turn {
         self.text.push_str(&text);
     }
 
-    async fn on_permission(&mut self, id: PermissionRequestId) -> Result<()> {
+    /// Answers a permission request by the plan, or a question with
+    /// `answers`.
+    async fn on_permission(
+        &mut self,
+        id: PermissionRequestId,
+        answers: Option<Vec<Answer>>,
+    ) -> Result<()> {
         match (&self.plan, &self.open) {
             (Plan::InterruptOnPermission, None) => {
                 self.open = Some(id);
@@ -231,7 +272,13 @@ impl Turn {
                 };
                 self.answer(id, decision).await
             }
-            (Plan::Answer(policy), _) => self.answer(id, policy.decision()).await,
+            (Plan::Answer(policy), _) => {
+                let decision = match answers {
+                    Some(answers) => PermissionDecision::Answer(answers),
+                    None => policy.decision(),
+                };
+                self.answer(id, decision).await
+            }
         }
     }
 
@@ -339,6 +386,139 @@ async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result
         ),
     )?;
     Ok((after.live, verdict))
+}
+
+/// Steps 7 to 9, in a third session: a question answered, a command
+/// approved for the session and then run again without asking, and a
+/// question withdrawn by an interrupt.
+async fn questions(
+    claude: &Path,
+    scratch: &Path,
+    fixtures: Option<&Path>,
+) -> Result<(Verdict, Verdict, Verdict)> {
+    let live = spawn(claude, None, log_path(fixtures, "session3-questions")).await?;
+    let t = Turn::start(
+        live,
+        "Use the AskUserQuestion tool to ask me one question: which color do I prefer, with the options Red and Blue. Then reply with only the color I chose.",
+        Plan::Answer(Policy::Deny(String::from("no tools besides the question"))),
+    )
+    .await?;
+    let asked = t
+        .questions
+        .iter()
+        .map(|questions| {
+            questions
+                .iter()
+                .map(|question| question.options.len())
+                .collect::<Vec<usize>>()
+        })
+        .collect::<Vec<Vec<usize>>>();
+    let question = report(
+        "7 question",
+        match (&asked, t.result(), t.text.find("Blue")) {
+            (asked, Some(("success", Outcome::Succeeded)), Some(_))
+                if asked == &Vec::from([Vec::from([2])]) =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "questions={:?} permissions={:?} finished={:?} reply={:?}",
+            t.questions, t.permissions, t.finished, t.text
+        ),
+    )?;
+
+    let t = Turn::start(
+        t.live,
+        "Run exactly this bash command and nothing else: touch t1.txt",
+        Plan::Answer(Policy::ApproveForSession),
+    )
+    .await?;
+    let first = (t.permissions.clone(), t.for_session.clone());
+    let again = Turn::start(
+        t.live,
+        "Run exactly this bash command again, and nothing else: touch t1.txt",
+        Plan::Answer(Policy::Deny(String::from(
+            "the session's rule should have allowed it",
+        ))),
+    )
+    .await?;
+    let for_session = report(
+        "8 approve for session",
+        match (
+            &first,
+            presence(&scratch.join("t1.txt")),
+            again.permissions.first(),
+            again.result(),
+        ) {
+            (first, Presence::Present, None, Some(("success", Outcome::Succeeded)))
+                if first
+                    == &(
+                        Vec::from([String::from("Bash")]),
+                        Vec::from([Some(String::from("Bash(touch t1.txt)"))]),
+                    ) =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "first permissions={first:?} t1.txt {:?}; again permissions={:?} finished={:?}",
+            presence(&scratch.join("t1.txt")),
+            again.permissions,
+            again.finished
+        ),
+    )?;
+
+    let t = Turn::start(
+        again.live,
+        "Use the AskUserQuestion tool to ask me one question: which fruit do I prefer, with the options Apple and Pear. Then reply with only the fruit I chose.",
+        Plan::InterruptOnPermission,
+    )
+    .await?;
+    let late = match &t.open {
+        Some(id) => Some(
+            t.live
+                .session
+                .respond(
+                    id.clone(),
+                    PermissionDecision::Answer(Vec::from([Answer(Vec::from([String::from(
+                        "Pear",
+                    )]))])),
+                )
+                .await,
+        ),
+        None => None,
+    };
+    let withdrawn = report(
+        "9 question withdrawn by interrupt",
+        match (
+            t.questions.len(),
+            &t.interrupted,
+            t.cancelled_permissions,
+            &late,
+            t.finished
+                .as_ref()
+                .map(|finished| (finished.outcome, finished.terminal_reason())),
+        ) {
+            (
+                1,
+                Some(Ok(())),
+                1,
+                Some(Err(_)),
+                Some((Outcome::Failed, Some("aborted_tools" | "aborted_streaming"))),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "questions={:?} interrupt()={:?} cancelled={} finished={:?} respond-after={late:?}",
+            t.questions, t.interrupted, t.cancelled_permissions, t.finished
+        ),
+    )?;
+    let status = t.live.session.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((question, for_session, withdrawn))
 }
 
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
@@ -537,6 +717,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
 
     let status = t.live.session.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    let (question, for_session, withdrawn) = questions(&claude, scratch, fixtures).await?;
     let failed = Vec::from([
         approve,
         deny,
@@ -547,6 +728,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         resume,
         accept_edits,
         unknown_id,
+        question,
+        for_session,
+        withdrawn,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

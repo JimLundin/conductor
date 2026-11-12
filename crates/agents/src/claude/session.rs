@@ -18,9 +18,8 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::protocol::{
-    ClaudeEvent, ControlCall, Inbound, Outbound, PermissionDecision, PermissionMode,
+    ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision, PermissionMode,
     PermissionRequestId, SessionId, UnsupportedVersion, check_version, encode, parse_line,
-    tool_detail,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -454,8 +453,8 @@ struct Actor {
     stdout_log: Option<std::fs::File>,
     /// Our control requests awaiting a `control_response`, by request_id.
     pending: HashMap<String, Pending>,
-    /// `can_use_tool` requests not yet answered, with the input `allow` echoes.
-    open_permissions: HashMap<PermissionRequestId, Value>,
+    /// `can_use_tool` requests not yet answered, with what an answer needs.
+    open_permissions: HashMap<PermissionRequestId, Open>,
     next_request: u64,
 }
 
@@ -524,21 +523,9 @@ impl Actor {
                 }
                 self.emit(event).await;
             }
-            Inbound::Permission {
-                id,
-                tool_name,
-                input,
-                tool_use_id,
-            } => {
-                let detail = tool_detail(&tool_name, &input);
-                self.open_permissions.insert(id.clone(), input);
-                self.emit(ClaudeEvent::PermissionRequested {
-                    id,
-                    tool_name,
-                    detail,
-                    tool_use_id,
-                })
-                .await;
+            Inbound::Permission { id, open, event } => {
+                self.open_permissions.insert(id, open);
+                self.emit(event).await;
             }
             Inbound::ControlResponse {
                 request_id,
@@ -601,13 +588,9 @@ impl Actor {
             } => {
                 let result = match self.open_permissions.remove(&id) {
                     None => Err(Error::UnknownPermissionRequest(id)),
-                    Some(input) => {
-                        self.write(Outbound::Permission {
-                            id,
-                            decision,
-                            input,
-                        })
-                        .await
+                    Some(open) => {
+                        self.write(Outbound::Permission { id, decision, open })
+                            .await
                     }
                 };
                 let _ = reply.send(result);

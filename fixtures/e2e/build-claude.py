@@ -1,4 +1,4 @@
-"""Builds the gated Claude e2e recordings from the live `s1` recording.
+"""Builds the gated Claude e2e recordings from the live `s1` recordings.
 
 Run from anywhere: `python3 -I fixtures/e2e/build-claude.py`. Markers go in
 by rule, so every gate matches what a session writes:
@@ -21,17 +21,23 @@ import pathlib
 import re
 
 HERE = pathlib.Path(__file__).parent
-SOURCE = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
+SESSION1 = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
+SESSION3 = HERE.parent / "claude" / "session3-questions.jsonl"
 
 # The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt at
 # start, pong, 3c interrupt mid-stream, pong, 3d interrupt at send, pong,
-# 3b interrupt with a permission open.
+# 3b interrupt with a permission open. Session 3: 7 a question, 8 a command
+# approved for the session, the same command again with no request, 9 a
+# question withdrawn by an interrupt.
 RECORDINGS = {
-    "claude-approve.jsonl": [0],
-    "claude-deny-interrupt.jsonl": [1, 4, 5],
-    "claude-held-interrupt.jsonl": [2],
-    "claude-hang-up.jsonl": [],
-    "claude-withdraw.jsonl": [8],
+    "claude-approve.jsonl": (SESSION1, [0]),
+    "claude-deny-interrupt.jsonl": (SESSION1, [1, 4, 5]),
+    "claude-held-interrupt.jsonl": (SESSION1, [2]),
+    "claude-hang-up.jsonl": (SESSION1, []),
+    "claude-withdraw.jsonl": (SESSION1, [8]),
+    "claude-question.jsonl": (SESSION3, [0]),
+    "claude-for-session.jsonl": (SESSION3, [1, 2]),
+    "claude-question-withdraw.jsonl": (SESSION3, [3]),
 }
 
 # The turn starts only once the test has sent its interrupt, so the session
@@ -42,7 +48,7 @@ RELEASED = {"claude-held-interrupt.jsonl"}
 HUNG_UP = {"claude-hang-up.jsonl"}
 
 # The test never answers the request. Its interrupt makes the CLI withdraw it.
-WITHDRAWN = {"claude-withdraw.jsonl"}
+WITHDRAWN = {"claude-withdraw.jsonl", "claude-question-withdraw.jsonl"}
 
 
 def wait(match):
@@ -77,8 +83,8 @@ def renumbered(lines):
     return [ack.sub(lambda m: f'{m.group(1)}req_{next(acks)}"', line) for line in lines]
 
 
-initialize, played = turns(SOURCE.read_text().splitlines())
-for name, picked in RECORDINGS.items():
+for name, (source, picked) in RECORDINGS.items():
+    initialize, played = turns(source.read_text().splitlines())
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
     hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
     turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN)]
