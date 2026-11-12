@@ -1,5 +1,6 @@
-//! What differs per target: how the iroh endpoint is built, and in the
-//! browser, the WebRTC upgrade. Native builds get stand-ins for the WebRTC
+//! What differs per target: the client's name, and in the browser, the
+//! WebRTC upgrade. The app runs only in the browser; native builds are the
+//! test harness, and get stand-ins for the WebRTC
 //! types that no value can inhabit, so the code above this module reads the
 //! same on both targets.
 
@@ -31,7 +32,7 @@ pub(crate) use rtc::{ChannelRecv, ChannelSend, Session, negotiate};
 /// hedge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
-    /// n0's relays and DNS lookup, plus mDNS on native.
+    /// n0's relays and DNS lookup.
     Public,
     /// Direct addresses only, with no relays and no lookup, as on loopback.
     Local,

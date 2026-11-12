@@ -1,6 +1,7 @@
 {
   "name": "Conductor",
   "short_name": "Conductor",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

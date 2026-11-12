@@ -2,7 +2,7 @@ use iroh::endpoint::{BindError, presets};
 use iroh::{Endpoint, RelayMode};
 use proto::ClientName;
 
-use crate::device::{Platform, Touch, device_name};
+use crate::device::{Touch, device_name};
 
 /// Browsers can't send UDP, so this endpoint only ever talks through n0's
 /// relays.
@@ -22,14 +22,8 @@ pub fn client_name() -> ClientName {
                 0 | 1 => Touch::None,
                 _ => Touch::Screen,
             };
-            device_name(Platform::Browser {
-                user_agent: navigator.user_agent().unwrap_or_default(),
-                touch,
-            })
+            device_name(&navigator.user_agent().unwrap_or_default(), touch)
         }
-        None => device_name(Platform::Browser {
-            user_agent: String::new(),
-            touch: Touch::None,
-        }),
+        None => device_name("", Touch::None),
     }
 }

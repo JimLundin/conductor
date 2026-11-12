@@ -1,4 +1,4 @@
-//! Where the host ticket comes from on each target.
+//! Where the host ticket comes from: the join link, then local storage.
 
 use proto::{Ticket, TicketError};
 
@@ -18,9 +18,8 @@ pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
     Ticket::parse(ticket)
 }
 
-/// In the browser: `#join=<ticket>` on first open, saved to local storage and
-/// removed from the address bar so a reload reconnects from storage.
-#[cfg(target_family = "wasm")]
+/// `#join=<ticket>` on first open, saved to local storage and removed from
+/// the address bar so a reload reconnects from storage.
 mod storage {
     const KEY: &str = "conductor.ticket";
 
@@ -47,26 +46,17 @@ mod storage {
 
 /// Remembers the host so the next launch reconnects. A Home Screen web app on
 /// iOS has its own storage, separate from Safari's, so it pairs through here.
-#[cfg(target_family = "wasm")]
 pub fn save(ticket: &Ticket) {
     storage::set(&ticket.to_text());
 }
 
-#[cfg(not(target_family = "wasm"))]
-pub fn save(_ticket: &Ticket) {}
-
 /// Drops the saved host, so the next launch asks for a join link. A Home
 /// Screen app can't receive a new join link from the camera; iOS opens those
 /// in Safari, so pairing again starts here.
-#[cfg(target_family = "wasm")]
 pub fn forget() {
     storage::remove();
 }
 
-#[cfg(not(target_family = "wasm"))]
-pub fn forget() {}
-
-#[cfg(target_family = "wasm")]
 pub fn initial() -> Result<Opening, TicketError> {
     let window = web_sys::window().expect("running in a browser window");
     let hash = window.location().hash().unwrap_or_default();
@@ -86,12 +76,6 @@ pub fn initial() -> Result<Opening, TicketError> {
         }
         None => opening(storage::get()),
     }
-}
-
-/// Natively: the `CONDUCTOR_TICKET` environment variable.
-#[cfg(not(target_family = "wasm"))]
-pub fn initial() -> Result<Opening, TicketError> {
-    opening(std::env::var("CONDUCTOR_TICKET").ok())
 }
 
 fn opening(saved: Option<String>) -> Result<Opening, TicketError> {

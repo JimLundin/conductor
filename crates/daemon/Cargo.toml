@@ -15,8 +15,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 data-encoding.workspace = true
 directories = "6.0.0"
 getrandom.workspace = true
-iroh = { workspace = true, features = ["tls-ring", "portmapper"] }
-iroh-mdns-address-lookup = "0.6.1"
+iroh = { workspace = true, features = ["tls-ring"] }
 n0-future.workspace = true
 netdev = "0.46.3"
 agents = { path = "../agents" }

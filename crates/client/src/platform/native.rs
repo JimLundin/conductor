@@ -1,33 +1,29 @@
+//! The app runs only in the browser. A native build of the client is the
+//! test harness: the daemon's e2e tests and the headless example.
+
 use iroh::endpoint::{BindError, Connection, presets};
 use iroh::{Endpoint, RelayMode};
-use iroh_mdns_address_lookup::MdnsAddressLookup;
 
 use proto::ClientName;
 
 use crate::CandidatePair;
-use crate::device::{Platform, device_name};
 use crate::wire::WireError;
 
-/// n0's relays and DNS lookup, plus mDNS so hosts on the same LAN connect
-/// with no relay (§5.3).
+/// n0's relays and DNS lookup.
 pub(crate) async fn public_endpoint() -> Result<Endpoint, BindError> {
     Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(super::n0_relays()))
-        .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await
 }
 
-/// The desktop app's name in `Hello`: its OS. The headless example and the
-/// tests give their own.
+/// Its OS. The headless example and the tests give their own names.
 pub fn client_name() -> ClientName {
-    device_name(Platform::Native {
-        os: String::from(std::env::consts::OS),
-    })
+    ClientName(String::from(std::env::consts::OS))
 }
 
-/// Native clients hole-punch with iroh and never upgrade, so a native build
-/// has no WebRTC connection. These stand in for the browser's types so the
+/// The native harness stays on iroh and never upgrades, so it has no WebRTC
+/// connection. These stand in for the browser's types so the
 /// link reads the same on both targets. No value of them exists, so their
 /// methods never run.
 #[derive(Debug, Clone)]

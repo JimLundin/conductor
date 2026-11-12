@@ -1,7 +1,8 @@
 # Conductor
 
 A Rust orchestrator for Claude Code and Codex sessions across several hosts,
-with a desktop app and an iPhone web app. The design is in
+with one web app that installs as an app on the desktop and on the iPhone
+Home Screen. The design is in
 `docs/architecture.md`; what is built and what is next is in
 `docs/roadmap.md`.
 

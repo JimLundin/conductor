@@ -12,11 +12,8 @@ n0-future.workspace = true
 proto = { path = "../proto" }
 tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
 tracing.workspace = true
-
-[target.'cfg(target_family = "wasm")'.dependencies]
 web-sys = { version = "0.3.107", features = ["Window", "Location", "Storage", "History"] }
 
 [features]
 default = []
 web = ["dioxus/web"]
-desktop = ["dioxus/desktop"]

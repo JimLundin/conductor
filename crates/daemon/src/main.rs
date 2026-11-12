@@ -14,7 +14,6 @@ use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use iroh_mdns_address_lookup::MdnsAddressLookup;
 use proto::Ticket;
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
@@ -162,7 +161,6 @@ async fn host(
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
         .secret_key(daemon::load_or_create_key(&data_dir)?)
-        .address_lookup(MdnsAddressLookup::builder())
         .bind()
         .await?;
     endpoint.online().await;

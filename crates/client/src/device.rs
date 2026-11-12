@@ -11,19 +11,6 @@ pub enum Touch {
     Screen,
 }
 
-/// What a client knows about where it runs, read at the platform boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Platform {
-    Browser {
-        user_agent: String,
-        touch: Touch,
-    },
-    /// `std::env::consts::OS`.
-    Native {
-        os: String,
-    },
-}
-
 /// A word in a user agent, and the device it names without and with a
 /// touchscreen.
 struct Row {
@@ -72,49 +59,24 @@ const DEVICES: &[Row] = &[
     },
 ];
 
-/// A native client is named by its OS as a browser on it would be, and an
-/// OS with no such name keeps its own. iPadOS Safari sends a Mac's user
-/// agent, so a "Mac" with a touchscreen is an iPad. A user agent that names
-/// no known device is a "Browser".
-pub(crate) fn device_name(platform: Platform) -> ClientName {
-    match platform {
-        Platform::Browser { user_agent, touch } => {
-            let name = DEVICES
-                .iter()
-                .find(|row| user_agent.contains(row.marker))
-                .map_or("Browser", |row| match touch {
-                    Touch::None => row.name,
-                    Touch::Screen => row.touch_name,
-                });
-            ClientName(String::from(name))
-        }
-        Platform::Native { os } => ClientName(match os.as_str() {
-            "windows" => String::from("Windows"),
-            "macos" => String::from("Mac"),
-            "linux" => String::from("Linux"),
-            _ => os,
-        }),
-    }
+/// iPadOS Safari sends a Mac's user agent, so a "Mac" with a touchscreen is
+/// an iPad. A user agent that names no known device is a "Browser".
+pub fn device_name(user_agent: &str, touch: Touch) -> ClientName {
+    let name = DEVICES
+        .iter()
+        .find(|row| user_agent.contains(row.marker))
+        .map_or("Browser", |row| match touch {
+            Touch::None => row.name,
+            Touch::Screen => row.touch_name,
+        });
+    ClientName(String::from(name))
 }
 
 #[cfg(test)]
 mod tests {
     use proto::ClientName;
 
-    use super::{Platform, Touch, device_name};
-
-    fn native(os: &str) -> ClientName {
-        device_name(Platform::Native {
-            os: String::from(os),
-        })
-    }
-
-    #[test]
-    fn a_native_client_is_named_by_its_os() {
-        assert_eq!(native("windows"), ClientName(String::from("Windows")));
-        assert_eq!(native("macos"), ClientName(String::from("Mac")));
-        assert_eq!(native("freebsd"), ClientName(String::from("freebsd")));
-    }
+    use super::{Touch, device_name};
 
     /// A browser's user agent and touchscreen, and the name it should give.
     struct Case {
@@ -185,10 +147,7 @@ mod tests {
             .into_iter()
             .map(|case| {
                 (
-                    device_name(Platform::Browser {
-                        user_agent: case.user_agent,
-                        touch: case.touch,
-                    }),
+                    device_name(&case.user_agent, case.touch),
                     ClientName(case.name),
                 )
             })
