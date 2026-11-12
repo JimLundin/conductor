@@ -742,28 +742,31 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
 }
 
 /// The recording starts the turn only once `release` exists, and the fake
-/// answers only an interrupt sent after that, so this passes only if the
-/// session holds the interrupt until the turn starts.
-#[tokio::test]
-async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
-    let fx = host().await;
-    let dir = scratch("held", "claude-held-interrupt.jsonl");
+/// answers only an interrupt sent after that (Codex's of that turn's id), so
+/// this passes only if the session holds the interrupt until the turn starts.
+async fn held_interrupt(fx: Fixture, dir: PathBuf, provider: Provider) {
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    let _ = send(&link, message("count to 100")).await;
+    let _ = send(&link, start(provider, &dir)).await;
+    let _ = send(&link, message("count to 300")).await;
     assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
     std::fs::write(dir.join("release"), "").unwrap();
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
-            opening(Provider::Claude, &dir),
-            Vec::from([user("count to 100"), turn_end(TurnOutcome::Interrupted)]),
+            opening(provider, &dir),
+            Vec::from([user("count to 300"), turn_end(TurnOutcome::Interrupted)]),
         ]
         .concat()
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
+    let dir = scratch("held", "claude-held-interrupt.jsonl");
+    held_interrupt(host().await, dir, Provider::Claude).await;
 }
 
 /// The CLI withdraws the open request when the turn is interrupted, and the
@@ -962,27 +965,10 @@ async fn two_codex_sessions_share_one_server() {
     fx.router.shutdown().await.unwrap();
 }
 
-/// The recording starts the turn only once `release` exists, and waits for
-/// an interrupt of that turn's id sent after that.
 #[tokio::test]
 async fn a_codex_interrupt_before_the_turn_starts_is_sent_by_turn_id() {
     let (fx, dir) = codex_host("codex-held-interrupt.jsonl").await;
-    let (link, mut updates) = link(fx.target.clone(), None).await;
-    until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let _ = send(&link, message("count to 300")).await;
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
-    std::fs::write(dir.join("release"), "").unwrap();
-    assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await,
-        [
-            opening(Provider::Codex, &dir),
-            Vec::from([user("count to 300"), turn_end(TurnOutcome::Interrupted)]),
-        ]
-        .concat()
-    );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    held_interrupt(fx, dir, Provider::Codex).await;
 }
 
 #[tokio::test]

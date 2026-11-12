@@ -184,12 +184,11 @@ impl HubActor {
             event,
         };
         match self.routes.get(&thread) {
-            Some(route) => match route.send(event).await {
-                Ok(()) => {}
-                Err(_) => {
+            Some(route) => {
+                if let Err(mpsc::error::SendError(_)) = route.send(event).await {
                     self.routes.remove(&thread);
                 }
-            },
+            }
             None => tracing::debug!(thread = %thread.0, "an event for a thread with no session"),
         }
     }

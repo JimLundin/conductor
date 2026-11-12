@@ -70,16 +70,16 @@ struct SessionMsg {
     reply: oneshot::Sender<CommandResult>,
 }
 
-/// The agent, once started.
+/// The agent, once started, and where its events arrive.
 enum Agent {
-    Claude(ClaudeSession),
-    Codex(CodexThread),
-}
-
-/// Where the agent's events arrive.
-enum Feed {
-    Claude(mpsc::Receiver<ClaudeEvent>),
-    Codex(mpsc::Receiver<CodexEvent>),
+    Claude {
+        session: ClaudeSession,
+        events: mpsc::Receiver<ClaudeEvent>,
+    },
+    Codex {
+        thread: CodexThread,
+        events: mpsc::Receiver<CodexEvent>,
+    },
 }
 
 /// An agent call that failed.
@@ -121,7 +121,6 @@ enum Pending {
 struct SessionActor {
     id: SessionId,
     agent: Agent,
-    feed: Feed,
     log: Log,
     turn: Turn,
     requests: HashMap<RequestId, Pending>,
@@ -174,12 +173,11 @@ async fn run(
     inbox: mpsc::Receiver<SessionMsg>,
 ) -> Result<Infallible, Stopped> {
     match start(directory, launch).await {
-        Ok((agent, feed)) => {
+        Ok(agent) => {
             log.append(id, EventKind::SessionReady).await?;
             let actor = SessionActor {
                 id,
                 agent,
-                feed,
                 log,
                 turn: Turn::Idle,
                 requests: HashMap::new(),
@@ -198,7 +196,7 @@ async fn run(
     }
 }
 
-async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), AgentError> {
+async fn start(directory: HostPath, launch: Launch) -> Result<Agent, AgentError> {
     match launch {
         Launch::Claude(ClaudeLaunch { claude_path, model }) => {
             let (session, events) = ClaudeSession::spawn(ClaudeOptions {
@@ -213,7 +211,7 @@ async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), Age
                 versions: VersionPolicy::AllowUntested,
             })
             .await?;
-            Ok((Agent::Claude(session), Feed::Claude(events)))
+            Ok(Agent::Claude { session, events })
         }
         // Paseo's preset: Codex asks before leaving the workspace.
         Launch::Codex(CodexLaunch { hub, model }) => {
@@ -226,7 +224,7 @@ async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), Age
                     sandbox: Sandbox::WorkspaceWrite,
                 })
                 .await?;
-            Ok((Agent::Codex(thread), Feed::Codex(events)))
+            Ok(Agent::Codex { thread, events })
         }
     }
 }
@@ -240,11 +238,15 @@ impl Pending {
     }
 }
 
-impl Feed {
+impl Agent {
     async fn next(&mut self) -> Input {
         match self {
-            Feed::Claude(events) => events.recv().await.map_or(Input::AgentGone, Input::Claude),
-            Feed::Codex(events) => events.recv().await.map_or(Input::AgentGone, Input::Codex),
+            Agent::Claude { events, .. } => {
+                events.recv().await.map_or(Input::AgentGone, Input::Claude)
+            }
+            Agent::Codex { events, .. } => {
+                events.recv().await.map_or(Input::AgentGone, Input::Codex)
+            }
         }
     }
 }
@@ -254,7 +256,7 @@ impl SessionActor {
         loop {
             let input = tokio::select! {
                 msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
-                input = self.feed.next() => input,
+                input = self.agent.next() => input,
             };
             self.on(input).await?;
         }
@@ -369,8 +371,8 @@ impl SessionActor {
     /// `TurnStarted`, which an interrupt must wait for anyway.
     async fn send(&self, text: String) -> Result<(), AgentError> {
         match &self.agent {
-            Agent::Claude(claude) => Ok(claude.send_user(text).await?),
-            Agent::Codex(thread) => {
+            Agent::Claude { session, .. } => Ok(session.send_user(text).await?),
+            Agent::Codex { thread, .. } => {
                 let _ = thread.send_turn(text).await?;
                 Ok(())
             }
@@ -379,11 +381,12 @@ impl SessionActor {
 
     async fn interrupt(&self, turn: &NativeTurn) -> Result<(), AgentError> {
         match (&self.agent, turn) {
-            (Agent::Claude(claude), NativeTurn::Claude) => Ok(claude.interrupt().await?),
-            (Agent::Codex(thread), NativeTurn::Codex(turn)) => {
+            (Agent::Claude { session, .. }, NativeTurn::Claude) => Ok(session.interrupt().await?),
+            (Agent::Codex { thread, .. }, NativeTurn::Codex(turn)) => {
                 Ok(thread.interrupt(turn.clone()).await?)
             }
-            (Agent::Claude(_), NativeTurn::Codex(_)) | (Agent::Codex(_), NativeTurn::Claude) => {
+            (Agent::Claude { .. }, NativeTurn::Codex(_))
+            | (Agent::Codex { .. }, NativeTurn::Claude) => {
                 tracing::error!(session = self.id.0, "a turn of the other provider");
                 Ok(())
             }
@@ -397,14 +400,14 @@ impl SessionActor {
         by: &ClientName,
     ) -> Result<(), AgentError> {
         match (&self.agent, native) {
-            (Agent::Claude(claude), NativeRequest::Claude(id)) => Ok(claude
+            (Agent::Claude { session, .. }, NativeRequest::Claude(id)) => Ok(session
                 .respond(id, mapping::claude_answer(decision, by))
                 .await?),
-            (Agent::Codex(thread), NativeRequest::Codex(id)) => {
+            (Agent::Codex { thread, .. }, NativeRequest::Codex(id)) => {
                 Ok(thread.respond(id, mapping::codex_answer(decision)).await?)
             }
-            (Agent::Claude(_), NativeRequest::Codex(_))
-            | (Agent::Codex(_), NativeRequest::Claude(_)) => {
+            (Agent::Claude { .. }, NativeRequest::Codex(_))
+            | (Agent::Codex { .. }, NativeRequest::Claude(_)) => {
                 tracing::error!(session = self.id.0, "a request of the other provider");
                 Ok(())
             }

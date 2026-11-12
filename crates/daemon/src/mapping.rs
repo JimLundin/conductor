@@ -5,7 +5,9 @@ use agents::claude::{
     AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionRequestId, Role,
     ToolDetail,
 };
-use agents::codex::{ApprovalId, ApprovalKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId};
+use agents::codex::{
+    self, ApprovalId, ApprovalKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId,
+};
 use proto::{
     ClientName, CloseReason, Decision, EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
     TurnOutcome,
@@ -193,53 +195,25 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             call: ToolCallId(id),
             outcome: codex_outcome(&status),
         }]),
-        ThreadEvent::ApprovalRequested {
-            id,
-            item,
-            kind: ApprovalKind::Command { command, .. },
-            ..
-        } => codex_open(
-            id,
-            item,
-            ToolKind::Command {
-                command: command.unwrap_or_default(),
-            },
-        ),
-        // The request names no paths; the tool card the item started has them.
-        ThreadEvent::ApprovalRequested {
-            id,
-            item,
-            kind: ApprovalKind::FileChange { .. },
-            ..
-        } => codex_open(id, item, ToolKind::FileChange { paths: Vec::new() }),
-        ThreadEvent::ApprovalRequested {
-            id,
-            item,
-            kind: ApprovalKind::Permissions { reason, .. },
-            ..
-        } => codex_open(
-            id,
-            item,
-            ToolKind::Other {
-                name: String::from("permissions"),
-                detail: reason.unwrap_or_default(),
-            },
-        ),
-        ThreadEvent::ApprovalRequested {
-            kind: ApprovalKind::UserInput { .. },
-            ..
-        } => Vec::from([Step::Emit(EventKind::Error {
-            message: String::from(
-                "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
-            ),
-        })]),
+        ThreadEvent::ApprovalRequested { id, item, kind, .. } => match approval_tool(kind) {
+            Some(tool) => Vec::from([Step::Open {
+                native: NativeRequest::Codex(id),
+                call: ToolCallId(item),
+                tool,
+            }]),
+            None => Vec::from([Step::Emit(EventKind::Error {
+                message: String::from(
+                    "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
+                ),
+            })]),
+        },
         ThreadEvent::ApprovalCancelled { id } => {
             Vec::from([Step::Withdraw(NativeRequest::Codex(id))])
         }
         ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(match outcome {
-            agents::codex::TurnOutcome::Completed => TurnOutcome::Completed,
-            agents::codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
-            agents::codex::TurnOutcome::Failed { message } => TurnOutcome::Failed {
+            codex::TurnOutcome::Completed => TurnOutcome::Completed,
+            codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
+            codex::TurnOutcome::Failed { message } => TurnOutcome::Failed {
                 message: message.unwrap_or_else(|| String::from("the turn failed")),
             },
         })]),
@@ -275,18 +249,26 @@ fn codex_outcome(status: &str) -> ToolOutcome {
     }
 }
 
-fn codex_open(id: ApprovalId, item: String, tool: ToolKind) -> Vec<Step> {
-    Vec::from([Step::Open {
-        native: NativeRequest::Codex(id),
-        call: ToolCallId(item),
-        tool,
-    }])
+/// The tool an approval asks about. A question asks about none.
+fn approval_tool(kind: ApprovalKind) -> Option<ToolKind> {
+    match kind {
+        ApprovalKind::Command { command, .. } => Some(ToolKind::Command {
+            command: command.unwrap_or_default(),
+        }),
+        // The request names no paths; the tool card the item started has them.
+        ApprovalKind::FileChange { .. } => Some(ToolKind::FileChange { paths: Vec::new() }),
+        ApprovalKind::Permissions { reason, .. } => Some(ToolKind::Other {
+            name: String::from("permissions"),
+            detail: reason.unwrap_or_default(),
+        }),
+        ApprovalKind::UserInput { .. } => None,
+    }
 }
 
-pub(crate) fn codex_answer(decision: Decision) -> agents::codex::Decision {
+pub(crate) fn codex_answer(decision: Decision) -> codex::Decision {
     match decision {
-        Decision::Approve => agents::codex::Decision::Accept,
-        Decision::Deny => agents::codex::Decision::Decline,
+        Decision::Approve => codex::Decision::Accept,
+        Decision::Deny => codex::Decision::Decline,
     }
 }
 
@@ -297,18 +279,17 @@ mod tests {
         Block, ClaudeEvent, Outcome, PermissionRequestId, Role, SessionId, ToolDetail,
     };
     use agents::codex::{
-        ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase, ThreadEvent,
-        ThreadId, TurnId,
+        self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
+        ThreadEvent, ThreadId, TurnId,
     };
-    use proto::{
-        CloseReason, EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
-    };
+    use proto::{CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
 
-    use super::{NativeRequest, NativeTurn, Step, claude_steps, codex_steps};
+    use super::{NativeRequest, Step, claude_steps, codex_steps};
 
+    /// The steps one provider event maps to, and the steps it should.
     struct Case {
-        event: ClaudeEvent,
-        steps: Vec<Step>,
+        got: Vec<Step>,
+        want: Vec<Step>,
     }
 
     fn finished(outcome: Outcome, terminal_reason: Option<&str>) -> ClaudeEvent {
@@ -328,103 +309,80 @@ mod tests {
         }
     }
 
-    fn started(tool: ToolKind) -> Step {
+    fn started(id: &str, tool: ToolKind) -> Step {
         Step::Emit(EventKind::ToolCall {
-            call: ToolCallId(String::from("toolu_1")),
+            call: ToolCallId(String::from(id)),
             phase: ToolPhase::Started { tool },
         })
     }
 
-    #[test]
-    fn each_claude_event_maps_to_its_steps() {
-        let cases = Vec::from([
-            Case {
-                event: ClaudeEvent::Message {
-                    role: Role::Assistant,
-                    content: Vec::from([
-                        Block::Thinking(String::from("hmm")),
-                        tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
-                        tool_use("Bash", ToolDetail::Command(String::from("ls"))),
-                    ]),
-                },
-                steps: Vec::from([
-                    started(ToolKind::Other {
-                        name: String::from("Read"),
-                        detail: String::from("b.txt"),
-                    }),
-                    started(ToolKind::Command {
-                        command: String::from("ls"),
-                    }),
-                ]),
-            },
-            Case {
-                event: ClaudeEvent::PermissionCancelled {
-                    id: PermissionRequestId(String::from("p1")),
-                },
-                steps: Vec::from([Step::Withdraw(NativeRequest::Claude(PermissionRequestId(
-                    String::from("p1"),
-                )))]),
-            },
-            Case {
-                event: finished(Outcome::Failed, Some("aborted_tools")),
-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Interrupted)]),
-            },
-            Case {
-                event: finished(Outcome::Failed, None),
-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
-                    message: String::from("error_during_execution"),
-                })]),
-            },
-            Case {
-                event: ClaudeEvent::Exited {
-                    status: Exit::Unknown(String::from("gone")),
-                },
-                steps: Vec::from([Step::Closed(CloseReason::Exited {
-                    status: String::from("unknown exit (gone)"),
-                })]),
-            },
-        ]);
-        let (events, expected) = cases
-            .into_iter()
-            .map(|case| (case.event, case.steps))
-            .unzip::<ClaudeEvent, Vec<Step>, Vec<ClaudeEvent>, Vec<Vec<Step>>>();
-        assert_eq!(
-            events
-                .into_iter()
-                .map(claude_steps)
-                .collect::<Vec<Vec<Step>>>(),
-            expected
-        );
-    }
-
-    struct CodexCase {
-        event: ThreadEvent,
-        steps: Vec<Step>,
+    fn on_thread(event: ThreadEvent) -> Vec<Step> {
+        codex_steps(CodexEvent::Thread {
+            thread: ThreadId(String::from("th_1")),
+            event,
+        })
     }
 
     fn turn() -> TurnId {
         TurnId(String::from("tu_1"))
     }
 
-    fn asked(kind: ApprovalKind) -> ThreadEvent {
-        ThreadEvent::ApprovalRequested {
-            id: ApprovalId(String::from("0")),
-            turn: turn(),
-            item: String::from("exec-1"),
-            kind,
-            options: Vec::new(),
-        }
-    }
-
     #[test]
-    fn each_codex_event_maps_to_its_steps() {
+    fn each_provider_event_maps_to_its_steps() {
         let cases = Vec::from([
-            CodexCase {
-                event: ThreadEvent::TurnStarted { turn: turn() },
-                steps: Vec::from([Step::TurnStarted(NativeTurn::Codex(turn()))]),
+            Case {
+                got: claude_steps(ClaudeEvent::Message {
+                    role: Role::Assistant,
+                    content: Vec::from([
+                        Block::Thinking(String::from("hmm")),
+                        tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
+                        tool_use("Bash", ToolDetail::Command(String::from("ls"))),
+                    ]),
+                }),
+                want: Vec::from([
+                    started(
+                        "toolu_1",
+                        ToolKind::Other {
+                            name: String::from("Read"),
+                            detail: String::from("b.txt"),
+                        },
+                    ),
+                    started(
+                        "toolu_1",
+                        ToolKind::Command {
+                            command: String::from("ls"),
+                        },
+                    ),
+                ]),
             },
-            CodexCase {
-                event: ThreadEvent::Item {
+            Case {
+                got: claude_steps(ClaudeEvent::PermissionCancelled {
+                    id: PermissionRequestId(String::from("p1")),
+                }),
+                want: Vec::from([Step::Withdraw(NativeRequest::Claude(PermissionRequestId(
+                    String::from("p1"),
+                )))]),
+            },
+            Case {
+                got: claude_steps(finished(Outcome::Failed, Some("aborted_tools"))),
+                want: Vec::from([Step::TurnEnded(TurnOutcome::Interrupted)]),
+            },
+            Case {
+                got: claude_steps(finished(Outcome::Failed, None)),
+                want: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
+                    message: String::from("error_during_execution"),
+                })]),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::Exited {
+                    status: Exit::Unknown(String::from("gone")),
+                }),
+                want: Vec::from([Step::Closed(CloseReason::Exited {
+                    status: String::from("unknown exit (gone)"),
+                })]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::Item {
                     turn: turn(),
                     phase: ItemPhase::Started,
                     item: Item::FileChange {
@@ -435,79 +393,44 @@ mod tests {
                         }]),
                         status: String::from("inProgress"),
                     },
-                },
-                steps: Vec::from([Step::Emit(EventKind::ToolCall {
-                    call: ToolCallId(String::from("patch-1")),
-                    phase: ToolPhase::Started {
-                        tool: ToolKind::FileChange {
-                            paths: Vec::from([String::from("a.txt")]),
-                        },
+                }),
+                want: Vec::from([started(
+                    "patch-1",
+                    ToolKind::FileChange {
+                        paths: Vec::from([String::from("a.txt")]),
                     },
-                })]),
+                )]),
             },
-            CodexCase {
-                event: ThreadEvent::Item {
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("0")),
                     turn: turn(),
-                    phase: ItemPhase::Completed,
-                    item: Item::Command {
-                        id: String::from("exec-1"),
-                        command: String::from("ls"),
-                        status: String::from("declined"),
-                        exit_code: None,
+                    item: String::from("exec-1"),
+                    kind: ApprovalKind::UserInput {
+                        questions: serde_json::Value::Null,
                     },
-                },
-                steps: Vec::from([Step::ToolFinished {
-                    call: ToolCallId(String::from("exec-1")),
-                    outcome: ToolOutcome::Declined,
-                }]),
-            },
-            CodexCase {
-                event: asked(ApprovalKind::Command {
-                    command: Some(String::from("ls")),
-                    cwd: None,
-                    reason: None,
+                    options: Vec::new(),
                 }),
-                steps: Vec::from([Step::Open {
-                    native: NativeRequest::Codex(ApprovalId(String::from("0"))),
-                    call: ToolCallId(String::from("exec-1")),
-                    tool: ToolKind::Command {
-                        command: String::from("ls"),
-                    },
-                }]),
-            },
-            CodexCase {
-                event: asked(ApprovalKind::UserInput {
-                    questions: serde_json::Value::Null,
-                }),
-                steps: Vec::from([Step::Emit(EventKind::Error {
+                want: Vec::from([Step::Emit(EventKind::Error {
                     message: String::from(
                         "Codex asked a question. Questions arrive in a later slice; interrupt to continue.",
                     ),
                 })]),
             },
-            CodexCase {
-                event: ThreadEvent::TurnCompleted {
+            Case {
+                got: on_thread(ThreadEvent::TurnCompleted {
                     turn: turn(),
-                    outcome: agents::codex::TurnOutcome::Failed { message: None },
-                },
-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
+                    outcome: codex::TurnOutcome::Failed { message: None },
+                }),
+                want: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
                     message: String::from("the turn failed"),
                 })]),
             },
         ]);
-        let (events, expected) = cases
+        let (got, want) = cases
             .into_iter()
-            .map(|case| (case.event, case.steps))
-            .unzip::<ThreadEvent, Vec<Step>, Vec<ThreadEvent>, Vec<Vec<Step>>>();
-        assert_eq!(
-            events
-                .into_iter()
-                .map(|event| codex_steps(CodexEvent::Thread {
-                    thread: ThreadId(String::from("th_1")),
-                    event,
-                }))
-                .collect::<Vec<Vec<Step>>>(),
-            expected
-        );
+            .map(|case| (case.got, case.want))
+            .unzip::<Vec<Step>, Vec<Step>, Vec<Vec<Step>>, Vec<Vec<Step>>>();
+        assert_eq!(got, want);
     }
 }
