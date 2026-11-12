@@ -153,7 +153,7 @@ fn TranscriptItem(
                             Some(allows) => rsx! {
                                 button { class: "for-session", onclick: move |_| on_decide((request, Decision::ApproveForSession)),
                                     span { class: "for-session-title", "Allow for this session" }
-                                    span { class: "for-session-allows", "Allows {allows} until the session ends" }
+                                    span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
                                 }
                             },
                             None => rsx! {},

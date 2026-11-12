@@ -14,6 +14,9 @@
 //             approved and one denied.
 //   credentials  A Claude gateway entered, shown as configured, and
 //             cleared; <dir> is unused.
+//   questions A Claude question in <dir>/question answered by tapping an
+//             option, and a command in <dir>/for-session allowed for the
+//             session, which then runs again without asking.
 //   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
 //             (the CLI hangs up) and <dir>/notes (never sent to), shot at
 //             1280x800 and 390x844, light and dark.
@@ -233,6 +236,61 @@ if (scenario === 'turn') {
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
   check((await text('.request .resolved')) === 'Denied by iPhone', 'the second request was denied by this device');
   check((await text('.reply')) === 'The request was declined.', 'the second turn ended with its own answer');
+  await page.screenshot({ path: out });
+} else if (scenario === 'questions') {
+  // fixtures/e2e/claude-question.jsonl: Claude asks which color, the answer
+  // goes back, and it replies with it.
+  await startSession('Claude Code', `${dir}/question`);
+  await send('ask me');
+  const card = pane.locator('.question[data-open="true"]');
+  await card.waitFor({ timeout: 30_000 });
+  log(`question card: "${(await card.innerText()).replace(/\s+/g, ' ')}"`);
+  const sendAnswer = card.getByRole('button', { name: 'Send answer' });
+  check(await sendAnswer.isDisabled(), 'the answer cannot be sent before an option is chosen');
+  await back();
+  const row = page.locator('.session-row', { has: page.locator('.row-title', { hasText: /^question$/ }) });
+  check((await row.locator('.row-sub').innerText()) === 'Claude Code, needs you', 'the session list says the question waits on you');
+  check((await row.locator('.badge').innerText()) === '1', 'the badge counts the open question');
+  await openRow('question');
+  const blue = card.locator('button.option', { hasText: 'Blue' });
+  await blue.tap();
+  check((await blue.getAttribute('aria-pressed')) === 'true', 'the tapped option shows as chosen');
+  const box = await blue.boundingBox();
+  check(box.height >= 44 && box.width >= 300, `the option is a thumb-sized target (${Math.round(box.width)}x${Math.round(box.height)})`);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: out.replace(/\.png$/, '-question.png') });
+  await sendAnswer.tap();
+  log('tapped Send answer');
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  check((await text('.question .question-answer')) === 'Blue', 'the card shows the answer given');
+  check((await text('.question .resolved')) === 'Answered by iPhone', 'the question was answered once, by this device');
+  check((await text('.reply')) === 'Blue', 'Claude replied with the answer');
+  check((await pane.locator('.tool').count()) === 0, 'the question shows no tool card of its own');
+
+  // fixtures/e2e/claude-for-session.jsonl: `touch t1.txt` asks, is allowed
+  // for the session, and runs again in the next turn without asking.
+  await startSession('Claude Code', `${dir}/for-session`);
+  await send('touch t1.txt');
+  const request = pane.locator('.request[data-open="true"]');
+  await request.waitFor({ timeout: 30_000 });
+  const forSession = request.locator('button.for-session');
+  check(
+    (await forSession.innerText()).replace(/\s+/g, ' ') === 'Allow for this session Allows Bash(touch t1.txt) until the session ends',
+    'the third button says what it allows, in the CLI\'s words',
+  );
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: out.replace(/\.png$/, '-for-session.png') });
+  await forSession.tap();
+  log('tapped Allow for this session');
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  check((await text('.request .resolved')) === 'Allowed for this session by iPhone', 'the request was allowed for the session by this device');
+  await send('again');
+  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
+  check((await pane.locator('.request').count()) === 1, 'the second identical call asked nothing');
+  check(
+    (await pane.locator('.tool').evaluateAll((tools) => tools.map((t) => t.dataset.state))).join(' ') === 'succeeded succeeded',
+    'both calls ran',
+  );
   await page.screenshot({ path: out });
 } else if (scenario === 'credentials') {
   const GATEWAY = 'https://gateway.conductor-test.invalid';

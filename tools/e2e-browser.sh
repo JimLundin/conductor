@@ -4,8 +4,9 @@
 # viewport against `conductord host` running the fake CLIs
 # (crates/agents/tests/fake-*.sh) through n0's relays. Each scenario gets its
 # own host: a Claude turn with approval in both engines (turn), two Codex
-# sessions on one app-server (codex, Chromium only), and the screenshots of
-# the states a real CLI shows only with careful timing (screens).
+# sessions on one app-server (codex, Chromium only), a question and an
+# approval for the session (questions, WebKit), and the screenshots of the
+# states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt and docs/p1/screens/*-{running,closed,idle}.png.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -126,6 +127,20 @@ set +e
   host_log codex
   echo
   expect codex 1 'version=fake-codex' 'the host found Codex'
+
+  session "$scratch/questions/question" claude-question.jsonl
+  session "$scratch/questions/for-session" claude-for-session.jsonl
+  start_host questions
+  echo
+  echo "## Questions and approval for the session, webkit"
+  run webkit questions "$scratch/questions.png" "$scratch/questions"
+  echo
+  echo "## Questions, host log"
+  host_log questions
+  echo
+  expect questions 7 'serve: command client="iPhone"' 'both starts, three messages, the answer and the approval reached the host'
+  expect questions 1 'body: Answer {' 'one answer reached the host'
+  expect questions 1 'decision: ApproveForSession' 'one approval for the session reached the host'
 
   start_host credentials
   echo
