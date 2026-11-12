@@ -103,16 +103,26 @@ at_send=$(turn at-send Interrupted --prompt "$count" --interrupt at-send)
 grep -q 'interrupt -> Accepted' "$logs/at-send.out" || at_send=fail
 
 # The leak canary: a command the agent runs counts, in its own environment,
-# the variables that carry the credential. It prints counts only, never a
+# the variable that carries the secret. It prints counts only, never a
 # value. PATH must count 1, which shows the command ran in a shell at all.
+# Codex always keeps its key out. Claude does only where its sandbox runs
+# (bwrap and socat on PATH); without it the token reaches commands, which
+# the host warns about, and the canary reports leak=unprotected.
 case $provider in
-  claude) leak_vars="ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL" ;;
-  codex) leak_vars="CONDUCTOR_CODEX_KEY" ;;
+  claude) leak_vars=ANTHROPIC_AUTH_TOKEN ;;
+  codex) leak_vars=CONDUCTOR_CODEX_KEY ;;
 esac
 leak_cmd="for v in PATH $leak_vars; do env | grep -c \"^\$v=\"; done | tr '\\n' ' ' > leak.txt"
 leak=$(turn leak Completed --prompt "Run this exact shell command in the current directory, unchanged, then say done: $leak_cmd")
 leak_counts=$(sed 's/ *$//' "$scratch/leak.txt" 2>/dev/null || echo missing)
-[ "$leak_counts" = "1$(for _ in $leak_vars; do printf ' 0'; done)" ] || leak=fail
+sandboxed=yes
+command -v bwrap >/dev/null && command -v socat >/dev/null || sandboxed=no
+case $provider$sandboxed:$leak:$leak_counts in
+  *:pass:"1 0") ;;
+  claudeno:pass:"1 1")
+    grep -q "Claude's commands can read the gateway token" "$logs/host.log" && leak=unprotected || leak=fail ;;
+  *) leak=fail ;;
+esac
 
 file=missing
 [ -f "$scratch/a.txt" ] && file="present:$(tr -d '\n' <"$scratch/a.txt")"
@@ -121,4 +131,4 @@ interrupt=direct
 grep -q 'holding the interrupt until the turn starts' "$logs/host.log" && interrupt=held
 grep -q 'holding the interrupt' "$logs/host.log" && ! grep -q 'sending the held interrupt' "$logs/host.log" && at_send=fail
 echo "RESULT provider=$provider register=$register approve=$approve first-delta=$delta at-send=$at_send leak=$leak leak-counts=${leak_counts// /,} a.txt=$file interrupt-at-send=$interrupt logs=$logs"
-[ "$approve$delta$at_send$leak" = passpasspasspass ]
+case $approve$delta$at_send:$leak in passpasspass:pass | passpasspass:unprotected) ;; *) exit 1 ;; esac

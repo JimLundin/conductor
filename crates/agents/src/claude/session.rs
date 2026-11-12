@@ -291,6 +291,32 @@ pub fn cli(claude_path: &Path, home: &Home) -> Command {
     cmd
 }
 
+/// Whether Claude's command sandbox can run on this host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sandbox {
+    Available,
+    Missing,
+}
+
+/// What Claude's sandbox needs on Linux and WSL2.
+const SANDBOX_TOOLS: &[&str] = &["bwrap", "socat"];
+
+/// Whether Claude's command sandbox can run here ([sandboxing] in
+/// docs/architecture.md): Seatbelt on macOS always, on Linux and WSL2 with
+/// `bwrap` and `socat` on `PATH`, and never on native Windows, where Claude
+/// runs commands unsandboxed.
+pub fn sandbox() -> Sandbox {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::env::split_paths(&path).collect::<Vec<PathBuf>>();
+    let missing = SANDBOX_TOOLS
+        .iter()
+        .find(|tool| !dirs.iter().any(|dir| dir.join(tool).is_file()));
+    match (std::env::consts::OS, missing) {
+        ("macos", _) | ("linux", None) => Sandbox::Available,
+        (_, _) => Sandbox::Missing,
+    }
+}
+
 /// `claude auth status`, which succeeds when `home` is signed in.
 pub fn auth_status(claude_path: &Path, home: &Home) -> Command {
     let mut cmd = cli(claude_path, home);
@@ -309,12 +335,9 @@ pub fn login(claude_path: &Path, home: &Home) -> Command {
 pub(crate) fn command(opts: &ClaudeOptions) -> Command {
     let mut cmd = cli(&opts.claude_path, &opts.home);
     match &opts.credential {
-        // The scrub keeps the token out of the commands, hooks and MCP
-        // servers Claude starts; Claude itself still uses it.
         Some(ClaudeCredential::Gateway { base_url, token }) => {
             cmd.env("ANTHROPIC_BASE_URL", base_url)
-                .env("ANTHROPIC_AUTH_TOKEN", token)
-                .env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1");
+                .env("ANTHROPIC_AUTH_TOKEN", token);
         }
         None => {}
     }
@@ -328,6 +351,15 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
         "--permission-mode",
         opts.permission_mode.wire(),
     ]);
+    // The scrub keeps credentials out of the commands, hooks and MCP servers
+    // Claude starts, and Claude itself still uses them. On Linux it runs
+    // every command in Claude's sandbox, so it is set only where that runs.
+    match (&opts.credential, sandbox()) {
+        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Available) => {
+            cmd.env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1");
+        }
+        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) | (None, _) => {}
+    }
     // One argument, so an id that starts with `-` is not read as a flag.
     if let Some(id) = &opts.resume {
         cmd.arg(format!("--resume={}", id.0));

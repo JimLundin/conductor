@@ -13,5 +13,6 @@ pub use protocol::{
     PermissionRequestId, Role, SessionId, ToolDetail,
 };
 pub use session::{
-    ClaudeOptions, ClaudeSession, Error, SettingSource, VersionPolicy, auth_status, cli, login,
+    ClaudeOptions, ClaudeSession, Error, Sandbox, SettingSource, VersionPolicy, auth_status, cli,
+    login, sandbox,
 };

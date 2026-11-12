@@ -404,7 +404,15 @@ sign-in on the host's terminal against the private home: `claude auth login
 configured (`Auth::SignedIn`, §6.3). The host checks it once, when it
 starts, with `claude auth status` and `codex login status` (15 s at most
 each), so a sign-in made while the host runs, or one that expires, shows
-only after a restart. The credential store of §6.3 exists
+only after a restart.
+
+Optional host setup on Linux and WSL2: `sudo apt install bubblewrap
+socat`. With them Claude runs its commands in its own sandbox and the
+host turns on its environment scrub, so Claude's commands can't read a
+gateway token (§6.3). Codex sandboxes its commands itself and needs
+nothing. Conductor packages neither.
+
+The credential store of §6.3 exists
 now, with gateway credentials as its first kind; the shared `setup-token`
 token becomes another kind in it.
 
@@ -432,17 +440,24 @@ types.
 - **Claude:** `ClaudeCredential::Gateway { base_url, token }`. A Claude
   session gets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in its
   environment when it starts. The private home already scrubs both from
-  the host's environment (§6.2), so only the stored values reach it. It
-  also gets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, so the commands, hooks
-  and MCP servers Claude starts don't inherit the token ([env-vars],
-  verified; the scrub matches a credential by name or by the shape of its
-  value, from 2.1.251). The live canary in `tools/live-host.sh` counts
-  `ANTHROPIC_AUTH_TOKEN` 0 and `ANTHROPIC_BASE_URL` 1 in a command's
-  environment (observed): the base URL is not scrubbed. On Linux the
-  scrub runs every command in Claude's sandbox, which needs `bubblewrap`
-  and `socat` ([sandboxing], verified). Without them every Bash command
-  fails (observed). Whether to keep the scrub at that cost is open with the
-  owner. A change applies to the next session. Clearing a Claude credential
+  the host's environment (§6.2), so only the stored values reach it.
+  Where Claude's sandbox can run, it also gets
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, so the commands, hooks and MCP
+  servers Claude starts don't inherit the token ([env-vars], verified; the
+  scrub matches a credential by name or by the shape of its value, from
+  2.1.251). On Linux and WSL2 the scrub runs every command in that
+  sandbox, which needs `bubblewrap` and `socat`, and without them every
+  Bash command fails ([sandboxing], verified; observed). So the host sets
+  the scrub on macOS always, on Linux and WSL2 when `bwrap` and `socat`
+  are on `PATH`, and never on native Windows, where Claude runs commands
+  unsandboxed ([sandboxing], verified). Without it, a stored gateway makes
+  the host log "Claude's commands can read the gateway token; install
+  bubblewrap and socat to sandbox them" at start and when the gateway is
+  set. The base URL reaches commands either way; it is an address, not a
+  secret. The live canary in `tools/live-host.sh` has the agent count the
+  token in a command's environment: 0 with the sandbox, and 1 without it,
+  reported as `leak=unprotected` (observed both). A change applies to the
+  next session. Clearing a Claude credential
   doesn't stop the sessions already running on it, unlike Codex below; to
   cut off a leaked token, revoke it at the gateway.
 - **Codex:** `CodexCredential::Provider { name, base_url, key, model }`.
@@ -609,6 +624,10 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   `<data>/credentials.unreadable` and starts an empty store, which is the
   recovery from the phone. Only a `store.key` that can't be read stops the
   host.
+- A Claude gateway token is kept from Claude's commands only where
+  Claude's sandbox runs, which on Linux and WSL2 is the optional
+  `sudo apt install bubblewrap socat` of §6.2. The Codex key is kept from
+  Codex's commands everywhere.
 - Most hosts here are WSL or headless Linux, where there is no Secret
   Service. There the encryption protects copies of the store (a backup, a
   store attached to a bug report) and not the running host, because the key

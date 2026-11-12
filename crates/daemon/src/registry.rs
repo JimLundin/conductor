@@ -4,9 +4,10 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 
+use agents::claude::Sandbox;
 use proto::{
-    Auth, Availability, ClientName, CommandResult, Credential, Credentials, EventKind, HostPath,
-    Provider, Providers, Rejection, SessionId,
+    Auth, Availability, ClaudeCredential, ClientName, CommandResult, Credential, Credentials,
+    EventKind, HostPath, Provider, Providers, Rejection, SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -102,6 +103,9 @@ struct RegistryActor {
 impl Registry {
     /// `stored` is what `store` held when it opened.
     pub fn spawn(log: Log, launchers: Launchers, store: Store, stored: Stored) -> Registry {
+        if let Stored::Opened(credentials) = &stored {
+            warn_unprotected(credentials);
+        }
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
@@ -255,6 +259,7 @@ impl RegistryActor {
             })),
             Ok(()) => {
                 tracing::info!(?provider, "stored a credential change");
+                warn_unprotected(&next);
                 if let (
                     Provider::Codex,
                     Launcher::Ready {
@@ -336,5 +341,17 @@ impl RegistryActor {
                 Ok(CommandResult::Started { session: id })
             }
         }
+    }
+}
+
+/// Without Claude's sandbox the scrub is off (`agents::claude::sandbox`),
+/// so the commands Claude runs inherit a gateway token.
+fn warn_unprotected(credentials: &Credentials) {
+    if let (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) =
+        (&credentials.claude, agents::claude::sandbox())
+    {
+        tracing::warn!(
+            "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them"
+        );
     }
 }

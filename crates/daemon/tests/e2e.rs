@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agents::Home;
+use agents::claude::Sandbox;
 use agents::codex::ServerOptions;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
@@ -1383,6 +1384,8 @@ fn captured(path: &Path) -> String {
 const GATEWAY: &str = "https://conductor-test.invalid/gateway";
 const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
 const NO_CREDENTIAL: &str = "no credential configured";
+const UNPROTECTED: &str =
+    "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them";
 
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
@@ -1484,7 +1487,11 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
     assert_eq!(
         read(&dir.join("env.txt")),
         format!(
-            "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\nCLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\nCLAUDE_CONFIG_DIR={}\n",
+            "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\n{}CLAUDE_CONFIG_DIR={}\n",
+            match agents::claude::sandbox() {
+                Sandbox::Available => "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\n",
+                Sandbox::Missing => "",
+            },
             data.join("home/claude").display()
         )
     );
@@ -1524,8 +1531,18 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
             logged.matches("stored a credential change").count(),
             logged.matches(CLAUDE_TOKEN).count(),
             format!("{events:?}").matches(CLAUDE_TOKEN).count(),
+            logged.matches(UNPROTECTED).count(),
         ),
-        (2, 0, 0)
+        (
+            2,
+            0,
+            0,
+            // Once when the gateway is set, once when the restart finds it.
+            match agents::claude::sandbox() {
+                Sandbox::Available => 0,
+                Sandbox::Missing => 2,
+            }
+        )
     );
 }
 
