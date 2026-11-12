@@ -122,7 +122,7 @@ touches = ["daemon", "agents"]
 [[phase.unit]]
 id = "p1-6"
 name = "Unit 6: app screens"
-status = "in_progress"
+status = "done"
 branch = "p1-u6-screens"
 purpose = "Session list, new-session form, session pane, phone layout."
 done_when = "A Claude turn runs by hand in dx serve; screenshots at desktop and 390 px."
