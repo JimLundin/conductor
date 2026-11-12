@@ -4,7 +4,10 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 
-use proto::{ClientName, CommandResult, EventKind, HostPath, Provider, Rejection, SessionId};
+use proto::{
+    Availability, ClientName, CommandResult, EventKind, HostPath, Provider, Providers, Rejection,
+    SessionId,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
@@ -13,16 +16,44 @@ use crate::session::{Launch, Session};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
-pub struct Providers {
-    pub claude: Availability,
-    pub codex: Availability,
+pub struct Launchers {
+    pub claude: Launcher,
+    pub codex: Launcher,
 }
 
 #[derive(Debug, Clone)]
-pub enum Availability {
+pub enum Launcher {
     Ready(Launch),
     /// The host can't run this provider's sessions, for this reason.
     Unavailable(String),
+}
+
+impl Launchers {
+    /// What `Welcome` tells a client the host can run.
+    pub fn providers(&self) -> Providers {
+        Providers {
+            claude: self.claude.availability(),
+            codex: self.codex.availability(),
+        }
+    }
+
+    fn of(&self, provider: Provider) -> &Launcher {
+        match provider {
+            Provider::Claude => &self.claude,
+            Provider::Codex => &self.codex,
+        }
+    }
+}
+
+impl Launcher {
+    fn availability(&self) -> Availability {
+        match self {
+            Launcher::Ready(_) => Availability::Available,
+            Launcher::Unavailable(reason) => Availability::Unavailable {
+                reason: reason.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -45,17 +76,17 @@ enum RegistryMsg {
 
 struct RegistryActor {
     log: Log,
-    providers: Providers,
+    launchers: Launchers,
     sessions: BTreeMap<SessionId, Session>,
     last: SessionId,
 }
 
 impl Registry {
-    pub fn spawn(log: Log, providers: Providers) -> Registry {
+    pub fn spawn(log: Log, launchers: Launchers) -> Registry {
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
-            providers,
+            launchers,
             sessions: BTreeMap::new(),
             last: SessionId(0),
         };
@@ -133,19 +164,18 @@ impl RegistryActor {
         directory: HostPath,
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
-        let availability = match provider {
-            Provider::Claude => self.providers.claude.clone(),
-            Provider::Codex => self.providers.codex.clone(),
-        };
         // `read_dir` fails for a missing path and for a file alike.
-        match (std::fs::read_dir(&directory.0), availability) {
+        match (
+            std::fs::read_dir(&directory.0),
+            self.launchers.of(provider).clone(),
+        ) {
             (Err(_), _) => Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)),
-            (Ok(_), Availability::Unavailable(reason)) => {
+            (Ok(_), Launcher::Unavailable(reason)) => {
                 Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
                     reason,
                 }))
             }
-            (Ok(_), Availability::Ready(launch)) => {
+            (Ok(_), Launcher::Ready(launch)) => {
                 let id = self.last.next();
                 self.last = id;
                 let created = EventKind::SessionCreated {

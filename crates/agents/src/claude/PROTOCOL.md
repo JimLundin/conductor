@@ -47,6 +47,11 @@ From the 2026-11-11 `s1` runs with `--include-partial-messages`.
 - `can_use_tool` carries `tool_name`, `display_name`, `description` (the file
   name for Write), `input`, `permission_suggestions` and `tool_use_id`. The
   `request_id` is a UUID. No `blocked_path` field was sent. (Steps 1, 2, 3b.)
+- Conductor relies on `tool_use_id`, because the app shows a request on its
+  tool call. `agents` answers a `can_use_tool` without it with a control
+  error, as it does an unknown subtype, and logs a warning that names the
+  missing id. The tool is then refused, so `s1` fails at its first approval
+  step if the CLI ever stops sending the id.
 - `permission_suggestions` for Write in `default` mode was
   `[{"type":"setMode","mode":"acceptEdits","destination":"session"}]`.
   (Steps 1, 2, 3b.)

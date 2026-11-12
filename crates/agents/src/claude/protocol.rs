@@ -137,8 +137,8 @@ pub enum ClaudeEvent {
         id: PermissionRequestId,
         tool_name: String,
         detail: ToolDetail,
-        /// The `ToolUse` block this asks about, when the CLI names it.
-        tool_use_id: Option<String>,
+        /// The `ToolUse` block this asks about.
+        tool_use_id: String,
     },
     /// The CLI withdrew a permission request; answering it is now an error.
     PermissionCancelled {
@@ -168,7 +168,7 @@ pub(crate) enum Inbound {
         id: PermissionRequestId,
         tool_name: String,
         input: Value,
-        tool_use_id: Option<String>,
+        tool_use_id: String,
     },
     /// Answer to a control request we sent.
     ControlResponse {
@@ -224,11 +224,19 @@ fn inbound(output: ClaudeOutput, raw: Value) -> Inbound {
             session_id: SessionId(msg.session_id),
         }),
         ClaudeOutput::ControlRequest(req) => match req.request {
-            ControlRequestPayload::CanUseTool(perm) => Inbound::Permission {
-                id: PermissionRequestId(req.request_id),
-                tool_name: perm.tool_name,
-                input: perm.input,
-                tool_use_id: perm.tool_use_id,
+            ControlRequestPayload::CanUseTool(perm) => match perm.tool_use_id {
+                Some(tool_use_id) => Inbound::Permission {
+                    id: PermissionRequestId(req.request_id),
+                    tool_name: perm.tool_name,
+                    input: perm.input,
+                    tool_use_id,
+                },
+                // Conductor shows a request on its tool call, so a request
+                // that names none is refused like an unknown subtype.
+                None => Inbound::UnsupportedControlRequest {
+                    request_id: req.request_id,
+                    subtype: String::from("can_use_tool without tool_use_id"),
+                },
             },
             other => Inbound::UnsupportedControlRequest {
                 request_id: req.request_id,
@@ -585,6 +593,18 @@ mod tests {
             Inbound::UnsupportedControlRequest {
                 request_id: String::from("cli_5"),
                 subtype: String::from("can_use_tool")
+            }
+        );
+    }
+
+    #[test]
+    fn can_use_tool_without_its_tool_use_id_is_refused() {
+        let line = r#"{"type":"control_request","request_id":"cli_6","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"a.txt"}}}"#;
+        assert_eq!(
+            parse_line(line).unwrap(),
+            Inbound::UnsupportedControlRequest {
+                request_id: String::from("cli_6"),
+                subtype: String::from("can_use_tool without tool_use_id")
             }
         );
     }

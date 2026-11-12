@@ -14,7 +14,7 @@ use client::host_view::{HostView, Item, ReplyState, SessionStatus, SessionView};
 use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Status, Target, Update};
 use daemon::Stopped;
 use daemon::log::Log;
-use daemon::registry::{Availability, Providers, Registry};
+use daemon::registry::{Launcher, Launchers, Registry};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, Launch};
 use iroh::endpoint::presets;
@@ -22,9 +22,9 @@ use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use n0_future::StreamExt;
 use proto::{
-    AuthToken, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch, Event,
-    EventKind, HostPath, HostSeq, Provider, Rejection, RequestId, Resolution, SessionId,
-    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    AuthToken, Availability, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch,
+    Event, EventKind, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
+    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -54,13 +54,15 @@ fn fake_claude() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fixture {
-    let log = Log::spawn(String::from("test-host"), Epoch(11));
-    let claude = Availability::Ready(Launch::Claude(ClaudeLaunch {
-        claude_path,
-        model: None,
-    }));
-    let codex = Availability::Unavailable(String::from(UNAVAILABLE));
-    let registry = Registry::spawn(log.clone(), Providers { claude, codex });
+    let launchers = Launchers {
+        claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
+            claude_path,
+            model: None,
+        })),
+        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+    };
+    let log = Log::spawn(String::from("test-host"), Epoch(11), launchers.providers());
+    let registry = Registry::spawn(log.clone(), launchers);
     let endpoint = endpoint().await;
     let target = Target {
         addr: endpoint.addr(),
@@ -220,6 +222,15 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
         ]
     );
     assert_eq!(link.status().host, Some(String::from("test-host")));
+    assert_eq!(
+        link.status().providers,
+        Some(Providers {
+            claude: Availability::Available,
+            codex: Availability::Unavailable {
+                reason: String::from(UNAVAILABLE),
+            },
+        })
+    );
     assert_eq!(link.status().path, PathKind::Direct);
 
     let cases = Vec::from([
@@ -463,8 +474,10 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
         },
         EventKind::RequestOpened {
             request: RequestId(1),
-            tool: String::from("Write"),
-            detail: String::from(path),
+            call: ToolCallId(String::from(call)),
+            tool: ToolKind::FileChange {
+                paths: Vec::from([String::from(path)]),
+            },
         },
     ])
 }

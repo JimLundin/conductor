@@ -1,9 +1,9 @@
 //! The session list and the form that starts a session.
 
 use client::host_view::{Attention, HostView, SessionStatus, SessionView};
-use client::new_session::{Attempt, PROVIDERS, Refusal, StartForm, label};
+use client::new_session::{Attempt, PROVIDERS, Refusal, label};
 use dioxus::prelude::*;
-use proto::{CommandBody, CommandResult, HostPath, Provider, SessionId};
+use proto::{Availability, CommandBody, CommandResult, HostPath, Provider, Providers, SessionId};
 
 use crate::{Link, PaneHeader, Screen, send};
 
@@ -96,17 +96,17 @@ fn SessionRow(
 #[component]
 pub(crate) fn NewSession(
     view: Signal<HostView>,
+    providers: Option<Providers>,
     link: Signal<Link>,
     on_back: EventHandler<()>,
     on_started: EventHandler<SessionId>,
 ) -> Element {
     let mut provider = use_signal(|| Provider::Claude);
     let mut directory = use_signal(String::new);
-    let form = use_signal(StartForm::empty);
+    let attempt = use_signal(|| Attempt::Editing);
     let host = view.read();
     let suggestions = host.directories();
-    let attempt = form.read().attempt.clone();
-    let (directory_error, provider_error, form_error) = match &attempt {
+    let (directory_error, provider_error, form_error) = match &attempt() {
         Attempt::Refused(Refusal::Directory) => (
             Some(String::from(
                 "There is no directory at that path on the host.",
@@ -125,7 +125,7 @@ pub(crate) fn NewSession(
         Attempt::Refused(Refusal::Other(message)) => (None, None, Some(message.clone())),
         Attempt::Editing | Attempt::Starting => (None, None, None),
     };
-    let start = match (&attempt, directory().trim()) {
+    let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
         (_, "") => Start::Empty,
         (_, _) => Start::Ready,
@@ -137,12 +137,12 @@ pub(crate) fn NewSession(
                 class: "new-session",
                 onsubmit: move |event: FormEvent| {
                     event.prevent_default();
-                    begin(link, form, provider(), HostPath(directory().trim().to_string()), on_started);
+                    begin(link, attempt, provider(), HostPath(directory().trim().to_string()), on_started);
                 },
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",
-                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, form.read().availability(&host, *choice).word())) {
+                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, word(providers.as_ref().map(|providers| providers.of(*choice))))) {
                             label { class: "segment", "data-available": "{state}",
                                 input {
                                     r#type: "radio",
@@ -227,12 +227,12 @@ fn Hint(error: Option<String>) -> Element {
 
 fn begin(
     link: Signal<Link>,
-    mut form: Signal<StartForm>,
+    mut attempt: Signal<Attempt>,
     provider: Provider,
     directory: HostPath,
     on_started: EventHandler<SessionId>,
 ) {
-    form.set(form().attempt(Attempt::Starting));
+    attempt.set(Attempt::Starting);
     spawn(async move {
         let answer = send(
             link(),
@@ -245,6 +245,15 @@ fn begin(
         if let Ok(CommandResult::Started { session }) = &answer {
             on_started(SessionId(session.0));
         }
-        form.set(form().answered(provider, answer));
+        attempt.set(Attempt::answered(answer));
     });
+}
+
+/// The provider's state in one word, for the form's text and `data-available`.
+fn word(availability: Option<&Availability>) -> String {
+    String::from(match availability {
+        Some(Availability::Available) => "available",
+        Some(Availability::Unavailable { .. }) => "unavailable",
+        None => "unknown",
+    })
 }

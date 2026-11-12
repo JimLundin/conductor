@@ -1,7 +1,8 @@
 //! One session: its header, transcript and composer.
 
 use client::host_view::{
-    self, Interrupt, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
+    self, Approval, Interrupt, Item, ReplyState, RequestState, SessionStatus, SessionView,
+    ToolState,
 };
 use client::new_session::label;
 use dioxus::prelude::*;
@@ -103,55 +104,39 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
         Item::Reply { text, state } => rsx! {
             p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
         },
-        Item::Tool { tool, state, .. } => {
+        Item::Tool {
+            tool,
+            state,
+            approval,
+            ..
+        } => {
             let state = match state {
                 ToolState::Running => "running",
                 ToolState::Finished(ToolOutcome::Succeeded) => "succeeded",
                 ToolState::Finished(ToolOutcome::Failed) => "failed",
                 ToolState::Finished(ToolOutcome::Declined) => "declined",
             };
-            rsx! {
-                div { class: "tool", "data-state": state, title: state,
-                    span { class: "tool-mark", role: "img", "aria-label": state }
-                    match tool {
-                        ToolKind::Command { command } => rsx! {
-                            code { class: "tool-detail", "{command}" }
-                        },
-                        ToolKind::FileChange { paths } => rsx! {
-                            span { class: "tool-name", "Edit" }
-                            span { class: "tool-paths",
-                                for path in paths {
-                                    code { class: "tool-detail", "{path}" }
-                                }
-                            }
-                        },
-                        ToolKind::Other { name, detail } => rsx! {
-                            span { class: "tool-name", "{name}" }
-                            code { class: "tool-detail", "{detail}" }
-                        },
-                    }
-                }
-            }
-        }
-        Item::Request {
-            request,
-            tool,
-            detail,
-            state,
-        } => rsx! {
-            section { class: "request", "data-open": matches!(state, RequestState::Open),
-                match &state {
-                    RequestState::Open => rsx! {
-                        p { class: "request-title", "Allow {tool}?" }
-                        pre { "{detail}" }
+            match approval {
+                Approval::NotAsked => rsx! { ToolLine { tool, state } },
+                Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                } => rsx! {
+                    section { class: "request", "data-open": true,
+                        p { class: "request-title", "Allow this?" }
+                        ToolLine { tool, state }
                         div { class: "actions",
                             button { class: "deny", onclick: move |_| on_decide((request, Decision::Deny)), "Deny" }
                             button { class: "approve", onclick: move |_| on_decide((request, Decision::Approve)), "Approve" }
                         }
-                    },
-                    RequestState::Resolved(resolution) => rsx! {
-                        p { class: "request-title", "{tool}" }
-                        pre { "{detail}" }
+                    }
+                },
+                Approval::Asked {
+                    state: RequestState::Resolved(resolution),
+                    ..
+                } => rsx! {
+                    section { class: "request", "data-open": false,
+                        ToolLine { tool, state }
                         p { class: "resolved",
                             match resolution {
                                 Resolution::Decided { decision: Decision::Approve, by } => format!("Approved by {}", by.0),
@@ -159,10 +144,10 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
                                 Resolution::Withdrawn => String::from("Withdrawn"),
                             }
                         }
-                    },
-                }
+                    }
+                },
             }
-        },
+        }
         Item::TurnCompleted(outcome) => {
             let (attr, text) = match outcome {
                 TurnOutcome::Completed => ("completed", String::from("Turn finished")),
@@ -172,6 +157,33 @@ fn TranscriptItem(item: Item, on_decide: EventHandler<(RequestId, Decision)>) ->
             rsx! { p { class: "turn-end", "data-outcome": attr, "{text}" } }
         }
         Item::Error(message) => rsx! { p { class: "error", "{message}" } },
+    }
+}
+
+/// A tool call's outcome and what it acts on.
+#[component]
+fn ToolLine(tool: ToolKind, state: String) -> Element {
+    rsx! {
+        div { class: "tool", "data-state": "{state}", title: "{state}",
+            span { class: "tool-mark", role: "img", "aria-label": "{state}" }
+            match tool {
+                ToolKind::Command { command } => rsx! {
+                    code { class: "tool-detail", "{command}" }
+                },
+                ToolKind::FileChange { paths } => rsx! {
+                    span { class: "tool-name", "Edit" }
+                    span { class: "tool-paths",
+                        for path in paths {
+                            code { class: "tool-detail", "{path}" }
+                        }
+                    }
+                },
+                ToolKind::Other { name, detail } => rsx! {
+                    span { class: "tool-name", "{name}" }
+                    code { class: "tool-detail", "{detail}" }
+                },
+            }
+        }
     }
 }
 

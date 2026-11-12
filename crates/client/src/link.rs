@@ -24,7 +24,7 @@ use n0_future::time::sleep;
 use n0_future::{StreamExt, join_all, task};
 use proto::{
     AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch,
-    Event, Hello, HelloReply, HostSeq, Open, Subscribe, Ticket, Welcome,
+    Event, Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -94,6 +94,8 @@ pub struct Status {
     pub path: PathKind,
     /// The host's name from its last `Welcome`.
     pub host: Option<String>,
+    /// What the host can run, from its last `Welcome`.
+    pub providers: Option<Providers>,
     /// Why the last connection ended, until the next one is live.
     pub error: Option<String>,
     /// Why the last WebRTC upgrade failed or dropped, until one succeeds.
@@ -189,6 +191,7 @@ impl HostLink {
             state: LinkState::Disconnected,
             path: PathKind::Unknown,
             host: None,
+            providers: None,
             error: None,
             upgrade_error: None,
         };
@@ -527,6 +530,7 @@ impl Link {
         self.outbox
             .publish(Status {
                 host: Some(welcome.host.clone()),
+                providers: Some(welcome.providers.clone()),
                 state: LinkState::CatchingUp,
                 ..current
             })

@@ -29,10 +29,9 @@ pub(crate) enum Step {
     /// `RequestOpened`.
     Open {
         native: NativeRequest,
-        /// The tool call the request asks about, when the provider names it.
-        call: Option<ToolCallId>,
-        tool: String,
-        detail: String,
+        /// The tool call the request asks about.
+        call: ToolCallId,
+        tool: ToolKind,
     },
     /// The session logs the call finished, as `Declined` if it failed after
     /// the user denied it.
@@ -67,9 +66,8 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             tool_use_id,
         } => Vec::from([Step::Open {
             native: NativeRequest::Claude(id),
-            call: tool_use_id.map(ToolCallId),
-            tool: tool_name,
-            detail: detail_text(detail),
+            call: ToolCallId(tool_use_id),
+            tool: tool_kind(tool_name, detail),
         }]),
         ClaudeEvent::PermissionCancelled { id } => {
             Vec::from([Step::Withdraw(NativeRequest::Claude(id))])
@@ -140,12 +138,6 @@ fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
         (_, ToolDetail::Path(detail) | ToolDetail::Text(detail)) => {
             ToolKind::Other { name, detail }
         }
-    }
-}
-
-fn detail_text(detail: ToolDetail) -> String {
-    match detail {
-        ToolDetail::Command(text) | ToolDetail::Path(text) | ToolDetail::Text(text) => text,
     }
 }
 

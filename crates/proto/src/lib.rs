@@ -32,7 +32,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/1";
+pub const ALPN: &[u8] = b"conductor/2";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -172,6 +172,32 @@ pub struct Welcome {
     pub host: String,
     pub epoch: Epoch,
     pub head_seq: HostSeq,
+    pub providers: Providers,
+}
+
+/// Whether the host can run each provider, fixed when it starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Providers {
+    pub claude: Availability,
+    pub codex: Availability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Availability {
+    Available,
+    /// The host can't run this provider's sessions, for this reason.
+    Unavailable {
+        reason: String,
+    },
+}
+
+impl Providers {
+    pub fn of(&self, provider: Provider) -> &Availability {
+        match provider {
+            Provider::Claude => &self.claude,
+            Provider::Codex => &self.codex,
+        }
+    }
 }
 
 /// Replays every event after `after_seq`, then streams live ones. A
@@ -322,10 +348,12 @@ pub enum EventKind {
         call: ToolCallId,
         phase: ToolPhase,
     },
+    /// An approval the tool call `call` waits on. `tool` repeats what the
+    /// call's `Started` said, so a client can show the request on its own.
     RequestOpened {
         request: RequestId,
-        tool: String,
-        detail: String,
+        call: ToolCallId,
+        tool: ToolKind,
     },
     RequestResolved {
         request: RequestId,

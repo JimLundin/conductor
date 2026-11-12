@@ -4,7 +4,7 @@
 
 use std::convert::Infallible;
 
-use proto::{Epoch, Event, EventKind, HostSeq, SessionId, Welcome};
+use proto::{Epoch, Event, EventKind, HostSeq, Providers, SessionId, Welcome};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::Stopped;
@@ -43,17 +43,19 @@ enum LogMsg {
 struct LogActor {
     name: String,
     epoch: Epoch,
+    providers: Providers,
     events: Vec<Event>,
     live: broadcast::Sender<Event>,
 }
 
 impl Log {
-    pub fn spawn(name: String, epoch: Epoch) -> Log {
+    pub fn spawn(name: String, epoch: Epoch, providers: Providers) -> Log {
         let (inbox, messages) = mpsc::channel(64);
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let actor = LogActor {
             name,
             epoch,
+            providers,
             events: Vec::new(),
             live,
         };
@@ -113,6 +115,7 @@ impl LogActor {
                     host: self.name.clone(),
                     epoch: self.epoch,
                     head_seq: self.head(),
+                    providers: self.providers.clone(),
                 });
             }
             LogMsg::Subscribe { after, reply } => {
@@ -136,7 +139,7 @@ impl LogActor {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Epoch, EventKind, HostSeq, SessionId, Welcome};
+    use proto::{Availability, Epoch, EventKind, HostSeq, Providers, SessionId, Welcome};
 
     use super::Log;
 
@@ -146,9 +149,18 @@ mod tests {
         }
     }
 
+    fn providers() -> Providers {
+        Providers {
+            claude: Availability::Available,
+            codex: Availability::Unavailable {
+                reason: String::from("no codex"),
+            },
+        }
+    }
+
     #[tokio::test]
     async fn replay_starts_after_the_cursor_and_welcome_reports_the_head() {
-        let log = Log::spawn(String::from("test"), Epoch(5));
+        let log = Log::spawn(String::from("test"), Epoch(5), providers());
         log.append(SessionId(1), EventKind::SessionReady)
             .await
             .unwrap();
@@ -160,6 +172,7 @@ mod tests {
                 host: String::from("test"),
                 epoch: Epoch(5),
                 head_seq: HostSeq(3),
+                providers: providers(),
             }
         );
         let replay = log.subscribe(HostSeq(1)).await.unwrap().replay;

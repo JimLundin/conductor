@@ -138,6 +138,7 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
                         (Screen::NewSession, _) => rsx! {
                             sessions::NewSession {
                                 view,
+                                providers: status().and_then(|status| status.providers),
                                 link,
                                 on_back: move |()| screen.set(Screen::Sessions),
                                 on_started: move |id| screen.set(Screen::Session(id)),
@@ -253,6 +254,7 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
         state: LinkState::Disconnected,
         path: PathKind::Unknown,
         host: None,
+        providers: None,
         error: None,
         upgrade_error: None,
     });

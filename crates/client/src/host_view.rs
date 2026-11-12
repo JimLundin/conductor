@@ -43,16 +43,12 @@ pub enum Item {
         text: String,
         state: ReplyState,
     },
+    /// A tool call, with the approval it asked for, if any.
     Tool {
         call: ToolCallId,
         tool: ToolKind,
         state: ToolState,
-    },
-    Request {
-        request: RequestId,
-        tool: String,
-        detail: String,
-        state: RequestState,
+        approval: Approval,
     },
     TurnCompleted(TurnOutcome),
     Error(String),
@@ -72,14 +68,24 @@ pub enum ToolState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Approval {
+    NotAsked,
+    Asked {
+        request: RequestId,
+        state: RequestState,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestState {
     Open,
     Resolved(Resolution),
 }
 
-/// An in-place change to an earlier item. Resolving a request and finishing
-/// a tool call are the same shape, so they are one `map` over the items.
+/// An in-place change to an earlier tool call. Asking, resolving and
+/// finishing are the same shape, so they are one `map` over the items.
 enum Change {
+    Ask(ToolCallId, RequestId),
     Resolve(RequestId, Resolution),
     Finish(ToolCallId, ToolOutcome),
 }
@@ -210,8 +216,11 @@ impl SessionView {
             .filter(|item| {
                 matches!(
                     item,
-                    Item::Request {
-                        state: RequestState::Open,
+                    Item::Tool {
+                        approval: Approval::Asked {
+                            state: RequestState::Open,
+                            ..
+                        },
                         ..
                     }
                 )
@@ -240,6 +249,7 @@ impl SessionView {
                 call,
                 tool,
                 state: ToolState::Running,
+                approval: Approval::NotAsked,
             }),
             EventKind::ToolCall {
                 call,
@@ -247,14 +257,9 @@ impl SessionView {
             } => self.change(Change::Finish(call, outcome)),
             EventKind::RequestOpened {
                 request,
+                call,
                 tool,
-                detail,
-            } => self.push(Item::Request {
-                request,
-                tool,
-                detail,
-                state: RequestState::Open,
-            }),
+            } => self.ask(call, request, tool),
             EventKind::RequestResolved {
                 request,
                 resolution,
@@ -307,6 +312,28 @@ impl SessionView {
         SessionView { items, ..self }
     }
 
+    /// A request joins its tool call's card. A request for a call this view
+    /// never saw started gets a card of its own.
+    fn ask(self, call: ToolCallId, request: RequestId, tool: ToolKind) -> SessionView {
+        match self
+            .items
+            .iter()
+            .filter_map(Item::call)
+            .find(|seen| seen.0 == call.0)
+        {
+            Some(_) => self.change(Change::Ask(call, request)),
+            None => self.push(Item::Tool {
+                call,
+                tool,
+                state: ToolState::Running,
+                approval: Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                },
+            }),
+        }
+    }
+
     fn change(self, change: Change) -> SessionView {
         SessionView {
             items: self
@@ -320,34 +347,65 @@ impl SessionView {
 }
 
 impl Item {
+    fn call(&self) -> Option<&ToolCallId> {
+        match self {
+            Item::Tool { call, .. } => Some(call),
+            Item::User { .. } | Item::Reply { .. } | Item::TurnCompleted(_) | Item::Error(_) => {
+                None
+            }
+        }
+    }
+
     fn changed(self, change: &Change) -> Item {
-        match (self, change) {
-            (
-                Item::Request {
-                    request,
-                    tool,
-                    detail,
-                    state,
-                },
-                Change::Resolve(id, resolution),
-            ) => Item::Request {
-                state: match request.eq(id).then_some(resolution) {
-                    Some(resolution) => RequestState::Resolved(resolution.clone()),
-                    None => state,
-                },
-                request,
+        match self {
+            Item::Tool {
+                call,
                 tool,
-                detail,
-            },
-            (Item::Tool { call, tool, state }, Change::Finish(id, outcome)) => Item::Tool {
-                state: match call.eq(id).then_some(outcome).copied() {
-                    Some(outcome) => ToolState::Finished(outcome),
-                    None => state,
-                },
+                state,
+                approval,
+            } => Item::Tool {
+                state: state.changed(&call, change),
+                approval: approval.changed(&call, change),
                 call,
                 tool,
             },
-            (item, _) => item,
+            item => item,
+        }
+    }
+}
+
+impl ToolState {
+    fn changed(self, call: &ToolCallId, change: &Change) -> ToolState {
+        match change {
+            Change::Finish(id, outcome) => match call.eq(id).then_some(outcome).copied() {
+                Some(outcome) => ToolState::Finished(outcome),
+                None => self,
+            },
+            Change::Ask(_, _) | Change::Resolve(_, _) => self,
+        }
+    }
+}
+
+impl Approval {
+    fn changed(self, call: &ToolCallId, change: &Change) -> Approval {
+        match (self, change) {
+            (approval, Change::Ask(id, request)) => match call.eq(id).then_some(request).copied() {
+                Some(request) => Approval::Asked {
+                    request,
+                    state: RequestState::Open,
+                },
+                None => approval,
+            },
+            (Approval::Asked { request, state }, Change::Resolve(id, resolution)) => {
+                Approval::Asked {
+                    state: match request.eq(id).then_some(resolution) {
+                        Some(resolution) => RequestState::Resolved(resolution.clone()),
+                        None => state,
+                    },
+                    request,
+                }
+            }
+            (approval, Change::Resolve(_, _) | Change::Finish(_, _)) => approval,
         }
     }
 }
@@ -363,7 +421,8 @@ mod tests {
     };
 
     use super::{
-        Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
+        Approval, Attention, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView,
+        ToolState,
     };
 
     fn text(text: &str) -> String {
@@ -422,16 +481,20 @@ mod tests {
                 1,
                 EventKind::RequestOpened {
                     request: RequestId(1),
-                    tool: text("Bash"),
-                    detail: text("ls"),
+                    call: call.clone(),
+                    tool: ToolKind::Command {
+                        command: text("ls"),
+                    },
                 },
             ),
             (
                 1,
                 EventKind::RequestOpened {
                     request: RequestId(2),
-                    tool: text("Bash"),
-                    detail: text("rm"),
+                    call: ToolCallId(text("toolu_2")),
+                    tool: ToolKind::Command {
+                        command: text("rm"),
+                    },
                 },
             ),
             (
@@ -506,21 +569,24 @@ mod tests {
                                     command: text("ls"),
                                 },
                                 state: ToolState::Finished(ToolOutcome::Succeeded),
+                                approval: Approval::Asked {
+                                    request: RequestId(1),
+                                    state: RequestState::Resolved(Resolution::Decided {
+                                        decision: Decision::Approve,
+                                        by: ClientName(text("phone")),
+                                    }),
+                                },
                             },
-                            Item::Request {
-                                request: RequestId(1),
-                                tool: text("Bash"),
-                                detail: text("ls"),
-                                state: RequestState::Resolved(Resolution::Decided {
-                                    decision: Decision::Approve,
-                                    by: ClientName(text("phone")),
-                                }),
-                            },
-                            Item::Request {
-                                request: RequestId(2),
-                                tool: text("Bash"),
-                                detail: text("rm"),
-                                state: RequestState::Resolved(Resolution::Withdrawn),
+                            Item::Tool {
+                                call: ToolCallId(text("toolu_2")),
+                                tool: ToolKind::Command {
+                                    command: text("rm"),
+                                },
+                                state: ToolState::Running,
+                                approval: Approval::Asked {
+                                    request: RequestId(2),
+                                    state: RequestState::Resolved(Resolution::Withdrawn),
+                                },
                             },
                             Item::Reply {
                                 text: text("Done"),
@@ -560,8 +626,10 @@ mod tests {
     fn opened(request: u64) -> EventKind {
         EventKind::RequestOpened {
             request: RequestId(request),
-            tool: text("Bash"),
-            detail: text("ls"),
+            call: ToolCallId(format!("toolu_{request}")),
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
         }
     }
 
