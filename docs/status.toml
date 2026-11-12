@@ -3,7 +3,8 @@
 # score, into the architecture page. Update a unit when its branch is
 # created or merged.
 #
-# status: "done", "in_progress" (needs `branch`) or "planned".
+# status: "done", "in_progress" (needs `branch`) or "planned". Drop `branch`
+# when a unit merges; tools/check.sh fails otherwise.
 # touches: crate names, or crate/path for a single module.
 
 updated = 2026-11-12
@@ -100,7 +101,6 @@ touches = ["agents", "claude-codes"]
 id = "p1-3"
 name = "Unit 3: protocol swap"
 status = "done"
-branch = "p1-u3-protocol"
 purpose = "Per-session protocol; daemon log, registry and serve; the simulated host deleted."
 done_when = "Wrong-token and epoch e2e pass; StartSession answers ProviderUnavailable."
 touches = ["proto", "client", "daemon", "app"]
@@ -108,7 +108,6 @@ touches = ["proto", "client", "daemon", "app"]
 id = "p1-4"
 name = "Unit 4: Claude sessions"
 status = "done"
-branch = "p1-u4-claude"
 purpose = "Session actor and the Claude half of mapping; the first real session runs."
 done_when = "The Claude e2e tests pass."
 touches = ["daemon", "agents"]
@@ -116,7 +115,6 @@ touches = ["daemon", "agents"]
 id = "p1-5"
 name = "Unit 5: Codex sessions"
 status = "done"
-branch = "p1-u5-codex"
 purpose = "CodexHub, the Codex half of mapping, Codex in the registry."
 done_when = "The Codex e2e tests pass, including two sessions on one server."
 touches = ["daemon", "agents"]
@@ -124,7 +122,6 @@ touches = ["daemon", "agents"]
 id = "p1-6"
 name = "Unit 6: app screens"
 status = "done"
-branch = "p1-u6-screens"
 purpose = "Session list, new-session form, session pane, phone layout."
 done_when = "A Claude turn runs by hand in dx serve; screenshots at desktop and 390 px."
 touches = ["app"]
@@ -132,7 +129,6 @@ touches = ["app"]
 id = "p1-7"
 name = "Unit 7: browser e2e"
 status = "done"
-branch = "p1-u7-browser"
 purpose = "The browser e2e on the real daemon and the fake CLIs."
 done_when = "All three scenarios pass in Chromium and WebKit."
 touches = ["app", "daemon"]

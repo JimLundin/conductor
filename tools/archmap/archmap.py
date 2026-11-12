@@ -75,9 +75,9 @@ def load_status(path):
     return status, units
 
 
-def run(*cmd):
+def run(*cmd, quiet_ok=False):
     done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-    if done.returncode not in (0, 1) or not done.stdout:
+    if done.returncode not in (0, 1) or (not done.stdout and not (quiet_ok and done.returncode == 0)):
         raise SystemExit(f"{' '.join(cmd)} failed:\n{done.stderr}")
     return done.stdout
 
@@ -109,7 +109,7 @@ def load_crates(status, subset):
     for row in score["rows"]:
         crate = owner(row["name"])
         crate.files[row["name"][len(crate.dir) + 1:]] = File(row["tokens"], row["lines"])
-    for line in run(subset, "check").splitlines():
+    for line in run(subset, "check", quiet_ok=True).splitlines():
         if m := re.match(r"(\S+\.rs):\d+:\d+: ", line):
             crate = owner(m[1])
             crate.files[m[1][len(crate.dir) + 1:]].violations += 1
@@ -627,17 +627,23 @@ def page(status, units, crates, commit, date):
 <p class="meta">Generated at <a href="{REPO}/commit/{commit}"><code>{commit[:9]}</code></a> on {date} from docs/status.toml (updated {status["updated"]}) and the code. Docs: {doc_links}.</p>
 <nav>{nav}</nav><div class="legend">{legend}</div></header>
 {body}
-<footer>Regenerate with <code>python3 tools/archmap/archmap.py --out DIR</code>. Edit <code>docs/status.toml</code> when a unit starts or merges.</footer>
+<footer>Regenerate with <code>python3 tools/archmap/archmap.py --out DIR</code>. Edit <code>docs/status.toml</code> when a unit starts or merges; a merged unit drops its <code>branch</code>.</footer>
 </main></body></html>
 """
 
 
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument("--out", required=True, type=Path)
-    args.add_argument("--subset", default=str(Path(run("tools/target-dir").strip()) / "debug/subset"))
+    args.add_argument("--out", type=Path)
+    args.add_argument("--subset")
+    args.add_argument("--check", action="store_true", help="only validate docs/status.toml")
     args = args.parse_args()
     status, units = load_status(ROOT / "docs/status.toml")
+    if args.check:
+        return
+    if args.out is None:
+        raise SystemExit("--out is required unless --check")
+    args.subset = args.subset or str(Path(run("tools/target-dir").strip()) / "debug/subset")
     crates = load_crates(status, args.subset)
     commit = run("git", "rev-parse", "HEAD").strip()
     date = datetime.date.today().isoformat()

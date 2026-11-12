@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 WASM_CRATES=(proto client)
 cargo fmt --check
+# docs/status.toml feeds the Pages deploy; a malformed unit fails it there.
+python3 tools/archmap/archmap.py --check
 cargo clippy --workspace --all-targets -- -D warnings
 for crate in "${WASM_CRATES[@]}"; do
   if [ -d "crates/$crate" ]; then
