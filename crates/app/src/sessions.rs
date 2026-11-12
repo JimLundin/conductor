@@ -2,8 +2,8 @@
 
 use client::host_view::{Attention, HostView, SessionView};
 use client::new_session::{
-    Attempt, PROVIDERS, ProviderNote, Refusal, effort_picks, kept_effort, label, model_picks,
-    models, note,
+    Attempt, PROVIDERS, ProviderNote, Refusal, default_label, efforts, kept_effort, label, models,
+    note,
 };
 use dioxus::prelude::*;
 use proto::{
@@ -129,8 +129,7 @@ pub(crate) fn NewSession(
         providers.as_ref().map(|providers| providers.of(provider())),
     );
     let offered = models(providers.as_ref().map(|providers| providers.of(provider())));
-    let model_options = model_picks(&offered);
-    let effort_options = effort_picks(&offered, model().as_ref());
+    let effort_options = efforts(&offered, model().as_ref());
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
         (_, "") => Start::Empty,
@@ -190,11 +189,12 @@ pub(crate) fn NewSession(
                                 effort.set(kept_effort(&offered, picked.as_ref(), effort()));
                                 model.set(picked);
                             },
-                            for pick in model_options {
+                            option { value: "", selected: model().is_none(), "{default_label(&offered)}" }
+                            for choice in offered.choices.clone() {
                                 option {
-                                    value: "{pick.value.as_ref().map(|id| id.0.clone()).unwrap_or_default()}",
-                                    selected: pick.value == model(),
-                                    "{pick.label}"
+                                    value: "{choice.id.0}",
+                                    selected: Some(&choice.id) == model().as_ref(),
+                                    "{choice.name}"
                                 }
                             }
                         }
@@ -204,11 +204,12 @@ pub(crate) fn NewSession(
                         select {
                             name: "effort",
                             onchange: move |event| effort.set(Effort::parse(&event.value())),
-                            for pick in effort_options {
+                            option { value: "", selected: effort().is_none(), "Default" }
+                            for offered_effort in effort_options {
                                 option {
-                                    value: "{pick.value.map(|effort| String::from(effort.wire())).unwrap_or_default()}",
-                                    selected: pick.value == effort(),
-                                    "{pick.label}"
+                                    value: "{offered_effort.wire()}",
+                                    selected: Some(offered_effort) == effort(),
+                                    "{offered_effort.wire()}"
                                 }
                             }
                         }
