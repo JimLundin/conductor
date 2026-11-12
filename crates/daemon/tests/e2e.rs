@@ -515,10 +515,16 @@ async fn a_claude_turn_streams_asks_and_finishes() {
         ]
         .concat()
     );
+    let desk = LinkOptions {
+        network: Network::Local,
+        ..LinkOptions::new(ClientName(String::from("desk")))
+    };
+    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await.unwrap();
+    until_live(&mut at_desk).await;
     assert_eq!(
         [
             send(&link, resolve(1, Decision::Approve)).await,
-            send(&link, resolve(1, Decision::Deny)).await,
+            send(&desk, resolve(1, Decision::Deny)).await,
             send(&link, resolve(2, Decision::Approve)).await,
         ],
         [
