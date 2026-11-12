@@ -32,7 +32,7 @@ pub use ticket::{AuthToken, Ticket, TicketError};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/3";
+pub const ALPN: &[u8] = b"conductor/4";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -200,8 +200,9 @@ impl Providers {
     }
 }
 
-/// Replays every event after `after_seq`, then streams live ones. A
-/// subscription from another epoch is refused by closing the stream.
+/// Replays every stored event after `after_seq`, then streams live ones,
+/// deltas included. A subscription from another epoch is refused by closing
+/// the stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Subscribe {
     pub epoch: Epoch,
@@ -312,7 +313,8 @@ impl Rejection {
     }
 }
 
-/// Every event names its session.
+/// Every event names its session. A stored event has a seq of its own; an
+/// `AssistantDelta` repeats the last one's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub seq: HostSeq,
@@ -336,6 +338,12 @@ pub enum EventKind {
         text: String,
         by: ClientName,
     },
+    /// A fragment of the assistant message being streamed. Live only: the
+    /// host stores none, so a subscription never replays one, and the
+    /// `AssistantMessage` that follows replaces them. It carries the seq of
+    /// the stored event before it, which may be another session's, so a
+    /// client that has applied that seq takes it and one that hasn't sees a
+    /// gap.
     AssistantDelta {
         text: String,
     },

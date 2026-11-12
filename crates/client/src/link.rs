@@ -24,7 +24,7 @@ use n0_future::time::sleep;
 use n0_future::{StreamExt, join_all, task};
 use proto::{
     AuthToken, CandidateType, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch,
-    Event, Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
+    Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -720,18 +720,25 @@ impl Link {
 
     async fn apply(&mut self, event: Event, epoch: Epoch, live_at: HostSeq) -> Result<(), Lost> {
         let after = self.cursor_seq();
-        match after.0.checked_add(1).map(|next| event.seq.0.cmp(&next)) {
-            Some(Ordering::Less) => Ok(()),
-            Some(Ordering::Equal) => {
+        let order = after.0.checked_add(1).map(|next| event.seq.0.cmp(&next));
+        match (order, &event.kind) {
+            // A delta repeats the seq of the stored event before it, which
+            // the stream delivered first (`EventKind::AssistantDelta`).
+            (Some(Ordering::Less), EventKind::AssistantDelta { .. }) => {
+                Ok(self.outbox.emit(Update::Event(event)).await?)
+            }
+            (Some(Ordering::Less), _) => Ok(()),
+            (Some(Ordering::Equal), EventKind::AssistantDelta { .. })
+            | (Some(Ordering::Greater) | None, _) => Err(Lost::Gap {
+                after: after.0,
+                got: event.seq.0,
+            }),
+            (Some(Ordering::Equal), _) => {
                 let seq = event.seq;
                 self.cursor = Some(Cursor { epoch, seq });
                 self.outbox.emit(Update::Event(event)).await?;
                 Ok(self.catch_up(seq, live_at).await?)
             }
-            Some(Ordering::Greater) | None => Err(Lost::Gap {
-                after: after.0,
-                got: event.seq.0,
-            }),
         }
     }
 
