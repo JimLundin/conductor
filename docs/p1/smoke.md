@@ -46,18 +46,21 @@ In the desktop browser, open **New session**, choose Claude Code, and enter
 
 ## 3. Codex
 
-Start a second session with Codex in `/tmp/smoke`. Codex writes inside the
-session's directory without asking, so ask for something outside it to get
-an approval.
+Start a second session with Codex in `/tmp/smoke`. Codex's workspace-write
+sandbox lets it write inside the session's directory and anywhere under
+`/tmp` without asking, so ask for a file in your home directory to get an
+approval.
 
-- [ ] Ask it to create `/tmp/smoke-outside/three.txt`. Approve it. The file
+- [ ] Ask it to create `~/smoke-outside/three.txt`. Approve it. The file
       exists.
-- [ ] Ask for `/tmp/smoke-outside/four.txt`. Deny it. No file appears.
-- [ ] Ask for a long answer and interrupt it.
+- [ ] Ask for `~/smoke-outside/four.txt`. Deny it. No file appears.
+- [ ] Ask for a long answer and interrupt it once text streams. Codex may
+      reason for 15 to 30 seconds before any text appears.
 
 ## 4. Both at once, on the phone
 
-- [ ] Send a prompt to each session that needs an approval, without answering.
+- [ ] Send a prompt to each session that needs an approval, without
+      answering (for Codex, a file under `~/smoke-outside`).
 - [ ] On the iPhone, the session list shows both sessions, each with an
       approval badge.
 - [ ] Approve one from the phone and the other from the desktop. Each card
@@ -88,8 +91,36 @@ an approval.
 ## Teardown
 
 - [ ] Stop the host with Ctrl-C. The phone shows that the host is gone.
-- [ ] `rm -rf /tmp/smoke /tmp/smoke-outside`.
+- [ ] `rm -rf /tmp/smoke ~/smoke-outside`.
 
 ## Findings
 
 Write one line per finding: the time, the step, and what happened.
+
+### Run 1 (2026-11-12, owner, host on WSL with mirrored networking)
+
+Every step passed. Phone: iPhone, Safari and the Home Screen app, on the same
+Wi-Fi as the host.
+
+1. **Step 1, WebRTC never upgrades; every client stays relayed.** Browsers
+   offer their LAN address only as an mDNS `.local` name, which the host
+   skips (`ICE bad candidate`), and the shared public address needs NAT
+   hairpinning, which the router doesn't do. The phone's checks never reach
+   the host (0 datagrams in), most likely the Hyper-V firewall blocking
+   inbound UDP to WSL. The desktop browser on the same machine exchanges
+   datagrams (59 in, 83 out) but ICE stays in Checking; Windows and WSL share
+   192.168.0.27 in mirrored mode. The client retries every 15 s, forever.
+2. **Step 3, the checklist was wrong**: Codex may write under `/tmp` without
+   asking, so `/tmp/smoke-outside` never prompted. Fixed above.
+3. **Step 3, Codex shows nothing while it reasons.** The rebase turn sent no
+   text for 18 s before the interrupt; the app looked stalled. The interrupt
+   itself worked, and the turn ended as interrupted.
+4. **Step 4, every client is named "browser"**, so a card can't say which
+   device approved. The log showed the phone approved Claude's request and the
+   desktop approved Codex's.
+5. **Step 6, a gap above the keyboard**: a band about a finger's height
+   between the composer and the keyboard's accessory bar, likely the
+   home-indicator inset kept while the keyboard is up. Return sends the
+   message; the owner accepts that as the design.
+6. **Step 7, Codex shows "unavailable" with no reason.** The host sends the
+   reason in `Welcome`; the New Session form doesn't render it.

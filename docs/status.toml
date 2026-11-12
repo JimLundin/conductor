@@ -135,7 +135,7 @@ touches = ["app", "daemon"]
 [[phase.unit]]
 id = "p1-8"
 name = "Unit 8: smoke and docs"
-status = "planned"
+status = "done"
 purpose = "Run the manual smoke test with the real CLIs; update the docs."
 done_when = "The owner has run the checklist; nothing is reported under crates/daemon."
 touches = ["daemon"]
