@@ -724,13 +724,13 @@ async fn subscribe(
     epoch: Epoch,
     after_seq: HostSeq,
 ) -> Result<(SendStream, RecvStream), Lost> {
-    let (mut send, recv) = conn.open_bi().await?;
+    let (mut send, recv) = conn.open_bi().await.map_err(WireError::from)?;
     wire::write(&mut send, &Open::Subscribe(Subscribe { epoch, after_seq })).await?;
     Ok((send, recv))
 }
 
 async fn hello(conn: &Connection, hello: Hello) -> Result<Welcome, Lost> {
-    let (mut send, mut recv) = conn.open_bi().await?;
+    let (mut send, mut recv) = conn.open_bi().await.map_err(WireError::from)?;
     wire::write(&mut send, &Open::Hello(hello)).await?;
     match wire::read::<HelloReply>(&mut recv).await? {
         Some(HelloReply::Welcome(welcome)) => Ok(welcome),
