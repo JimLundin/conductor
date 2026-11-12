@@ -256,20 +256,16 @@ fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Eleme
         host: None,
         providers: None,
         error: None,
-        upgrade_error: None,
     });
     let state = format!("{:?}", status.state);
     let (path_attr, path) = match status.path {
         PathKind::Direct => ("Direct", "Direct"),
         PathKind::Relayed => ("Relayed", "Relayed"),
-        PathKind::WebRtc => ("WebRtc", "WebRTC"),
         PathKind::Unknown => ("Unknown", "path unknown"),
     };
-    let upgrade_error = status.upgrade_error.unwrap_or_default();
     let host = status.host.unwrap_or_else(|| "host".into());
     rsx! {
         header { class: "status", "data-state": "{state}", "data-path": "{path_attr}",
-            "data-upgrade-error": "{upgrade_error}",
             span { class: "dot" }
             span { class: "host", "{host}" }
             span { class: "state", "{state}" }

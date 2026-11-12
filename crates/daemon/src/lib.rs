@@ -1,14 +1,12 @@
 //! `conductord`: the host daemon. It serves the event log and the sessions
-//! over iroh, and over WebRTC to browsers that upgrade (`conductord host`).
+//! over iroh (`conductord host`).
 
 pub mod codex_hub;
 pub mod log;
 mod mapping;
 pub mod registry;
-pub mod rtc;
 pub mod serve;
 pub mod session;
-mod stun;
 mod wire;
 
 use std::io::ErrorKind;

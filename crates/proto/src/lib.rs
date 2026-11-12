@@ -5,17 +5,15 @@
 //! stream of a connection must be [`Open::Hello`], answered by one
 //! [`HelloReply`]. A [`Open::Command`] stream gets one [`CommandResult`] and
 //! closes. A [`Open::Subscribe`] stream then carries [`Event`]s until either
-//! side closes it. A [`Open::Rtc`] stream negotiates a WebRTC connection that
-//! carries the same streams as data channels (§5.4); it then carries
-//! [`Signal`]s both ways for as long as that connection lives.
+//! side closes it.
 //!
 //! Frame bodies are postcard, which is not self-describing. A variant is
 //! its index and a field is its position, so a reordered enum or struct
 //! decodes as the wrong value with no error, and a variant added at the end
 //! fails an old peer mid-stream. So any change to a type reachable from
-//! [`Open`], [`HelloReply`], [`CommandResult`], [`Event`] or [`Signal`] bumps
-//! [`ALPN`], including a variant added at the end. Renaming a variant or a
-//! field doesn't change the bytes and needs no bump.
+//! [`Open`], [`HelloReply`], [`CommandResult`] or [`Event`] bumps [`ALPN`],
+//! including a variant added at the end. Renaming a variant or a field
+//! doesn't change the bytes and needs no bump.
 
 mod frame;
 mod relay;
@@ -23,16 +21,14 @@ mod ticket;
 
 use serde::{Deserialize, Serialize};
 
-pub use frame::{
-    CHUNK_LEN, FrameBuffer, FrameError, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode,
-};
+pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
 pub use relay::without_root_dot;
 pub use ticket::{AuthToken, Ticket, TicketError};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/4";
+pub const ALPN: &[u8] = b"conductor/5";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -69,33 +65,6 @@ pub enum Open {
     Hello(Hello),
     Subscribe(Subscribe),
     Command(Command),
-    Rtc(RtcOffer),
-}
-
-/// Public STUN servers both ends ask for their public address by default.
-/// They are stateless and see no traffic; nothing relays (§5.4).
-pub const DEFAULT_STUN_SERVERS: &[&str] = &[
-    "stun:stun.l.google.com:19302",
-    "stun:stun.cloudflare.com:3478",
-];
-
-/// The browser's SDP offer. It carries the browser's DTLS fingerprint, and
-/// the answer carries the host's, so only the two ends of this authenticated
-/// iroh connection can complete the WebRTC handshake.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RtcOffer {
-    pub sdp: String,
-}
-
-/// Everything after the offer on an [`Open::Rtc`] stream. Closing the stream
-/// ends the WebRTC connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Signal {
-    /// Host to client, once, first.
-    Answer { sdp: String },
-    /// Both ways, trickled as each side learns its addresses. The text is an
-    /// SDP `candidate:` attribute value.
-    Candidate { candidate: String },
 }
 
 /// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`

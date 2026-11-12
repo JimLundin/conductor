@@ -17,29 +17,7 @@ tracing.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { workspace = true, features = ["wasm_js"] }
-js-sys = "0.3.107"
-wasm-bindgen = "0.2.130"
-wasm-bindgen-futures = "0.4.80"
-web-sys = { version = "0.3.107", features = [
-    "MessageEvent",
-    "Navigator",
-    "RtcConfiguration",
-    "RtcDataChannel",
-    "RtcDataChannelInit",
-    "RtcDataChannelState",
-    "RtcDataChannelType",
-    "RtcIceCandidate",
-    "RtcIceCandidateInit",
-    "RtcIceConnectionState",
-    "RtcIceGatheringState",
-    "RtcIceServer",
-    "RtcPeerConnection",
-    "RtcPeerConnectionIceEvent",
-    "RtcPeerConnectionState",
-    "RtcSdpType",
-    "RtcSessionDescriptionInit",
-    "Window",
-] }
+web-sys = { version = "0.3.107", features = ["Navigator", "Window"] }
 
 [dev-dependencies]
 anyhow.workspace = true

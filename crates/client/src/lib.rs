@@ -6,7 +6,6 @@ pub mod host_view;
 mod link;
 pub mod new_session;
 pub mod platform;
-mod upgrade;
 mod wire;
 
 pub use link::{

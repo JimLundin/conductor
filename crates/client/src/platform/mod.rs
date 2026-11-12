@@ -1,13 +1,9 @@
-//! What differs per target: the client's name, and in the browser, the
-//! WebRTC upgrade. The app runs only in the browser; native builds are the
-//! test harness, and get stand-ins for the WebRTC
-//! types that no value can inhabit, so the code above this module reads the
-//! same on both targets.
+//! The endpoint the link binds, and the client's name, which differs per
+//! target. The app runs only in the browser; native builds are the test
+//! harness.
 
 #[cfg(not(target_family = "wasm"))]
 mod native;
-#[cfg(target_family = "wasm")]
-mod rtc;
 #[cfg(target_family = "wasm")]
 mod web;
 
@@ -16,23 +12,15 @@ use iroh::{Endpoint, RelayMode};
 
 #[cfg(not(target_family = "wasm"))]
 pub use native::client_name;
-#[cfg(not(target_family = "wasm"))]
-use native::public_endpoint;
 #[cfg(target_family = "wasm")]
 pub use web::client_name;
-#[cfg(target_family = "wasm")]
-use web::public_endpoint;
-
-#[cfg(not(target_family = "wasm"))]
-pub(crate) use native::{ChannelRecv, ChannelSend, Session, negotiate};
-#[cfg(target_family = "wasm")]
-pub(crate) use rtc::{ChannelRecv, ChannelSend, Session, negotiate};
 
 /// Which kind of endpoint the link binds, for its first dial and for every
 /// hedge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
-    /// n0's relays and DNS lookup.
+    /// n0's relays and DNS lookup. A browser can't send UDP, so there it
+    /// only ever talks through a relay.
     Public,
     /// Direct addresses only, with no relays and no lookup, as on loopback.
     Local,
@@ -40,7 +28,12 @@ pub enum Network {
 
 pub(crate) async fn bind_endpoint(network: Network) -> Result<Endpoint, BindError> {
     match network {
-        Network::Public => public_endpoint().await,
+        Network::Public => {
+            Endpoint::builder(presets::N0)
+                .relay_mode(RelayMode::Custom(n0_relays()))
+                .bind()
+                .await
+        }
         Network::Local => {
             Endpoint::builder(presets::Minimal)
                 .relay_mode(RelayMode::Disabled)
