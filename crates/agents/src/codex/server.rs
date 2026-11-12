@@ -237,7 +237,7 @@ async fn ask<T>(
 }
 
 /// `codex` with its home.
-fn cli(codex_path: &Path, home: &Home) -> Command {
+pub fn cli(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(codex_path);
     if let Home::Private(dir) = home {
         cmd.env("CODEX_HOME", dir);

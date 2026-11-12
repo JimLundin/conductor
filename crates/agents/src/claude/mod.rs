@@ -12,4 +12,4 @@ pub use protocol::{
     AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionMode,
     PermissionRequestId, Role, SessionId, ToolDetail,
 };
-pub use session::{ClaudeOptions, ClaudeSession, Error, SettingSource, VersionPolicy, login};
+pub use session::{ClaudeOptions, ClaudeSession, Error, SettingSource, VersionPolicy, cli, login};

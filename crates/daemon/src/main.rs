@@ -103,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
             let claude = match cli_path(Cli::Claude, claude_path, &data_dir).await {
                 Ok(claude_path) => {
                     launcher(
-                        &claude_path.clone(),
+                        agents::claude::cli(&claude_path, &homes.claude),
                         Launch::Claude(ClaudeLaunch {
                             claude_path,
                             home: homes.claude,
@@ -118,14 +118,15 @@ async fn main() -> anyhow::Result<()> {
                 Ok(codex_path) => {
                     // The app-server's own working directory is the data dir;
                     // each thread runs in its session's directory.
+                    let version = agents::codex::cli(&codex_path, &homes.codex);
                     let hub = CodexHub::spawn(ServerOptions {
-                        codex_path: codex_path.clone(),
+                        codex_path,
                         home: homes.codex,
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
                     launcher(
-                        &codex_path,
+                        version,
                         Launch::Codex(CodexLaunch {
                             hub,
                             model: codex_model,
@@ -221,14 +222,10 @@ async fn host(
     Ok(router)
 }
 
-/// A provider is available when `<path> --version` runs and succeeds.
-async fn launcher(cli: &Path, launch: Launch) -> Launcher {
-    let ran = tokio::process::Command::new(cli)
-        .arg("--version")
-        .output()
-        .await;
-    let path = cli.display().to_string();
-    match ran {
+/// A provider is available when `<cli> --version` runs and succeeds.
+async fn launcher(mut cli: tokio::process::Command, launch: Launch) -> Launcher {
+    let path = cli.as_std().get_program().display().to_string();
+    match cli.arg("--version").output().await {
         Ok(output) => match output.status.code() {
             Some(0) => {
                 let version = String::from_utf8_lossy(&output.stdout);

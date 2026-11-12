@@ -1,7 +1,7 @@
 //! Installs the pinned CLIs (`pins.toml`, docs/architecture.md §6.2). Each
 //! one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
 //! file, a SHA-256 check against the pin and a rename, so a crash leaves
-//! either nothing or a verified binary.
+//! either nothing or a verified install.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -109,12 +109,12 @@ fn unpinned() -> InstallError {
     }
 }
 
-/// How a download becomes the binary.
+/// How a download becomes the install.
 enum Package {
     /// The download is the binary.
     Binary,
-    /// A `.tar.gz` holding the binary under this name.
-    TarGz { member: String },
+    /// A `.tar.gz` of the whole install directory.
+    Archive,
 }
 
 /// One CLI's pinned download for this platform.
@@ -123,7 +123,7 @@ struct Pin {
     url: String,
     sha256: String,
     package: Package,
-    /// The installed binary's file name.
+    /// The binary's path in the install directory.
     binary: String,
 }
 
@@ -143,14 +143,12 @@ fn pin(cli: Cli, platform: Platform) -> Result<Pin, InstallError> {
         Cli::Codex => Ok(Pin {
             version: String::from(pins::CODEX_VERSION),
             url: format!(
-                "https://github.com/openai/codex/releases/download/rust-v{}/codex-{codex}{exe}.tar.gz",
+                "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-{codex}.tar.gz",
                 pins::CODEX_VERSION
             ),
             sha256: pins::codex_sha256(&codex).ok_or_else(unpinned)?,
-            package: Package::TarGz {
-                member: format!("codex-{codex}{exe}"),
-            },
-            binary: format!("codex{exe}"),
+            package: Package::Archive,
+            binary: format!("bin/codex{exe}"),
         }),
     }
 }
@@ -191,20 +189,21 @@ pub async fn install(cli: Cli, data_dir: &Path) -> Result<PathBuf, InstallError>
     }
 }
 
-/// Moves the verified download into place as `binary`.
+/// Moves the verified download into place as `dir`, with the binary at
+/// `binary`.
 async fn unpack(
     package: &Package,
     download: &Path,
     dir: &Path,
     binary: &Path,
 ) -> Result<(), InstallError> {
-    std::fs::create_dir_all(dir).map_err(|error| io(dir, error))?;
     match package {
         Package::Binary => {
+            std::fs::create_dir_all(dir).map_err(|error| io(dir, error))?;
             make_executable(download).map_err(|error| io(download, error))?;
             std::fs::rename(download, binary).map_err(|error| io(binary, error))
         }
-        Package::TarGz { member } => {
+        Package::Archive => {
             let staging = download.with_extension("unpack");
             let _ = std::fs::remove_dir_all(&staging);
             std::fs::create_dir_all(&staging).map_err(|error| io(&staging, error))?;
@@ -218,9 +217,9 @@ async fn unpack(
                 .map_err(|error| io(download, error))?;
             match status.code() {
                 Some(0) => {
-                    std::fs::rename(staging.join(member), binary)
-                        .map_err(|error| io(binary, error))?;
-                    let _ = std::fs::remove_dir_all(&staging);
+                    // An earlier run may have left the directory without its binary.
+                    let _ = std::fs::remove_dir_all(dir);
+                    std::fs::rename(&staging, dir).map_err(|error| io(dir, error))?;
                     std::fs::remove_file(download).map_err(|error| io(download, error))
                 }
                 _ => Err(InstallError::Unpack {

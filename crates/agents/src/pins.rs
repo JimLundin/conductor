@@ -36,26 +36,26 @@ pub(crate) fn claude_sha256(platform: &str) -> Option<String> {
 
 pub(crate) const CODEX_VERSION: &str = "0.166.0";
 
-/// The SHA-256 of the `codex-<triple>.tar.gz` release asset for a target triple.
+/// The SHA-256 of the `codex-package-<triple>.tar.gz` release asset for a target triple.
 pub(crate) fn codex_sha256(platform: &str) -> Option<String> {
     match platform {
         "x86_64-unknown-linux-musl" => Some(String::from(
-            "a0bf572d2f93f056c6712a6da348e96078dc84f3885fd7be67807ef389cb3978",
+            "1d44b28bc4ac9937d7d3532264baa68a507ce364956a0d4ebb856f331cdee254",
         )),
         "aarch64-unknown-linux-musl" => Some(String::from(
-            "94eb707605ec2646b2e05b7edf7c4e7b3ccf02b16237c34ae9beb8cfb7f810a9",
+            "7821b77dda2e6283fb1f63f3165177a271da8833e857cf673c6ca1c9db3bfcc6",
         )),
         "x86_64-apple-darwin" => Some(String::from(
-            "db0c38713c36199b12e7c8d1629386c35a4ce8f99e1c9ce72f1725a74df67b57",
+            "1cb65690230be5982c654ba2655e3a3b594dce9c55b780e78bfdfeff829d7ad9",
         )),
         "aarch64-apple-darwin" => Some(String::from(
-            "c48824462fc57681eafb0925d97b11b589010475613904f570b42fea53e240d5",
+            "55a440cb579f970abe7c79ab181e54b0ea4c419be99f333bbd868eebac9c21f0",
         )),
         "x86_64-pc-windows-msvc" => Some(String::from(
-            "dafeb48b5a853b2898453a6b5bdae0fa0646bd5d5b73c5dfe74c97d0af4a4a0d",
+            "d559bb88e74d471265857b93b7f19bc250dae527673b9191b33534478093f6bc",
         )),
         "aarch64-pc-windows-msvc" => Some(String::from(
-            "23cfbde45609292c325029a376340df30191298d7b6c5b26f607f481573ac768",
+            "9383152a72f97bb5dd148493c8214e4fed38d805aa2c3297cb3739f7f130becf",
         )),
         _ => None,
     }

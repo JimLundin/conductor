@@ -259,7 +259,7 @@ const PARENT_SESSION_VARS: &[&str] = &[
 
 /// `claude` with what every run of it gets: its home, and its own updates
 /// off, since the host installs the version it runs.
-fn cli(claude_path: &Path, home: &Home) -> Command {
+pub fn cli(claude_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(claude_path);
     cmd.env("DISABLE_UPDATES", "1");
     if let Home::Private(dir) = home {

@@ -7,9 +7,10 @@
 Verifies every platform's build with upstream's own checks, then writes the
 provider's section of pins.toml and the compiled form of the whole file,
 crates/agents/src/pins.rs. Claude: manifest.json.sig against Anthropic's
-release key, then each binary against the manifest. Codex: each release
-asset against GitHub's published digest, and the Linux cosign bundles when
-cosign is installed.
+release key, then each binary against the manifest. Codex: each
+codex-package-<triple>.tar.gz against GitHub's published digest and
+codex-package_SHA256SUMS, and the Linux cosign bundles when cosign is
+installed.
 """
 
 import hashlib
@@ -104,57 +105,46 @@ def pin_claude(version, work):
     }
 
 
-def codex_asset(triple):
-    return f"codex-{triple}.exe.tar.gz" if "windows" in triple else f"codex-{triple}.tar.gz"
-
-
-def codex_member(triple):
-    return f"codex-{triple}.exe" if "windows" in triple else f"codex-{triple}"
-
-
 def pin_codex(version, work):
     release = json.loads(fetch(CODEX_RELEASE.format(version)))
     assets = {asset["name"]: asset for asset in release["assets"]}
+    sums = fetch(assets["codex-package_SHA256SUMS"]["browser_download_url"]).decode()
+    listed = {name: digest for digest, name in (line.split() for line in sums.splitlines() if line.strip())}
     cosign = shutil.which("cosign")
     if cosign is None:
         print("cosign is not installed: the Linux cosign bundles are skipped")
     hashes = {}
     for triple in CODEX_TRIPLES:
-        name = codex_asset(triple)
+        name = f"codex-package-{triple}.tar.gz"
         if name not in assets:
             fail(f"rust-v{version} has no asset {name}")
-        published = assets[name].get("digest") or ""
-        if not published.startswith("sha256:"):
-            fail(f"GitHub publishes no SHA-256 digest for {name}")
+        published = (assets[name].get("digest") or "").removeprefix("sha256:")
         archive = work / name
         found = fetch(assets[name]["browser_download_url"], archive)
-        if found != published.removeprefix("sha256:"):
-            fail(f"{name}: SHA-256 {found}, GitHub publishes {published}")
-        member = codex_member(triple)
+        if found != published or found != listed.get(name):
+            fail(f"{name}: SHA-256 {found}, GitHub publishes {published}, codex-package_SHA256SUMS lists {listed.get(name)}")
+        binary = "bin/codex.exe" if "windows" in triple else "bin/codex"
         with tarfile.open(archive) as tar:
-            if tar.getnames() != [member]:
-                fail(f"{name} holds {tar.getnames()}, not [{member!r}]")
-            if cosign is not None and "linux" in triple:
-                tar.extract(member, work, filter="data")
-        print(f"  {triple}: {found} matches GitHub's digest; holds {member}")
+            if binary not in tar.getnames():
+                fail(f"{name} holds no {binary}")
+        print(f"  {triple}: {found} matches GitHub's digest and codex-package_SHA256SUMS; holds {binary}")
         if cosign is not None and "linux" in triple:
-            bundle = work / f"codex-{triple}.sigstore"
+            bundle = work / f"{name}.sigstore"
             bundle.write_bytes(fetch(assets[bundle.name]["browser_download_url"]))
             checked = subprocess.run(
                 [cosign, "verify-blob", "--bundle", str(bundle),
                  "--certificate-identity", CODEX_IDENTITY.format(version),
-                 "--certificate-oidc-issuer", CODEX_ISSUER, str(work / member)],
+                 "--certificate-oidc-issuer", CODEX_ISSUER, str(archive)],
                 capture_output=True, text=True)
             if checked.returncode != 0:
-                fail(f"cosign rejects {member}:\n{checked.stderr}")
-            print(f"  {triple}: cosign verifies {member}")
-            (work / member).unlink()
+                fail(f"cosign rejects {name}:\n{checked.stderr}")
+            print(f"  {triple}: cosign verifies {name}")
         archive.unlink()
         hashes[triple] = found
     bundles = "the Linux cosign bundles verify" if cosign else "the Linux cosign bundles were skipped: cosign was not installed"
     return {
         "version": version,
-        "verified": f"every asset matches GitHub's published SHA-256 digest; {bundles}",
+        "verified": f"every package matches GitHub's published digest and codex-package_SHA256SUMS; {bundles}",
         "sha256": hashes,
     }
 
@@ -179,7 +169,7 @@ def write(pins):
     PINS.write_text(
         "# The CLIs conductord installs, written by tools/pin (docs/architecture.md §6.2).\n"
         "# Claude's hashes are of each binary, keyed by its manifest platform; Codex's\n"
-        "# are of each release asset, codex-<triple>.tar.gz (.exe.tar.gz on Windows).\n\n"
+        "# are of each codex-package-<triple>.tar.gz, the package Codex's installer uses.\n\n"
         + "\n".join(toml_section(name, pins[name]) for name in ("claude", "codex") if name in pins))
     if "claude" not in pins or "codex" not in pins:
         print(f"wrote {PINS.relative_to(ROOT)}; {PINS_RS.relative_to(ROOT)} waits for both providers' pins")
@@ -188,7 +178,7 @@ def write(pins):
         "//! The pinned CLIs, written by `tools/pin` with `pins.toml`. Edit neither by\n"
         "//! hand: run `tools/pin` again.\n\n"
         + rust_fn("claude", "`claude` binary for a platform named as in Claude's manifest", pins["claude"]) + "\n"
-        + rust_fn("codex", "`codex-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
+        + rust_fn("codex", "`codex-package-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
     subprocess.run(["rustfmt", "--edition", "2024", str(PINS_RS)], check=True)
     print(f"wrote {PINS.relative_to(ROOT)} and {PINS_RS.relative_to(ROOT)}")
 
