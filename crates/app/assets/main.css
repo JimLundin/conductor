@@ -388,7 +388,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .tool-name { flex-shrink: 0; color: var(--ink); font-weight: 600; }
-.tool-paths { display: flex; flex-direction: column; min-width: 0; }
+.tool-files { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.tool-file { display: flex; align-items: baseline; gap: 0.55rem; min-width: 0; }
 .tool-detail {
   min-width: 0;
   font-family: var(--mono);

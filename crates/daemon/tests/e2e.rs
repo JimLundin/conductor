@@ -25,9 +25,9 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    AuthToken, Availability, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch,
-    Event, EventKind, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
-    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    AuthToken, Availability, Change, ClientName, CloseReason, CommandBody, CommandResult, Decision,
+    Epoch, Event, EventKind, FileChange, HostPath, HostSeq, Provider, Providers, Rejection,
+    RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -535,7 +535,10 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
             call: ToolCallId(String::from(call)),
             phase: ToolPhase::Started {
                 tool: ToolKind::FileChange {
-                    paths: Vec::from([String::from(path)]),
+                    files: Vec::from([FileChange {
+                        path: String::from(path),
+                        change: Change::Write,
+                    }]),
                 },
             },
         },
@@ -543,7 +546,10 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
             request: RequestId(1),
             call: ToolCallId(String::from(call)),
             tool: ToolKind::FileChange {
-                paths: Vec::from([String::from(path)]),
+                files: Vec::from([FileChange {
+                    path: String::from(path),
+                    change: Change::Write,
+                }]),
             },
             reason: None,
         },

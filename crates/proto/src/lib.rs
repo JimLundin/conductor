@@ -379,8 +379,26 @@ pub enum ToolPhase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolKind {
     Command { command: String },
-    FileChange { paths: Vec<String> },
+    FileChange { files: Vec<FileChange> },
     Other { name: String, detail: String },
+}
+
+/// One file a tool call changes, and how.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChange {
+    pub path: String,
+    pub change: Change,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Change {
+    /// A new file.
+    Create,
+    /// The whole file written, new or replaced, as Claude's `Write` does.
+    Write,
+    /// Part of an existing file changed.
+    Edit,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

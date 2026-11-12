@@ -7,8 +7,8 @@ use client::host_view::{
 use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
-    CloseReason, CommandBody, Decision, RequestId, Resolution, SessionId, ToolKind, ToolOutcome,
-    TurnOutcome,
+    Change, CloseReason, CommandBody, Decision, RequestId, Resolution, SessionId, ToolKind,
+    ToolOutcome, TurnOutcome,
 };
 
 use crate::sessions::short;
@@ -175,13 +175,18 @@ fn ToolLine(tool: ToolKind, state: String) -> Element {
                 ToolKind::Command { command } => rsx! {
                     code { class: "tool-detail", "{command}" }
                 },
-                ToolKind::FileChange { paths } => rsx! {
-                    span { class: "tool-name", "Edit" }
-                    span { class: "tool-paths",
-                        for path in paths {
-                            code { class: "tool-detail", "{path}" }
+                ToolKind::FileChange { files } => match files.first() {
+                    Some(_) => rsx! {
+                        span { class: "tool-files",
+                            for file in files {
+                                span { class: "tool-file",
+                                    span { class: "tool-name", "{verb(file.change)}" }
+                                    code { class: "tool-detail", "{file.path}" }
+                                }
+                            }
                         }
-                    }
+                    },
+                    None => rsx! { span { class: "tool-name", "Change files" } },
                 },
                 ToolKind::Other { name, detail } => rsx! {
                     span { class: "tool-name", "{name}" }
@@ -190,6 +195,15 @@ fn ToolLine(tool: ToolKind, state: String) -> Element {
             }
         }
     }
+}
+
+fn verb(change: Change) -> String {
+    String::from(match change {
+        Change::Create => "Create",
+        Change::Write => "Write",
+        Change::Edit => "Edit",
+        Change::Delete => "Delete",
+    })
 }
 
 /// Why the agent asks, in its own words.

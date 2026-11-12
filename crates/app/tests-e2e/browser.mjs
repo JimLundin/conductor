@@ -152,6 +152,7 @@ const turn = async ({ during = async () => {}, beforeApprove = async () => {} } 
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
   check((await text('.user .bubble')) === PROMPT, 'the message shows once');
   check((await text('.tool .tool-detail')) === WRITTEN, 'one tool card, for the written file');
+  check((await text('.tool .tool-name')) === 'Write', 'the card names the change a Write');
   check((await pane.locator('.tool').getAttribute('data-state')) === 'succeeded', 'the tool succeeded');
   check((await text('.request .resolved')) === 'Approved by browser', 'the approval resolved once, by this browser');
   check((await text('.reply')) === REPLY, 'the streamed reply is every delta exactly once');

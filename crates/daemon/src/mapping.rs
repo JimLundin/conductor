@@ -6,11 +6,11 @@ use agents::claude::{
     ToolDetail,
 };
 use agents::codex::{
-    self, ApprovalId, ApprovalKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId,
+    self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, ThreadEvent, TurnId,
 };
 use proto::{
-    ClientName, CloseReason, Decision, EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    Change, ClientName, CloseReason, Decision, EventKind, FileChange, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
 
 /// The provider's own id for an open request, which `agents` answers.
@@ -139,13 +139,18 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
 
 fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
     match (name.as_str(), detail) {
-        ("Edit" | "Write" | "MultiEdit", ToolDetail::Path(path)) => ToolKind::FileChange {
-            paths: Vec::from([path]),
-        },
+        ("Write", ToolDetail::Path(path)) => one_file(path, Change::Write),
+        ("Edit" | "MultiEdit", ToolDetail::Path(path)) => one_file(path, Change::Edit),
         (_, ToolDetail::Command(command)) => ToolKind::Command { command },
         (_, ToolDetail::Path(detail) | ToolDetail::Text(detail)) => {
             ToolKind::Other { name, detail }
         }
+    }
+}
+
+fn one_file(path: String, change: Change) -> ToolKind {
+    ToolKind::FileChange {
+        files: Vec::from([FileChange { path, change }]),
     }
 }
 
@@ -233,7 +238,17 @@ fn codex_item(item: Item) -> EventKind {
         Item::FileChange { id, changes, .. } => (
             id,
             ToolKind::FileChange {
-                paths: changes.into_iter().map(|change| change.path).collect(),
+                files: changes
+                    .into_iter()
+                    .map(|file| FileChange {
+                        path: file.path,
+                        change: match file.kind {
+                            ChangeKind::Add => Change::Create,
+                            ChangeKind::Update => Change::Edit,
+                            ChangeKind::Delete => Change::Delete,
+                        },
+                    })
+                    .collect(),
             },
         ),
     };
@@ -266,7 +281,7 @@ fn approval_tool(kind: ApprovalKind) -> Option<(ToolKind, Option<String>)> {
         )),
         // The request names no paths; the tool card the item started has them.
         ApprovalKind::FileChange { reason, .. } => {
-            Some((ToolKind::FileChange { paths: Vec::new() }, reason))
+            Some((ToolKind::FileChange { files: Vec::new() }, reason))
         }
         ApprovalKind::Permissions { reason, requested } => Some((
             ToolKind::Other {
@@ -296,7 +311,7 @@ mod tests {
         self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
         ThreadEvent, ThreadId, TurnId,
     };
-    use proto::{CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
+    use proto::{Change, CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
 
     use super::{NativeRequest, Step, claude_steps, codex_steps};
 
@@ -351,6 +366,8 @@ mod tests {
                         Block::Thinking(String::from("hmm")),
                         tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
                         tool_use("Bash", ToolDetail::Command(String::from("ls"))),
+                        tool_use("Write", ToolDetail::Path(String::from("c.txt"))),
+                        tool_use("Edit", ToolDetail::Path(String::from("d.txt"))),
                     ]),
                 }),
                 want: Vec::from([
@@ -365,6 +382,24 @@ mod tests {
                         "toolu_1",
                         ToolKind::Command {
                             command: String::from("ls"),
+                        },
+                    ),
+                    started(
+                        "toolu_1",
+                        ToolKind::FileChange {
+                            files: Vec::from([proto::FileChange {
+                                path: String::from("c.txt"),
+                                change: Change::Write,
+                            }]),
+                        },
+                    ),
+                    started(
+                        "toolu_1",
+                        ToolKind::FileChange {
+                            files: Vec::from([proto::FileChange {
+                                path: String::from("d.txt"),
+                                change: Change::Edit,
+                            }]),
                         },
                     ),
                 ]),
@@ -401,17 +436,40 @@ mod tests {
                     phase: ItemPhase::Started,
                     item: Item::FileChange {
                         id: String::from("patch-1"),
-                        changes: Vec::from([FileChange {
-                            path: String::from("a.txt"),
-                            kind: ChangeKind::Add,
-                        }]),
+                        changes: Vec::from([
+                            FileChange {
+                                path: String::from("a.txt"),
+                                kind: ChangeKind::Add,
+                            },
+                            FileChange {
+                                path: String::from("b.txt"),
+                                kind: ChangeKind::Update,
+                            },
+                            FileChange {
+                                path: String::from("c.txt"),
+                                kind: ChangeKind::Delete,
+                            },
+                        ]),
                         status: String::from("inProgress"),
                     },
                 }),
                 want: Vec::from([started(
                     "patch-1",
                     ToolKind::FileChange {
-                        paths: Vec::from([String::from("a.txt")]),
+                        files: Vec::from([
+                            proto::FileChange {
+                                path: String::from("a.txt"),
+                                change: Change::Create,
+                            },
+                            proto::FileChange {
+                                path: String::from("b.txt"),
+                                change: Change::Edit,
+                            },
+                            proto::FileChange {
+                                path: String::from("c.txt"),
+                                change: Change::Delete,
+                            },
+                        ]),
                     },
                 )]),
             },
