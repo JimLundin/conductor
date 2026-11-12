@@ -1,6 +1,5 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use agents::codex::ServerOptions;
 use anyhow::Context;
@@ -8,7 +7,6 @@ use clap::{Parser, Subcommand};
 use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
-use daemon::rtc::{Blackhole, PortRange, RtcOptions, RtcPorts};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
@@ -42,30 +40,6 @@ struct HostArgs {
     /// The web app's URL; the printed join link is this plus `#join=<ticket>`.
     #[arg(long, default_value = "http://localhost:8080/conductor/")]
     web_url: String,
-    /// A STUN server for the WebRTC upgrade, as `stun:host:port`. Repeat
-    /// for more. STUN only reports public addresses; nothing relays.
-    #[arg(long = "stun", default_values = proto::DEFAULT_STUN_SERVERS)]
-    stun_servers: Vec<String>,
-    /// Refuse browsers' WebRTC upgrades, so they stay on iroh's relay.
-    #[arg(long = "no-webrtc", action = clap::ArgAction::SetFalse)]
-    webrtc: bool,
-    /// The UDP ports for WebRTC, as `<first>-<last>`, for example
-    /// `50000-50099`. Without it, each socket takes a random port. A range
-    /// lets one firewall rule open exactly these ports, which a host behind
-    /// an inbound-blocking firewall (such as WSL's Hyper-V firewall) needs
-    /// before a phone can reach it directly. Each WebRTC session takes the
-    /// first free port on each local IPv4 address, so a range serves as
-    /// many sessions at once as it has ports; 100 leaves room for several
-    /// clients and their retries.
-    #[arg(long, value_parser = PortRange::parse)]
-    rtc_ports: Option<PortRange>,
-    /// Test only: drop every WebRTC datagram, so upgrades fail.
-    #[arg(long, hide = true)]
-    test_rtc_blackhole: bool,
-    /// Test only: drop the first WebRTC connection after it sends this
-    /// many frames.
-    #[arg(long, hide = true)]
-    test_rtc_drop_after: Option<u64>,
     /// The Claude Code CLI. A host where it doesn't run offers no Claude
     /// sessions.
     #[arg(long, default_value = "claude")]
@@ -96,11 +70,6 @@ async fn main() -> anyhow::Result<()> {
             data_dir,
             name,
             web_url,
-            stun_servers,
-            webrtc,
-            rtc_ports,
-            test_rtc_blackhole,
-            test_rtc_drop_after,
             claude_path,
             claude_model,
             codex_path,
@@ -113,12 +82,6 @@ async fn main() -> anyhow::Result<()> {
                     .data_dir()
                     .to_path_buf(),
             };
-            let rtc = webrtc.then_some(Arc::new(RtcOptions::new(
-                stun_servers,
-                test_rtc_blackhole.then_some(Blackhole {}),
-                test_rtc_drop_after,
-                rtc_ports.map_or(RtcPorts::Ephemeral, RtcPorts::Range),
-            )));
             let claude = launcher(
                 &claude_path.clone(),
                 Launch::Claude(ClaudeLaunch {
@@ -143,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .await;
             let launchers = Launchers { claude, codex };
-            let router = host(data_dir, web_url, name, rtc, launchers).await?;
+            let router = host(data_dir, web_url, name, launchers).await?;
             tokio::signal::ctrl_c().await?;
             router.shutdown().await?;
             Ok(())
@@ -155,7 +118,6 @@ async fn host(
     data_dir: PathBuf,
     web_url: String,
     name: String,
-    rtc: Option<Arc<RtcOptions>>,
     launchers: Launchers,
 ) -> anyhow::Result<Router> {
     let endpoint = Endpoint::builder(presets::N0)
@@ -176,7 +138,6 @@ async fn host(
         log: log.clone(),
         registry: Registry::spawn(log, launchers),
         token,
-        rtc,
     };
     let ticket = Ticket {
         host: endpoint.id(),

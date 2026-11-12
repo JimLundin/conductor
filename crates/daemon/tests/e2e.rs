@@ -2,39 +2,33 @@
 //! relays off so the test needs no network.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use agents::codex::ServerOptions;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
 };
-use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Status, Target, Update};
+use client::{Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
-use daemon::rtc::{PortRange, RtcOptions, RtcPorts};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
-use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream, presets};
+use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    AuthToken, Availability, Change, ClientName, CloseReason, Command, CommandBody, CommandId,
-    CommandResult, Decision, Epoch, Event, EventKind, FileChange, Hello, HelloReply, HostPath,
-    HostSeq, Open, Provider, Providers, Rejection, RequestId, Resolution, RtcOffer, SessionId,
-    Signal, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    AuthToken, Availability, Change, ClientName, CloseReason, CommandBody, CommandResult, Decision,
+    Epoch, Event, EventKind, FileChange, HostPath, HostSeq, Provider, Providers, Rejection,
+    RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
-use serde::de::DeserializeOwned;
-use str0m::change::{SdpAnswer, SdpPendingOffer};
-use str0m::net::{DatagramRecv, Protocol, Receive, Transmit};
-use str0m::{Candidate, Input, Output, Rtc};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -69,16 +63,13 @@ fn fake_codex() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fixture {
-    host_of(
-        Launchers {
-            claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
-                claude_path,
-                model: None,
-            })),
-            codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        },
-        None,
-    )
+    host_of(Launchers {
+        claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
+            claude_path,
+            model: None,
+        })),
+        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+    })
     .await
 }
 
@@ -91,18 +82,15 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
         cwd: server.clone(),
         stdout_log: None,
     });
-    let fixture = host_of(
-        Launchers {
-            claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
-            codex: Launcher::Ready(Launch::Codex(CodexLaunch { hub, model: None })),
-        },
-        None,
-    )
+    let fixture = host_of(Launchers {
+        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
+        codex: Launcher::Ready(Launch::Codex(CodexLaunch { hub, model: None })),
+    })
     .await;
     (fixture, server)
 }
 
-async fn host_of(launchers: Launchers, rtc: Option<Arc<RtcOptions>>) -> Fixture {
+async fn host_of(launchers: Launchers) -> Fixture {
     let log = Log::spawn(String::from("test-host"), Epoch(11), launchers.providers());
     let registry = Registry::spawn(log.clone(), launchers);
     let endpoint = endpoint().await;
@@ -114,7 +102,6 @@ async fn host_of(launchers: Launchers, rtc: Option<Arc<RtcOptions>>) -> Fixture 
         log: log.clone(),
         registry,
         token: AuthToken::from_bytes(TOKEN),
-        rtc,
     };
     let router = Router::builder(endpoint)
         .accept(proto::ALPN, conductor)
@@ -269,7 +256,6 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
             },
         })
     );
-    assert_eq!(link.status().path, PathKind::Direct);
 
     let cases = Vec::from([
         Case {
@@ -1359,450 +1345,4 @@ fn captured(path: &Path) -> String {
     let logged = std::fs::read_to_string(path).unwrap();
     std::fs::remove_file(path).unwrap();
     logged
-}
-
-/// A host with no agents whose WebRTC sockets bind in `first..=last`. It
-/// has no STUN servers, so the test needs no network.
-async fn rtc_host(first: u16, last: u16) -> Fixture {
-    let ports = RtcPorts::Range(PortRange::parse(&format!("{first}-{last}")).unwrap());
-    let launchers = Launchers {
-        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-    };
-    host_of(
-        launchers,
-        Some(Arc::new(RtcOptions::new(Vec::new(), None, None, ports))),
-    )
-    .await
-}
-
-/// A UDP port that no socket holds now, picked by the OS, so the test
-/// never depends on a fixed port or on another copy of itself.
-fn free_port() -> u16 {
-    std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-/// The first of two adjacent free UDP ports. The OS picks the first; a few
-/// tries find one whose neighbour is free too.
-fn free_pair() -> u16 {
-    std::iter::repeat_n(Ipv4Addr::UNSPECIFIED, 20)
-        .find_map(adjacent_free)
-        .expect("two adjacent free UDP ports within 20 tries")
-}
-
-fn adjacent_free(ip: Ipv4Addr) -> Option<u16> {
-    let first = std::net::UdpSocket::bind((ip, 0)).ok()?;
-    let port = first.local_addr().ok()?.port();
-    let _second = std::net::UdpSocket::bind((ip, port.checked_add(1)?)).ok()?;
-    Some(port)
-}
-
-/// An authenticated iroh connection without a link, for the raw streams a
-/// browser opens.
-async fn said_hello(endpoint: &Endpoint, target: &Target) -> Connection {
-    let conn = endpoint
-        .connect(target.addr.clone(), proto::ALPN)
-        .await
-        .unwrap();
-    let hello = Open::Hello(Hello {
-        client: test_client(),
-        token: target.token,
-    });
-    let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    send.write_all(&proto::encode(&hello).unwrap())
-        .await
-        .unwrap();
-    send.finish().unwrap();
-    let welcomed = match read_frame::<HelloReply>(&mut recv).await.unwrap() {
-        Some(HelloReply::Welcome(_)) => Some(conn),
-        Some(HelloReply::Refused { .. }) | None => None,
-    };
-    welcomed.expect("the host welcomes the test client")
-}
-
-/// The next frame, or `None` once the peer finished the stream.
-async fn read_frame<T: DeserializeOwned>(
-    recv: &mut RecvStream,
-) -> Result<Option<T>, ReadExactError> {
-    let mut header = [0u8; proto::HEADER_LEN];
-    match recv.read_exact(&mut header).await {
-        Ok(()) => {
-            let mut body =
-                std::iter::repeat_n(0u8, proto::body_len(header).unwrap()).collect::<Vec<u8>>();
-            recv.read_exact(&mut body).await.unwrap();
-            Ok(Some(proto::decode(&body).unwrap()))
-        }
-        Err(ReadExactError::FinishedEarly(0)) => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
-/// A browser that has made its offer and waits for the answer.
-struct Offering {
-    rtc: Rtc,
-    pending: SdpPendingOffer,
-    offer: RtcOffer,
-}
-
-/// The offer a browser makes: one data channel.
-fn offering() -> Offering {
-    let mut rtc = Rtc::builder()
-        .set_crypto_provider(Arc::new(str0m::crypto::from_feature_flags()))
-        .build(Instant::now());
-    let mut changes = rtc.sdp_api();
-    let _ = changes.add_channel(String::from("probe"));
-    let (offer, pending) = changes.apply().unwrap();
-    Offering {
-        rtc,
-        pending,
-        offer: RtcOffer {
-            sdp: offer.to_sdp_string(),
-        },
-    }
-}
-
-/// A WebRTC upgrade's signaling stream. The host's session lives while it
-/// stays open.
-struct Signaling {
-    send: SendStream,
-    recv: RecvStream,
-    /// The host's first signal, or `None` if it refused the offer.
-    answer: Option<Signal>,
-}
-
-async fn offer(conn: &Connection) -> Signaling {
-    send_offer(conn, offering().offer).await
-}
-
-async fn send_offer(conn: &Connection, offer: RtcOffer) -> Signaling {
-    let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    let offer = proto::encode(&Open::Rtc(offer)).unwrap();
-    send.write_all(&offer).await.unwrap();
-    let answer = tokio::time::timeout(STEP, read_frame::<Signal>(&mut recv))
-        .await
-        .expect("the host answers or refuses within the step timeout")
-        .unwrap();
-    Signaling { send, recv, answer }
-}
-
-/// The ports of the host candidates in the answer.
-fn host_ports(signaling: &Signaling) -> Vec<u16> {
-    match &signaling.answer {
-        Some(Signal::Answer { sdp }) => sdp
-            .lines()
-            .filter_map(|line| line.strip_prefix("a="))
-            .filter_map(|line| Candidate::from_sdp_string(line).ok())
-            .map(|candidate| candidate.addr().port())
-            .collect::<BTreeSet<u16>>()
-            .into_iter()
-            .collect(),
-        Some(Signal::Candidate { .. }) | None => Vec::new(),
-    }
-}
-
-/// Closes the signaling stream, which ends the session, and waits until the
-/// host closes its side.
-async fn hang_up(signaling: Signaling) {
-    let Signaling {
-        mut send, mut recv, ..
-    } = signaling;
-    send.finish().unwrap();
-    let rest = tokio::time::timeout(STEP, read_frame::<Signal>(&mut recv))
-        .await
-        .expect("the host ends the session within the step timeout")
-        .unwrap();
-    assert_eq!(rest, None);
-}
-
-async fn command(conn: &Connection, body: CommandBody) -> Option<CommandResult> {
-    let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    let command = Open::Command(Command {
-        id: CommandId(1),
-        body,
-    });
-    send.write_all(&proto::encode(&command).unwrap())
-        .await
-        .unwrap();
-    send.finish().unwrap();
-    read_frame::<CommandResult>(&mut recv).await.unwrap()
-}
-
-#[tokio::test]
-async fn concurrent_webrtc_sessions_take_distinct_ports_in_the_range() {
-    let first_port = free_pair();
-    let second_port = first_port.checked_add(1).unwrap();
-    let fx = rtc_host(first_port, second_port).await;
-    let endpoint = endpoint().await;
-    let conn = said_hello(&endpoint, &fx.target).await;
-    let first = offer(&conn).await;
-    let second = offer(&conn).await;
-    assert_eq!(
-        (host_ports(&first), host_ports(&second)),
-        (Vec::from([first_port]), Vec::from([second_port]))
-    );
-    hang_up(first).await;
-    hang_up(second).await;
-    endpoint.close().await;
-    fx.router.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn a_full_range_refuses_the_upgrade_and_iroh_keeps_serving() {
-    let (log_path, _logging) = capture_log("full-range");
-    let port = free_port();
-    let fx = rtc_host(port, port).await;
-    let endpoint = endpoint().await;
-    let conn = said_hello(&endpoint, &fx.target).await;
-    let holder = offer(&conn).await;
-    let refused = offer(&conn).await;
-    let on_iroh = command(&conn, message_to(9, "still there?")).await;
-    hang_up(holder).await;
-    let after = offer(&conn).await;
-    assert_eq!(
-        (refused.answer, on_iroh, host_ports(&after)),
-        (
-            None,
-            Some(CommandResult::Rejected(Rejection::UnknownSession)),
-            Vec::from([port])
-        )
-    );
-    hang_up(after).await;
-    endpoint.close().await;
-    fx.router.shutdown().await.unwrap();
-    let logged = captured(&log_path);
-    assert_eq!(
-        logged
-            .matches(&format!(
-                "every UDP port in --rtc-ports {port}-{port} is taken"
-            ))
-            .count(),
-        1,
-        "{logged}"
-    );
-}
-
-/// The host's first datagram to `socket`, or `None` if none arrives within
-/// two seconds.
-async fn first_from_host(socket: &UdpSocket) -> Option<(Vec<u8>, SocketAddr)> {
-    let mut bytes = Vec::with_capacity(DATAGRAM);
-    let received = tokio::time::timeout(Duration::from_secs(2), socket.recv_buf_from(&mut bytes))
-        .await
-        .ok()?
-        .unwrap();
-    let (_, from) = received;
-    Some((bytes, from))
-}
-
-/// The host candidates' addresses in the answer.
-fn host_addrs(signaling: &Signaling) -> Vec<SocketAddr> {
-    match &signaling.answer {
-        Some(Signal::Answer { sdp }) => sdp
-            .lines()
-            .filter_map(|line| line.strip_prefix("a="))
-            .filter_map(|line| Candidate::from_sdp_string(line).ok())
-            .map(|candidate| candidate.addr())
-            .collect(),
-        Some(Signal::Candidate { .. }) | None => Vec::new(),
-    }
-}
-
-/// The candidates Safari trickles on mobile data: an mDNS host candidate the
-/// host can't resolve, and a srflx candidate at `public` with the related
-/// address zeroed.
-fn safari_candidates(public: SocketAddr) -> Vec<Signal> {
-    Vec::from([
-        Signal::Candidate {
-            candidate: String::from(
-                "candidate:3217215570 1 udp 2113939711 \
-                 d9fe3477-56cf-45d1-9625-8ebc4f10e456.local 61390 typ host \
-                 generation 0 network-cost 999",
-            ),
-        },
-        Signal::Candidate {
-            candidate: format!(
-                "candidate:842163049 1 udp 1685987071 {} {} typ srflx \
-                 raddr 0.0.0.0 rport 0 generation 0 network-cost 999",
-                public.ip(),
-                public.port()
-            ),
-        },
-    ])
-}
-
-async fn trickle(send: &mut SendStream, signals: Vec<Signal>) -> anyhow::Result<()> {
-    let frames = signals
-        .iter()
-        .map(proto::encode)
-        .collect::<Result<Vec<Vec<u8>>, proto::FrameError>>()?;
-    for frame in frames {
-        send.write_all(&frame).await?;
-    }
-    Ok(())
-}
-
-/// STUN's message type for a Binding request (RFC 5389 §6).
-fn stun_type(bytes: &[u8]) -> Option<Vec<u8>> {
-    bytes.split_at_checked(2).map(|(head, _)| head.to_vec())
-}
-
-#[tokio::test]
-async fn the_host_checks_a_srflx_candidate_before_hearing_from_it() {
-    let port = free_port();
-    let fx = rtc_host(port, port).await;
-    let endpoint = endpoint().await;
-    let conn = said_hello(&endpoint, &fx.target).await;
-    let mut signaling = offer(&conn).await;
-    let host = host_addrs(&signaling).into_iter().next().unwrap();
-    let browser = UdpSocket::bind((host.ip(), 0)).await.unwrap();
-    trickle(
-        &mut signaling.send,
-        safari_candidates(browser.local_addr().unwrap()),
-    )
-    .await
-    .unwrap();
-    let first = first_from_host(&browser).await;
-    assert_eq!(
-        first.map(|(bytes, from)| (stun_type(&bytes), from)),
-        Some((Some(Vec::from([0u8, 1])), host))
-    );
-    hang_up(signaling).await;
-    endpoint.close().await;
-    fx.router.shutdown().await.unwrap();
-}
-
-/// Whether the host's side of the path lets the browser's datagrams in. Like
-/// a stateful firewall in front of the host, it opens once the host has sent
-/// to the browser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Pinhole {
-    Closed,
-    Open,
-}
-
-enum Progress {
-    Going,
-    Connected,
-}
-
-/// A browser on mobile data: the host knows it only by its srflx candidate,
-/// and can reach it only by sending first.
-struct SrflxBrowser {
-    rtc: Rtc,
-    socket: UdpSocket,
-    pinhole: Pinhole,
-}
-
-impl SrflxBrowser {
-    fn answered(offering: Offering, signaling: &Signaling, socket: UdpSocket) -> SrflxBrowser {
-        let Offering {
-            mut rtc, pending, ..
-        } = offering;
-        let sdp = match &signaling.answer {
-            Some(Signal::Answer { sdp }) => Some(sdp),
-            Some(Signal::Candidate { .. }) | None => None,
-        };
-        let answer = SdpAnswer::from_sdp_string(sdp.unwrap()).unwrap();
-        rtc.sdp_api().accept_answer(pending, answer).unwrap();
-        // The browser's own agent knows its interface; the host hears of it
-        // only as an mDNS name it can't resolve.
-        let _ = rtc
-            .add_local_candidate(Candidate::host(socket.local_addr().unwrap(), "udp").unwrap())
-            .unwrap();
-        rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
-        SrflxBrowser {
-            rtc,
-            socket,
-            pinhole: Pinhole::Closed,
-        }
-    }
-
-    /// Drives the connection until DTLS is up, and says whether the host
-    /// had opened the path by then.
-    async fn connect(mut self) -> Pinhole {
-        loop {
-            match self.turn().await {
-                Progress::Going => {}
-                Progress::Connected => break self.pinhole,
-            }
-        }
-    }
-
-    async fn turn(&mut self) -> Progress {
-        match self.rtc.poll_output().unwrap() {
-            Output::Transmit(transmit) => {
-                self.send(transmit).await;
-                Progress::Going
-            }
-            Output::Event(str0m::Event::Connected) => Progress::Connected,
-            Output::Event(_) => Progress::Going,
-            Output::Timeout(deadline) => {
-                self.wait(deadline).await;
-                Progress::Going
-            }
-        }
-    }
-
-    async fn send(&self, transmit: Transmit) {
-        match self.pinhole {
-            Pinhole::Open => {
-                let _ = self
-                    .socket
-                    .send_to(&transmit.contents, transmit.destination)
-                    .await
-                    .unwrap();
-            }
-            Pinhole::Closed => {}
-        }
-    }
-
-    async fn wait(&mut self, deadline: Instant) {
-        let mut bytes = Vec::with_capacity(DATAGRAM);
-        let received =
-            tokio::time::timeout_at(deadline.into(), self.socket.recv_buf_from(&mut bytes)).await;
-        let input = match received {
-            Ok(received) => {
-                let (_, source) = received.unwrap();
-                self.pinhole = Pinhole::Open;
-                Input::Receive(
-                    Instant::now(),
-                    Receive {
-                        proto: Protocol::Udp,
-                        source,
-                        destination: self.socket.local_addr().unwrap(),
-                        contents: DatagramRecv::try_from(bytes.as_slice()).unwrap(),
-                    },
-                )
-            }
-            Err(_) => Input::Timeout(Instant::now()),
-        };
-        self.rtc.handle_input(input).unwrap();
-    }
-}
-
-#[tokio::test]
-async fn a_browser_with_only_a_srflx_candidate_connects_through_the_hosts_first_check() {
-    let port = free_port();
-    let fx = rtc_host(port, port).await;
-    let endpoint = endpoint().await;
-    let conn = said_hello(&endpoint, &fx.target).await;
-    let offering = offering();
-    let mut signaling = send_offer(&conn, offering.offer.clone()).await;
-    let host = host_addrs(&signaling).into_iter().next().unwrap();
-    let socket = UdpSocket::bind((host.ip(), 0)).await.unwrap();
-    trickle(
-        &mut signaling.send,
-        safari_candidates(socket.local_addr().unwrap()),
-    )
-    .await
-    .unwrap();
-    let browser = SrflxBrowser::answered(offering, &signaling, socket);
-    let connected = tokio::time::timeout(STEP, browser.connect()).await;
-    assert_eq!(connected.ok(), Some(Pinhole::Open));
-    hang_up(signaling).await;
-    endpoint.close().await;
-    fx.router.shutdown().await.unwrap();
 }

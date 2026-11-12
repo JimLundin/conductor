@@ -1,10 +1,6 @@
 //! A frame is a `u32` big-endian body length followed by a postcard body.
 //! Callers own the I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`],
 //! read that many bytes, pass them to [`decode`].
-//!
-//! A WebRTC data channel delivers messages, not a byte stream, so a sender
-//! splits each encoded frame into messages of at most [`CHUNK_LEN`] bytes and
-//! the receiver feeds them to a [`FrameBuffer`].
 
 use std::cmp::Ordering;
 
@@ -15,11 +11,6 @@ pub const HEADER_LEN: usize = 4;
 
 /// Larger frames are refused before their body is read. 16 MiB.
 pub(crate) const MAX_FRAME_LEN: u32 = 16_777_216;
-
-/// The largest data channel message we send, 16 KiB. Every browser accepts
-/// 16 KiB messages (RFC 8831 §6.6), and the length prefix makes boundaries
-/// irrelevant to the receiver.
-pub const CHUNK_LEN: usize = 16_384;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
@@ -57,73 +48,13 @@ pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
     Ok(postcard::from_bytes(body)?)
 }
 
-/// Reassembles frames from data channel messages, which split and join
-/// frames arbitrarily.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrameBuffer {
-    bytes: Vec<u8>,
-}
-
-/// What [`FrameBuffer::next_body`] found at the front of the buffer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reassembly {
-    /// A whole frame's body, and the buffer that remains after it.
-    Frame { body: Vec<u8>, rest: FrameBuffer },
-    /// The next frame has not fully arrived.
-    Incomplete,
-}
-
-/// What is left in a [`FrameBuffer`] when its channel ends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Remainder {
-    /// The buffer sits between frames: the channel can end here without
-    /// losing data.
-    Nothing,
-    PartialFrame,
-}
-
-impl FrameBuffer {
-    pub fn empty() -> FrameBuffer {
-        FrameBuffer { bytes: Vec::new() }
-    }
-
-    pub fn push(self, message: &[u8]) -> FrameBuffer {
-        let mut bytes = self.bytes;
-        bytes.extend_from_slice(message);
-        FrameBuffer { bytes }
-    }
-
-    /// The next complete frame's body, if all of it has arrived.
-    pub fn next_body(&self) -> Result<Reassembly, FrameError> {
-        match self.bytes.split_first_chunk::<HEADER_LEN>() {
-            None => Ok(Reassembly::Incomplete),
-            Some((header, rest)) => Ok(match rest.split_at_checked(body_len(header.to_owned())?) {
-                Some((body, after)) => Reassembly::Frame {
-                    body: body.to_vec(),
-                    rest: FrameBuffer {
-                        bytes: after.to_vec(),
-                    },
-                },
-                None => Reassembly::Incomplete,
-            }),
-        }
-    }
-
-    pub fn remainder(&self) -> Remainder {
-        match self.bytes.first() {
-            None => Remainder::Nothing,
-            Some(_) => Remainder::PartialFrame,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{FrameBuffer, HEADER_LEN, Reassembly, Remainder, body_len, decode, encode};
+    use super::{HEADER_LEN, body_len, decode, encode};
     use crate::{
         AuthToken, Availability, ClientName, Command, CommandBody, CommandId, CommandResult,
         Decision, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers, Rejection,
-        RequestId, Resolution, RtcOffer, SessionId, Signal, Subscribe, TurnOutcome, Welcome,
+        RequestId, Resolution, SessionId, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -133,22 +64,6 @@ mod tests {
             .into_iter()
             .chain(body.iter().copied())
             .collect()
-    }
-
-    /// A buffer and the bodies taken out of it so far.
-    struct Drained {
-        buffer: FrameBuffer,
-        bodies: Vec<Vec<u8>>,
-    }
-
-    fn drain(buffer: FrameBuffer, bodies: Vec<Vec<u8>>) -> Drained {
-        match buffer.next_body().unwrap() {
-            Reassembly::Frame { body, rest } => drain(
-                rest,
-                bodies.into_iter().chain(std::iter::once(body)).collect(),
-            ),
-            Reassembly::Incomplete => Drained { buffer, bodies },
-        }
     }
 
     #[test]
@@ -261,48 +176,6 @@ mod tests {
             ))
         );
         assert_eq!(body_len([0x01, 0x00, 0x00, 0x00]).unwrap(), 16_777_216);
-    }
-
-    #[test]
-    fn frame_buffer_reassembles_frames_split_and_joined_across_messages() {
-        let first = encode(&Event {
-            seq: HostSeq(1),
-            session: SessionId(1),
-            kind: EventKind::SessionReady,
-        })
-        .unwrap();
-        let second = encode(&CommandResult::Accepted).unwrap();
-        let stream = first.into_iter().chain(second).collect::<Vec<u8>>();
-        let drained = stream.chunks(5).fold(
-            Drained {
-                buffer: FrameBuffer::empty(),
-                bodies: Vec::new(),
-            },
-            |drained, message| drain(drained.buffer.push(message), drained.bodies),
-        );
-        assert_eq!(drained.bodies, [b"\x01\x01\x01".to_vec(), b"\x00".to_vec()]);
-        assert_eq!(drained.buffer.remainder(), Remainder::Nothing);
-        let partial = drained.buffer.push(&[0_u8; 2]);
-        assert_eq!(partial.next_body().unwrap(), Reassembly::Incomplete);
-        assert_eq!(partial.remainder(), Remainder::PartialFrame);
-    }
-
-    #[test]
-    fn rtc_signal_wire_shapes() {
-        assert_eq!(
-            encode(&Open::Rtc(RtcOffer {
-                sdp: String::from("v=0")
-            }))
-            .unwrap(),
-            frame(b"\x03\x03v=0")
-        );
-        assert_eq!(
-            encode(&Signal::Candidate {
-                candidate: String::from("c")
-            })
-            .unwrap(),
-            frame(b"\x01\x01c")
-        );
     }
 
     #[test]

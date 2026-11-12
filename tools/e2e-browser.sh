@@ -2,18 +2,15 @@
 # Browser end to end: builds the web app, serves it under /conductor/ like
 # GitHub Pages does, and drives headless Chromium and WebKit at an iPhone
 # viewport against `conductord host` running the fake CLIs
-# (crates/agents/tests/fake-*.sh), first through n0's relays, then over the
-# WebRTC upgrade. Each scenario gets its own host: the upgrade, with its
-# sockets in --rtc-ports (upgrade), a forced upgrade failure (fallback),
-# WebRTC dropped mid-turn (drop), two Codex sessions on one app-server
-# (codex, Chromium only), and the screenshots of the states a real CLI shows
-# only with careful timing (screens).
+# (crates/agents/tests/fake-*.sh) through n0's relays. Each scenario gets its
+# own host: a Claude turn with approval in both engines (turn), two Codex
+# sessions on one app-server (codex, Chromium only), and the screenshots of
+# the states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt and docs/p1/screens/*-{running,closed,idle}.png.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
 port=${PORT:-8080}
-drop_after=6
 recordings=$PWD/fixtures/e2e
 fakes=$PWD/crates/agents/tests
 
@@ -42,7 +39,7 @@ session() {
   "${@:-cat}" <"$recordings/$recording" >"$dir/stdout.jsonl"
 }
 # Claude's turn plays a line every 200 ms once the message arrives, so the
-# reply streams and the drop lands mid-turn.
+# reply streams.
 paced() { sed '/"match": {"type": "user"}/a {"fake": "pace", "ms": 200}'; }
 # Paced, and held after the reply's third delta for a `release` file that
 # never comes.
@@ -104,54 +101,19 @@ set +e
   wasm=$(ls -t "$target"/dx/app/release/web/public/assets/*.wasm | head -1)
   echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
 
-  start_host upgrade --rtc-ports 50000-50099
+  start_host turn
   echo
-  echo "## Upgrade, Chromium"
-  turn_run chromium upgrade "$scratch/chromium.png"
+  echo "## Turn, Chromium"
+  turn_run chromium turn "$scratch/chromium.png"
   echo
-  echo "## Upgrade, WebKit"
-  turn_run webkit upgrade "$scratch/webkit.png"
+  echo "## Turn, WebKit"
+  turn_run webkit turn "$scratch/webkit.png"
   sleep 2
   echo
-  echo "## Upgrade, host log"
-  host_log upgrade
+  echo "## Turn, host log"
+  host_log turn
   echo
-  expect upgrade 6 'command .*transport="webrtc"' 'both turns'"'"' commands went over WebRTC'
-  expect upgrade 0 'command .*transport="iroh"' 'no command went over iroh'
-  ports=$(host_log upgrade | grep -oE 'host_candidates=\[[^]]*\]' | grep -oE ':[0-9]+' | tr -d : | sort -un)
-  [ -n "$ports" ] && [ -z "$(awk '$1 < 50000 || $1 > 50099' <<<"$ports")" ] ||
-    { echo "FAILED: host upgrade: host candidate ports $(echo $ports) not all in --rtc-ports 50000-50099"; exit 1; }
-  echo "ok: host upgrade: host candidate ports $(echo $ports) are in --rtc-ports 50000-50099"
-
-  for engine in chromium webkit; do
-    start_host "fallback-$engine" --test-rtc-blackhole
-    echo
-    echo "## Fallback (host drops every WebRTC datagram), $engine"
-    turn_run "$engine" fallback "$scratch/fallback-$engine.png"
-    sleep 1
-    echo
-    echo "## Fallback, $engine, host log"
-    host_log "fallback-$engine"
-    echo
-    expect "fallback-$engine" 3 'command .*transport="iroh"' 'the turn'"'"'s commands went over iroh'
-    expect "fallback-$engine" 0 'webrtc connected' 'WebRTC never connected'
-  done
-
-  for engine in chromium webkit; do
-    start_host "drop-$engine" --test-rtc-drop-after "$drop_after"
-    echo
-    echo "## Drop (host drops WebRTC after $drop_after frames, mid-turn), $engine"
-    turn_run "$engine" drop "$scratch/drop-$engine.png"
-    sleep 2
-    echo
-    echo "## Drop, $engine, host log"
-    host_log "drop-$engine"
-    echo
-    expect "drop-$engine" 1 'test knob: dropping the connection' 'WebRTC was dropped once'
-    expect "drop-$engine" 1 'transport="webrtc".*SendMessage' 'the message went over WebRTC'
-    expect "drop-$engine" 1 'subscribed transport="iroh" after_seq=[1-9]' 'the client resubscribed on iroh from its cursor'
-    expect "drop-$engine" 2 'subscribed transport="webrtc"' 'the client subscribed over WebRTC before the drop and again after'
-  done
+  expect turn 6 'serve: command client="iPhone"' 'both turns'"'"' commands reached the host'
 
   session "$scratch/codex" codex-two-threads.jsonl
   mkdir "$scratch/codex/first" "$scratch/codex/second"

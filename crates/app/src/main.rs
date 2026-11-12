@@ -14,7 +14,7 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use client::host_view::HostView;
-use client::{HostLink, LinkOptions, LinkState, PathKind, SendError, Status, Target, Update};
+use client::{HostLink, LinkOptions, LinkState, SendError, Status, Target, Update};
 use dioxus::prelude::*;
 use proto::{CommandBody, CommandResult, SessionId, Ticket};
 use ticket::Opening;
@@ -213,7 +213,7 @@ async fn follow(
     loop {
         match updates.recv().await {
             Some(Update::Status(next)) => {
-                tracing::info!(state = ?next.state, path = ?next.path, error = ?next.error, "link status");
+                tracing::info!(state = ?next.state, error = ?next.error, "link status");
                 status.set(Some(next));
             }
             Some(Update::Reset(_)) => view.set(HostView::empty()),
@@ -252,28 +252,17 @@ pub(crate) fn run_command(
 fn StatusLine(status: Option<Status>, on_change_host: EventHandler<()>) -> Element {
     let status = status.unwrap_or(Status {
         state: LinkState::Disconnected,
-        path: PathKind::Unknown,
         host: None,
         providers: None,
         error: None,
-        upgrade_error: None,
     });
     let state = format!("{:?}", status.state);
-    let (path_attr, path) = match status.path {
-        PathKind::Direct => ("Direct", "Direct"),
-        PathKind::Relayed => ("Relayed", "Relayed"),
-        PathKind::WebRtc => ("WebRtc", "WebRTC"),
-        PathKind::Unknown => ("Unknown", "path unknown"),
-    };
-    let upgrade_error = status.upgrade_error.unwrap_or_default();
     let host = status.host.unwrap_or_else(|| "host".into());
     rsx! {
-        header { class: "status", "data-state": "{state}", "data-path": "{path_attr}",
-            "data-upgrade-error": "{upgrade_error}",
+        header { class: "status", "data-state": "{state}",
             span { class: "dot" }
             span { class: "host", "{host}" }
             span { class: "state", "{state}" }
-            span { class: "path", "{path}" }
             button { class: "change-host", onclick: move |_| on_change_host.call(()), "Change host" }
             match status.error {
                 Some(error) => rsx! { span { class: "error", "{error}" } },

@@ -1,17 +1,6 @@
-use iroh::endpoint::{BindError, presets};
-use iroh::{Endpoint, RelayMode};
 use proto::ClientName;
 
 use crate::device::{Touch, device_name};
-
-/// Browsers can't send UDP, so this endpoint only ever talks through n0's
-/// relays.
-pub(crate) async fn public_endpoint() -> Result<Endpoint, BindError> {
-    Endpoint::builder(presets::N0)
-        .relay_mode(RelayMode::Custom(super::n0_relays()))
-        .bind()
-        .await
-}
 
 /// The device this browser runs on, as `Hello` names it.
 pub fn client_name() -> ClientName {

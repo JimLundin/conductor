@@ -110,7 +110,11 @@ Write one line per finding: the time, the step, and what happened.
 Every step passed. Phone: iPhone, Safari and the Home Screen app, on the same
 Wi-Fi as the host.
 
-1. **Step 1, WebRTC never upgrades; every client stays relayed.** Browsers
+1. **Historical.** WebRTC was removed after this run, and every connection
+   now goes over iroh, so this finding no longer applies. It stays as the
+   record of the attempt.
+
+   **Step 1, WebRTC never upgrades; every client stays relayed.** Browsers
    offer their LAN address only as an mDNS `.local` name, which the host
    skips (`ICE bad candidate`), and the shared public address needs NAT
    hairpinning, which the router doesn't do. The phone's checks never reach
@@ -120,9 +124,9 @@ Wi-Fi as the host.
    192.168.0.27 in mirrored mode. The client retries every 15 s, forever.
 
    *Follow-up (branch `rtc-ports`).* The phone's case is the Hyper-V firewall:
-   `conductord host --rtc-ports 50000-50099` plus the rule in architecture §5.4,
-   "Running the host in WSL". The client now retries after 15 s, 30 s, 60 s and
-   120 s, then every 300 s.
+   `conductord host --rtc-ports 50000-50099` plus a Hyper-V firewall rule for
+   those ports. The client then retried after 15 s, 30 s, 60 s and 120 s,
+   then every 300 s.
 
    *Same-machine hypothesis, untested.* The desktop browser and the host share
    192.168.0.27, and WSL's `hostAddressLoopback` setting is off by default. Its

@@ -2,11 +2,10 @@
 """Replace personal public IP addresses in run records before they are committed.
 
 The test scripts record host logs, which name the host's public address (from
-STUN or iroh's probes) and sometimes a phone's. Those identify the owner, so
-every public address is replaced with one from the documentation ranges
-(RFC 5737, RFC 3849), keeping distinct addresses distinct. Private, loopback
-and link-local addresses stay, and so do the public servers we talk to on
-purpose (the STUN servers), which identify nobody.
+iroh's probes) and sometimes a phone's. Those identify the owner, so every
+public address is replaced with one from the documentation ranges (RFC 5737,
+RFC 3849), keeping distinct addresses distinct. Private, loopback and
+link-local addresses stay.
 
 Usage: tools/scrub-ips.py FILE...          rewrites each file in place
        tools/scrub-ips.py --check FILE...  exits 1 if any file still has one
@@ -14,13 +13,6 @@ Usage: tools/scrub-ips.py FILE...          rewrites each file in place
 import ipaddress
 import re
 import sys
-
-# Public servers named in our logs on purpose. Keeping them keeps the logs
-# readable; they identify nobody.
-KEEP = {
-    "74.125.250.129",  # stun.l.google.com
-    "162.159.207.0",  # stun.cloudflare.com
-}
 
 V4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 V6 = re.compile(r"(?<![0-9A-Fa-f:])((?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4})(?![0-9A-Fa-f:])")
@@ -33,7 +25,7 @@ def scrub(text, names):
             ip = ipaddress.ip_address(raw)
         except ValueError:
             return raw
-        if not ip.is_global or raw in KEEP:
+        if not ip.is_global:
             return raw
         return names.setdefault(raw, make(len(names) + 1))
 

@@ -1,5 +1,5 @@
 // Drives the web build at an iPhone viewport against a live `conductord host`
-// on the fake CLIs, through n0's relays and then WebRTC. ENGINE picks
+// on the fake CLIs, through n0's relays. ENGINE picks
 // chromium or webkit; webkit stands in for iOS Safari, which Chromium does
 // not catch (it accepted the relay's root-dot hostname that Safari rejected).
 //
@@ -8,12 +8,8 @@
 // Scenarios, each against its own host. <dir> is the session directory on
 // the host, holding the fake's recording; <out> is a screenshot, or for
 // screens the directory the screenshots go to.
-//   upgrade   Live on the relay, then WebRTC, a Claude turn over WebRTC,
-//             reload, and pairing a fresh install.
-//   fallback  The host drops every WebRTC datagram: the upgrade fails and a
-//             turn completes on the relay.
-//   drop      The host drops WebRTC mid-turn: the client falls back to the
-//             relay, sees every event once, and upgrades again.
+//   turn      Live on the relay, a Claude turn through approval, reload,
+//             and pairing a fresh install.
 //   codex     Two Codex sessions in <dir>/first and <dir>/second, one
 //             approved and one denied.
 //   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
@@ -24,11 +20,9 @@ import { chromium, webkit } from 'playwright';
 
 const [joinUrl, out, scenario, dir] = process.argv.slice(2);
 if (!dir) {
-  console.error('usage: node browser.mjs <join-url> <out> <upgrade|fallback|drop|codex|screens> <dir>');
+  console.error('usage: node browser.mjs <join-url> <out> <turn|codex|screens> <dir>');
   process.exit(2);
 }
-
-const UPGRADE_WITHIN_MS = 10_000;
 
 const t0 = Date.now();
 const log = (line) => console.log(`[${((Date.now() - t0) / 1000).toFixed(3).padStart(7)}s] ${line}`);
@@ -50,37 +44,14 @@ const context = await browser.newContext({
   hasTouch: true,
   userAgent: IPHONE_UA,
 });
-// Records every status change with the page's own clock, so upgrade timings
-// don't depend on how often Playwright polls.
-const recordStatus = () => {
-  window.__status = [];
-  let last = '';
-  new MutationObserver(() => {
-    const header = document.querySelector('header.status');
-    if (!header) return;
-    const now = `${header.dataset.state} ${header.dataset.path}`;
-    if (now !== last) window.__status.push({ t: performance.now(), state: header.dataset.state, path: header.dataset.path });
-    last = now;
-  }).observe(document, { subtree: true, childList: true, attributes: true });
-};
-await context.addInitScript(recordStatus);
 const page = await context.newPage();
-/// Milliseconds from the first Live on the relay to the first Live on WebRTC.
-const upgradeMs = () =>
-  page.evaluate(() => {
-    const relayed = window.__status.find((s) => s.state === 'Live' && s.path === 'Relayed');
-    const rtc = window.__status.find((s) => s.state === 'Live' && s.path === 'WebRtc');
-    return relayed && rtc ? Math.round(rtc.t - relayed.t) : null;
-  });
 const consoleErrors = [];
 const linkErrors = [];
-const fallbacks = [];
 const watch = (p) => {
   p.on('console', (msg) => {
     const text = msg.text();
     if (msg.type() === 'error') consoleErrors.push(text);
     if (/link status/.test(text) && /error = Some/.test(text)) linkErrors.push(text.replace(/%c|color:.*$/gs, ''));
-    if (/WebRTC dropped; back on iroh/.test(text)) fallbacks.push(Date.now());
   });
   p.on('pageerror', (err) => consoleErrors.push(String(err)));
 };
@@ -88,13 +59,7 @@ watch(page);
 
 const status = page.locator('header.status');
 const statusLine = async () => (await status.innerText()).replace(/\s+/g, ' ');
-const path = () => status.getAttribute('data-path');
 const waitFor = (selector, timeout) => page.locator(selector).waitFor({ timeout });
-const waitPath = async (kind, timeout) => {
-  const start = Date.now();
-  await waitFor(`header.status[data-state="Live"][data-path="${kind}"]`, timeout);
-  return Date.now() - start;
-};
 
 const pane = page.locator('.session-pane');
 /// Back to the session list; only a phone has the button.
@@ -116,13 +81,13 @@ const startSession = async (agent, directory) => {
   await page.locator('input[name="directory"]').fill(directory);
   await page.getByRole('button', { name: 'Start session' }).click();
   await pane.locator(`.composer textarea[placeholder="Message ${agent}"], .closed-note`).waitFor({ timeout: 20_000 });
-  log(`started a ${agent} session in ${directory} on ${await path()}`);
+  log(`started a ${agent} session in ${directory}`);
 };
 const send = async (prompt) => {
   const composer = pane.locator('.composer textarea');
   await composer.fill(prompt);
   await composer.press('Enter');
-  log(`sent "${prompt}" on ${await path()}`);
+  log(`sent "${prompt}"`);
 };
 const text = async (selector) => (await pane.locator(selector).allInnerTexts()).join(' | ');
 
@@ -133,18 +98,17 @@ const REPLY = 'I created `a.txt` in `/tmp/s1-scratch` with the content `hello fr
 
 /// A Claude session in `dir`, one message through approval to the end of the
 /// turn. The recording asks before it replies, so the reply streams after
-/// Approve. `during` runs once the approval card shows, `beforeApprove` after
-/// it. Checks the whole turn rendered exactly once.
-const turn = async ({ during = async () => {}, beforeApprove = async () => {} } = {}) => {
+/// Approve. `beforeApprove` runs once the approval card shows. Checks the
+/// whole turn rendered exactly once.
+const turn = async ({ beforeApprove = async () => {} } = {}) => {
   await startSession('Claude Code', dir);
   await send(PROMPT);
   const approve = pane.locator('.request[data-open="true"] button.approve');
   await approve.waitFor({ timeout: 30_000 });
   log(`approval card: "${(await pane.locator('.request[data-open="true"]').innerText()).replace(/\s+/g, ' ')}"`);
-  await during();
   await beforeApprove();
   await approve.tap();
-  log(`tapped Approve on ${await path()}`);
+  log('tapped Approve');
   const reply = pane.locator('.reply.streaming');
   await reply.waitFor({ timeout: 20_000 });
   const seen = new Set();
@@ -168,18 +132,19 @@ const opened = Date.now();
 await page.goto(joinUrl);
 await waitFor('header.status[data-state="Live"]', 60_000);
 log(`Live ${Date.now() - opened}ms after navigation (first connect)`);
-await waitFor('header.status[data-state="Live"]:not([data-path="Unknown"])', 10_000);
 log(`status line: "${await statusLine()}"`);
 
-if (scenario === 'upgrade') {
+if (scenario === 'turn') {
   check(!page.url().includes('#join='), 'the join fragment was removed from the address bar');
   check(
     (await page.evaluate(() => localStorage.getItem('conductor.ticket'))) !== null,
     'the ticket is in local storage',
   );
-  await waitPath('WebRtc', UPGRADE_WITHIN_MS);
-  log(`WebRtc ${await upgradeMs()}ms after Live on the relay (page clock)`);
-  log(`status line: "${await statusLine()}"`);
+  // This host runs no Codex CLI.
+  await page.getByRole('button', { name: 'New session' }).click();
+  await page.locator('.segment', { hasText: 'Codex' }).click();
+  const why = await page.locator('.providers .hint').innerText();
+  check(why.startsWith("Codex can't run on this host: "), `the form says why Codex is unavailable ("${why}")`);
 
   await turn({
     beforeApprove: async () => {
@@ -189,8 +154,6 @@ if (scenario === 'upgrade') {
       }
     },
   });
-  check((await path()) === 'WebRtc', 'the turn ended still on WebRTC');
-  check(fallbacks.length === 0, 'WebRTC never dropped during the turn');
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
 
@@ -209,8 +172,6 @@ if (scenario === 'upgrade') {
   await openRow(dir.split('/').pop());
   await pane.locator('.turn-end').waitFor({ timeout: 10_000 });
   check((await text('.reply')) === REPLY, 'the transcript replayed after reload');
-  await waitPath('WebRtc', UPGRADE_WITHIN_MS);
-  log(`WebRtc ${await upgradeMs()}ms after Live on the relay, after reload (page clock)`);
 
   // A Home Screen web app on iOS starts with empty storage and no fragment, so it
   // must pair by pasting the join link.
@@ -237,35 +198,6 @@ if (scenario === 'upgrade') {
   await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
   check(true, 'pairing again after Change host reaches Live');
   await fresh.close();
-} else if (scenario === 'fallback') {
-  check((await path()) === 'Relayed', 'Live on the relay');
-  // This host runs no Codex CLI.
-  await page.getByRole('button', { name: 'New session' }).click();
-  await page.locator('.segment', { hasText: 'Codex' }).click();
-  const why = await page.locator('.providers .hint').innerText();
-  check(why.startsWith("Codex can't run on this host: "), `the form says why Codex is unavailable ("${why}")`);
-  await turn();
-  check((await path()) === 'Relayed', 'the turn completed on the relay');
-  const failed = page.locator('header.status[data-path="Relayed"]:not([data-upgrade-error=""])');
-  await failed.waitFor({ timeout: 20_000 });
-  log(`upgrade error shown to the client: "${await status.getAttribute('data-upgrade-error')}"`);
-  check((await status.getAttribute('data-state')) === 'Live', 'still Live after the upgrade failed');
-  await page.screenshot({ path: out });
-} else if (scenario === 'drop') {
-  await waitPath('WebRtc', UPGRADE_WITHIN_MS);
-  log(`WebRtc ${await upgradeMs()}ms after Live on the relay (page clock)`);
-  // The drop lands between the message, sent on WebRTC, and the approval card.
-  await turn({
-    during: async () => {
-      check(fallbacks.length === 1, 'WebRTC dropped mid-turn, before the approval card');
-      const relayed = await page.evaluate(() => window.__status.some((s, i) => i > 0 && s.state === 'Live' && s.path === 'Relayed'));
-      check(relayed, 'the client went back to Live on the relay');
-    },
-  });
-  check(fallbacks.length === 1, 'the client fell back exactly once');
-  await waitPath('WebRtc', 30_000);
-  log(`WebRtc again ${Date.now() - fallbacks[0]}ms after the drop`);
-  await page.screenshot({ path: out });
 } else if (scenario === 'codex') {
   // fixtures/e2e/codex-two-threads.jsonl: two threads start, then a turn on
   // each; the first asks to run a command and is approved, the second is
@@ -307,9 +239,8 @@ if (scenario === 'upgrade') {
   log(`closed: "${await text('.closed-note')}"`);
   await startSession('Claude Code', `${dir}/conductor`);
   await send(PROMPT);
-  await pane.locator('.request[data-open="true"] button.approve').click();
-  await pane.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 20_000 });
-  log(`running, held mid-reply: "${await text('.reply')}"`);
+  const approve = pane.locator('.request[data-open="true"] button.approve');
+  await approve.waitFor({ timeout: 20_000 });
   const shots = {
     desktop: [{ viewport: { width: 1280, height: 800 } }, [['conductor', 'running'], ['scratch', 'closed']]],
     phone: [
@@ -317,24 +248,33 @@ if (scenario === 'upgrade') {
       [['conductor', 'running'], ['notes', 'idle']],
     ],
   };
+  // Deltas are live-only, so every shooter is Live before the reply starts.
+  const shooters = [];
   for (const scheme of ['light', 'dark']) {
     for (const [device, [options, states]] of Object.entries(shots)) {
-      const shooter = await browser.newContext({ ...options, colorScheme: scheme, reducedMotion: 'reduce' });
-      const shot = await shooter.newPage();
+      const context = await browser.newContext({ ...options, colorScheme: scheme, reducedMotion: 'reduce' });
+      const shot = await context.newPage();
       watch(shot);
       await shot.goto(joinUrl);
       await shot.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
-      for (const [title, state] of states) {
-        await openRow(title, shot);
-        await shot.waitForTimeout(450);
-        const file = `${out}/${device}-${scheme}-${state}.png`;
-        // The path differs from run to run, so it is left out of the shot;
-        // display: none, since a hidden span keeps its width.
-        await shot.screenshot({ path: file, style: '.status .path { display: none; }' });
-        log(`screenshot ${file}`);
-      }
-      await shooter.close();
+      shooters.push({ scheme, device, states, context, shot });
     }
+  }
+  await approve.click();
+  await pane.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 20_000 });
+  log(`running, held mid-reply: "${await text('.reply')}"`);
+  for (const { scheme, device, states, context, shot } of shooters) {
+    for (const [title, state] of states) {
+      await openRow(title, shot);
+      if (state === 'running') {
+        await shot.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 10_000 });
+      }
+      await shot.waitForTimeout(450);
+      const file = `${out}/${device}-${scheme}-${state}.png`;
+      await shot.screenshot({ path: file });
+      log(`screenshot ${file}`);
+    }
+    await context.close();
   }
 } else {
   throw new Error(`unknown scenario ${scenario}`);

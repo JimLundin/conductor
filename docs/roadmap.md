@@ -9,10 +9,9 @@ What is built and what comes next. Update it in the commit that changes it.
   tool calls, approvals, interrupts. `s1` and `s2` are the live checks.
 - **Host.** `conductord` serves one host over iroh: an in-memory event log
   (streaming deltas are live-only), a session actor per agent, one shared
-  Codex app-server. A browser upgrades to a direct WebRTC connection (str0m)
-  when it can.
-- **Client.** `HostLink` per host: reconnect with backoff, catch-up from the
-  cursor, the WebRTC upgrade. `HostView` folds events into what the UI shows.
+  Codex app-server. Clients reach it over iroh through n0's public relays.
+- **Client.** `HostLink` per host: reconnect with backoff, a hedged dial,
+  catch-up from the cursor. `HostView` folds events into what the UI shows.
 - **App.** One Dioxus web app, installed as an app on the desktop and the
   iPhone: session list, new session, session pane, phone layout. Browser e2e
   on the real daemon with fake CLIs.
@@ -66,3 +65,9 @@ Each item ends in something to try. The fleet design is
 
 - A fresh connection sometimes gets no `Welcome` and dies at the 30 s idle
   timeout. Not reproduced yet.
+
+## Known risks
+
+- n0's free relays now carry all traffic. If n0 ever restricts them, use a
+  paid n0 relay or iroh's open-source relay on a small server. The relay URL
+  is one setting, so no code changes.
