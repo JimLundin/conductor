@@ -1,8 +1,5 @@
 # The rewrite to-do list: `subset report` on crates/ under subset.toml version 7.
 # Regenerate with `cargo run -q -p subset -- report`, then restore this header.
 #
-# Total: 3 violations of 1 id in 2 files, all warnings under
-# `replaced_form_warnings`: the `a.eq(b).then_some(..)` lifts that proposal
-# 0040's guard replaces, left for the client round. crates/daemon and
-# crates/agents are clean.
-expr.method_call 3 in 2 files: crates/client/src/host_view.rs:258:45 crates/client/src/host_view.rs:267:42 crates/client/src/link.rs:786:54
+# Total: 0 violations. Every site of the forms 0040 and 0041 replaced is
+# rewritten, in crates/daemon, crates/agents and crates/client.

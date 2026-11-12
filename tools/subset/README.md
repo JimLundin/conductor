@@ -133,14 +133,6 @@ endpoints = ["SendHalf", "RecvHalf"]
 - `consuming_readers` names types and traits that read by changing their
   buffer (0039). A `use` of one and a path through one are flagged. The
   default is `bytes::Buf`.
-- `replaced_form_warnings` lists path globs where a form that version 7
-  replaced is reported as a warning (0040, 0041): `Some(x).filter(..)` or
-  `a.eq(b).then_some(..)` with one comparison, and
-  `stream::iter(..).then(..).try_collect()` into `()`. `check` prints a
-  warning as `path:line:col: warning: <id>: <reason>` and still exits with
-  0 when it finds nothing else. A warning still scores as `outside`, and
-  `report` counts it. The default is none, so the forms are violations
-  everywhere.
 
 Both lists hold paths, matched against paths as the code writes them: the
 path's segment names the item, and the segments written before it agree

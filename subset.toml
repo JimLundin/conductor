@@ -126,12 +126,6 @@ macros = [
 # Extra macros allowed only inside #[cfg(test)] code and tests/.
 test_macros = ["assert_eq", "assert_ne"]
 
-# Proposals 0040 and 0041: in these paths, a form that version 7 replaced
-# (`Some(x).filter(..)` or `a.eq(b).then_some(..)` with one comparison, and
-# `stream::iter(..).then(..).try_collect()` into `()`) is reported as a
-# warning, which `check` lets pass, until the client round rewrites them.
-replaced_form_warnings = ["crates/client/**", "crates/app/**"]
-
 # Proposal 0035: stream endpoints of ours, whose methods may take `&mut self`
 # anywhere. A type joins by review: it wraps a library stream or channel
 # whose own API takes `&mut`, or it is the reassembly buffer of one.

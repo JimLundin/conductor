@@ -385,12 +385,14 @@ impl Item {
 impl ToolState {
     fn changed(self, call: &ToolCallId, change: &Change) -> ToolState {
         match (self, change) {
-            (state, Change::Finish(id, outcome)) => match call.eq(id).then_some(outcome).copied() {
-                Some(outcome) => ToolState::Finished(outcome),
-                None => state,
-            },
+            (_, Change::Finish(id, outcome)) if call == id => {
+                ToolState::Finished(outcome.to_owned())
+            }
             (ToolState::Running, Change::End) => ToolState::Stopped,
-            (state, Change::Ask(_, _) | Change::Resolve(_, _) | Change::End) => state,
+            (
+                state,
+                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+            ) => state,
         }
     }
 }
@@ -398,20 +400,16 @@ impl ToolState {
 impl Approval {
     fn changed(self, call: &ToolCallId, change: &Change) -> Approval {
         match (self, change) {
-            (approval, Change::Ask(id, request)) => match call.eq(id).then_some(request).copied() {
-                Some(request) => Approval::Asked {
-                    request,
-                    state: RequestState::Open,
-                },
-                None => approval,
+            (_, Change::Ask(id, request)) if call == id => Approval::Asked {
+                request: request.to_owned(),
+                state: RequestState::Open,
             },
-            (Approval::Asked { request, state }, Change::Resolve(id, resolution)) => {
+            (Approval::Asked { request, .. }, Change::Resolve(id, resolution))
+                if &request == id =>
+            {
                 Approval::Asked {
-                    state: match request.eq(id).then_some(resolution) {
-                        Some(resolution) => RequestState::Resolved(resolution.clone()),
-                        None => state,
-                    },
                     request,
+                    state: RequestState::Resolved(resolution.clone()),
                 }
             }
             (
@@ -424,7 +422,10 @@ impl Approval {
                 request,
                 state: RequestState::Resolved(Resolution::Withdrawn),
             },
-            (approval, Change::Resolve(_, _) | Change::Finish(_, _) | Change::End) => approval,
+            (
+                approval,
+                Change::Ask(_, _) | Change::Resolve(_, _) | Change::Finish(_, _) | Change::End,
+            ) => approval,
         }
     }
 }

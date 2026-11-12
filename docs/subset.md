@@ -225,8 +225,8 @@ from `docs/subset/rewrite-report.txt`, now the report under version 7.
 Version 7 accepts 0040 (a match guard of one comparison, which replaces
 the single-comparison lifts) and 0041 (a `for` of awaited calls, which
 replaces `stream::iter(..).then(..)` for effects), both as amended by the
-owner. Until the client round rewrites `crates/client` and `crates/app`,
-the replaced forms there are warnings (`replaced_form_warnings`).
+owner. The replaced forms are violations everywhere, and every site in
+`crates/` is rewritten.
 
 ## Growing the subset
 

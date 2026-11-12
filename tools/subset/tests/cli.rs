@@ -2029,33 +2029,3 @@ impl Session {
          crates/daemon/src/a_fail.rs:24:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n"
     );
 }
-
-#[test]
-fn a_replaced_form_is_a_warning_under_replaced_form_warnings() {
-    let config = scratch(
-        "replaced-warnings",
-        "version = 0\ninclude = [\"**/*.rs\"]\nallowed = [\"item.fn\", \"expr.call\", \"expr.method_call\", \"expr.path\", \"expr.closure.adapter\", \"expr.field\", \"expr.binary.eq\", \"pat.ident\", \"type.path\"]\nreplaced_form_warnings = [\"client/**\"]\n",
-        &[
-            (
-                "client/a.rs",
-                "fn admit(hello: Hello, token: Token) -> Option<Hello> {\n    Some(hello).filter(|hello| hello.token == token)\n}\n",
-            ),
-            (
-                "daemon/a.rs",
-                "fn admit(hello: Hello, token: Token) -> Option<Hello> {\n    Some(hello).filter(|hello| hello.token == token)\n}\n",
-            ),
-        ],
-    );
-    let (code, stdout, _) = subset(&["check", "--config", config.to_str().unwrap()]);
-    assert_eq!(
-        (code, stdout.as_str()),
-        (
-            1,
-            "client/a.rs:2:17: warning: expr.method_call: `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n\
-             daemon/a.rs:2:17: expr.method_call: `Some(x).filter(..)` with one comparison is a match guard: `pat if a == b => ..` with an unguarded arm for the rest (proposal 0040)\n"
-        )
-    );
-    std::fs::remove_file(config.with_file_name("daemon/a.rs")).unwrap();
-    let (code, _, _) = subset(&["check", "--config", config.to_str().unwrap()]);
-    assert_eq!(code, 0);
-}

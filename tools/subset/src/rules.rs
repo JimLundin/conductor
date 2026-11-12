@@ -140,10 +140,6 @@ pub const STREAM_EFFECTS: Rule = rule(
     "awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)",
 );
 
-/// The rules that flag a form version 7 replaced. `replaced_form_warnings`
-/// in the config turns them into warnings under the paths it lists.
-pub const REPLACED: &[&Rule] = &[&LIFT_FILTER, &LIFT_EQ, &STREAM_EFFECTS];
-
 pub const IMPL_TRAIT: Rule = rule(
     "item.impl.trait",
     "trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009)",

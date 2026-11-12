@@ -787,12 +787,13 @@ impl Outbox {
 
     /// Shows `next` to every handle, and sends it as an update if it changed.
     async fn publish(&self, next: Status) -> Result<(), Stopped> {
-        let changed = self.status.borrow().ne(&next).then_some(());
-        if let Some(()) = changed {
-            self.status.send_replace(next.clone());
-            self.emit(Update::Status(next)).await?;
+        match self.current() {
+            current if current != next => {
+                self.status.send_replace(next.clone());
+                self.emit(Update::Status(next)).await
+            }
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     async fn emit(&self, update: Update) -> Result<(), Stopped> {
