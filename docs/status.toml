@@ -131,7 +131,8 @@ touches = ["app"]
 [[phase.unit]]
 id = "p1-7"
 name = "Unit 7: browser e2e"
-status = "planned"
+status = "in_progress"
+branch = "p1-u7-browser"
 purpose = "The browser e2e on the real daemon and the fake CLIs."
 done_when = "All three scenarios pass in Chromium and WebKit."
 touches = ["app", "daemon"]
