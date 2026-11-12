@@ -2,13 +2,13 @@
 //! relays off so the test needs no network.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agents::codex::ServerOptions;
 use client::host_view::{
@@ -19,16 +19,20 @@ use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
+use daemon::rtc::{PortRange, RtcOptions, RtcPorts};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
-use iroh::endpoint::presets;
+use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream, presets};
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    AuthToken, Availability, ClientName, CloseReason, CommandBody, CommandResult, Decision, Epoch,
-    Event, EventKind, HostPath, HostSeq, Provider, Providers, Rejection, RequestId, Resolution,
-    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    AuthToken, Availability, ClientName, CloseReason, Command, CommandBody, CommandId,
+    CommandResult, Decision, Epoch, Event, EventKind, Hello, HelloReply, HostPath, HostSeq, Open,
+    Provider, Providers, Rejection, RequestId, Resolution, RtcOffer, SessionId, Signal, ToolCallId,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
+use serde::de::DeserializeOwned;
+use str0m::{Candidate, Rtc};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -63,13 +67,16 @@ fn fake_codex() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fixture {
-    host_of(Launchers {
-        claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
-            claude_path,
-            model: None,
-        })),
-        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-    })
+    host_of(
+        Launchers {
+            claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
+                claude_path,
+                model: None,
+            })),
+            codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+        },
+        None,
+    )
     .await
 }
 
@@ -82,15 +89,18 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
         cwd: server.clone(),
         stdout_log: None,
     });
-    let fixture = host_of(Launchers {
-        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        codex: Launcher::Ready(Launch::Codex(CodexLaunch { hub, model: None })),
-    })
+    let fixture = host_of(
+        Launchers {
+            claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
+            codex: Launcher::Ready(Launch::Codex(CodexLaunch { hub, model: None })),
+        },
+        None,
+    )
     .await;
     (fixture, server)
 }
 
-async fn host_of(launchers: Launchers) -> Fixture {
+async fn host_of(launchers: Launchers, rtc: Option<Arc<RtcOptions>>) -> Fixture {
     let log = Log::spawn(String::from("test-host"), Epoch(11), launchers.providers());
     let registry = Registry::spawn(log.clone(), launchers);
     let endpoint = endpoint().await;
@@ -102,7 +112,7 @@ async fn host_of(launchers: Launchers) -> Fixture {
         log: log.clone(),
         registry,
         token: AuthToken::from_bytes(TOKEN),
-        rtc: None,
+        rtc,
     };
     let router = Router::builder(endpoint)
         .accept(proto::ALPN, conductor)
@@ -1257,14 +1267,7 @@ fn loopback(endpoint: &Endpoint) -> SocketAddr {
 
 #[tokio::test]
 async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
-    let log_path = std::env::temp_dir().join(format!("conductor-e2e-{}.log", std::process::id()));
-    let log = std::fs::File::create(&log_path).unwrap();
-    let _logging = tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .with_writer(Arc::new(log))
-            .with_ansi(false)
-            .finish(),
-    );
+    let (log_path, _logging) = capture_log("stalled-dial");
     let fx = host().await;
     let hop = Hop::spawn(loopback(fx.router.endpoint())).await;
     let target = Target {
@@ -1288,14 +1291,216 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
     drop(updates);
     fx.router.shutdown().await.unwrap();
 
-    let logged = std::fs::read_to_string(&log_path).unwrap();
-    std::fs::remove_file(&log_path).unwrap();
+    let logged = captured(&log_path);
     assert_eq!(
         (
             logged.matches("hedged dial connected").count(),
             logged.matches(UNGRACEFUL).count()
         ),
         (1, 0),
+        "{logged}"
+    );
+}
+
+/// Sends this thread's logs to a file named after `test`. A `tokio::test`
+/// runs on one thread, so they include the host's.
+fn capture_log(test: &str) -> (PathBuf, tracing::subscriber::DefaultGuard) {
+    let path =
+        std::env::temp_dir().join(format!("conductor-e2e-{test}-{}.log", std::process::id()));
+    let log = std::fs::File::create(&path).unwrap();
+    let guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(Arc::new(log))
+            .with_ansi(false)
+            .finish(),
+    );
+    (path, guard)
+}
+
+/// The captured log, whose file is then removed.
+fn captured(path: &Path) -> String {
+    let logged = std::fs::read_to_string(path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    logged
+}
+
+/// A host with no agents whose WebRTC sockets bind in `ports`. It has no
+/// STUN servers, so the test needs no network.
+async fn rtc_host(ports: &str) -> Fixture {
+    let ports = RtcPorts::Range(PortRange::parse(ports).unwrap());
+    let launchers = Launchers {
+        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
+        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+    };
+    host_of(
+        launchers,
+        Some(Arc::new(RtcOptions::new(Vec::new(), None, None, ports))),
+    )
+    .await
+}
+
+/// An authenticated iroh connection without a link, for the raw streams a
+/// browser opens.
+async fn said_hello(endpoint: &Endpoint, target: &Target) -> Connection {
+    let conn = endpoint
+        .connect(target.addr.clone(), proto::ALPN)
+        .await
+        .unwrap();
+    let hello = Open::Hello(Hello {
+        client: test_client(),
+        token: target.token,
+    });
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    send.write_all(&proto::encode(&hello).unwrap())
+        .await
+        .unwrap();
+    send.finish().unwrap();
+    let welcomed = match read_frame::<HelloReply>(&mut recv).await.unwrap() {
+        Some(HelloReply::Welcome(_)) => Some(conn),
+        Some(HelloReply::Refused { .. }) | None => None,
+    };
+    welcomed.expect("the host welcomes the test client")
+}
+
+/// The next frame, or `None` once the peer finished the stream.
+async fn read_frame<T: DeserializeOwned>(
+    recv: &mut RecvStream,
+) -> Result<Option<T>, ReadExactError> {
+    let mut header = [0u8; proto::HEADER_LEN];
+    match recv.read_exact(&mut header).await {
+        Ok(()) => {
+            let mut body =
+                std::iter::repeat_n(0u8, proto::body_len(header).unwrap()).collect::<Vec<u8>>();
+            recv.read_exact(&mut body).await.unwrap();
+            Ok(Some(proto::decode(&body).unwrap()))
+        }
+        Err(ReadExactError::FinishedEarly(0)) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// The offer a browser makes: one data channel.
+fn browser_offer() -> RtcOffer {
+    let mut rtc = Rtc::builder()
+        .set_crypto_provider(Arc::new(str0m::crypto::from_feature_flags()))
+        .build(Instant::now());
+    let mut changes = rtc.sdp_api();
+    let _ = changes.add_channel(String::from("probe"));
+    let (offer, _) = changes.apply().unwrap();
+    RtcOffer {
+        sdp: offer.to_sdp_string(),
+    }
+}
+
+/// A WebRTC upgrade's signaling stream. The host's session lives while it
+/// stays open.
+struct Signaling {
+    send: SendStream,
+    recv: RecvStream,
+    /// The host's first signal, or `None` if it refused the offer.
+    answer: Option<Signal>,
+}
+
+async fn offer(conn: &Connection) -> Signaling {
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    let offer = proto::encode(&Open::Rtc(browser_offer())).unwrap();
+    send.write_all(&offer).await.unwrap();
+    let answer = tokio::time::timeout(STEP, read_frame::<Signal>(&mut recv))
+        .await
+        .expect("the host answers or refuses within the step timeout")
+        .unwrap();
+    Signaling { send, recv, answer }
+}
+
+/// The ports of the host candidates in the answer.
+fn host_ports(signaling: &Signaling) -> Vec<u16> {
+    match &signaling.answer {
+        Some(Signal::Answer { sdp }) => sdp
+            .lines()
+            .filter_map(|line| line.strip_prefix("a="))
+            .filter_map(|line| Candidate::from_sdp_string(line).ok())
+            .map(|candidate| candidate.addr().port())
+            .collect::<BTreeSet<u16>>()
+            .into_iter()
+            .collect(),
+        Some(Signal::Candidate { .. } | Signal::Selected { .. } | Signal::Failed { .. }) | None => {
+            Vec::new()
+        }
+    }
+}
+
+/// Closes the signaling stream, which ends the session, and waits until the
+/// host closes its side.
+async fn hang_up(signaling: Signaling) {
+    let Signaling {
+        mut send, mut recv, ..
+    } = signaling;
+    send.finish().unwrap();
+    let rest = tokio::time::timeout(STEP, read_frame::<Signal>(&mut recv))
+        .await
+        .expect("the host ends the session within the step timeout")
+        .unwrap();
+    assert_eq!(rest, None);
+}
+
+async fn command(conn: &Connection, body: CommandBody) -> Option<CommandResult> {
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    let command = Open::Command(Command {
+        id: CommandId(1),
+        body,
+    });
+    send.write_all(&proto::encode(&command).unwrap())
+        .await
+        .unwrap();
+    send.finish().unwrap();
+    read_frame::<CommandResult>(&mut recv).await.unwrap()
+}
+
+#[tokio::test]
+async fn concurrent_webrtc_sessions_take_distinct_ports_in_the_range() {
+    let fx = rtc_host("31311-31312").await;
+    let endpoint = endpoint().await;
+    let conn = said_hello(&endpoint, &fx.target).await;
+    let first = offer(&conn).await;
+    let second = offer(&conn).await;
+    assert_eq!(
+        (host_ports(&first), host_ports(&second)),
+        (Vec::from([31311]), Vec::from([31312]))
+    );
+    hang_up(first).await;
+    hang_up(second).await;
+    endpoint.close().await;
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_full_range_refuses_the_upgrade_and_iroh_keeps_serving() {
+    let (log_path, _logging) = capture_log("full-range");
+    let fx = rtc_host("31321-31321").await;
+    let endpoint = endpoint().await;
+    let conn = said_hello(&endpoint, &fx.target).await;
+    let holder = offer(&conn).await;
+    let refused = offer(&conn).await;
+    let on_iroh = command(&conn, message_to(9, "still there?")).await;
+    hang_up(holder).await;
+    let after = offer(&conn).await;
+    assert_eq!(
+        (refused.answer, on_iroh, host_ports(&after)),
+        (
+            None,
+            Some(CommandResult::Rejected(Rejection::UnknownSession)),
+            Vec::from([31321])
+        )
+    );
+    hang_up(after).await;
+    endpoint.close().await;
+    fx.router.shutdown().await.unwrap();
+    let logged = captured(&log_path);
+    assert_eq!(
+        logged
+            .matches("every UDP port in --rtc-ports 31321-31321 is taken")
+            .count(),
+        1,
         "{logged}"
     );
 }

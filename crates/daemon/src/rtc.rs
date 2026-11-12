@@ -15,13 +15,13 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::ops::ControlFlow;
+use std::num::NonZeroU16;
+use std::ops::{ControlFlow, RangeInclusive};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use iroh::endpoint::{RecvStream, SendStream};
-use n0_future::StreamExt;
 use proto::{CandidateType, FrameBuffer, Reassembly, Remainder, RtcOffer, Signal};
 use str0m::change::SdpOffer;
 use str0m::channel::ChannelId;
@@ -29,6 +29,7 @@ use str0m::net::{DatagramRecv, Protocol, Receive, Transmit};
 use str0m::{Candidate, Event, IceConnectionState, Output, Rtc, RtcError};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 
 use crate::stun::{Answer, Stun};
 use crate::wire::{RecvHalf, SendHalf, WireError};
@@ -49,6 +50,85 @@ pub struct RtcOptions {
     drop_after: Option<Count>,
     /// Whether the drop knob has fired yet, in any session.
     drop_knob: watch::Sender<Knob>,
+    ports: RtcPorts,
+}
+
+/// Which UDP ports the host's WebRTC sockets bind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtcPorts {
+    /// Any port the OS picks, a new one for each socket.
+    Ephemeral,
+    /// The first free port in the range, for each socket.
+    Range(PortRange),
+}
+
+/// An inclusive range of UDP ports, `first` no higher than `last`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortRange {
+    first: NonZeroU16,
+    last: NonZeroU16,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PortRangeError {
+    #[error("expected <first>-<last>, as in 50000-50099")]
+    NoDash,
+    #[error("{0:?} is not a port from 1 to 65535")]
+    NotAPort(String),
+    #[error("the first port, {first}, is above the last, {last}")]
+    Reversed { first: u16, last: u16 },
+}
+
+impl PortRange {
+    /// Parses `<first>-<last>`, as in `50000-50099`.
+    pub fn parse(text: &str) -> Result<PortRange, PortRangeError> {
+        let (first, last) = text.split_once('-').ok_or(PortRangeError::NoDash)?;
+        match (port(first)?, port(last)?) {
+            (first, last) if first > last => Err(PortRangeError::Reversed {
+                first: first.get(),
+                last: last.get(),
+            }),
+            (first, last) => Ok(PortRange { first, last }),
+        }
+    }
+}
+
+fn port(text: &str) -> Result<NonZeroU16, PortRangeError> {
+    text.parse::<NonZeroU16>()
+        .map_err(|_| PortRangeError::NotAPort(String::from(text)))
+}
+
+impl RtcPorts {
+    /// The ports to try for one socket, in order. Port 0 asks the OS.
+    fn candidates(self) -> Vec<u16> {
+        match self {
+            RtcPorts::Ephemeral => Vec::from([0]),
+            RtcPorts::Range(PortRange { first, last }) => {
+                RangeInclusive::new(first.get(), last.get()).collect()
+            }
+        }
+    }
+
+    fn exhausted(self) -> Unbound {
+        match self {
+            RtcPorts::Ephemeral => Unbound::NoSocket,
+            RtcPorts::Range(PortRange { first, last }) => Unbound::RangeFull {
+                first: first.get(),
+                last: last.get(),
+            },
+        }
+    }
+}
+
+/// Why the host has no socket to answer an offer with.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Unbound {
+    #[error("no usable IPv4 interface for WebRTC")]
+    NoInterface,
+    #[error("no interface would bind a UDP socket")]
+    NoSocket,
+    #[error("every UDP port in --rtc-ports {first}-{last} is taken")]
+    RangeFull { first: u16, last: u16 },
 }
 
 /// Test knob: drop every datagram that arrives, so ICE never connects.
@@ -72,6 +152,7 @@ impl RtcOptions {
         stun_servers: Vec<String>,
         blackhole: Option<Blackhole>,
         drop_after: Option<u64>,
+        ports: RtcPorts,
     ) -> Self {
         let (drop_knob, _) = watch::channel(Knob::Armed);
         Self {
@@ -79,7 +160,12 @@ impl RtcOptions {
             blackhole,
             drop_after: drop_after.map(Count),
             drop_knob,
+            ports,
         }
+    }
+
+    pub(crate) fn ports(&self) -> RtcPorts {
+        self.ports
     }
 
     /// Fires the drop knob once per host, in the first session to reach it.
@@ -231,18 +317,18 @@ pub(crate) struct Socket {
     pub(crate) addr: SocketAddr,
 }
 
-/// Answers `offer` and starts driving the connection. The signaling stream
-/// stays open for trickled candidates and reports; when it closes, the
-/// connection ends.
+/// Answers `offer` on `sockets` and starts driving the connection. The
+/// signaling stream stays open for trickled candidates and reports; when it
+/// closes, the connection ends.
 pub(crate) async fn accept(
     offer: RtcOffer,
+    sockets: Vec<Socket>,
     options: Arc<RtcOptions>,
     client: String,
     signal_send: SendStream,
     signal_recv: RecvStream,
 ) -> anyhow::Result<Upgrade> {
     let started = Instant::now();
-    let sockets = bind_sockets().await?;
     let stun = Stun::resolve(&options.stun_servers, &sockets).await;
     let mut rtc = Rtc::builder()
         .set_crypto_provider(Arc::new(str0m::crypto::from_feature_flags()))
@@ -274,8 +360,9 @@ pub(crate) async fn accept(
         .await?;
 
     let (packets_tx, packets) = mpsc::channel(256);
+    let mut readers = JoinSet::new();
     for socket in sockets.iter().cloned() {
-        tokio::spawn(read_socket(socket, packets_tx.clone()));
+        let _ = readers.spawn(read_socket(socket, packets_tx.clone()));
     }
     let (signals_tx, signals) = mpsc::channel(16);
     tokio::spawn(read_signals(RecvHalf::Iroh(signal_recv), signals_tx));
@@ -287,6 +374,7 @@ pub(crate) async fn accept(
         client,
         sockets,
         packets,
+        readers,
         signals,
         signal_send,
         stun,
@@ -314,34 +402,50 @@ pub(crate) async fn accept(
     })
 }
 
-/// One socket per usable IPv4 interface, each on an ephemeral port, so the
-/// destination of every datagram is known without `IP_PKTINFO`, and several
+/// One socket per usable IPv4 interface, so the destination of every
+/// datagram is known without `IP_PKTINFO`. Each takes the first port of
+/// `ports` that is free on its interface, so several sessions and several
 /// hosts on one machine never collide with each other or with iroh.
-async fn bind_sockets() -> anyhow::Result<Vec<Socket>> {
-    let sockets = n0_future::stream::iter(interface_ips())
-        .then(bind)
-        .collect::<Vec<Option<Socket>>>()
-        .await
+pub(crate) fn bind_sockets(ports: RtcPorts) -> Result<Vec<Socket>, Unbound> {
+    let ips = interface_ips();
+    let _ = ips.first().ok_or(Unbound::NoInterface)?;
+    let sockets = ips
         .into_iter()
-        .flatten()
+        .filter_map(|ip| bind(ip, ports))
         .collect::<Vec<Socket>>();
-    let _ = sockets
-        .first()
-        .context("no usable IPv4 interface for WebRTC")?;
+    let _ = sockets.first().ok_or_else(|| ports.exhausted())?;
     Ok(sockets)
 }
 
-async fn bind(ip: IpAddr) -> Option<Socket> {
-    let bound = UdpSocket::bind(SocketAddr::new(ip, 0)).await;
-    match bound.and_then(|udp| {
+fn bind(ip: IpAddr, ports: RtcPorts) -> Option<Socket> {
+    let bound = ports
+        .candidates()
+        .into_iter()
+        .find_map(|port| bind_port(SocketAddr::new(ip, port)));
+    match bound {
+        Some(socket) => Some(socket),
+        None => {
+            tracing::warn!(%ip, ?ports, "webrtc could not bind a socket");
+            None
+        }
+    }
+}
+
+/// Synchronous, since a UDP bind never waits on the network. tokio needs
+/// the socket in non-blocking mode.
+fn bind_port(addr: SocketAddr) -> Option<Socket> {
+    let bound = std::net::UdpSocket::bind(addr).and_then(|udp| {
+        udp.set_nonblocking(true)?;
+        let udp = UdpSocket::from_std(udp)?;
         Ok(Socket {
             addr: udp.local_addr()?,
             udp: Arc::new(udp),
         })
-    }) {
+    });
+    match bound {
         Ok(socket) => Some(socket),
         Err(err) => {
-            tracing::warn!(%ip, %err, "webrtc could not bind a socket");
+            tracing::debug!(%addr, %err, "webrtc could not bind a port");
             None
         }
     }
@@ -458,8 +562,9 @@ struct Driver {
     client: String,
     sockets: Vec<Socket>,
     packets: mpsc::Receiver<Packet>,
+    /// The tasks reading `sockets`. Each holds its socket open.
+    readers: JoinSet<Result<Infallible, Stopped>>,
     signals: mpsc::Receiver<Signal>,
-    signal_send: SendHalf,
     stun: Stun,
     out: mpsc::Receiver<Out>,
     out_tx: mpsc::Sender<Out>,
@@ -480,6 +585,9 @@ struct Driver {
     frames_out: Count,
     datagrams_in: Count,
     datagrams_out: Count,
+    /// After every field that holds a socket, so the ports are free by the
+    /// time dropping it closes the signaling stream.
+    signal_send: SendHalf,
     /// Dropped when the driver ends, which resolves [`Session::closed`].
     _ended: watch::Sender<()>,
 }
@@ -489,13 +597,16 @@ impl Driver {
         loop {
             match self.turn().await {
                 Ok(()) => {}
-                Err(ended) => break self.end(ended),
+                Err(ended) => break self.end(ended).await,
             }
         }
     }
 
-    fn end(&mut self, ended: Ended) {
+    /// Frees the sockets' ports before the signaling stream closes, so a
+    /// client that retries at once finds them free.
+    async fn end(&mut self, ended: Ended) {
         self.writable.clear();
+        self.readers.shutdown().await;
         tracing::info!(
             client = self.client,
             reason = ended.to_string(),
@@ -843,5 +954,44 @@ fn flushed(done: usize, written: Option<Result<Option<()>, RtcError>>) -> Contro
             done,
             error: Some(error),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PortRange;
+
+    fn parsed(text: &str) -> String {
+        match PortRange::parse(text) {
+            Ok(PortRange { first, last }) => format!("{first}..={last}"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_port_range_is_two_ports_in_order_with_no_zero() {
+        assert_eq!(
+            [
+                "50000-50099",
+                "7-7",
+                "50099-50000",
+                "0-10",
+                "1-65536",
+                "50000",
+                "a-b"
+            ]
+            .into_iter()
+            .map(parsed)
+            .collect::<Vec<String>>(),
+            Vec::from([
+                String::from("50000..=50099"),
+                String::from("7..=7"),
+                String::from("the first port, 50099, is above the last, 50000"),
+                String::from("\"0\" is not a port from 1 to 65535"),
+                String::from("\"65536\" is not a port from 1 to 65535"),
+                String::from("expected <first>-<last>, as in 50000-50099"),
+                String::from("\"a\" is not a port from 1 to 65535"),
+            ])
+        );
     }
 }

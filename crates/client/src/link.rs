@@ -621,7 +621,6 @@ impl Link {
 
     /// Moves the subscription onto the new WebRTC connection.
     async fn upgraded(&mut self, connected: Connected, rtc: Carrier) -> Result<Connected, Lost> {
-        let upgrade = connected.upgrade.succeeded();
         let transport = rtc.transport(&connected.conn);
         match subscribe(&transport, connected.epoch, self.cursor_seq()).await {
             Ok(halves) => {
@@ -631,7 +630,7 @@ impl Link {
                 let next = Connected {
                     carrier: rtc,
                     feed: frames(halves),
-                    upgrade,
+                    upgrade: connected.upgrade.succeeded(),
                     ..connected
                 };
                 let path = next.carrier.path(next.iroh_path);
@@ -656,7 +655,7 @@ impl Link {
                     })
                     .await?;
                 Ok(Connected {
-                    upgrade: upgrade.retry_later(&connected.conn),
+                    upgrade: connected.upgrade.retry_later(&connected.conn),
                     ..connected
                 })
             }
@@ -977,7 +976,7 @@ fn path_kind(paths: &PathList) -> PathKind {
 
 /// Exponential from `floor` to `ceiling`, with the upper half jittered so
 /// many clients don't retry in step.
-pub(crate) fn backoff(failures: u32, random: u64, floor: Duration, ceiling: Duration) -> Duration {
+fn backoff(failures: u32, random: u64, floor: Duration, ceiling: Duration) -> Duration {
     let ceiling = floor
         .saturating_mul(1u32.checked_shl(failures).unwrap_or(u32::MAX))
         .min(ceiling);
@@ -989,7 +988,7 @@ pub(crate) fn backoff(failures: u32, random: u64, floor: Duration, ceiling: Dura
     half.saturating_add(jitter)
 }
 
-pub(crate) fn random_u64() -> u64 {
+fn random_u64() -> u64 {
     let mut bytes = [0u8; 8];
     getrandom::fill(&mut bytes).expect("the platform has a random source");
     u64::from_le_bytes(bytes)

@@ -9,11 +9,19 @@ use n0_future::boxed::BoxFuture;
 use n0_future::time::sleep;
 
 use crate::LinkState;
-use crate::link::{backoff, random_u64};
 use crate::platform::{Session, negotiate};
 
-const RETRY_FLOOR: Duration = Duration::from_secs(2);
-const RETRY_CEILING: Duration = Duration::from_secs(120);
+/// How long the link stays on iroh before each of the first retries. A
+/// host whose firewall drops WebRTC fails every attempt, so the retries
+/// thin out rather than keep probing it.
+const RETRY_FIRST: &[Duration] = &[
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+    Duration::from_secs(120),
+];
+/// How long it stays on iroh before every later retry.
+const RETRY_EVERY: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Copy)]
 enum Stage {
@@ -29,7 +37,8 @@ enum Stage {
 pub(crate) struct Upgrade {
     stun_servers: Vec<String>,
     stage: Stage,
-    failures: u32,
+    /// Attempts that failed since the link connected or WebRTC last came up.
+    failures: usize,
     /// The timer and attempt in progress, or a future that never resolves.
     pub(crate) attempt: BoxFuture<Result<Session, String>>,
 }
@@ -68,7 +77,7 @@ impl Upgrade {
     /// After an attempt failed or WebRTC dropped: stay on iroh for a while,
     /// then try again.
     pub(crate) fn retry_later(self, conn: &Connection) -> Upgrade {
-        let delay = backoff(self.failures, random_u64(), RETRY_FLOOR, RETRY_CEILING);
+        let delay = retry_delay(self.failures);
         tracing::info!(
             retry_in_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
             "webrtc upgrade retry scheduled"
@@ -89,4 +98,24 @@ async fn retry(
 ) -> Result<Session, String> {
     sleep(delay).await;
     negotiate(conn, stun_servers).await
+}
+
+fn retry_delay(failures: usize) -> Duration {
+    RETRY_FIRST.get(failures).copied().unwrap_or(RETRY_EVERY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retry_delay;
+
+    #[test]
+    fn retries_back_off_from_15_seconds_to_every_5_minutes() {
+        assert_eq!(
+            Vec::from([0, 1, 2, 3, 4, 5, 100])
+                .into_iter()
+                .map(|failures| retry_delay(failures).as_secs())
+                .collect::<Vec<u64>>(),
+            Vec::from([15, 30, 60, 120, 300, 300, 300])
+        );
+    }
 }

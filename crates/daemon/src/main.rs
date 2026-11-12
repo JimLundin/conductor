@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
-use daemon::rtc::{Blackhole, RtcOptions};
+use daemon::rtc::{Blackhole, PortRange, RtcOptions, RtcPorts};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
@@ -50,6 +50,16 @@ struct HostArgs {
     /// Refuse browsers' WebRTC upgrades, so they stay on iroh's relay.
     #[arg(long = "no-webrtc", action = clap::ArgAction::SetFalse)]
     webrtc: bool,
+    /// The UDP ports for WebRTC, as `<first>-<last>`, for example
+    /// `50000-50099`. Without it, each socket takes a random port. A range
+    /// lets one firewall rule open exactly these ports, which a host behind
+    /// an inbound-blocking firewall (such as WSL's Hyper-V firewall) needs
+    /// before a phone can reach it directly. Each WebRTC session takes the
+    /// first free port on each local IPv4 address, so a range serves as
+    /// many sessions at once as it has ports; 100 leaves room for several
+    /// clients and their retries.
+    #[arg(long, value_parser = PortRange::parse)]
+    rtc_ports: Option<PortRange>,
     /// Test only: drop every WebRTC datagram, so upgrades fail.
     #[arg(long, hide = true)]
     test_rtc_blackhole: bool,
@@ -89,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
             web_url,
             stun_servers,
             webrtc,
+            rtc_ports,
             test_rtc_blackhole,
             test_rtc_drop_after,
             claude_path,
@@ -107,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
                 stun_servers,
                 test_rtc_blackhole.then_some(Blackhole {}),
                 test_rtc_drop_after,
+                rtc_ports.map_or(RtcPorts::Ephemeral, RtcPorts::Range),
             )));
             let claude = launcher(
                 &claude_path.clone(),

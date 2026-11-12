@@ -251,17 +251,36 @@ impl Conductor {
                 tracing::info!(client = client.0, "webrtc offer refused: WebRTC is off");
                 Ok(send.finish().map_err(WireError::from)?)
             }
-            Some(options) => {
-                match rtc::accept(offer, options, client.0.clone(), send, recv).await {
-                    Ok(upgrade) => {
-                        self.channels(Transport::WebRtc(upgrade.session), upgrade.channels, client)
-                            .await
-                    }
-                    Err(err) => {
-                        tracing::warn!(client = client.0, %err, "webrtc offer failed");
-                        Ok(())
-                    }
+            Some(options) => match rtc::bind_sockets(options.ports()) {
+                Ok(sockets) => {
+                    self.answer(offer, sockets, options, client, send, recv)
+                        .await
                 }
+                Err(err) => {
+                    tracing::warn!(client = client.0, %err, "webrtc offer refused");
+                    Ok(send.finish().map_err(WireError::from)?)
+                }
+            },
+        }
+    }
+
+    async fn answer(
+        self,
+        offer: RtcOffer,
+        sockets: Vec<rtc::Socket>,
+        options: Arc<RtcOptions>,
+        client: ClientName,
+        send: SendStream,
+        recv: RecvStream,
+    ) -> Result<(), StreamError> {
+        match rtc::accept(offer, sockets, options, client.0.clone(), send, recv).await {
+            Ok(upgrade) => {
+                self.channels(Transport::WebRtc(upgrade.session), upgrade.channels, client)
+                    .await
+            }
+            Err(err) => {
+                tracing::warn!(client = client.0, %err, "webrtc offer failed");
+                Ok(())
             }
         }
     }
