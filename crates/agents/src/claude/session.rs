@@ -306,7 +306,7 @@ pub(crate) fn command(opts: &ClaudeOptions) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    cmd
+    crate::process::no_window(cmd)
 }
 
 async fn log_stderr(stderr: ChildStderr) -> std::io::Result<()> {
