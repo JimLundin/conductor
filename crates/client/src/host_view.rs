@@ -223,12 +223,14 @@ impl SessionView {
         }
     }
 
-    /// A running turn shows it is working, unless its last item is live
-    /// already: a reply streaming in, or a tool call running or asking.
+    /// A running turn shows it is working, unless it waits on a person or
+    /// its last item is live already: a reply streaming in, or a tool call
+    /// running.
     pub fn working(&self) -> Working {
-        match (&self.status, self.items.last()) {
+        match (&self.status, self.attention(), self.items.last()) {
             (
                 SessionStatus::Running,
+                Attention::Quiet,
                 Some(
                     Item::Reply {
                         state: ReplyState::Streaming,
@@ -240,8 +242,9 @@ impl SessionView {
                     },
                 ),
             ) => Working::Hidden,
-            (SessionStatus::Running, _) => Working::Shown,
-            (SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Closed(_), _) => {
+            (SessionStatus::Running, Attention::Quiet, _) => Working::Shown,
+            (SessionStatus::Running, Attention::Requests(_), _) => Working::Hidden,
+            (SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Closed(_), _, _) => {
                 Working::Hidden
             }
         }
@@ -900,6 +903,62 @@ mod tests {
             })
             .unzip::<Vec<Working>, Vec<Working>, Vec<Vec<Working>>, Vec<Vec<Working>>>();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn rv_no_thinking_under_an_open_approval_after_a_parallel_tool_finished() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::UserMessage {
+                    text: text("hi"),
+                    by: ClientName(text("phone")),
+                },
+            ),
+            (1, started("toolu_1")),
+            (1, started("toolu_2")),
+            (
+                1,
+                EventKind::ToolCall {
+                    call: ToolCallId(text("toolu_2")),
+                    phase: ToolPhase::Finished {
+                        outcome: ToolOutcome::Succeeded,
+                    },
+                },
+            ),
+            (1, opened(1)),
+        ]));
+        let session = view.sessions.values().next().unwrap();
+        assert_eq!(session.attention(), Attention::Requests(1));
+        assert_eq!(session.working(), Working::Hidden);
+    }
+
+    #[test]
+    fn rv_no_thinking_under_an_open_approval_after_a_commentary_reply() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::UserMessage {
+                    text: text("hi"),
+                    by: ClientName(text("phone")),
+                },
+            ),
+            (1, started("toolu_1")),
+            (
+                1,
+                EventKind::AssistantMessage {
+                    text: text("I need to write a file."),
+                },
+            ),
+            (1, opened(1)),
+        ]));
+        let session = view.sessions.values().next().unwrap();
+        assert_eq!(session.attention(), Attention::Requests(1));
+        assert_eq!(session.working(), Working::Hidden);
     }
 
     #[test]
