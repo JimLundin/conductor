@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use agents::claude::{
     ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode, SettingSource, VersionPolicy,
 };
+use agents::codex::{ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadOptions};
 use proto::{
     ClientName, CloseReason, CommandResult, Decision, EventKind, HostPath, Rejection, RequestId,
     Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
@@ -15,6 +16,7 @@ use proto::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
+use crate::codex_hub::{CodexHub, HubError};
 use crate::log::Log;
 use crate::mapping::{self, NativeRequest, NativeTurn, Step};
 
@@ -26,10 +28,19 @@ pub struct ClaudeLaunch {
     pub model: Option<String>,
 }
 
+/// How the host runs Codex: threads on the hub's shared app-server.
+#[derive(Debug, Clone)]
+pub struct CodexLaunch {
+    pub hub: CodexHub,
+    /// `None` leaves the app-server's default model.
+    pub model: Option<String>,
+}
+
 /// What a session task needs to start its agent.
 #[derive(Debug, Clone)]
 pub enum Launch {
     Claude(ClaudeLaunch),
+    Codex(CodexLaunch),
 }
 
 /// A handle to one session's task. Clone it freely.
@@ -62,11 +73,24 @@ struct SessionMsg {
 /// The agent, once started.
 enum Agent {
     Claude(ClaudeSession),
+    Codex(CodexThread),
 }
 
 /// Where the agent's events arrive.
 enum Feed {
     Claude(mpsc::Receiver<ClaudeEvent>),
+    Codex(mpsc::Receiver<CodexEvent>),
+}
+
+/// An agent call that failed.
+#[derive(Debug, thiserror::Error)]
+enum AgentError {
+    #[error("{0}")]
+    Claude(#[from] agents::claude::Error),
+    #[error("{0}")]
+    Codex(#[from] agents::codex::Error),
+    #[error("{0}")]
+    Hub(#[from] HubError),
 }
 
 /// An interrupt that arrived before the agent began the turn. Sent then, it
@@ -109,6 +133,7 @@ struct SessionActor {
 enum Input {
     Order(SessionMsg),
     Claude(ClaudeEvent),
+    Codex(CodexEvent),
     /// The agent's event stream ended.
     AgentGone,
     /// Every handle was dropped.
@@ -173,10 +198,7 @@ async fn run(
     }
 }
 
-async fn start(
-    directory: HostPath,
-    launch: Launch,
-) -> Result<(Agent, Feed), agents::claude::Error> {
+async fn start(directory: HostPath, launch: Launch) -> Result<(Agent, Feed), AgentError> {
     match launch {
         Launch::Claude(ClaudeLaunch { claude_path, model }) => {
             let (session, events) = ClaudeSession::spawn(ClaudeOptions {
@@ -192,6 +214,19 @@ async fn start(
             })
             .await?;
             Ok((Agent::Claude(session), Feed::Claude(events)))
+        }
+        // Paseo's preset: Codex asks before leaving the workspace.
+        Launch::Codex(CodexLaunch { hub, model }) => {
+            let (thread, events) = hub
+                .start_thread(ThreadOptions {
+                    cwd: PathBuf::from(directory.0),
+                    model,
+                    effort: None,
+                    approval_policy: ApprovalPolicy::OnRequest,
+                    sandbox: Sandbox::WorkspaceWrite,
+                })
+                .await?;
+            Ok((Agent::Codex(thread), Feed::Codex(events)))
         }
     }
 }
@@ -209,6 +244,7 @@ impl Feed {
     async fn next(&mut self) -> Input {
         match self {
             Feed::Claude(events) => events.recv().await.map_or(Input::AgentGone, Input::Claude),
+            Feed::Codex(events) => events.recv().await.map_or(Input::AgentGone, Input::Codex),
         }
     }
 }
@@ -232,6 +268,7 @@ impl SessionActor {
                 Ok(())
             }
             Input::Claude(event) => self.apply(mapping::claude_steps(event)).await,
+            Input::Codex(event) => self.apply(mapping::codex_steps(event)).await,
             Input::AgentGone => {
                 let reason = CloseReason::Exited {
                     status: String::from("the agent's events ended"),
@@ -250,9 +287,7 @@ impl SessionActor {
                     by,
                 })
                 .await?;
-                let sent = match &self.agent {
-                    Agent::Claude(claude) => claude.send_user(text).await,
-                };
+                let sent = self.send(text).await;
                 // A message the agent never got starts no turn.
                 match sent {
                     Ok(()) => self.turn = Turn::Starting(Held::Nothing),
@@ -277,8 +312,8 @@ impl SessionActor {
                 self.turn = Turn::Starting(Held::Interrupt);
                 Ok(CommandResult::Accepted)
             }
-            (Order::Interrupt, Turn::Running(NativeTurn::Claude)) => {
-                let sent = self.interrupt().await;
+            (Order::Interrupt, Turn::Running(native)) => {
+                let sent = self.interrupt(native).await;
                 self.note(sent).await?;
                 Ok(CommandResult::Accepted)
             }
@@ -308,10 +343,7 @@ impl SessionActor {
                     by: first,
                 }))
             }
-            Some(Pending::Open {
-                native: NativeRequest::Claude(id),
-                call,
-            }) => {
+            Some(Pending::Open { native, call }) => {
                 if let Decision::Deny = decision {
                     self.declined.insert(call);
                 }
@@ -326,28 +358,62 @@ impl SessionActor {
                     resolution,
                 })
                 .await?;
-                let sent = match &self.agent {
-                    Agent::Claude(claude) => {
-                        claude
-                            .respond(id, mapping::claude_answer(decision, &by))
-                            .await
-                    }
-                };
+                let sent = self.answer(native, decision, &by).await;
                 self.note(sent).await?;
                 Ok(CommandResult::Accepted)
             }
         }
     }
 
-    async fn interrupt(&self) -> Result<(), agents::claude::Error> {
+    /// Codex returns the turn's id here too; the session takes it from
+    /// `TurnStarted`, which an interrupt must wait for anyway.
+    async fn send(&self, text: String) -> Result<(), AgentError> {
         match &self.agent {
-            Agent::Claude(claude) => claude.interrupt().await,
+            Agent::Claude(claude) => Ok(claude.send_user(text).await?),
+            Agent::Codex(thread) => {
+                let _ = thread.send_turn(text).await?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn interrupt(&self, turn: &NativeTurn) -> Result<(), AgentError> {
+        match (&self.agent, turn) {
+            (Agent::Claude(claude), NativeTurn::Claude) => Ok(claude.interrupt().await?),
+            (Agent::Codex(thread), NativeTurn::Codex(turn)) => {
+                Ok(thread.interrupt(turn.clone()).await?)
+            }
+            (Agent::Claude(_), NativeTurn::Codex(_)) | (Agent::Codex(_), NativeTurn::Claude) => {
+                tracing::error!(session = self.id.0, "a turn of the other provider");
+                Ok(())
+            }
+        }
+    }
+
+    async fn answer(
+        &self,
+        native: NativeRequest,
+        decision: Decision,
+        by: &ClientName,
+    ) -> Result<(), AgentError> {
+        match (&self.agent, native) {
+            (Agent::Claude(claude), NativeRequest::Claude(id)) => Ok(claude
+                .respond(id, mapping::claude_answer(decision, by))
+                .await?),
+            (Agent::Codex(thread), NativeRequest::Codex(id)) => {
+                Ok(thread.respond(id, mapping::codex_answer(decision)).await?)
+            }
+            (Agent::Claude(_), NativeRequest::Codex(_))
+            | (Agent::Codex(_), NativeRequest::Claude(_)) => {
+                tracing::error!(session = self.id.0, "a request of the other provider");
+                Ok(())
+            }
         }
     }
 
     /// An agent call that failed after the command was accepted is logged as
     /// an `Error`, since the command's effects are already in the log.
-    async fn note(&self, sent: Result<(), agents::claude::Error>) -> Result<(), Stopped> {
+    async fn note(&self, sent: Result<(), AgentError>) -> Result<(), Stopped> {
         match sent {
             Ok(()) => Ok(()),
             Err(err) => {
@@ -404,14 +470,14 @@ impl SessionActor {
                 self.emit(EventKind::TurnCompleted { outcome }).await
             }
             Step::TurnStarted(native) => {
-                let before = std::mem::replace(&mut self.turn, Turn::Running(native));
+                let before = std::mem::replace(&mut self.turn, Turn::Running(native.clone()));
                 match before {
                     Turn::Starting(Held::Interrupt) => {
                         tracing::info!(
                             session = self.id.0,
                             "the turn started: sending the held interrupt"
                         );
-                        let sent = self.interrupt().await;
+                        let sent = self.interrupt(&native).await;
                         self.note(sent).await
                     }
                     Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => Ok(()),

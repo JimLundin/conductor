@@ -2,13 +2,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use agents::codex::ServerOptions;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
 use daemon::rtc::{Blackhole, RtcOptions};
 use daemon::serve::Conductor;
-use daemon::session::{ClaudeLaunch, Launch};
+use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
@@ -62,6 +64,13 @@ struct HostArgs {
     /// The model for Claude sessions, such as `haiku`. Defaults to the CLI's.
     #[arg(long)]
     claude_model: Option<String>,
+    /// The Codex CLI. A host where it doesn't run offers no Codex sessions.
+    #[arg(long, default_value = "codex")]
+    codex_path: PathBuf,
+    /// The model for Codex sessions, such as `gpt-6-luna`. Defaults to the
+    /// app-server's.
+    #[arg(long)]
+    codex_model: Option<String>,
 }
 
 #[tokio::main]
@@ -84,6 +93,8 @@ async fn main() -> anyhow::Result<()> {
             test_rtc_drop_after,
             claude_path,
             claude_model,
+            codex_path,
+            codex_model,
         }) => {
             let data_dir = match data_dir {
                 Some(dir) => dir,
@@ -97,12 +108,31 @@ async fn main() -> anyhow::Result<()> {
                 test_rtc_blackhole.then_some(Blackhole {}),
                 test_rtc_drop_after,
             )));
-            let claude = claude(ClaudeLaunch {
-                claude_path,
-                model: claude_model,
-            })
+            let claude = launcher(
+                &claude_path.clone(),
+                Launch::Claude(ClaudeLaunch {
+                    claude_path,
+                    model: claude_model,
+                }),
+            )
             .await;
-            let router = host(data_dir, web_url, name, rtc, claude).await?;
+            // The app-server's own working directory is the data dir; each
+            // thread runs in its session's directory.
+            let hub = CodexHub::spawn(ServerOptions {
+                codex_path: codex_path.clone(),
+                cwd: data_dir.clone(),
+                stdout_log: None,
+            });
+            let codex = launcher(
+                &codex_path,
+                Launch::Codex(CodexLaunch {
+                    hub,
+                    model: codex_model,
+                }),
+            )
+            .await;
+            let launchers = Launchers { claude, codex };
+            let router = host(data_dir, web_url, name, rtc, launchers).await?;
             tokio::signal::ctrl_c().await?;
             router.shutdown().await?;
             Ok(())
@@ -115,7 +145,7 @@ async fn host(
     web_url: String,
     name: String,
     rtc: Option<Arc<RtcOptions>>,
-    claude: Launcher,
+    launchers: Launchers,
 ) -> anyhow::Result<Router> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
@@ -131,10 +161,6 @@ async fn host(
         .cloned()
         .context("online, but no home relay")?;
     let token = daemon::random_token();
-    let launchers = Launchers {
-        claude,
-        codex: Launcher::Unavailable(String::from("this host does not run Codex sessions yet")),
-    };
     let log = Log::spawn(name, daemon::random_epoch(), launchers.providers());
     let conductor = Conductor {
         log: log.clone(),
@@ -154,19 +180,19 @@ async fn host(
     Ok(router)
 }
 
-/// Claude is available when `claude --version` runs and succeeds.
-async fn claude(launch: ClaudeLaunch) -> Launcher {
-    let ran = tokio::process::Command::new(&launch.claude_path)
+/// A provider is available when `<path> --version` runs and succeeds.
+async fn launcher(cli: &Path, launch: Launch) -> Launcher {
+    let ran = tokio::process::Command::new(cli)
         .arg("--version")
         .output()
         .await;
-    let path = launch.claude_path.display().to_string();
+    let path = cli.display().to_string();
     match ran {
         Ok(output) => match output.status.code() {
             Some(0) => {
                 let version = String::from_utf8_lossy(&output.stdout);
-                tracing::info!(%path, version = %version.trim(), "claude is available");
-                Launcher::Ready(Launch::Claude(launch))
+                tracing::info!(%path, version = %version.trim(), "available");
+                Launcher::Ready(launch)
             }
             status => Launcher::Unavailable(format!("{path} --version exited with {status:?}")),
         },

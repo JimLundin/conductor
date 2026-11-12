@@ -327,7 +327,7 @@ fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
             Some(Asked {
                 thread: p.thread_id,
                 turn: p.turn_id,
-            item: p.item_id,
+                item: p.item_id,
                 shape: AnswerShape::Permissions(requested.clone()),
                 kind: ApprovalKind::Permissions {
                     reason: p.reason,

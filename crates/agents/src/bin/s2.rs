@@ -266,7 +266,10 @@ impl Run {
                     self.live.server.respond(id.clone(), decision).await?;
                 }
                 Plan::Interrupt(_) => {
-                    self.live.server.respond(id.clone(), Decision::Decline).await?;
+                    self.live
+                        .server
+                        .respond(id.clone(), Decision::Decline)
+                        .await?;
                 }
             },
         }
@@ -389,6 +392,20 @@ async fn interrupted(
     Ok((after.live, verdict))
 }
 
+/// Reads the server's events until Codex withdraws a request.
+async fn until_withdrawn(events: &mut mpsc::Receiver<CodexEvent>) -> Option<ApprovalId> {
+    loop {
+        match events.recv().await {
+            Some(CodexEvent::Thread {
+                event: ThreadEvent::ApprovalCancelled { id },
+                ..
+            }) => break Some(id),
+            Some(_) => {}
+            None => break None,
+        }
+    }
+}
+
 async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: PathBuf::from(CODEX),
@@ -507,22 +524,25 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )
     .await?;
     let t = &s.turn;
+    // Codex withdraws the request only after the turn has completed.
+    let Live { server, mut events } = s.live;
+    let withdrawn = tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
     let late = match t.answered.first() {
-        Some(id) => Some(s.live.server.respond(id.clone(), Decision::Accept).await),
+        Some(id) => Some(server.respond(id.clone(), Decision::Accept).await),
         None => None,
     };
     let withdraw = report(
         "3b interrupt with an approval open",
         match (
             &s.interrupted,
-            t.cancelled,
+            &withdrawn,
             &late,
             &t.outcome,
             presence(&scratch.join("d.txt")),
         ) {
             (
                 Some(Ok(())),
-                1,
+                Ok(Some(_)),
                 Some(Err(_)),
                 Some(TurnOutcome::Interrupted),
                 Presence::Missing,
@@ -530,11 +550,11 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
             _ => Verdict::Fail,
         },
         format!(
-            "approvals={:?} interrupt()={:?} cancelled={} items={:?} outcome={:?} respond-after={late:?}",
-            t.approvals, s.interrupted, t.cancelled, t.items, t.outcome
+            "approvals={:?} interrupt()={:?} items={:?} outcome={:?} after the turn={withdrawn:?} respond-after={late:?}",
+            t.approvals, s.interrupted, t.items, t.outcome
         ),
     )?;
-    let live = s.live;
+    let live = Live { server, events };
 
     let b = live.server.start_thread(thread_opts.clone()).await?;
     let c = live.server.start_thread(thread_opts.clone()).await?;

@@ -10,13 +10,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use client::host_view::{HostView, Item, ReplyState, SessionStatus, SessionView};
+use agents::codex::ServerOptions;
+use client::host_view::{
+    Approval, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
+};
 use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Status, Target, Update};
 use daemon::Stopped;
+use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, Registry};
 use daemon::serve::Conductor;
-use daemon::session::{ClaudeLaunch, Launch};
+use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
@@ -51,15 +55,42 @@ fn fake_claude() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fake-claude.sh")
 }
 
+/// The gated stand-in that plays `stdout.jsonl` from the app-server's
+/// working directory.
+fn fake_codex() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fake-codex.sh")
+}
+
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fixture {
-    let launchers = Launchers {
+    host_of(Launchers {
         claude: Launcher::Ready(Launch::Claude(ClaudeLaunch {
             claude_path,
             model: None,
         })),
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-    };
+    })
+    .await
+}
+
+/// A host whose Codex app-server is the stand-in, playing `recording` from
+/// the directory it returns, and whose Claude is unavailable.
+async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
+    let server = scratch(recording, recording);
+    let hub = CodexHub::spawn(ServerOptions {
+        codex_path: fake_codex(),
+        cwd: server.clone(),
+        stdout_log: None,
+    });
+    let fixture = host_of(Launchers {
+        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
+        codex: Launcher::Ready(Launch::Codex(CodexLaunch { hub, model: None })),
+    })
+    .await;
+    (fixture, server)
+}
+
+async fn host_of(launchers: Launchers) -> Fixture {
     let log = Log::spawn(String::from("test-host"), Epoch(11), launchers.providers());
     let registry = Registry::spawn(log.clone(), launchers);
     let endpoint = endpoint().await;
@@ -370,7 +401,9 @@ fn scratch(name: &str, recording: &str) -> PathBuf {
 
 /// The event a test reads until.
 enum Until {
+    Ready,
     Request,
+    Resolved,
     Delta,
     TurnEnd,
     Closed,
@@ -383,7 +416,9 @@ enum Reached {
 
 fn reached(until: &Until, kind: &EventKind) -> Reached {
     match (until, kind) {
-        (Until::Request, EventKind::RequestOpened { .. })
+        (Until::Ready, EventKind::SessionReady)
+        | (Until::Request, EventKind::RequestOpened { .. })
+        | (Until::Resolved, EventKind::RequestResolved { .. })
         | (Until::Delta, EventKind::AssistantDelta { .. })
         | (Until::TurnEnd, EventKind::TurnCompleted { .. })
         | (Until::Closed, EventKind::SessionClosed { .. }) => Reached::Yes,
@@ -392,16 +427,25 @@ fn reached(until: &Until, kind: &EventKind) -> Reached {
 }
 
 /// The kinds of the events the link receives, through the first that
-/// reaches `until`. Each test starts one session, so all are session 1's.
+/// reaches `until`, for tests that start one session.
 async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<EventKind> {
-    let mut kinds = Vec::new();
+    events_until(updates, until)
+        .await
+        .into_iter()
+        .map(|event| event.kind)
+        .collect()
+}
+
+/// The events the link receives, through the first that reaches `until`.
+async fn events_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<Event> {
+    let mut events = Vec::new();
     loop {
         match next(updates).await {
-            Update::Event(Event { kind, .. }) => {
-                let done = reached(&until, &kind);
-                kinds.push(kind);
+            Update::Event(event) => {
+                let done = reached(&until, &event.kind);
+                events.push(event);
                 match done {
-                    Reached::Yes => break kinds,
+                    Reached::Yes => break events,
                     Reached::No => {}
                 }
             }
@@ -410,13 +454,26 @@ async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<
     }
 }
 
+/// The kinds of `session`'s events.
+fn of(session: u64, events: &[Event]) -> Vec<EventKind> {
+    events
+        .iter()
+        .filter(|event| event.session == SessionId(session))
+        .map(|event| event.kind.clone())
+        .collect()
+}
+
 async fn send(link: &HostLink, body: CommandBody) -> CommandResult {
     link.send(body).await.unwrap()
 }
 
 fn message(text: &str) -> CommandBody {
+    message_to(1, text)
+}
+
+fn message_to(session: u64, text: &str) -> CommandBody {
     CommandBody::SendMessage {
-        session: SessionId(1),
+        session: SessionId(session),
         text: String::from(text),
     }
 }
@@ -428,8 +485,12 @@ fn interrupt() -> CommandBody {
 }
 
 fn resolve(request: u64, decision: Decision) -> CommandBody {
+    resolve_in(1, request, decision)
+}
+
+fn resolve_in(session: u64, request: u64, decision: Decision) -> CommandBody {
     CommandBody::Resolve {
-        session: SessionId(1),
+        session: SessionId(session),
         request: RequestId(request),
         decision,
     }
@@ -439,10 +500,10 @@ fn test_client() -> ClientName {
     ClientName(String::from("test-client"))
 }
 
-fn opening(directory: &Path) -> Vec<EventKind> {
+fn opening(provider: Provider, directory: &Path) -> Vec<EventKind> {
     Vec::from([
         EventKind::SessionCreated {
-            provider: Provider::Claude,
+            provider,
             directory: HostPath(directory.display().to_string()),
             by: test_client(),
         },
@@ -504,6 +565,38 @@ fn decided(decision: Decision, call: &str, outcome: ToolOutcome) -> Vec<EventKin
     ])
 }
 
+fn items(view: &HostView, session: u64) -> Vec<Item> {
+    view.sessions
+        .get(&SessionId(session))
+        .map(|session| session.items.clone())
+        .unwrap_or_default()
+}
+
+fn done(text: &str) -> Item {
+    Item::Reply {
+        text: String::from(text),
+        state: ReplyState::Done,
+    }
+}
+
+/// A Codex command the user decided on, as the client shows it.
+fn codex_tool(call: &str, command: &str, decision: Decision, outcome: ToolOutcome) -> Item {
+    Item::Tool {
+        call: ToolCallId(String::from(call)),
+        tool: ToolKind::Command {
+            command: String::from(command),
+        },
+        state: ToolState::Finished(outcome),
+        approval: Approval::Asked {
+            request: RequestId(1),
+            state: RequestState::Resolved(Resolution::Decided {
+                decision,
+                by: test_client(),
+            }),
+        },
+    }
+}
+
 const APPROVED_CALL: &str = "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD";
 const DENIED_CALL: &str = "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx";
 
@@ -530,7 +623,7 @@ async fn a_claude_turn_streams_asks_and_finishes() {
     assert_eq!(
         kinds_until(&mut updates, Until::Request).await,
         [
-            opening(&dir),
+            opening(Provider::Claude, &dir),
             Vec::from([user("create a.txt")]),
             write_asked(APPROVED_CALL, "/tmp/s1-scratch/a.txt"),
         ]
@@ -591,7 +684,7 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
     assert_eq!(
         kinds_until(&mut updates, Until::Request).await,
         [
-            opening(&dir),
+            opening(Provider::Claude, &dir),
             Vec::from([user("create b.txt")]),
             write_asked(DENIED_CALL, "/tmp/s1-scratch/b.txt"),
         ]
@@ -664,7 +757,7 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
-            opening(&dir),
+            opening(Provider::Claude, &dir),
             Vec::from([user("count to 100"), turn_end(TurnOutcome::Interrupted)]),
         ]
         .concat()
@@ -687,7 +780,7 @@ async fn an_interrupt_withdraws_the_open_request() {
     assert_eq!(
         kinds_until(&mut updates, Until::Request).await,
         [
-            opening(&dir),
+            opening(Provider::Claude, &dir),
             Vec::from([user("create d.txt")]),
             write_asked(call, "/tmp/s1-scratch/d.txt"),
         ]
@@ -731,7 +824,7 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
-            opening(&dir),
+            opening(Provider::Claude, &dir),
             Vec::from([
                 user("hi"),
                 turn_end(TurnOutcome::Failed {
@@ -786,6 +879,237 @@ async fn a_missing_claude_binary_closes_the_session() {
     assert_eq!(
         send(&link, message("hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// Two sessions' turns run at once on one app-server: each session's events
+/// are its own thread's, one approves and the other declines.
+#[tokio::test]
+async fn two_codex_sessions_share_one_server() {
+    let (fx, dir) = codex_host("codex-two-threads.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    // The second session starts once the first has its thread, so the first
+    // gets the recording's first thread.
+    let first = events_until(&mut updates, Until::Ready).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let second = events_until(&mut updates, Until::Ready).await;
+    assert_eq!(
+        [
+            send(&link, message_to(1, "create a.txt")).await,
+            send(&link, message_to(2, "create b.txt")).await,
+        ],
+        [CommandResult::Accepted, CommandResult::Accepted]
+    );
+    let asked = [
+        events_until(&mut updates, Until::Request).await,
+        events_until(&mut updates, Until::Request).await,
+    ]
+    .concat();
+    assert_eq!(
+        [
+            send(&link, resolve_in(1, 1, Decision::Approve)).await,
+            send(&link, resolve_in(2, 1, Decision::Deny)).await,
+        ],
+        [CommandResult::Accepted, CommandResult::Accepted]
+    );
+    let ended = [
+        events_until(&mut updates, Until::TurnEnd).await,
+        events_until(&mut updates, Until::TurnEnd).await,
+    ]
+    .concat();
+    let view = fold([first, second, asked, ended].concat());
+    let a_call = "exec-f4c7c6d4-8255-4bcc-972d-9f106cda7991";
+    assert_eq!(
+        items(&view, 1),
+        [
+            Item::User {
+                text: String::from("create a.txt"),
+                by: test_client(),
+            },
+            done("I’ll create `a.txt` with the exact requested contents."),
+            codex_tool(
+                a_call,
+                "/usr/bin/zsh -lc \"printf %s 'hello from s2' > a.txt\"",
+                Decision::Approve,
+                ToolOutcome::Succeeded
+            ),
+            done("Created [a.txt](/tmp/s2-scratch/a.txt)."),
+            Item::TurnCompleted(TurnOutcome::Completed),
+        ]
+    );
+    assert_eq!(
+        items(&view, 2),
+        [
+            Item::User {
+                text: String::from("create b.txt"),
+                by: test_client(),
+            },
+            codex_tool(
+                "exec-5f0ba5d1-395f-4d84-b098-a443a0873a5a",
+                "/usr/bin/zsh -lc 'printf %s nope > b.txt'",
+                Decision::Deny,
+                ToolOutcome::Declined
+            ),
+            done("The request was declined."),
+            Item::TurnCompleted(TurnOutcome::Completed),
+        ]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// The recording starts the turn only once `release` exists, and waits for
+/// an interrupt of that turn's id sent after that.
+#[tokio::test]
+async fn a_codex_interrupt_before_the_turn_starts_is_sent_by_turn_id() {
+    let (fx, dir) = codex_host("codex-held-interrupt.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let _ = send(&link, message("count to 300")).await;
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    std::fs::write(dir.join("release"), "").unwrap();
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            opening(Provider::Codex, &dir),
+            Vec::from([user("count to 300"), turn_end(TurnOutcome::Interrupted)]),
+        ]
+        .concat()
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
+    let (fx, dir) = codex_host("codex-interrupt.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let _ = send(&link, message("count to 300")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::Delta).await,
+        [
+            opening(Provider::Codex, &dir),
+            Vec::from([user("count to 300"), delta("1")]),
+        ]
+        .concat()
+    );
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [delta("\n"), turn_end(TurnOutcome::Interrupted)]
+    );
+    let _ = send(&link, message("ping")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            user("ping"),
+            delta("pong"),
+            reply("pong"),
+            turn_end(TurnOutcome::Completed)
+        ]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// Codex withdraws the open request only after the interrupted turn ends.
+#[tokio::test]
+async fn a_codex_interrupt_withdraws_the_open_request() {
+    let (fx, dir) = codex_host("codex-withdraw.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let _ = send(&link, message("create d.txt")).await;
+    let call = ToolCallId(String::from("exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b"));
+    let tool = ToolKind::Command {
+        command: String::from("/usr/bin/zsh -lc 'printf %s d > d.txt'"),
+    };
+    assert_eq!(
+        kinds_until(&mut updates, Until::Request).await,
+        [
+            opening(Provider::Codex, &dir),
+            Vec::from([
+                user("create d.txt"),
+                EventKind::ToolCall {
+                    call: call.clone(),
+                    phase: ToolPhase::Started { tool: tool.clone() },
+                },
+                EventKind::RequestOpened {
+                    request: RequestId(1),
+                    call,
+                    tool,
+                },
+            ]),
+        ]
+        .concat()
+    );
+    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::Resolved).await,
+        [
+            turn_end(TurnOutcome::Interrupted),
+            EventKind::RequestResolved {
+                request: RequestId(1),
+                resolution: Resolution::Withdrawn,
+            },
+        ]
+    );
+    assert_eq!(
+        send(&link, resolve(1, Decision::Approve)).await,
+        CommandResult::Rejected(Rejection::UnknownRequest)
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// The stand-in exits once both threads have started. Both sessions close,
+/// and the next session runs on a new app-server.
+#[tokio::test]
+async fn the_app_server_exiting_closes_every_codex_session() {
+    let (fx, dir) = codex_host("codex-exit.jsonl").await;
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let first = events_until(&mut updates, Until::Ready).await;
+    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let seen = [
+        first,
+        events_until(&mut updates, Until::Closed).await,
+        events_until(&mut updates, Until::Closed).await,
+    ]
+    .concat();
+    let closed = EventKind::SessionClosed {
+        reason: CloseReason::Exited {
+            status: String::from("exit status: 0"),
+        },
+    };
+    assert_eq!(
+        (of(1, &seen), of(2, &seen)),
+        (
+            [opening(Provider::Codex, &dir), Vec::from([closed.clone()])].concat(),
+            [opening(Provider::Codex, &dir), Vec::from([closed])].concat(),
+        )
+    );
+    assert_eq!(
+        send(&link, message("hi")).await,
+        CommandResult::Rejected(Rejection::SessionClosed)
+    );
+    assert_eq!(
+        send(&link, start(Provider::Codex, &dir)).await,
+        CommandResult::Started {
+            session: SessionId(3)
+        }
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Ready).await,
+        opening(Provider::Codex, &dir)
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();

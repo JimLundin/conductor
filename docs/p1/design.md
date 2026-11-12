@@ -631,8 +631,15 @@ Routing, as the hub's one `match` on `CodexEvent`:
 |---|---|
 | `Thread { thread, event }` with a route | send `event` to that session's channel |
 | `Thread { thread, event }` without a route | `tracing::debug!` and drop (a thread of a closed session) |
-| `Exited { status }` | drop every route, which ends every Codex session's `Feed` (`SessionClosed { Exited }`) |
+| `Exited { status }` | send the exit to every route and drop them all, so every Codex session logs `SessionClosed { Exited }` and ends |
 | `Unknown(_)` | `tracing::debug!` |
+
+**Lifecycle (unit 5).** The hub starts `codex app-server` with the first
+thread a session asks for, not at boot; availability comes from
+`codex --version`, as Claude's does. When the server exits, the hub marks it
+down after closing every Codex session, and the next `StartSession` runs a
+new server. A crash costs the sessions that were open, not the host's Codex
+until a restart.
 
 `respond` and `interrupt` need no hub: `CodexThread` and `CodexServer` are
 handles to the agents actor, which answers each approval exactly once.
@@ -977,8 +984,9 @@ recordings come from unit 2's new `s1` recording with
 |---|---|---|
 | `claude-approve.jsonl` | unit 1, rebuilt in unit 2 | built by `fixtures/e2e/build-claude.py` |
 | `claude-deny-interrupt.jsonl` | unit 2 | built by `fixtures/e2e/build-claude.py` from steps 2 and 3c; a `pong` turn follows the interrupt |
-| `codex-two-threads.jsonl` | unit 5 | |
-| `codex-interrupt.jsonl` | unit 5 | |
+| `codex-two-threads.jsonl` | unit 5 | built by `fixtures/e2e/build-codex.py` from `fixtures/codex/server1-u5.jsonl` (`s2`, 2026-11-12), steps 1 and 2 on two threads at once |
+| `codex-interrupt.jsonl` | unit 5 | built by `fixtures/e2e/build-codex.py`, step 3c and its `pong` |
+| `codex-held-interrupt.jsonl`, `codex-withdraw.jsonl`, `codex-exit.jsonl` | unit 5 | built by `fixtures/e2e/build-codex.py`: step 3 held for `release`, step 3b, and the two thread starts before the stand-in exits |
 
 Advisories from the unit 1 review (`docs/subset/reviews/p1-u1.md`):
 - `fake-cli.py` plays `serverRequest/resolved` after a 5 s fallback even with
