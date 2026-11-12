@@ -345,6 +345,10 @@ pub(crate) async fn accept(
     }
     let offer = SdpOffer::from_sdp_string(&offer.sdp).context("parsing the browser's offer")?;
     let answer = rtc.sdp_api().accept_offer(offer)?;
+    // str0m's ICE agent has no clock, so no deadline, until its first
+    // timeout. Without one, the host sends no check until the browser's
+    // checks reach it, which a firewall in front of the host may block.
+    rtc.handle_input(str0m::Input::Timeout(started))?;
     tracing::info!(
         client,
         host_candidates = ?sockets.iter().map(|socket| socket.addr).collect::<Vec<SocketAddr>>(),
