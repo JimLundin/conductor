@@ -37,10 +37,9 @@ pub fn turn_is_simple(body: &Block) -> bool {
 fn takes_input(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Macro(m) => is_select(&m.mac),
-        Stmt::Local(local) => local
-            .init
-            .as_ref()
-            .is_some_and(|init| init.diverge.is_none() && awaits(&init.expr)),
+        Stmt::Local(local) => local.init.as_ref().is_some_and(|init| {
+            init.diverge.is_none() && (awaits(&init.expr) || is_select_expr(&init.expr))
+        }),
         Stmt::Expr(Expr::Macro(m), _) => is_select(&m.mac),
         Stmt::Expr(Expr::Match(m), _) => {
             awaits(&m.expr)

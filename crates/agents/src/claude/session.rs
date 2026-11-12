@@ -392,6 +392,7 @@ impl Actor {
                 id,
                 tool_name,
                 input,
+                tool_use_id,
             } => {
                 let detail = tool_detail(&tool_name, &input);
                 self.open_permissions.insert(id.clone(), input);
@@ -399,6 +400,7 @@ impl Actor {
                     id,
                     tool_name,
                     detail,
+                    tool_use_id,
                 })
                 .await;
             }

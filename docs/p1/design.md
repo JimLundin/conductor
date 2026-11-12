@@ -1185,6 +1185,12 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   text. The browser's offline cache, a later item, uses the browser's own
   storage with the same postcard bytes. Durability is a later slice, not
   slice 1.
+- **Storage models: serde-derived types plus typed table consts** (option C,
+  decided 2026-11-12). A stored value is a plain struct or enum deriving
+  `Serialize` and `Deserialize`, encoded with postcard. Each table is one
+  `const` of type `redb::TableDefinition<K, V>`, with `K` and `V` our own
+  types, declared in the `store` module. No hand-written codecs and no derive
+  macro of our own.
 
 ## 11. Changes from the unit 2 review (2026-11-11)
 
@@ -1207,3 +1213,24 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
 - **`s2` step 1 runs under `ApprovalPolicy::Untrusted` with a writable
   workspace**, so Codex itself asks before every command and the step no
   longer depends on the model.
+
+## 12. Owner decisions from the unit 4 and unit 6 reviews (2026-11-12)
+
+- **Provider availability travels in `Welcome`.** `Providers { claude, codex }`
+  and `Availability` move to `proto`; the host fills them from its registry,
+  and the New Session screen shows them before the user tries. ALPN bump.
+- **`RequestOpened` is typed and carries the tool call id**:
+  `RequestOpened { request, call, tool: ToolKind, details }`, so the app joins
+  an approval to its tool card. Same ALPN bump as `Welcome`.
+- **The client ends leftover state when the host says the turn or the CLI
+  ended.** On `TurnCompleted` or `SessionClosed`, the `HostView` fold turns a
+  `Running` tool into `Stopped` and an `Open` request into
+  `Resolved(Withdrawn)`. Display only: a client disconnecting never stops or
+  closes a session; the host keeps running it and a reconnecting client
+  replays the log.
+- **Proposal 0040 accepted, amended**: the `Some(x).filter(..)` lift stays when
+  the predicate combines library booleans.
+- **Proposal 0041 accepted, amended**: `for` is the form for a loop whose body
+  only performs awaited side effects; every other loop stays adapters.
+- **The fixture is gone from `crates/`**; unit 7 regenerates the screenshots
+  from the real host running the fake CLIs.

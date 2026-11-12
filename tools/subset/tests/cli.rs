@@ -764,6 +764,19 @@ fn a_loop_turn_takes_one_input_and_handles_it_once() {
 }
 
 #[test]
+fn a_loop_turn_may_bind_its_input_to_a_select() {
+    assert_eq!(
+        rule_case(
+            "loop-let-select",
+            "crates/daemon/src/a.rs",
+            "impl Log {\n    async fn run(mut self, mut inbox: Inbox) -> Result<Infallible, Stopped> {\n        loop {\n            let input = tokio::select! {\n                msg = inbox.recv() => Input::Msg(msg),\n                tick = self.ticks.next() => Input::Tick(tick),\n            };\n            self.on(input).await?;\n        }\n    }\n}\n",
+            "impl Log {\n    async fn run(mut self, mut inbox: Inbox) -> Result<Infallible, Stopped> {\n        loop {\n            let input = Input::from(tokio::select! {\n                msg = inbox.recv() => msg,\n            });\n            self.on(input).await?;\n        }\n    }\n}\n",
+        ),
+        "crates/daemon/src/a_fail.rs:3:9: expr.loop: a loop turn takes one input (`select!`, a `match` of `select!`s, or one awaited call) and handles it with one call or `match` (proposal 0007)\n"
+    );
+}
+
+#[test]
 fn break_carries_a_value_out_of_an_actor_loop() {
     assert_eq!(
         rule_case(

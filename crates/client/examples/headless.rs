@@ -33,6 +33,9 @@ struct Args {
     /// to show the resubscribe with `after_seq`.
     #[arg(long)]
     reconnect_after: Option<usize>,
+    /// Interrupt the turn on its first delta, or right after the message.
+    #[arg(long, value_enum, default_value_t = When::Never)]
+    interrupt: When,
     #[arg(long, default_value_t = 60)]
     timeout_secs: u64,
 }
@@ -41,6 +44,13 @@ struct Args {
 enum ProviderChoice {
     Claude,
     Codex,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum When {
+    Never,
+    FirstDelta,
+    AtSend,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -87,6 +97,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         prompt: args.prompt,
         decision,
         reconnect_after: args.reconnect_after,
+        interrupt: args.interrupt,
         link,
         updates,
         ours: None,
@@ -153,6 +164,7 @@ struct Session {
     prompt: String,
     decision: Decision,
     reconnect_after: Option<usize>,
+    interrupt: When,
     link: HostLink,
     updates: mpsc::Receiver<Update>,
     ours: Option<Ours>,
@@ -233,6 +245,9 @@ impl Session {
                     .send(CommandBody::SendMessage { session, text })
                     .await?;
                 self.log(format!("message {:?} -> {result:?}", self.prompt))?;
+                if let When::AtSend = self.interrupt {
+                    self.interrupt(session).await?;
+                }
                 Ok(Flow::Next)
             }
         }
@@ -280,6 +295,9 @@ impl Session {
         match event.kind {
             EventKind::AssistantDelta { .. } => {
                 self.deltas = self.deltas.saturating_add(1);
+                if let (When::FirstDelta, 1) = (self.interrupt, self.deltas) {
+                    self.interrupt(event.session).await?;
+                }
                 let due = self.reconnect_after.filter(|after| after == &self.deltas);
                 if let (Some(_), Reconnected::No) = (due, self.reconnected) {
                     self.reconnected = Reconnected::Yes;
@@ -322,6 +340,12 @@ impl Session {
             | EventKind::RequestResolved { .. }
             | EventKind::Error { .. } => Ok(Flow::Next),
         }
+    }
+
+    async fn interrupt(&self, session: SessionId) -> anyhow::Result<()> {
+        let result = self.link.send(CommandBody::Interrupt { session }).await?;
+        self.log(format!("interrupt -> {result:?}"))?;
+        Ok(())
     }
 
     fn log(&self, line: String) -> std::io::Result<()> {
