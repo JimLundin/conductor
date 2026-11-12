@@ -1005,9 +1005,12 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
     fx.router.shutdown().await.unwrap();
 }
 
-/// Codex withdraws the open request only after the interrupted turn ends.
+/// Codex withdraws the open request only after the interrupted turn ends,
+/// and the recording holds that withdrawal until `release` exists. The
+/// session withdraws the request at the turn's end, so an answer in between
+/// is refused and never reaches Codex.
 #[tokio::test]
-async fn a_codex_interrupt_withdraws_the_open_request() {
+async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
     let (fx, dir) = codex_host("codex-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1050,6 +1053,25 @@ async fn a_codex_interrupt_withdraws_the_open_request() {
     assert_eq!(
         send(&link, resolve(1, Decision::Approve)).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
+    );
+    std::fs::write(dir.join("release"), "").unwrap();
+    // Codex's withdrawal plays before the next turn and is ignored.
+    let _ = send(&link, message("ping")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd).await,
+        [
+            user("ping"),
+            delta("pong"),
+            reply("pong"),
+            turn_end(TurnOutcome::Completed)
+        ]
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("stdin.jsonl"))
+            .unwrap()
+            .matches("\"decision\"")
+            .count(),
+        0
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();

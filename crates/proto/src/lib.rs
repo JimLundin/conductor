@@ -53,8 +53,8 @@ pub struct Epoch(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CommandId(pub u64);
 
-/// An approval request, assigned by the host per session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// An approval request, assigned by the host per session, in order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RequestId(pub u64);
 
 impl RequestId {

@@ -1,7 +1,7 @@
 //! One session's actor: it owns the agent, the turn and the open requests, so
 //! a slow agent call stalls only its own session.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
 use std::path::PathBuf;
 
@@ -468,9 +468,24 @@ impl SessionActor {
                 .await
             }
             Step::Withdraw(native) => self.withdraw(native).await,
+            // A request still open when the turn ends can't be answered any
+            // more: Codex withdraws it only after `TurnCompleted`, and an
+            // answer in between would log a decision for a command that
+            // never runs. Its later withdrawal then finds nothing open.
             Step::TurnEnded(outcome) => {
                 self.turn = Turn::Idle;
-                self.emit(EventKind::TurnCompleted { outcome }).await
+                self.emit(EventKind::TurnCompleted { outcome }).await?;
+                let open = self
+                    .requests
+                    .iter()
+                    .filter(|(_, pending)| matches!(pending, Pending::Open { .. }))
+                    .map(|(request, _)| request)
+                    .copied()
+                    .collect::<BTreeSet<RequestId>>();
+                for request in open {
+                    self.withdrawn(request).await?;
+                }
+                Ok(())
             }
             Step::TurnStarted(native) => {
                 let before = std::mem::replace(&mut self.turn, Turn::Running(native.clone()));
@@ -501,17 +516,19 @@ impl SessionActor {
             .map(|(request, _)| request)
             .copied();
         match found {
-            Some(request) => {
-                self.requests
-                    .insert(request, Pending::Resolved(Resolution::Withdrawn));
-                self.emit(EventKind::RequestResolved {
-                    request,
-                    resolution: Resolution::Withdrawn,
-                })
-                .await
-            }
+            Some(request) => self.withdrawn(request).await,
             None => Ok(()),
         }
+    }
+
+    async fn withdrawn(&mut self, request: RequestId) -> Result<(), Stopped> {
+        self.requests
+            .insert(request, Pending::Resolved(Resolution::Withdrawn));
+        self.emit(EventKind::RequestResolved {
+            request,
+            resolution: Resolution::Withdrawn,
+        })
+        .await
     }
 
     async fn emit(&self, kind: EventKind) -> Result<(), Stopped> {

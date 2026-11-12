@@ -1105,21 +1105,30 @@ against today).
 | `app/src/main.rs` (rewritten and split) | 1,754 | 255 | 11 |
 | **Total** | **15,874** | **2,359** | **327** |
 
-**Added (estimated):**
+**Added (estimated; three daemon rows re-baselined after unit 5, marked):**
 
 | Code | Tokens | Lines |
 |---|---|---|
 | `proto` new types | 1,050 | 220 |
-| `daemon` `log`, `registry`, `session`, `codex_hub` | 3,400 | 520 |
-| `daemon` `mapping` with its tables | 1,350 | 210 |
+| `daemon` `log`, `registry`, `session`, `codex_hub` (re-baselined; was 3,400) | 6,000 | 950 |
+| `daemon` `mapping` with its tables (re-baselined; was 1,350) | 1,700 | 240 |
 | `daemon` `serve`, `lib`, `main` | 3,200 | 480 |
 | `daemon` `wire`, `rtc`, `stun` (unit T) | 6,900 | 980 |
-| `daemon` unit tests and `tests/e2e.rs` | 4,100 | 590 |
+| `daemon` unit tests and `tests/e2e.rs` (re-baselined; was 4,100) | 9,500 | 1,400 |
 | `client/src/host_view.rs` with tests | 1,700 | 280 |
 | `app` (three files) | 3,200 | 430 |
 | `agents` deltas and `ToolDetail`, with tests | 900 | 140 |
-| **Total Rust** | **25,800** | **3,850** |
+| **Total Rust** (was 25,800 and 3,850) | **34,150** | **5,110** |
 | Not Rust: `fake-cli.py`, wrappers, `fixtures/e2e/`, `browser.mjs`, `e2e-browser.sh`, CSS, `smoke.md` | | about 450 |
+
+**Re-baselined after unit 5 (2026-11-12).** The original daemon budget was
+set before the actors existed, by scaling an earlier rewrite by +33%, and
+that factor is too low for actor code serving two providers (units 3, 4 and
+5 all ran over it). The three marked rows are the unit 5 review's figures
+(`docs/subset/reviews/p1-u5.md`), checked against the code after its fixes:
+`log`, `registry`, `session` and `codex_hub` measure 6,069 tokens, `mapping`'s
+code 1,713, and `e2e.rs` with `mapping`'s tests 9,096. Units 6 to 8 are held
+to these rows. The net figures below are from the original estimate.
 
 **Net:** about +9,900 tokens and +1,500 lines of Rust (estimated). Of that,
 unit T is about +1,400 tokens of pure subset inflation, which is the price of
@@ -1251,3 +1260,13 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   only performs awaited side effects; every other loop stays adapters.
 - **The fixture is gone from `crates/`**; unit 7 regenerates the screenshots
   from the real host running the fake CLIs.
+- **Open items for the next wire change** (from the unit 5 review; the app
+  is not changed until then):
+  - Claude's `Write` tool shows as "Edit" on its tool card, because
+    `ToolKind::FileChange` carries no tool name.
+  - The approval card drops Codex's `reason` (such as "needs escalated
+    permission to write outside the workspace"), which `ApprovalKind`
+    carries and `mapping` discards.
+  - Nothing tells the user that Codex works without asking inside the
+    session's directory (`OnRequest` with `WorkspaceWrite`). The New Session
+    screen or the session header needs a hint.

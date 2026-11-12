@@ -14,7 +14,9 @@ lines are Codex's own; only ids change, and markers go in by rule:
   answer, with the decision `s2` gave;
 - an interrupt step waits for our `turn/interrupt`: after the first delta
   (mid-stream), on `turn/started` once the test's `release` file exists
-  (held), or before Codex withdraws the open request (withdrawn).
+  (held), or before Codex withdraws the open request (withdrawn), which
+  then also waits for the test's `release` file, so a test can answer the
+  request between the turn's end and Codex's withdrawal.
 """
 
 import json
@@ -81,7 +83,8 @@ def held(turn):
 
 def withdrawn(turn):
     resolved = next(i for i, line in enumerate(turn) if '"serverRequest/resolved"' in line)
-    return turn[:resolved] + [interrupt()] + turn[resolved:]
+    release = json.dumps({"fake": "release", "file": "release"})
+    return turn[:resolved] + [interrupt(), release] + turn[resolved:]
 
 
 def renumbered(lines):
@@ -137,7 +140,7 @@ RECORDINGS = {
     + answered(decline_rest, "decline"),
     "codex-interrupt.jsonl": head + first + mid_stream(turns[MID_STREAM]) + turns[PONG],
     "codex-held-interrupt.jsonl": head + first + held(turns[AT_START]),
-    "codex-withdraw.jsonl": head + first + withdrawn(turns[WITHDRAW]),
+    "codex-withdraw.jsonl": head + first + withdrawn(turns[WITHDRAW]) + turns[PONG],
     # The stand-in stops reading once both threads have started, then exits.
     "codex-exit.jsonl": [json.dumps({"fake": "hang_up", "after": 4})] + head + first + second,
 }
