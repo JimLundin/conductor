@@ -241,20 +241,613 @@ or upgrading a CLI.
   revert is `git restore --source=<ref>` plus Claude's `rewind_files` or
   Codex's `thread/rollback`. This is T3 Code's mechanism (`GitVcsDriver.ts`).
 
-## 6. Planned: trust and pairing
+## 6. Planned: the fleet
 
-Today a ticket's random token stands in for a device certificate.
+The goal is one setup running in several places. Every host runs the same
+pinned Claude Code and Codex, installed and owned by `conductord`, with the
+same settings and, where the providers allow it, the same credentials. A
+host that joins the fleet can run sessions without a manual setup, and a
+session can move from one host to another.
 
-- A **fleet root key** signs `DeviceCert { fleet, device, name, role }` and a
-  versioned `Roster { hosts, revoked_devices }`. Hosts store only the root's
-  public key and check the certificate in `Hello` against it, the
-  authenticated node id and the revocation list.
-- The root key lives on a host and is used through `conductord pair`, which
-  signs a device's key from a QR code. A browser keeps its device key as a
-  non-extractable WebCrypto key in IndexedDB, and iOS gives a Home Screen app
-  its own storage, so the phone pairs from the installed app.
+D4 still holds. A session lives on one host at a time and its events are in
+that host's log. What the fleet shares is configuration, not sessions.
+
+Facts about the CLIs and their terms are marked **verified** (read in the
+cited source, or observed on the developer's machine) or **inferred**. They
+were checked on 2026-11-12, against Claude Code 2.1.316 to 2.1.322 and
+Codex 0.166 to 0.167.
+
+### 6.1 Trust and pairing
+
+Today a ticket's random token stands in for a device certificate. The fleet
+replaces it.
+
+- A **fleet root key** (Ed25519) signs `DeviceCert { fleet, device, name,
+  role }`. The role is `Owner` for a browser and `Host` for a `conductord`.
+  Hosts store only the root's public key and check the certificate in
+  `Hello` against it, the authenticated iroh node id and the revocation
+  list in the fleet config (§6.5).
+- Hosts talk to each other with the same certificates, over iroh, on their
+  own ALPN `conductor-fleet/<n>`. Clients never open it.
+- The root key lives on one host, the **root host**. It is the first host,
+  which creates the fleet with `conductord fleet init`. It signs device
+  certificates and every fleet config version, and the other hosts hold no
+  signing key. `fleet init` also writes the root key once as a
+  passphrase-sealed file for the owner to keep, so a lost root host doesn't
+  strand the fleet (open question 1).
+- A browser keeps its device key as a non-extractable WebCrypto key in
+  IndexedDB, and iOS gives a Home Screen app its own storage, so the phone
+  pairs from the installed app. The app shows its public key as a QR code
+  and `conductord pair` on the root host signs it. A paired app can approve
+  a new one the same way.
 - Whoever controls the GitHub Pages deploy controls the code the browser
-  runs: protect the deploy branch, use Subresource Integrity, and keep 2FA on.
+  runs, and from §6.3 on that code carries credentials in flight. Protect
+  the deploy branch, use Subresource Integrity, and keep 2FA on.
+
+### 6.2 The daemon manages its own CLIs
+
+`conductord` installs a pinned version of each CLI into its data dir, checks
+it against a recorded hash, and runs only that copy. The user's own `claude`
+and `codex`, their versions and their logins are never used or touched.
+
+#### Where the binaries come from
+
+Each CLI has several official channels. Conductor downloads the same
+per-platform binary the official installers fetch, straight from the
+vendor's release location, so a host needs neither Node.js nor a package
+manager.
+
+| | Claude Code | Codex |
+|---|---|---|
+| Official channels | Native installer (`install.sh`, `install.ps1`, `install.cmd`), npm `@anthropic-ai/claude-code`, Homebrew, WinGet, apt, dnf, apk ([setup], verified) | npm `@openai/codex`, a Homebrew cask, GitHub release binaries ([install.md], [releases], verified) |
+| Pinning | The installer takes a version (`bash -s 2.1.89`, [setup], verified), but `install.sh` always downloads the newest build first and has it install the requested one (verified, read in the script). npm pins with `@<version>`. | Release tags `rust-vX.Y.Z` pin exactly; npm pins with `@<version>` ([releases], [npm-codex], verified). The cask can't install an older version (inferred). |
+| What Conductor fetches | `https://downloads.claude.ai/claude-code-releases/<version>/<platform>/claude`, the URL `install.sh` uses, with `manifest.json` and `manifest.json.sig` from the same directory (verified, read in the script and fetched) | The release asset `codex-<triple>.tar.gz` (`.exe.zip` on Windows) from `github.com/openai/codex/releases/tag/rust-v<version>` ([releases], verified) |
+| Platforms | `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, their `-musl` variants, `win32-x64`, `win32-arm64` (the 2.1.316 manifest, verified) | `x86_64`/`aarch64` for `unknown-linux-musl`, `apple-darwin` and `pc-windows-msvc` ([releases], verified) |
+| Upstream integrity | The manifest lists a SHA-256 per platform and is signed with Anthropic's GPG key, fingerprint `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`, for releases from 2.1.89 on. macOS binaries are signed and notarized, Windows binaries are Authenticode-signed, Linux binaries are not individually signed ([setup], verified). | GitHub publishes a SHA-256 digest per asset ([releases], verified). Linux binaries are cosign-signed through Sigstore (`.sigstore` bundles), macOS binaries are codesigned, Windows binaries are signed with Azure Trusted Signing (the release workflows in [codex-src], verified). `codex-package_SHA256SUMS` covers only the `codex-package-*` tarballs, and GitHub artifact attestations return 404 for the CLI assets (verified). |
+| Updates | Native installs update themselves in the background. `DISABLE_AUTOUPDATER=1` stops the check; `DISABLE_UPDATES=1` also blocks `claude update` and `claude install`, and is meant for distributing Claude Code "through your own channels" ([setup], [env-vars], verified). | The TUI checks GitHub for a newer release and suggests an upgrade command; it doesn't update itself. `check_for_update_on_startup = false` turns the check off. No update check was found in the app-server (`codex-rs/tui/src/updates.rs`, `config_toml.rs` in [codex-src], verified; the app-server part inferred from a search). |
+
+npm was rejected as the channel. It needs Node.js on every host, Codex's
+npm package is a launcher plus a 458 MB platform package ([npm-codex],
+verified), and Claude Code's package has registry signatures but no
+provenance attestation ([npm-claude], verified). The native installer was
+rejected because it always runs the newest build before installing the
+pinned one.
+
+#### How a pin is verified
+
+A pin is a version plus one SHA-256 per platform. The hashes are recorded
+once, by the developer, with upstream's own checks, and every host checks
+against the recorded hash.
+
+1. `tools/pin claude <version>` downloads `manifest.json` and its
+   signature, verifies the signature against the Anthropic key fingerprint
+   above, downloads every platform's binary and checks each against the
+   manifest. `tools/pin codex <version>` downloads every platform's asset,
+   checks each against GitHub's published digest, and verifies the Linux
+   cosign bundles. Both write the result to `pins.toml` at the repository
+   root.
+2. `conductord` compiles `pins.toml` in. On start it makes sure the pinned
+   binary is at `<data>/cli/<provider>/<version>/`. It downloads to a
+   temporary file, checks the SHA-256, and renames it into place, so a crash
+   leaves either nothing or a verified binary. A wrong hash, or a download
+   that fails, makes the provider `Unavailable` with the reason, as a
+   missing CLI does today.
+3. The previous version stays on disk until no session uses it.
+
+This keeps OpenPGP and Sigstore out of the daemon. The trust is in the
+developer's `tools/pin` run, which upstream's signatures back, and in the
+Conductor build that carries the hashes.
+
+`--claude-path` and `--codex-path` stay, for the fake CLIs in tests and for
+development. Without them the daemon runs only the pinned copies.
+
+#### The pin, the fixtures and the live checks
+
+The pin and the protocol code move together. Bumping a pin is one commit
+that:
+
+1. runs `tools/pin` for the new version;
+2. runs `s1` or `s2` against the pinned binary, which installs it into a
+   scratch data dir, and re-records `fixtures/claude` or `fixtures/codex`;
+3. widens `SUPPORTED_VERSIONS` and `check_version`
+   (`crates/agents/src/claude/protocol.rs`) to include it.
+
+A test reads `pins.toml` and the version recorded in each fixture and fails
+when a pinned version has no fixture recorded at that version, or falls
+outside the supported range. The rule lives in that test rather than in
+this paragraph.
+
+#### Bundling is out
+
+Conductor never ships either binary inside its own release. Claude Code's
+`LICENSE.md` reads "© Anthropic PBC. All rights reserved. Use is subject to
+the Legal Agreements" ([license], verified), which grants no right to
+redistribute (inferred, because neither the license nor the terms has a
+redistribution clause to rely on). The
+legal page also says that running Claude Code in a product requires that
+"Claude Code must be installed and run as published by Anthropic" and
+that each end user authenticates with their own credentials ([legal],
+verified). Conductor follows both. The binary is downloaded unmodified from
+Anthropic, and each owner signs in with their own account. Codex is
+Apache-2.0 and could be bundled, but one mechanism for both CLIs is simpler,
+so Codex is downloaded the same way.
+
+#### Each host gets private CLI homes
+
+| | Directory | Set by |
+|---|---|---|
+| Claude config, credentials, transcripts | `<data>/home/claude` | `CLAUDE_CONFIG_DIR` |
+| Codex config, `auth.json`, rollouts | `<data>/home/codex` | `CODEX_HOME` |
+
+`CLAUDE_CONFIG_DIR` moves "all settings, session history, and plugins",
+`.claude.json` included, and on macOS keys the Keychain entry to the
+directory ([env-vars], [authentication], verified). `CODEX_HOME` holds
+`config.toml`, `auth.json` and `sessions/` (`codex-rs` in [codex-src],
+verified). So a host's own `~/.claude` and `~/.codex` stay exactly as the
+user left them.
+
+Two consequences for how sessions start (§5.2):
+
+- Claude sessions run with `--setting-sources user,project,local` instead of
+  `project,local`. The user level is now Conductor's own
+  `<data>/home/claude/settings.json`, which sets `cleanupPeriodDays` high
+  enough that Claude Code never sweeps a transcript Conductor still needs
+  (the default is 30 days, [settings-reference], verified). Conductor deletes
+  a transcript when it deletes the session.
+- Each Claude process gets `CLAUDE_CODE_PROJECT_DIR_NAME=<session ulid>`, so
+  its transcript lives at `<data>/home/claude/projects/<ulid>/` whatever the
+  working directory is ([sessions], verified; it needs 2.1.234 or later).
+  §6.8 relies on this.
+
+`conductord` writes `<data>/home/codex/config.toml` with
+`check_for_update_on_startup = false`, and sets `DISABLE_UPDATES=1` for
+Claude.
+
+### 6.3 Credentials, entered in the app
+
+#### What each provider accepts
+
+| | Claude Code | Codex |
+|---|---|---|
+| API key | `ANTHROPIC_API_KEY`, which takes precedence over a subscription login ([authentication], verified) | `account/login/start { type: "apiKey" }` on the app-server, or `codex login --with-api-key` from stdin ([codex-auth], `v2/account.rs` in [codex-src], verified) |
+| Subscription | `claude auth login --claudeai`. On a machine without a browser it prints a URL; the browser that opens it "shows a code instead of returning to `localhost`", and `claude auth login` "reads the pasted code from standard input" ([troubleshoot], verified). | Device code: `account/login/start { type: "chatgptDeviceCode" }` returns `{ loginId, verificationUrl, userCode }` and `account/login/completed` reports the result ([codex-src], verified). It is in beta and the owner must first "Enable device code login in your ChatGPT security settings" ([codex-auth], verified). |
+| Long-lived token | `claude setup-token` prints a one-year OAuth token for `CLAUDE_CODE_OAUTH_TOKEN` and saves nothing ([authentication], verified) | None for ChatGPT. `chatgptAuthTokens`, where the host app supplies the tokens, is marked "[UNSTABLE] FOR OPENAI INTERNAL USE ONLY – DO NOT USE" ([codex-src], verified). |
+
+The browser flow, `account/login/start { type: "chatgpt" }`, returns an
+`authUrl` whose callback is the app-server's listener on the host's
+`localhost:1455` ([codex-app-server], [codex-src], verified). A phone can't
+reach that, so it is not offered.
+
+#### The policy that shapes this
+
+Anthropic's legal page, verbatim: "developers may not collect, store, or
+intermediate Claude.ai credentials or session tokens — sign-in to a Claude
+account must complete through Anthropic's own flow." The same page allows
+"an end user signing in to the unmodified Claude Code binary with their own
+Claude subscription", and allows provisioning one's own API keys in "a
+development environment, secrets manager, or machine image" ([legal],
+verified).
+
+So Conductor never stores a Claude subscription credential. It does not use
+`setup-token`, because the token it prints would have to be stored by
+Conductor and copied to other hosts. A subscription sign-in runs Claude
+Code's own `claude auth login` on the host, and Claude Code stores the
+result in the host's private `CLAUDE_CONFIG_DIR` itself. Conductor stores
+API keys, which the policy lets the owner manage as they like.
+
+Codex is treated the same way, for a technical reason rather than a policy
+one (§6.6). Conductor stores the OpenAI API key; a ChatGPT login is made by
+the Codex app-server on each host and stays in that host's `CODEX_HOME`.
+
+#### Sign in from the phone
+
+The host runs the login and the phone does the browser part.
+
+1. In the app, the owner picks a host and *Sign in to Claude* or *Sign in to
+   Codex*. The app sends `StartLogin { provider }`.
+2. **Claude.** The host runs `claude auth login --claudeai` with
+   `CLAUDE_CONFIG_DIR` set, on pipes, and reads the URL it prints. The app
+   shows *Open Anthropic sign-in*. The owner signs in on Anthropic's page,
+   which shows a code, pastes the code into the app, and the app sends
+   `SubmitLoginCode { login, code }`. The host writes it to the CLI's stdin
+   and reports the exit status. Whether the CLI prints the URL and reads
+   the code when stdin is a pipe rather than a terminal is inferred, and
+   experiment E1 checks it; if it needs a terminal, the host runs it under a
+   pseudo-terminal.
+3. **Codex.** The host calls `account/login/start { type:
+   "chatgptDeviceCode" }` on its app-server. The app shows the
+   `verificationUrl` and the `userCode` with a copy button. The owner opens
+   the URL and enters the code, and `account/login/completed` ends the
+   flow. Codex writes `auth.json` in the host's `CODEX_HOME`.
+4. **API keys.** The app has one field per provider. `SetApiKey { provider,
+   key }` goes to the root host, which puts it in the fleet config (§6.5),
+   so every host gets it.
+
+The login URL, the user code and the pasted code are live-only messages.
+They are not events in the log, are never written to the store, and appear
+in no trace output.
+
+`Welcome.providers` grows from "can this host run the provider" to "and is
+it signed in, and how": `Availability::Available { auth: ApiKey |
+Subscription }`, or `Unavailable { reason }` with "not signed in" as one
+reason. The sidebar shows a host that needs a sign-in, with the button.
+
+#### The browser holds a secret only in flight
+
+The key field is `type="password"` with `autocomplete="off"`. The app sends
+the value on the encrypted iroh link, clears the field, and never writes it
+to IndexedDB, local storage, the URL or a log. Under the field the app says
+so: "Sent to desk-wsl over the encrypted link. This app doesn't keep it." A
+pasted Claude code gets the same treatment. The app never reads a secret
+back; the host reports only that a key is set, and its last four characters.
+
+#### Storage on the host
+
+Conductor stores API keys and its own keys (the host's iroh key and, on the
+root host, the fleet root key). They are encrypted in the store with
+XChaCha20-Poly1305 under a 32-byte **host key**.
+
+- On macOS the host key lives in the login Keychain, on Windows it is
+  sealed with DPAPI for the user, and on Linux it goes in the Secret Service
+  when a session bus offers one. Otherwise it is `<data>/host.key` with
+  mode 0600.
+- Most hosts here are WSL or headless Linux, where there is no Secret
+  Service. There the encryption protects copies of the store (a backup, a
+  store attached to a bug report) and not the running host, because the key
+  sits beside it. File permissions are the real protection, as they are for
+  the CLIs' own `~/.claude/.credentials.json` and `~/.codex/auth.json`
+  ([authentication], [codex-auth], verified). The design says this
+  plainly instead of promising more.
+- Keys reach the CLIs only at spawn. Claude gets `ANTHROPIC_API_KEY` in its
+  environment. The Codex app-server gets `account/login/start { type:
+  "apiKey" }` after `initialize`, with `cli_auth_credentials_store =
+  "ephemeral"` in its config when the host uses a key, so Codex keeps it in
+  memory only (the store options in `config/src/types.rs`, [codex-src],
+  verified; that `ephemeral` writes nothing to disk is inferred from its
+  name). A host signed in with ChatGPT uses the `file` store, because Codex
+  must keep its refreshed tokens across restarts.
+
+### 6.4 Join a host to the fleet
+
+A host joins with a one-time invite, from either side.
+
+- **From the app.** *Add host* asks the root host for an invite and shows
+  `conductord join <ticket>`. The ticket holds the root host's node id, its
+  home relay and a random 32-byte invite secret that expires after one hour
+  and works once. Running the command on the new machine dials the root host
+  on `conductor-fleet`, proves the secret, and receives a `Host` certificate
+  for its node id and the current fleet config.
+- **From the host.** A `conductord` started with no fleet prints its own
+  ticket, as it does today. Scanning it in a paired app sends it to the root
+  host, which dials the new host and admits it the same way.
+
+Joining is idempotent. An invite already used by the same node id returns the
+same certificate, so a join that died after the reply can run again. The new
+host then installs the pinned CLIs (§6.2) and can run sessions at once with
+the fleet's API keys. A provider the fleet uses by subscription needs one
+sign-in on the new host (§6.6), and the app asks for it as soon as the host
+appears.
+
+Leaving is revocation. The root host adds the node id to `revoked` in a new
+fleet config version, and every host refuses it from then on. A revoked host
+has seen the API keys, so the app tells the owner to rotate them, and the
+owner signs out of the subscriptions that host used on the provider's own
+account page.
+
+### 6.5 The fleet config: one signed document any host can serve
+
+What the fleet shares is one document:
+
+```
+FleetConfig {
+    fleet: FleetId,
+    version: u64,                 // +1 on every change
+    roster: Vec<HostEntry>,       // node id, name, home relay, added_at
+    revoked: Vec<NodeId>,         // devices and hosts
+    pins: Pins,                   // §6.2
+    settings: FleetSettings,      // default models, effort, permission modes
+    api_keys: ApiKeys,            // §6.3, sent only to hosts
+}
+SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root key
+```
+
+- **One writer.** Only the root host signs, so versions never fork and there
+  is nothing to merge. A change from the app (a new API key, a pin bump, a
+  new host) is a command to the root host, which applies it, bumps the
+  version, signs and stores it.
+- **Any host serves it.** Every host keeps the newest valid config it has
+  seen in its store. When two hosts connect on `conductor-fleet`, each sends
+  its version; the one behind asks for the document and checks the signature
+  and that the version is higher before it adopts it. The root host also
+  pushes each new version to every host it can reach.
+- **An offline host catches up** the next time it reaches any other host,
+  whether that is the root host or not. A host that comes back after a long
+  time adopts the newest version, installs any new pin and drops revoked
+  devices before it accepts a client.
+- **Only hosts get the API keys.** The whole config goes only to peers with a
+  `Host` certificate, on the authenticated, encrypted `conductor-fleet`
+  link. Each host stores it encrypted under its host key (§6.3).
+- **Clients see the rest.** `Welcome` carries the host's config version and its
+  roster, so the app learns new hosts from whichever host it reaches first,
+  and the sidebar shows a host that runs an older config.
+
+The config is small (a few kilobytes) and changes rarely, so whole-document
+transfer is enough. There is no gossip protocol, CRDT or per-field merge.
+The single writer costs nothing extra here, because a signature from one key
+is already what makes the roster trustworthy.
+
+### 6.6 Subscription logins are per host
+
+The owner wants a new host to share credentials. For API keys it does, through
+the fleet config. For subscription logins it can't, and the design falls back
+to one sign-in per host.
+
+- **Codex rotates its ChatGPT refresh token.** Codex refreshes when the
+  access token is within 5 minutes of expiry or the last refresh is more
+  than 8 days old, and writes the new tokens back to `auth.json`
+  (`TOKEN_REFRESH_INTERVAL`, `persist_tokens` in
+  `codex-rs/login/src/auth/manager.rs`, [codex-src], verified). A reused
+  refresh token fails with `refresh_token_reused`: "Your access token could
+  not be refreshed because your refresh token was already used. Please log
+  out and sign in again." (same source, verified). OpenAI's CI guide says
+  "Do not share the same file across concurrent jobs or multiple machines",
+  because "another machine or concurrent job rotated the token first"
+  ([codex-ci], verified). Two hosts on one `auth.json` would log each other
+  out.
+- **A single refresher isn't available.** It would need Codex to accept
+  tokens from Conductor and ask Conductor to refresh them. That is
+  `chatgptAuthTokens` with the `account/chatgptAuthTokens/refresh` server
+  request, which is marked for OpenAI's internal use only ([codex-src],
+  verified). Building on it would break without notice, and Conductor would
+  then hold ChatGPT tokens it has no business holding.
+- **Claude's login rotates too.** Claude Code refreshes its `/login` token
+  and coordinates so "only one process refreshes"; before 2.1.211, two
+  sessions renewing with the same token "revoked the saved login"
+  ([authentication], [troubleshoot], verified). That points to a rotating
+  refresh token (inferred), so a copied `.credentials.json` would fail the
+  same way. Copying it would also be Conductor storing a Claude.ai
+  credential, which §6.3 rules out.
+
+So each host signs in to each subscription once, from the phone, by §6.3's
+flow. The app makes it one step: after a join, the new host appears with
+*Sign in to Claude* and *Sign in to Codex* buttons for the providers the
+fleet uses by subscription. Inside one host, every Claude process shares
+the host's `CLAUDE_CONFIG_DIR` and every Codex thread shares the one
+app-server, so each CLI's own refresh coordination applies.
+
+Whether a sign-in on a second host invalidates the first host's login is not
+documented for either provider. Experiments E2 and E3 test it. If it does,
+that provider can be signed in on one host at a time, and the app says so
+before the second sign-in.
+
+### 6.7 Fleet-unique session ids and branch names
+
+`SessionId` is a host counter today (`crates/proto/src/lib.rs`), unique only
+within an epoch. A session that moves keeps its id, and the app merges
+sessions from every host, so ids must be unique across the fleet and across
+restarts.
+
+- **Format.** A `SessionId` is a 128-bit ULID: 48 bits of Unix milliseconds
+  and 80 random bits, generated by the host that creates the session. On the
+  wire it is 16 bytes; as text it is the 26-character Crockford base32 form,
+  such as `01JCDZ6Q0Y3K7V8M2N4P5R6S7T`. No coordination between hosts is
+  needed, because two ids collide only if they share the millisecond and all 80
+  random bits. Ids sort by creation time, which the sidebar uses.
+- **Branch.** `conductor/<ulid>`. A session can carry a title, but the title
+  is not in the branch name, so renaming never touches git.
+- **Worktree.** `<data>/worktrees/<project>/<ulid>`.
+- **Checkpoints.** `refs/conductor/<ulid>/<turn>`, as in §5.3.
+- **Short form.** The UI shows the last 6 characters where space is tight,
+  and the full id on hover or long-press.
+
+`HostSeq` and `Epoch` stay per host (D4). An event names its session by id,
+so the same id can appear in two hosts' logs after a move (§6.8).
+
+The id change lands with durability, before redb tables key on it.
+
+### 6.8 Move a session to another host
+
+A session is three things: its worktree branch with its checkpoint refs, the
+CLI's own transcript, and its events in the host's log. A move copies all
+three to the target host and makes the target the session's only owner.
+D4 still holds: at any moment one host owns a session, and nothing
+replicates continuously.
+
+The app sends `MoveSession { session, to: NodeId }` to the host that owns
+the session. That host, the source, drives the move over `conductor-fleet`
+under a `MoveId`, and every step is safe to repeat.
+
+1. **Settle.** The source refuses while a turn is running or a request is
+   open; the app offers *Interrupt and move*. Otherwise it marks the session
+   `Moving`, which refuses `SendMessage`. Then it stops the agent. It ends the
+   Claude process, or drops the Codex thread from `CodexHub`.
+2. **Check the target.** The target must run the same CLI pin, which holds
+   in one fleet unless an upgrade is half done, and must be signed in to
+   the provider. It must also have the project, meaning a
+   clone of the same repository, matched by the root commit and the `origin` URL.
+   A target without one clones it from `origin`; a project with no remote is
+   sent whole in the bundle.
+3. **Send the branch.** The source snapshots the worktree, uncommitted
+   changes included, as one more checkpoint (§5.3), then streams
+   `git bundle create - conductor/<ulid> refs/conductor/<ulid>/*` excluding
+   the commits the target says it already has. The target runs `git bundle
+   verify` and `git fetch` from it. A bundle over the iroh stream is the
+   default rather than a push, because a push to the user's remote has side
+   effects the user didn't ask for (CI runs, a visible branch) and fails
+   when the remote is unreachable.
+4. **Send the transcript.** The source sends the CLI's session files and the
+   target writes them where its own CLI looks, unchanged (§6.8.1).
+5. **Send the events.** The source sends the session's durable events. The
+   target appends them to its log with its own seqs, after a
+   `SessionArrived { from, move_id, source_epoch, source_last_seq }` event,
+   and creates the worktree at its own `<data>/worktrees/<project>/<ulid>`
+   from the last checkpoint.
+6. **Commit.** The target registers the session and acknowledges. The
+   source then appends `SessionMoved { to, move_id }`, removes its worktree
+   and its copy of the transcript, and keeps the branch until the next move
+   or deletion. The next `SendMessage` on the target resumes the agent with
+   the provider's resume (`--resume <session_id>`, `thread/resume`).
+
+The source owns the session until the target's acknowledgement arrives. If
+the source crashes before that, it restarts with the session `Moving`, asks
+the target about the `MoveId` and either finishes step 6 or returns the
+session to idle. If the target crashed, the source retries from step 2, and
+the target's receipt for the `MoveId` makes each step converge.
+
+#### 6.8.1 Resume in another directory
+
+The worktree path differs between hosts, and between operating systems it
+can't be made the same. Each CLI handles that differently.
+
+- **Claude.** With `CLAUDE_CODE_PROJECT_DIR_NAME=<ulid>` (§6.2), the
+  session's transcript and auto memory are the one directory
+  `<data>/home/claude/projects/<ulid>/` ([sessions], verified). The move
+  copies that directory as it is. `claude --resume <session-id>` works "from
+  any directory" and searches every project for the id, refusing only when
+  two copies make it ambiguous ([sessions], verified), and there is one
+  copy, so the target resumes it from the new worktree. Each record in the
+  `.jsonl` keeps the old absolute `cwd` (verified, observed), and Anthropic
+  says the format "is internal to Claude Code and changes between versions"
+  ([sessions], verified), so Conductor never rewrites the file. That a
+  resume on another machine works is inferred: no document covers it, and
+  a request for shared-filesystem sessions was closed as not planned
+  ([cc-34024], verified). Experiment E4 tests it.
+- **Codex.** Rollouts are
+  `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`, with an
+  index in `session_index.jsonl` and a SQLite state database
+  (`codex-rs/rollout`, `codex-rs/state` in [codex-src], verified). Resume by
+  id asks SQLite first and falls back to matching file names
+  (`find_thread_path_by_id_str`, verified). The move copies the rollout to
+  the same relative path in the target's `CODEX_HOME`, and the target calls
+  `thread/resume { threadId, cwd: <new worktree> }`. `ThreadResumeParams`
+  has the `cwd` override and an unstable `path` field ([codex-src],
+  verified); Conductor uses the id and `cwd`, not `path`. That the file-name
+  fallback finds the copied rollout and that `cwd` takes effect is
+  inferred. Experiment E5 tests both. The rollout records the ChatGPT
+  account that created it (`creator_account_id`, verified); a target
+  signed in to a different account may hide it from `thread/list`
+  (inferred), which Conductor doesn't use.
+- **Both.** The model's context still names the old paths. The first
+  message after a move gets one line from the host before the user's text:
+  "This session moved to another machine. The working directory is now
+  `<path>`." Without it, the model may use a path from earlier in the
+  conversation that no longer exists (inferred).
+
+#### 6.8.2 What a client sees
+
+- **During.** The session stays in place in the sidebar with *Moving to
+  laptop-mac* and the current step. The composer and the interrupt button
+  are disabled, and the transcript stays readable.
+- **After.** The app is already connected to every host in the roster.
+  `SessionMoved` on the source and `SessionArrived` on the target carry the
+  same `MoveId`, so `HostView` folds them into one session. It shows the
+  target's copy under the target host, keeps the selection on it, and hides
+  the source's copy. The transcript reads as one, because the target holds
+  the whole history; a divider says where the move happened.
+- **If the target is offline** to this client, the app shows the source's
+  copy read-only, marked *Moved to laptop-mac (offline)*.
+- **If the move fails**, the session returns to idle on the source with the
+  reason, and nothing changed on the target that a retry won't reuse.
+
+Diffs and revert for turns before the move still work on the target,
+because the checkpoint refs moved with the branch and the events moved with
+the log.
+
+### 6.9 Experiments, which need owner consent
+
+None of these has been run. Each touches a real Claude or ChatGPT account,
+so each **needs owner consent**, and each runs in scratch
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` directories so the owner's own
+`~/.claude` and `~/.codex` are never read or written. A throwaway account is
+better where one exists.
+
+| | Question | Experiment | Risk to the account |
+|---|---|---|---|
+| E1 | Does `claude auth login --claudeai` print its URL and read the code when stdin and stdout are pipes? | Run it with a scratch `CLAUDE_CONFIG_DIR`, stdin and stdout piped to a script that prints the URL and forwards one line. Complete the sign-in in a browser on another device. Then `claude auth status` in the same directory. | A new login appears on the account. Sign out of it afterwards. |
+| E2 | Does a second Claude subscription login on another host invalidate the first? | Sign in hosts A and B (scratch dirs, separate machines) with the same account. Run one turn on each, every day for 4 days, past a refresh. Record `claude auth status` on both. | If the answer is yes, A is logged out once. |
+| E3 | Does a second ChatGPT device-code login invalidate the first, and does sharing one `auth.json` break as documented? | Part 1: device-code sign-in on A and B with the same account. Call `account/read { refreshToken: true }` on A, then on B, then a turn on each; repeat on day 9. Part 2: copy A's `auth.json` to a scratch home C, force a refresh on A, then on C, and expect `refresh_token_reused` on C. | Part 2 is meant to log one copy out. It may also invalidate A's login, which the owner then signs in again. |
+| E4 | Does a Claude session resume on another machine with a different working directory? | On A, start a session with a scratch `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME`, do two turns that read and edit files. Copy the project directory and the git branch to B under a different path, run `claude --resume <id>` from the new worktree with the stream-json flags, and ask what it did before. Check that it answers from history and edits the new path. | Uses the account's quota; an API key works and avoids the subscription. |
+| E5 | Does Codex `thread/resume` find a copied rollout by id and honour `cwd`? | The same as E4 with a scratch `CODEX_HOME`: copy the rollout to the same relative path on B, call `thread/resume { threadId, cwd }`, run a turn, and check the command's working directory. | Uses quota; an API key works. |
+
+E1 decides whether the Claude sign-in needs a pseudo-terminal. E2 and E3
+decide whether a subscription can be signed in on several hosts at once.
+E4 and E5 decide whether moving sessions is buildable as designed. They are
+worth running before the phase that needs each.
+
+### 6.10 Open questions for the owner
+
+1. **Where does the root key live?** Recommendation: on the first host, with
+   the passphrase-sealed backup file written at `fleet init`, and fleet
+   changes wait while the root host is offline. The alternative, the root
+   key on every host, means any one host can admit devices, which turns one
+   stolen laptop into control of the fleet.
+2. **Is relaying the Claude sign-in code through the app acceptable under
+   Anthropic's policy?** The sign-in happens on Anthropic's page and the code
+   goes into the unmodified binary, and Conductor never stores it; but the
+   app does carry the code (§6.3). Recommendation: accept it, because the
+   policy's own example allows an end user signing in to the unmodified
+   binary on a platform that hosts it, and keep the Claude API key as the
+   option with no question attached. If you'd rather be strict, the
+   sign-in has to happen at the host's own terminal.
+3. **Is one sign-in per host acceptable for subscriptions?** The research
+   says sharing a login breaks Codex and is forbidden for Claude (§6.6).
+   Recommendation: yes, with the app prompting right after a join. The
+   alternative that shares fully is API keys for both, billed per token
+   instead of by subscription.
+4. **Enable Codex device-code login?** It is a beta that you switch on in
+   ChatGPT's security settings (§6.3). Recommendation: enable it. Without
+   it, a ChatGPT login on a headless host needs an SSH tunnel to port 1455,
+   which the phone can't do.
+5. **Move by bundle, or by pushing to `origin`?** Recommendation: bundle
+   over iroh (§6.8), with no visible branch or CI run on the remote. A push
+   is simpler to inspect but has those side effects.
+6. **Refuse a move between different pins?** Recommendation: refuse, and
+   offer to update the target first. The transcript formats are internal
+   and change between versions ([sessions], verified).
+7. **Codex analytics.** Codex sends analytics unless `analytics.enabled =
+   false` ([codex-src], verified). Recommendation: off in the hosts'
+   private `config.toml`, as a fleet setting you can change.
+8. **Where moving sits in the order.** Recommendation: after push, last in
+   "Next", because it needs durability, worktrees and the fleet first, and
+   because E4 and E5 may change it.
+
+### 6.11 Sources
+
+[setup]: https://code.claude.com/docs/en/setup
+[env-vars]: https://code.claude.com/docs/en/env-vars.md
+[authentication]: https://code.claude.com/docs/en/authentication
+[troubleshoot]: https://code.claude.com/docs/en/troubleshoot-install.md
+[sessions]: https://code.claude.com/docs/en/sessions.md
+[settings-reference]: https://code.claude.com/docs/en/settings-reference.md
+[legal]: https://code.claude.com/docs/en/legal-and-compliance
+[license]: https://raw.githubusercontent.com/anthropics/claude-code/main/LICENSE.md
+[npm-claude]: https://registry.npmjs.org/@anthropic-ai/claude-code/2.1.316
+[cc-34024]: https://github.com/anthropics/claude-code/issues/34024
+[codex-src]: https://github.com/openai/codex/blob/c0cc9fc820f62e4dbdde68214dd6d792d6c8a7ee/
+[install.md]: https://github.com/openai/codex/blob/c0cc9fc820f62e4dbdde68214dd6d792d6c8a7ee/docs/install.md
+[releases]: https://github.com/openai/codex/releases
+[npm-codex]: https://registry.npmjs.org/@openai/codex/0.167.2-linux-x64
+[codex-auth]: https://learn.chatgpt.com/docs/auth
+[codex-ci]: https://learn.chatgpt.com/docs/auth/ci-cd-auth
+[codex-app-server]: https://learn.chatgpt.com/docs/app-server
+
+- Claude Code setup, installers, signing, updates: [setup]
+- Claude Code environment variables: [env-vars]
+- Claude Code authentication, credential storage, `setup-token`: [authentication]
+- Headless sign-in with a pasted code: [troubleshoot]
+- Transcripts, resume, `CLAUDE_CODE_PROJECT_DIR_NAME`: [sessions]
+- `cleanupPeriodDays`: [settings-reference]
+- Terms for running Claude Code and for credentials: [legal]
+- Claude Code's license: [license]
+- Claude Code on npm: [npm-claude]
+- Multi-machine sessions request: [cc-34024]
+- Codex source at the commit read (`codex-rs/login`, `codex-rs/app-server-protocol`, `codex-rs/rollout`, `codex-rs/state`, `codex-rs/config`, `.github/workflows`): [codex-src]
+- Codex install channels: [install.md]
+- Codex release assets and digests: [releases]
+- Codex on npm: [npm-codex]
+- Codex authentication and device code: [codex-auth]
+- Codex in CI, refresh and sharing `auth.json`: [codex-ci]
+- Codex app-server: [codex-app-server]
 
 ## 7. The client (`crates/client`)
 
