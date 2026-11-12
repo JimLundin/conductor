@@ -904,10 +904,10 @@ async fn two_codex_sessions_share_one_server() {
         ],
         [CommandResult::Accepted, CommandResult::Accepted]
     );
-    let asked = [
+    let asked = Vec::from([
         events_until(&mut updates, Until::Request).await,
         events_until(&mut updates, Until::Request).await,
-    ]
+    ])
     .concat();
     assert_eq!(
         [
@@ -916,12 +916,12 @@ async fn two_codex_sessions_share_one_server() {
         ],
         [CommandResult::Accepted, CommandResult::Accepted]
     );
-    let ended = [
+    let ended = Vec::from([
         events_until(&mut updates, Until::TurnEnd).await,
         events_until(&mut updates, Until::TurnEnd).await,
-    ]
+    ])
     .concat();
-    let view = fold([first, second, asked, ended].concat());
+    let view = fold(Vec::from([first, second, asked, ended]).concat());
     let a_call = "exec-f4c7c6d4-8255-4bcc-972d-9f106cda7991";
     assert_eq!(
         items(&view, 1),
@@ -1079,11 +1079,11 @@ async fn the_app_server_exiting_closes_every_codex_session() {
     let _ = send(&link, start(Provider::Codex, &dir)).await;
     let first = events_until(&mut updates, Until::Ready).await;
     let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let seen = [
+    let seen = Vec::from([
         first,
         events_until(&mut updates, Until::Closed).await,
         events_until(&mut updates, Until::Closed).await,
-    ]
+    ])
     .concat();
     let closed = EventKind::SessionClosed {
         reason: CloseReason::Exited {
