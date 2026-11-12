@@ -70,15 +70,21 @@ so one UI and one set of commands work for both agents.
   one is told who decided); questions asked and answered; a turn
   completes, is interrupted or fails.
 - **Model and effort:** `Welcome` lists, for each provider the host can
-  run, the models its CLI offered when the host started (`Models`: each
-  model's id, name, description and efforts, and the default).
+  run, the models its CLI offers with the current credential (`Models`:
+  each model's id, name, description and efforts, and the default). The
+  host lists them when it starts and again after each credential change,
+  for both providers.
   `StartSession` may name one of them and one of its efforts (`low` to
   `ultra`); a model or an effort the host doesn't list is refused as
   `NotOffered`. With none named, the session gets the default: a Codex provider
   credential's model, which is what its gateway serves; else the host's
   `--claude-model` or `--codex-model`; else the one the CLI marks as its
   default. The list comes from the CLI even with a credential. `SessionCreated` carries the model and effort
-  the session runs with. The effort is fixed for the session.
+  the session runs with. A `Continue` after a credential change whose
+  models no longer include the session's (neither listed nor the default)
+  runs on the new default, keeping the effort if that model takes it, and
+  logs `ModelChanged` with the reason first. Otherwise the model and
+  effort are fixed for the session.
 - **Reasoning:** `ReasoningDelta` streams and `Reasoning` stores the
   finished text, which is the provider's summary of the model's reasoning:
   a few sentences per stretch, never the raw thoughts, so the host stores
@@ -228,7 +234,7 @@ with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
 - Newline-delimited JSON-RPC with no `jsonrpc` field; allow very long lines.
   The handshake is `initialize` with `capabilities: {experimentalApi: true}`.
 - We call `thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`
-  and `model/list` (once, when the host starts), and handle
+  and `model/list` (when the host starts and after a credential change), and handle
   `turn/started`, `turn/completed`, `item/started`, `item/completed`,
   `item/agentMessage/delta` and `item/reasoning/summaryTextDelta`.
 - Approvals arrive as server requests (`item/commandExecution/requestApproval`,

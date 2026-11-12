@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::session::{Choice, ClaudeLaunch, CodexLaunch, Launch, Session};
+use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session, choose, list_models};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -27,11 +27,15 @@ pub struct Launchers {
 #[derive(Debug, Clone)]
 pub enum Launcher {
     /// The CLI runs, and signs in as `own` says when the host stores no
-    /// credential for it. `models` is what it offered when the host started.
+    /// credential for it. `models` is what it listed when the host started;
+    /// the registry lists them again when the credential changes.
+    /// `chosen` (`--claude-model`, `--codex-model`) comes before the CLI's
+    /// own default.
     Ready {
         launch: Launch,
         own: OwnSignIn,
         models: Models,
+        chosen: Option<ModelId>,
     },
     /// The host can't run this provider's sessions, for this reason.
     Unavailable(String),
@@ -65,6 +69,19 @@ impl Launchers {
             Provider::Codex => &self.codex,
         }
     }
+
+    fn with(self, provider: Provider, launcher: Launcher) -> Launchers {
+        match provider {
+            Provider::Claude => Launchers {
+                claude: launcher,
+                ..self
+            },
+            Provider::Codex => Launchers {
+                codex: launcher,
+                ..self
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +100,7 @@ enum RegistryMsg {
     },
     Continue {
         session: SessionId,
-        reply: oneshot::Sender<Result<(Session, Launch), Rejection>>,
+        reply: oneshot::Sender<Result<(Session, Launch, Models), Rejection>>,
     },
     Find {
         session: SessionId,
@@ -152,13 +169,14 @@ impl Registry {
         .await
     }
 
-    /// The session and how its provider runs now, for a `Continue`. The
+    /// The session, how its provider runs now and what it offers, for a
+    /// `Continue`. The
     /// session starts its agent itself, so a slow start never blocks the
     /// registry.
     pub async fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<Result<(Session, Launch), Rejection>, Stopped> {
+    ) -> Result<Result<(Session, Launch, Models), Rejection>, Stopped> {
         self.ask(|reply| RegistryMsg::Continue { session, reply })
             .await
     }
@@ -226,7 +244,9 @@ impl RegistryActor {
                     None => Err(Rejection::UnknownSession),
                     Some((provider, handle)) => self
                         .ready(provider.to_owned())
-                        .map(|(launch, _)| (handle.clone(), launch))
+                        .map(|(launch, _)| {
+                            (handle.clone(), launch, self.models(provider.to_owned()))
+                        })
                         .map_err(|reason| Rejection::ProviderUnavailable { reason }),
                 };
                 let _ = reply.send(relaunch);
@@ -313,8 +333,30 @@ impl RegistryActor {
                     hub.configure(next.codex.clone()).await?;
                 }
                 self.stored = Stored::Opened(next);
+                self.relist(provider).await;
                 Ok(CommandResult::Providers(self.providers()))
             }
+        }
+    }
+
+    /// Lists `provider`'s models again with its new credential, which may
+    /// serve others. A CLI that lists none offers only the default.
+    async fn relist(&mut self, provider: Provider) {
+        if let (Ok((launch, _)), Launcher::Ready { own, chosen, .. }) =
+            (self.ready(provider), self.launchers.of(provider))
+        {
+            let ready = Launcher::Ready {
+                models: list_models(launch.clone(), self.store.dir())
+                    .await
+                    .unwrap_or_else(|reason| {
+                        tracing::warn!(%reason, ?provider, "the CLI listed no models");
+                        Models::none()
+                    }),
+                launch,
+                own: own.to_owned(),
+                chosen: chosen.clone(),
+            };
+            self.launchers = self.launchers.clone().with(provider, ready);
         }
     }
 
@@ -335,26 +377,27 @@ impl RegistryActor {
         }
     }
 
-    /// What the CLI offered when the host started. A Codex provider
-    /// credential names the model its gateway serves, so that model is the
-    /// default.
+    /// What the CLI lists with the current credential. The default is the
+    /// model a Codex provider credential names, as its gateway serves that
+    /// one, then `chosen`, then the CLI's own.
     fn models(&self, provider: Provider) -> Models {
-        let listed = match self.launchers.of(provider) {
-            Launcher::Ready { models, .. } => models.clone(),
-            Launcher::Unavailable(_) => Models::none(),
+        let (listed, chosen) = match self.launchers.of(provider) {
+            Launcher::Ready { models, chosen, .. } => (models.clone(), chosen.clone()),
+            Launcher::Unavailable(_) => (Models::none(), None),
         };
-        match (provider, &self.stored) {
+        let credential = match (provider, &self.stored) {
             (
                 Provider::Codex,
                 Stored::Opened(Credentials {
                     codex: Some(CodexCredential::Provider { model, .. }),
                     ..
                 }),
-            ) => Models {
-                default: Some(ModelId(model.clone())),
-                ..listed
-            },
-            (_, _) => listed,
+            ) => Some(ModelId(model.clone())),
+            (_, _) => None,
+        };
+        Models {
+            default: credential.or(chosen).or(listed.default),
+            ..listed
         }
     }
 
@@ -417,42 +460,13 @@ impl RegistryActor {
                     effort: choice.effort,
                 };
                 self.log.append(id, created).await?;
-                let session = Session::spawn(id, directory, choice, launch, self.log.clone());
+                let offered = self.models(provider);
+                let session =
+                    Session::spawn(id, directory, choice, (launch, offered), self.log.clone());
                 self.sessions.insert(id, (provider, session));
                 Ok(CommandResult::Started { session: id })
             }
         }
-    }
-}
-
-/// The model and effort a session asked for, checked against what the
-/// provider offers. No model is the default. An effort must be one the
-/// model lists, unless the host knows nothing of the model (a default from
-/// `--claude-model` or a Codex credential that the CLI didn't list).
-fn choose(
-    models: &Models,
-    model: Option<ModelId>,
-    effort: Option<Effort>,
-) -> Result<Choice, String> {
-    let model = match model {
-        Some(model) => models
-            .find(&model)
-            .map(|choice| Some(choice.id.clone()))
-            .ok_or_else(|| format!("this host doesn't offer the model {}", model.0)),
-        None => Ok(models.default.clone()),
-    }?;
-    let listed = model.as_ref().and_then(|model| models.find(model));
-    match (effort, listed) {
-        (Some(effort), Some(choice)) => choice
-            .efforts
-            .iter()
-            .find(|offered| offered == &&effort)
-            .map(|_| Choice {
-                model: model.clone(),
-                effort: Some(effort),
-            })
-            .ok_or_else(|| format!("{} doesn't take the effort {}", choice.name, effort.wire())),
-        (effort, _) => Ok(Choice { model, effort }),
     }
 }
 

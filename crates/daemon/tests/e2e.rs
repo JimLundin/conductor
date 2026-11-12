@@ -77,6 +77,7 @@ async fn host_with(claude_path: PathBuf) -> Fixture {
             }),
             own: OwnSignIn::Unmanaged,
             models: models(),
+            chosen: None,
         },
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     })
@@ -100,6 +101,7 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
             launch: Launch::Codex(CodexLaunch { hub }),
             own: OwnSignIn::Unmanaged,
             models: models(),
+            chosen: None,
         },
     })
     .await;
@@ -1310,6 +1312,7 @@ async fn an_interrupt_withdraws_an_open_question() {
             | Item::Tool { .. }
             | Item::TurnCompleted(_)
             | Item::Continued(_)
+            | Item::ModelChanged(_)
             | Item::Error(_) => None,
         })
         .collect::<Vec<RequestState>>();
@@ -1885,6 +1888,8 @@ fn count(path: &Path, text: &str) -> usize {
 /// sign-in of its own, and whose Codex is unavailable.
 async fn claude_host_in(data: &Path) -> Fixture {
     let homes = daemon::homes(data).unwrap();
+    std::fs::create_dir_all(data.join("probe")).unwrap();
+    std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n")).unwrap();
     let launchers = Launchers {
         claude: Launcher::Ready {
             launch: Launch::Claude(ClaudeLaunch {
@@ -1894,6 +1899,7 @@ async fn claude_host_in(data: &Path) -> Fixture {
             }),
             own: OwnSignIn::Missing,
             models: models(),
+            chosen: None,
         },
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     };
@@ -1909,12 +1915,28 @@ fn with_claude(claude: Availability) -> Providers {
     }
 }
 
-fn gateway() -> Availability {
+fn gateway(models: Models) -> Availability {
     Availability::Available {
         auth: Auth::Gateway {
             base_url: String::from(GATEWAY),
         },
-        models: models(),
+        models,
+    }
+}
+
+/// What the Claude stand-in lists in the probe directory, which differs
+/// from what the host started with, so a test sees the list was read again.
+const PROBED: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.1.316","models":[{"value":"served","displayName":"Served","description":"by the gateway","supportedEffortLevels":["high"]}]}}}"#;
+
+fn probed() -> Models {
+    Models {
+        choices: Vec::from([ModelChoice {
+            id: ModelId(String::from("served")),
+            name: String::from("Served"),
+            description: String::from("by the gateway"),
+            efforts: Vec::from([Effort::High]),
+        }]),
+        default: None,
     }
 }
 
@@ -1961,9 +1983,16 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
     );
     assert_eq!(
         send(&link, claude_gateway()).await,
-        CommandResult::Providers(with_claude(gateway()))
+        CommandResult::Providers(with_claude(gateway(probed())))
     );
-    assert_eq!(link.status().providers, Some(with_claude(gateway())));
+    assert_eq!(
+        (
+            link.status().providers,
+            read(&data.join("probe/env.txt")).contains(GATEWAY)
+        ),
+        (Some(with_claude(gateway(probed()))), true),
+        "the models are listed again, with the new credential"
+    );
     let _ = send(&link, start(Provider::Claude, &dir)).await;
     let events = events_until(&mut updates, Until::Ready).await;
     assert_eq!(
@@ -1983,7 +2012,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
 
     let fx = claude_host_in(&data).await;
     let (link, _updates, welcomed) = live(&fx).await;
-    assert_eq!(welcomed, Some(with_claude(gateway())));
+    assert_eq!(welcomed, Some(with_claude(gateway(models()))));
     assert_eq!(
         send(
             &link,
@@ -2037,17 +2066,48 @@ fn with_codex(codex: Availability) -> Providers {
     }
 }
 
-/// A Codex provider credential's model is the default (`Registry::models`).
-fn codex_gateway() -> Availability {
-    Availability::Available {
-        auth: Auth::Gateway {
+/// How Codex signs in and the models it offers, by id, with the default
+/// first, from a host's answer to a credential change.
+fn codex_offer(result: CommandResult) -> Option<(Auth, Option<String>, Vec<String>)> {
+    match result {
+        CommandResult::Providers(Providers {
+            codex: Availability::Available { auth, models },
+            ..
+        }) => Some((
+            auth,
+            models.default.map(|model| model.0),
+            models
+                .choices
+                .into_iter()
+                .map(|choice| choice.id.0)
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
+const LISTED: &[&str] = &[
+    "gpt-6.1-sol",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-6.1-terra",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+];
+
+/// What `codex-*-listed.jsonl` lists, with a Codex provider credential's
+/// model as the default (`Registry::models`).
+fn codex_gateway() -> Option<(Auth, Option<String>, Vec<String>)> {
+    Some((
+        Auth::Gateway {
             base_url: String::from(GATEWAY),
         },
-        models: Models {
-            default: Some(ModelId(String::from("conductor-test-model"))),
-            ..models()
-        },
-    }
+        Some(String::from("conductor-test-model")),
+        LISTED.iter().copied().map(String::from).collect(),
+    ))
 }
 
 fn codex_provider(key: &str) -> CommandBody {
@@ -2067,7 +2127,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
     const SECOND_KEY: &str = "conductor-test-second-key";
     let data = data_dir("codex-provider");
     let (log, logging) = capture_log("codex-provider");
-    let server = scratch("codex-provider", "codex-interrupt.jsonl");
+    let server = scratch("codex-provider", "codex-two-threads-listed.jsonl");
     let homes = daemon::homes(&data).unwrap();
     let hub = CodexHub::spawn(ServerOptions {
         codex_path: fake_codex(),
@@ -2082,14 +2142,15 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
             launch: Launch::Codex(CodexLaunch { hub }),
             own: OwnSignIn::Missing,
             models: models(),
+            chosen: None,
         },
     };
     let fx = serve(endpoint().await, launchers, &data);
     let (link, mut updates, welcomed) = live(&fx).await;
     assert_eq!(welcomed, Some(with_codex(no_credential())));
     assert_eq!(
-        send(&link, codex_provider(FIRST_KEY)).await,
-        CommandResult::Providers(with_codex(codex_gateway()))
+        codex_offer(send(&link, codex_provider(FIRST_KEY)).await),
+        codex_gateway()
     );
     let _ = send(&link, start(Provider::Codex, &server)).await;
     let first = events_until(&mut updates, Until::Ready).await;
@@ -2108,8 +2169,8 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
         )
     );
     assert_eq!(
-        send(&link, codex_provider(SECOND_KEY)).await,
-        CommandResult::Providers(with_codex(codex_gateway()))
+        codex_offer(send(&link, codex_provider(SECOND_KEY)).await),
+        codex_gateway()
     );
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,
@@ -2230,7 +2291,7 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside() 
     );
     assert_eq!(
         send(&link, claude_gateway()).await,
-        CommandResult::Providers(with_claude(gateway()))
+        CommandResult::Providers(with_claude(gateway(probed())))
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
@@ -2688,6 +2749,59 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
             reply("quince"),
             turn_end(TurnOutcome::Completed),
         ]
+    );
+    link.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// A new credential that doesn't offer a Codex session's model: `Continue`
+/// starts it on the new default and logs why. (It closed before its first
+/// turn, so it starts a thread afresh; a resume takes the same choice.)
+#[tokio::test]
+async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_its_model() {
+    let (fx, server) = codex_host("codex-resumed.jsonl").await;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/codex-resumed-listed.jsonl"),
+        server.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let (link, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let _ = send(
+        &link,
+        start_with(Provider::Codex, &server, "small", Effort::Low),
+    )
+    .await;
+    let _ = kinds_until(&mut updates, Until::Ready).await;
+    assert_eq!(
+        codex_offer(send(&link, codex_provider("conductor-test-key")).await),
+        codex_gateway()
+    );
+    let _ = kinds_until(&mut updates, Until::Closed).await;
+    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        kinds_until(&mut updates, Until::Ready).await,
+        [
+            EventKind::ModelChanged {
+                model: Some(ModelId(String::from("conductor-test-model"))),
+                effort: Some(Effort::Low),
+                reason: String::from(
+                    "Model changed to conductor-test-model: small is not offered by the current credential"
+                ),
+            },
+            EventKind::SessionReady,
+        ]
+    );
+    assert_eq!(
+        requests(&server, "stdin.2.jsonl", "thread/start")
+            .iter()
+            .map(thread_settings)
+            .collect::<Vec<_>>(),
+        [(
+            None,
+            Some(serde_json::json!("conductor-test-model")),
+            Some(serde_json::json!("low"))
+        )]
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();

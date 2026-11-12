@@ -493,6 +493,7 @@ impl Session {
             | EventKind::Reasoning { .. }
             | EventKind::ToolCall { .. }
             | EventKind::RequestResolved { .. }
+            | EventKind::ModelChanged { .. }
             | EventKind::Error { .. } => Ok(Flow::Next),
         }
     }

@@ -263,6 +263,7 @@ fn TranscriptItem(
             };
             rsx! { p { class: "turn-end", "data-outcome": attr, "{text}" } }
         }
+        Item::ModelChanged(reason) => rsx! { p { class: "model-changed", "{reason}" } },
         Item::Error(message) => rsx! { p { class: "error", "{message}" } },
     }
 }

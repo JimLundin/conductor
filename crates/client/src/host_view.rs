@@ -69,6 +69,8 @@ pub enum Item {
     TurnCompleted(TurnOutcome),
     /// The agent started again after it had closed for this reason.
     Continued(CloseReason),
+    /// The model changed, for this reason.
+    ModelChanged(String),
     Error(String),
 }
 
@@ -328,6 +330,16 @@ impl SessionView {
                     self.status(SessionStatus::Idle)
                 }
             },
+            EventKind::ModelChanged {
+                model,
+                effort,
+                reason,
+            } => SessionView {
+                model,
+                effort,
+                ..self
+            }
+            .push(Item::ModelChanged(reason)),
             EventKind::SessionClosed { reason } => self
                 .change(Change::End)
                 .settle()
@@ -503,6 +515,7 @@ impl Item {
             | Item::Question { .. }
             | Item::TurnCompleted(_)
             | Item::Continued(_)
+            | Item::ModelChanged(_)
             | Item::Error(_) => None,
         }
     }
@@ -593,9 +606,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use proto::{
-        Answer, ClientName, CloseReason, Decision, Event, EventKind, HostPath, HostSeq, Provider,
-        Question, QuestionOption, RequestId, Resolution, Selection, SessionId, ToolCallId,
-        ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+        Answer, ClientName, CloseReason, Decision, Event, EventKind, HostPath, HostSeq, ModelId,
+        Provider, Question, QuestionOption, RequestId, Resolution, Selection, SessionId,
+        ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     };
 
     use super::{
@@ -1041,6 +1054,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_model_change_shows_in_the_header_and_the_transcript() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            closed(1),
+            (
+                1,
+                EventKind::ModelChanged {
+                    model: Some(ModelId(text("gpt"))),
+                    effort: None,
+                    reason: text("Model changed to gpt: small is not offered"),
+                },
+            ),
+        ]));
+        assert_eq!(
+            view.sessions
+                .get(&SessionId(1))
+                .map(|session| (session.model.clone(), session.items.clone())),
+            Some((
+                Some(ModelId(text("gpt"))),
+                Vec::from([Item::ModelChanged(text(
+                    "Model changed to gpt: small is not offered"
+                ))])
+            ))
+        );
+    }
+
     fn closed(session: u64) -> (u64, EventKind) {
         (
             session,
@@ -1249,6 +1290,7 @@ mod tests {
                         | Item::Tool { .. }
                         | Item::TurnCompleted(_)
                         | Item::Continued(_)
+                        | Item::ModelChanged(_)
                         | Item::Error(_) => None,
                     })
                     .collect()

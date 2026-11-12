@@ -369,7 +369,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .reasoning[open] summary::before { content: "▾"; }
 .reasoning[data-state="streaming"] summary { animation: breathe 1.8s ease-in-out infinite; }
 .reasoning-text { margin-top: 0.3rem; padding-left: 1.1em; white-space: pre-wrap; overflow-wrap: anywhere; }
-.continued { color: var(--muted); font-size: 0.75rem; text-align: center; }
+.continued, .model-changed { color: var(--muted); font-size: 0.75rem; text-align: center; }
 
 /* Fades in late, so a quick gap between events doesn't flash it. */
 .working {

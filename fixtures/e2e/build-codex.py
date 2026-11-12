@@ -201,6 +201,9 @@ RECORDINGS = {
     + c_turns[1]
     + [json.dumps({"fake": "exit"})],
     "codex-resumed.jsonl": r_head + r_threads[0] + r_turns[0],
+    # The same on a server the host lists the models of first, as it does
+    # after a credential change.
+    "codex-resumed-listed.jsonl": listed_head + r_threads[0] + r_turns[0],
 }
 
 for name, lines in RECORDINGS.items():

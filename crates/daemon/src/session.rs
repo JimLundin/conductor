@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use agents::Home;
 use agents::claude::{
@@ -53,6 +53,37 @@ pub struct Choice {
     pub effort: Option<Effort>,
 }
 
+/// The model and effort a session asked for, checked against what the
+/// provider offers. No model is the default. An effort must be one the
+/// model lists, unless the host knows nothing of the model (a default from
+/// `--claude-model` or a Codex credential that the CLI didn't list).
+pub fn choose(
+    models: &Models,
+    model: Option<ModelId>,
+    effort: Option<Effort>,
+) -> Result<Choice, String> {
+    let model = match model {
+        Some(model) => models
+            .find(&model)
+            .map(|choice| Some(choice.id.clone()))
+            .ok_or_else(|| format!("this host doesn't offer the model {}", model.0)),
+        None => Ok(models.default.clone()),
+    }?;
+    let listed = model.as_ref().and_then(|model| models.find(model));
+    match (effort, listed) {
+        (Some(effort), Some(choice)) => choice
+            .efforts
+            .iter()
+            .find(|offered| offered == &&effort)
+            .map(|_| Choice {
+                model: model.clone(),
+                effort: Some(effort),
+            })
+            .ok_or_else(|| format!("{} doesn't take the effort {}", choice.name, effort.wire())),
+        (effort, _) => Ok(Choice { model, effort }),
+    }
+}
+
 /// What a session task needs to start its agent.
 #[derive(Debug, Clone)]
 pub enum Launch {
@@ -80,8 +111,9 @@ pub enum Order {
         by: ClientName,
     },
     /// Starts the agent with this launch, resuming the conversation if the
-    /// session has one: when the session starts, and on `Continue`.
-    Start(Launch),
+    /// session has one: when the session starts, and on `Continue`. The
+    /// models are what the provider offers now.
+    Start(Launch, Models),
 }
 
 /// A reply to an open request: a decision for an approval, answers for a
@@ -200,7 +232,7 @@ impl Session {
         id: SessionId,
         directory: HostPath,
         choice: Choice,
-        launch: Launch,
+        launch: (Launch, Models),
         log: Log,
     ) -> Session {
         let (inbox, messages) = mpsc::channel(16);
@@ -218,8 +250,9 @@ impl Session {
         };
         // The first order starts the agent, so the actor's loop does it all.
         let (reply, _) = oneshot::channel();
+        let (launch, offered) = launch;
         let _ = inbox.try_send(SessionMsg {
-            order: Order::Start(launch),
+            order: Order::Start(launch, offered),
             reply,
         });
         tokio::spawn(actor.run(messages));
@@ -320,9 +353,23 @@ async fn start(
     }
 }
 
+/// What `launch` offers with the credential in it. Claude lists its models
+/// as a session would see them, started in a directory of its own under
+/// `data_dir`; Codex asks the hub's app-server.
+pub async fn list_models(launch: Launch, data_dir: &Path) -> Result<Models, String> {
+    match launch {
+        Launch::Claude(claude) => {
+            let probe = data_dir.join("probe");
+            std::fs::create_dir_all(&probe).map_err(|err| err.to_string())?;
+            claude_models(claude, probe).await
+        }
+        Launch::Codex(CodexLaunch { hub }) => hub.models().await.map_err(|err| err.to_string()),
+    }
+}
+
 /// What a Claude session offers, from its `initialize` response: the CLI
 /// is started in `directory` and stopped again.
-pub async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Models, String> {
+async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Models, String> {
     let (session, _events) = ClaudeSession::spawn(ClaudeOptions {
         claude_path: launch.claude_path,
         home: launch.home,
@@ -433,14 +480,46 @@ impl SessionActor {
         }
     }
 
+    /// A model the provider no longer offers, after a credential change,
+    /// gives way to its default, and the log says so.
+    async fn offered(&mut self, offered: Models) -> Result<(), Stopped> {
+        match self.choice.model.clone().filter(|model| {
+            offered.default.as_ref() != Some(model) && offered.find(model).is_none()
+        }) {
+            Some(gone) => {
+                let choice = choose(&offered, None, self.choice.effort).unwrap_or(Choice {
+                    model: offered.default.clone(),
+                    effort: None,
+                });
+                let reason = format!(
+                    "Model changed to {}: {} is not offered by the current credential",
+                    choice.model.as_ref().map_or_else(
+                        || String::from("the default model"),
+                        |model| model.0.clone()
+                    ),
+                    gone.0
+                );
+                self.choice = choice.clone();
+                self.emit(EventKind::ModelChanged {
+                    model: choice.model,
+                    effort: choice.effort,
+                    reason,
+                })
+                .await
+            }
+            None => Ok(()),
+        }
+    }
+
     async fn order(&mut self, order: Order) -> Result<CommandResult, Stopped> {
         match (order, &self.turn, &self.agent) {
-            (Order::Start(launch), _, Agent::Down) => {
+            (Order::Start(launch, offered), _, Agent::Down) => {
+                self.offered(offered).await?;
                 self.start(launch).await?;
                 Ok(CommandResult::Accepted)
             }
             // Continue is idempotent: the agent already runs.
-            (Order::Start(_), _, _) => Ok(CommandResult::Accepted),
+            (Order::Start(_, _), _, _) => Ok(CommandResult::Accepted),
             (_, _, Agent::Down) => Ok(CommandResult::Rejected(Rejection::SessionClosed)),
             (Order::Send { text, by }, Turn::Idle, _) => {
                 self.emit(EventKind::UserMessage {

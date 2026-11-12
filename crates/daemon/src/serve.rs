@@ -171,8 +171,8 @@ impl Conductor {
             }
             CommandBody::Continue { session } => match self.registry.relaunch(session).await? {
                 Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-                Ok((handle, launch)) => Ok(handle
-                    .order(Order::Start(launch))
+                Ok((handle, launch, offered)) => Ok(handle
+                    .order(Order::Start(launch, offered))
                     .await
                     .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
             },

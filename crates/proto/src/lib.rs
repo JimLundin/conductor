@@ -548,6 +548,13 @@ pub enum EventKind {
     /// The agent process is up and takes messages: at the start, and again
     /// after a `Continue`.
     SessionReady,
+    /// A `Continue` runs the agent on another model, because the current
+    /// credential no longer offers the one it ran, as `reason` says.
+    ModelChanged {
+        model: Option<ModelId>,
+        effort: Option<Effort>,
+        reason: String,
+    },
     SessionClosed {
         reason: CloseReason,
     },

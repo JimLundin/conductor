@@ -40,6 +40,11 @@ impl Store {
     /// Opens the store in `data_dir`, creating its key on first run, and
     /// reads what it holds. Only a store key that can't be read or made
     /// fails it.
+    /// The data dir the store is in.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     pub fn open(data_dir: &Path) -> anyhow::Result<(Store, Stored)> {
         let key = crate::load_or_create_secret(data_dir, "store.key")?;
         let store = Store {

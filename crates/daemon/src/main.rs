@@ -10,7 +10,7 @@ use daemon::credentials::{Store, Stored};
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
-use daemon::session::{ClaudeLaunch, CodexLaunch, Launch, claude_models};
+use daemon::session::{ClaudeLaunch, CodexLaunch, Launch, list_models};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
@@ -110,19 +110,15 @@ async fn main() -> anyhow::Result<()> {
                         home: homes.claude.clone(),
                         credential: None,
                     };
-                    // The CLI lists its models as a session would see them,
-                    // started in a directory of its own.
-                    let probe = data_dir.join("probe");
-                    std::fs::create_dir_all(&probe)?;
-                    let listed = claude_models(
-                        ClaudeLaunch {
+                    let listed = list_models(
+                        Launch::Claude(ClaudeLaunch {
                             credential: match &stored {
                                 Stored::Opened(credentials) => credentials.claude.clone(),
                                 Stored::Unreadable(_) => None,
                             },
                             ..launch.clone()
-                        },
-                        probe,
+                        }),
+                        &data_dir,
                     );
                     match runs(agents::claude::cli(&claude_path, &homes.claude)).await {
                         Ok(cli) => ready(
@@ -152,14 +148,14 @@ async fn main() -> anyhow::Result<()> {
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
-                    let lister = hub.clone();
-                    let listed = lister.models();
+                    let listed =
+                        list_models(Launch::Codex(CodexLaunch { hub: hub.clone() }), &data_dir);
                     match runs(version).await {
                         Ok(cli) => ready(
                             cli,
                             Launch::Codex(CodexLaunch { hub }),
                             own_sign_in(origin, status).await,
-                            (listed.await.map_err(|err| err.to_string()), codex_model),
+                            (listed.await, codex_model),
                         ),
                         Err(reason) => unavailable(reason),
                     }
@@ -301,31 +297,28 @@ async fn runs(mut cli: tokio::process::Command) -> Result<(String, String), Stri
     }
 }
 
-/// A CLI that runs offers the models it `listed`, with `default`
-/// (`--claude-model`, `--codex-model`) first as the one a session gets when
-/// it names none. A CLI that could not list them, for instance because it
-/// is not signed in yet, offers only the default.
+/// A CLI that runs offers the models it `listed`, with `chosen`
+/// (`--claude-model`, `--codex-model`) as the one a session gets when it
+/// names none. A CLI that could not list them, for instance because it is
+/// not signed in yet, offers only the default.
 fn ready(
     cli: (String, String),
     launch: Launch,
     own: OwnSignIn,
     models: (Result<Models, String>, Option<String>),
 ) -> Launcher {
-    let (listed, default) = models;
-    let listed = listed.unwrap_or_else(|reason| {
+    let (listed, chosen) = models;
+    let models = listed.unwrap_or_else(|reason| {
         tracing::warn!(%reason, "the CLI listed no models");
         Models::none()
     });
-    let models = Models {
-        default: default.map(ModelId).or(listed.default),
-        ..listed
-    };
     let (path, version) = cli;
     tracing::info!(%path, %version, ?own, models = models.choices.len(), "ready");
     Launcher::Ready {
         launch,
         own,
         models,
+        chosen: chosen.map(ModelId),
     }
 }
 
