@@ -11,13 +11,12 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use iroh::endpoint::{
-    BindError, ConnectError, Connection, PathEvent, PathList, RecvStream, SendStream,
-};
-use iroh::{Endpoint, EndpointAddr, TransportAddr};
+use iroh::endpoint::{BindError, ConnectError, Connection, RecvStream, SendStream};
+use iroh::{Endpoint, EndpointAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::sleep;
 use n0_future::{StreamExt, join_all, task};
+use proto::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch, Event, EventKind,
     Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
@@ -25,7 +24,6 @@ use proto::{
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::platform::{self, Network};
-use crate::wire::{self, WireError};
 
 const UPDATE_BUFFER: usize = 1024;
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
@@ -62,20 +60,9 @@ pub enum LinkState {
     Live,
 }
 
-/// How the iroh connection reaches the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PathKind {
-    Unknown,
-    /// Hole-punched.
-    Direct,
-    /// Through a relay, as a browser always is.
-    Relayed,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     pub state: LinkState,
-    pub path: PathKind,
     /// The host's name from its last `Welcome`.
     pub host: Option<String>,
     /// What the host can run, from its last `Welcome`.
@@ -164,7 +151,6 @@ impl HostLink {
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
         let initial = Status {
             state: LinkState::Disconnected,
-            path: PathKind::Unknown,
             host: None,
             providers: None,
             error: None,
@@ -243,8 +229,6 @@ enum Lost {
     Reconnect,
     #[error("connect failed: {0}")]
     Connect(#[from] iroh::endpoint::ConnectError),
-    #[error("connection lost: {0}")]
-    Connection(#[from] iroh::endpoint::ConnectionError),
     #[error("{0}")]
     Wire(#[from] WireError),
     #[error("the host refused us: {0}")]
@@ -293,15 +277,12 @@ struct Connected {
     /// `select!` that picks another branch doesn't lose bytes. It owns both
     /// halves, so dropping it ends the subscription.
     feed: BoxStream<Result<Option<Event>, WireError>>,
-    /// `None` now, then each change to the iroh paths.
-    paths: BoxStream<Option<PathEvent>>,
 }
 
 enum Input {
     Dial,
     Request(Option<Request>),
     Frame(Result<Option<Event>, WireError>),
-    PathsChanged,
 }
 
 impl Link {
@@ -321,7 +302,6 @@ impl Link {
             },
             Phase::Connected(connected) => tokio::select! {
                 frame = connected.feed.next() => Input::Frame(frame.expect("frames() never ends")),
-                Some(_) = connected.paths.next() => Input::PathsChanged,
                 request = self.requests.recv() => Input::Request(request),
             },
         }
@@ -355,7 +335,7 @@ impl Link {
             }
             (_, Input::Request(Some(Request::Stop { reply }))) => Err(self.stop(reply).await),
             (_, Input::Request(None)) => Err(Stopped {}),
-            (idle, Input::Frame(_) | Input::PathsChanged) => Ok(idle),
+            (idle, Input::Frame(_)) => Ok(idle),
         }
     }
 
@@ -445,7 +425,6 @@ impl Link {
             epoch: welcome.epoch,
             live_at,
             feed,
-            paths: Box::pin(n0_future::stream::once(None).chain(conn.path_events().map(Some))),
         })
     }
 
@@ -471,16 +450,6 @@ impl Link {
             }
             Input::Frame(Ok(None)) => Err(Lost::HostClosed(String::from("subscription"))),
             Input::Frame(Err(err)) => Err(err.into()),
-            Input::PathsChanged => {
-                let current = self.outbox.current();
-                self.outbox
-                    .publish(Status {
-                        path: path_kind(&connected.conn.paths()),
-                        ..current
-                    })
-                    .await?;
-                Ok(connected)
-            }
             Input::Dial => Ok(connected),
         }
     }
@@ -569,7 +538,6 @@ impl Outbox {
         let current = self.current();
         self.publish(Status {
             state: LinkState::Disconnected,
-            path: PathKind::Unknown,
             error,
             ..current
         })
@@ -762,17 +730,6 @@ async fn rpc(conn: Connection, command: Command) -> Result<CommandResult, SendEr
     wire::write(&mut send, &Open::Command(command)).await?;
     send.finish().map_err(WireError::from)?;
     wire::read(&mut recv).await?.ok_or(SendError::NoResult)
-}
-
-fn path_kind(paths: &PathList) -> PathKind {
-    paths
-        .iter()
-        .find(|path| path.is_selected())
-        .map_or(PathKind::Unknown, |path| match path.remote_addr() {
-            TransportAddr::Ip(_) => PathKind::Direct,
-            TransportAddr::Relay(_) => PathKind::Relayed,
-            _ => PathKind::Unknown,
-        })
 }
 
 /// Exponential from `floor` to `ceiling`, with the upper half jittered so

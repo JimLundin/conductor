@@ -2,6 +2,7 @@
 
 use iroh::endpoint::{ClosedStream, Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
+use proto::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open, Rejection,
     SessionId, Subscribe, Welcome,
@@ -12,7 +13,6 @@ use crate::Stopped;
 use crate::log::Log;
 use crate::registry::Registry;
 use crate::session::Order;
-use crate::wire::{self, WireError};
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
@@ -111,26 +111,18 @@ impl Conductor {
         loop {
             match conn.accept_bi().await {
                 Ok((send, recv)) => {
-                    self.clone()
-                        .spawn_stream(conn.clone(), send, recv, client.clone());
+                    let stream = self
+                        .clone()
+                        .stream(conn.clone(), send, recv, client.clone());
+                    tokio::spawn(async move {
+                        if let Err(err) = stream.await {
+                            tracing::debug!(%err, "stream ended with an error");
+                        }
+                    });
                 }
                 Err(err) => break err,
             }
         }
-    }
-
-    fn spawn_stream(
-        self,
-        conn: Connection,
-        send: SendStream,
-        recv: RecvStream,
-        client: ClientName,
-    ) {
-        tokio::spawn(async move {
-            if let Err(err) = self.stream(conn, send, recv, client).await {
-                tracing::debug!(%err, "stream ended with an error");
-            }
-        });
     }
 
     async fn stream(

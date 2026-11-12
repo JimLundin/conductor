@@ -14,7 +14,7 @@ use agents::codex::ServerOptions;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
 };
-use client::{Cursor, HostLink, LinkOptions, LinkState, Network, PathKind, Status, Target, Update};
+use client::{Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
 use daemon::log::Log;
@@ -256,7 +256,6 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
             },
         })
     );
-    assert_eq!(link.status().path, PathKind::Direct);
 
     let cases = Vec::from([
         Case {

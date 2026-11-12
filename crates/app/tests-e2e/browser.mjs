@@ -59,7 +59,6 @@ watch(page);
 
 const status = page.locator('header.status');
 const statusLine = async () => (await status.innerText()).replace(/\s+/g, ' ');
-const path = () => status.getAttribute('data-path');
 const waitFor = (selector, timeout) => page.locator(selector).waitFor({ timeout });
 
 const pane = page.locator('.session-pane');
@@ -82,13 +81,13 @@ const startSession = async (agent, directory) => {
   await page.locator('input[name="directory"]').fill(directory);
   await page.getByRole('button', { name: 'Start session' }).click();
   await pane.locator(`.composer textarea[placeholder="Message ${agent}"], .closed-note`).waitFor({ timeout: 20_000 });
-  log(`started a ${agent} session in ${directory} on ${await path()}`);
+  log(`started a ${agent} session in ${directory}`);
 };
 const send = async (prompt) => {
   const composer = pane.locator('.composer textarea');
   await composer.fill(prompt);
   await composer.press('Enter');
-  log(`sent "${prompt}" on ${await path()}`);
+  log(`sent "${prompt}"`);
 };
 const text = async (selector) => (await pane.locator(selector).allInnerTexts()).join(' | ');
 
@@ -109,7 +108,7 @@ const turn = async ({ beforeApprove = async () => {} } = {}) => {
   log(`approval card: "${(await pane.locator('.request[data-open="true"]').innerText()).replace(/\s+/g, ' ')}"`);
   await beforeApprove();
   await approve.tap();
-  log(`tapped Approve on ${await path()}`);
+  log('tapped Approve');
   const reply = pane.locator('.reply.streaming');
   await reply.waitFor({ timeout: 20_000 });
   const seen = new Set();
@@ -133,7 +132,6 @@ const opened = Date.now();
 await page.goto(joinUrl);
 await waitFor('header.status[data-state="Live"]', 60_000);
 log(`Live ${Date.now() - opened}ms after navigation (first connect)`);
-await waitFor('header.status[data-state="Live"]:not([data-path="Unknown"])', 10_000);
 log(`status line: "${await statusLine()}"`);
 
 if (scenario === 'turn') {
@@ -142,8 +140,6 @@ if (scenario === 'turn') {
     (await page.evaluate(() => localStorage.getItem('conductor.ticket'))) !== null,
     'the ticket is in local storage',
   );
-  // A browser can't send UDP, so iroh always reaches the host through a relay.
-  check((await path()) === 'Relayed', 'Live on the relay');
   // This host runs no Codex CLI.
   await page.getByRole('button', { name: 'New session' }).click();
   await page.locator('.segment', { hasText: 'Codex' }).click();
@@ -158,7 +154,6 @@ if (scenario === 'turn') {
       }
     },
   });
-  check((await path()) === 'Relayed', 'the turn completed on the relay');
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
 
@@ -244,9 +239,8 @@ if (scenario === 'turn') {
   log(`closed: "${await text('.closed-note')}"`);
   await startSession('Claude Code', `${dir}/conductor`);
   await send(PROMPT);
-  await pane.locator('.request[data-open="true"] button.approve').click();
-  await pane.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 20_000 });
-  log(`running, held mid-reply: "${await text('.reply')}"`);
+  const approve = pane.locator('.request[data-open="true"] button.approve');
+  await approve.waitFor({ timeout: 20_000 });
   const shots = {
     desktop: [{ viewport: { width: 1280, height: 800 } }, [['conductor', 'running'], ['scratch', 'closed']]],
     phone: [
@@ -254,24 +248,33 @@ if (scenario === 'turn') {
       [['conductor', 'running'], ['notes', 'idle']],
     ],
   };
+  // Deltas are live-only, so every shooter is Live before the reply starts.
+  const shooters = [];
   for (const scheme of ['light', 'dark']) {
     for (const [device, [options, states]] of Object.entries(shots)) {
-      const shooter = await browser.newContext({ ...options, colorScheme: scheme, reducedMotion: 'reduce' });
-      const shot = await shooter.newPage();
+      const context = await browser.newContext({ ...options, colorScheme: scheme, reducedMotion: 'reduce' });
+      const shot = await context.newPage();
       watch(shot);
       await shot.goto(joinUrl);
       await shot.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
-      for (const [title, state] of states) {
-        await openRow(title, shot);
-        await shot.waitForTimeout(450);
-        const file = `${out}/${device}-${scheme}-${state}.png`;
-        // The path differs from run to run, so it is left out of the shot;
-        // display: none, since a hidden span keeps its width.
-        await shot.screenshot({ path: file, style: '.status .path { display: none; }' });
-        log(`screenshot ${file}`);
-      }
-      await shooter.close();
+      shooters.push({ scheme, device, states, context, shot });
     }
+  }
+  await approve.click();
+  await pane.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 20_000 });
+  log(`running, held mid-reply: "${await text('.reply')}"`);
+  for (const { scheme, device, states, context, shot } of shooters) {
+    for (const [title, state] of states) {
+      await openRow(title, shot);
+      if (state === 'running') {
+        await shot.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 10_000 });
+      }
+      await shot.waitForTimeout(450);
+      const file = `${out}/${device}-${scheme}-${state}.png`;
+      await shot.screenshot({ path: file });
+      log(`screenshot ${file}`);
+    }
+    await context.close();
   }
 } else {
   throw new Error(`unknown scenario ${scenario}`);

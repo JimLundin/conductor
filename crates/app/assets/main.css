@@ -128,7 +128,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .status[data-state="CatchingUp"] .dot { background: #f2b24a; }
 .status[data-state="Live"] .dot { background: #5fd08e; }
 .status .host { font-weight: 600; }
-.status .state, .status .path { color: var(--band-muted); }
+.status .state { color: var(--band-muted); }
 .status .error { flex-basis: 100%; padding-bottom: 0.4rem; color: #f0a090; font-size: 0.75rem; }
 .status .change-host {
   margin-left: auto;

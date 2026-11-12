@@ -16,8 +16,8 @@ several of your machines, with no server of ours in the path.
   static files from GitHub Pages and installed as an app: Chrome, Edge or
   Safari's Add to Dock on the desktop, Add to Home Screen on the iPhone.
   There is no native client and no Apple Developer account.
-- **Traffic is end-to-end encrypted.** Clients reach hosts over iroh, through
-  n0's public relays where a direct path isn't possible (§4).
+- **Traffic is end-to-end encrypted.** Clients reach hosts over iroh through
+  n0's public relays (§4).
 
 ### Goals for v1
 

@@ -9,8 +9,7 @@ What is built and what comes next. Update it in the commit that changes it.
   tool calls, approvals, interrupts. `s1` and `s2` are the live checks.
 - **Host.** `conductord` serves one host over iroh: an in-memory event log
   (streaming deltas are live-only), a session actor per agent, one shared
-  Codex app-server. Every client, the browser included, connects over iroh,
-  through n0's relays where a direct path isn't possible.
+  Codex app-server. Clients reach it over iroh through n0's public relays.
 - **Client.** `HostLink` per host: reconnect with backoff, a hedged dial,
   catch-up from the cursor. `HostView` folds events into what the UI shows.
 - **App.** One Dioxus web app, installed as an app on the desktop and the
@@ -34,3 +33,9 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - A fresh connection sometimes gets no `Welcome` and dies at the 30 s idle
   timeout. Not reproduced yet.
+
+## Known risks
+
+- n0's free relays now carry all traffic. If n0 ever restricts them, use a
+  paid n0 relay or iroh's open-source relay on a small server. The relay URL
+  is one setting, so no code changes.

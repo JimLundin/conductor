@@ -1,5 +1,6 @@
-//! The wire protocol between a client and `conductord` (architecture §5). Pure
-//! types and the frame codec; no I/O, so it compiles natively and to wasm.
+//! The wire protocol between a client and `conductord` (architecture §5): the
+//! types, the frame codec, and [`wire`], which reads and writes frames on iroh
+//! streams. It compiles natively and to wasm.
 //!
 //! Every bi-stream starts with one [`Open`] frame from the client. The first
 //! stream of a connection must be [`Open::Hello`], answered by one
@@ -18,6 +19,7 @@
 mod frame;
 mod relay;
 mod ticket;
+pub mod wire;
 
 use serde::{Deserialize, Serialize};
 

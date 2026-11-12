@@ -1,4 +1,4 @@
-//! Frame I/O on iroh streams, using `proto`'s codec.
+//! Frame I/O on iroh streams, with this crate's codec.
 
 use iroh::endpoint::{ClosedStream, ReadExactError, RecvStream, SendStream, WriteError};
 use serde::Serialize;
@@ -15,23 +15,21 @@ pub enum WireError {
     #[error("could not open a stream: {0}")]
     Open(#[from] iroh::endpoint::ConnectionError),
     #[error("{0}")]
-    Frame(#[from] proto::FrameError),
+    Frame(#[from] crate::FrameError),
 }
 
-pub(crate) async fn write<T: Serialize>(send: &mut SendStream, msg: &T) -> Result<(), WireError> {
-    Ok(send.write_all(&proto::encode(msg)?).await?)
+pub async fn write<T: Serialize>(send: &mut SendStream, msg: &T) -> Result<(), WireError> {
+    Ok(send.write_all(&crate::encode(msg)?).await?)
 }
 
 /// `Ok(None)` when the peer finished the stream between frames.
-pub(crate) async fn read<T: DeserializeOwned>(
-    recv: &mut RecvStream,
-) -> Result<Option<T>, WireError> {
-    let mut header = [0u8; proto::HEADER_LEN];
+pub async fn read<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<Option<T>, WireError> {
+    let mut header = [0u8; crate::HEADER_LEN];
     match recv.read_exact(&mut header).await {
         Ok(()) => {
-            let mut body = std::iter::repeat_n(0u8, proto::body_len(header)?).collect::<Vec<u8>>();
+            let mut body = std::iter::repeat_n(0u8, crate::body_len(header)?).collect::<Vec<u8>>();
             recv.read_exact(&mut body).await?;
-            Ok(Some(proto::decode(&body)?))
+            Ok(Some(crate::decode(&body)?))
         }
         Err(ReadExactError::FinishedEarly(0)) => Ok(None),
         Err(err) => Err(err.into()),

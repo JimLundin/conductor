@@ -206,11 +206,9 @@ impl Session {
     }
 
     async fn on_status(&mut self, status: Status) -> anyhow::Result<Flow> {
-        let Status {
-            state, path, error, ..
-        } = status;
+        let Status { state, error, .. } = status;
         let error = error.map(|e| format!(" error={e}")).unwrap_or_default();
-        self.log(format!("status {state:?} path={path:?}{error}"))?;
+        self.log(format!("status {state:?}{error}"))?;
         let now = match state {
             LinkState::Live => Liveness::Live,
             LinkState::Disconnected
@@ -325,10 +323,7 @@ impl Session {
                 Ok(Flow::Next)
             }
             EventKind::TurnCompleted { .. } => {
-                self.log(format!(
-                    "turn completed; path={:?}",
-                    self.link.status().path
-                ))?;
+                self.log(String::from("turn completed"))?;
                 Ok(Flow::Finished)
             }
             EventKind::SessionClosed { reason } => Err(anyhow::Error::msg(format!(

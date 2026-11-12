@@ -127,11 +127,6 @@ macros = [
 # Extra macros allowed only inside #[cfg(test)] code and tests/.
 test_macros = ["assert_eq", "assert_ne"]
 
-# Proposal 0035: stream endpoints of ours, whose methods may take `&mut self`
-# anywhere. A type joins by review: it wraps a library stream or channel
-# whose own API takes `&mut`, or it is the reassembly buffer of one.
-endpoints = []
-
 # Proposals 0028 and 0037: methods whose closure argument may have a boolean
 # expression (`matches!`, a comparison, `&&`, `||`, `!`) as its body.
 predicate_adapters = [
@@ -198,11 +193,6 @@ allowed = ["item.use.glob"]
 rule = "`#![allow]` only for `clippy::useless_format` at the root of crates/app (proposal 0018)"
 paths = ["crates/app/src/main.rs"]
 allowed = ["attr.allow"]
-
-[[scope]]
-rule = "`dyn` only in crates/client/src/platform/ (proposal 0017)"
-paths = ["crates/client/src/platform/**"]
-allowed = ["type.dyn"]
 
 [[scope]]
 rule = "serde derives only on wire types in crates/proto and the agents' provider protocol modules (proposal 0012)"

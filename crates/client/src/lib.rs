@@ -6,9 +6,6 @@ pub mod host_view;
 mod link;
 pub mod new_session;
 pub mod platform;
-mod wire;
 
-pub use link::{
-    Cursor, HostLink, LinkOptions, LinkState, PathKind, SendError, Status, Target, Update,
-};
+pub use link::{Cursor, HostLink, LinkOptions, LinkState, SendError, Status, Target, Update};
 pub use platform::Network;

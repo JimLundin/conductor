@@ -7,7 +7,6 @@ mod mapping;
 pub mod registry;
 pub mod serve;
 pub mod session;
-mod wire;
 
 use std::io::ErrorKind;
 use std::path::Path;
