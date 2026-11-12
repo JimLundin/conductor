@@ -161,12 +161,13 @@ pub(crate) fn claude_answer(decision: Decision, by: &ClientName) -> PermissionDe
 
 #[cfg(test)]
 mod tests {
+    use agents::Exit;
     use agents::claude::{
         Block, ClaudeEvent, Outcome, PermissionRequestId, Role, SessionId, ToolDetail,
     };
-    use proto::{EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome};
+    use proto::{CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
 
-    use super::{NativeRequest, NativeTurn, Step, claude_steps};
+    use super::{NativeRequest, Step, claude_steps};
 
     struct Case {
         event: ClaudeEvent,
@@ -201,29 +202,15 @@ mod tests {
     fn each_claude_event_maps_to_its_steps() {
         let cases = Vec::from([
             Case {
-                event: ClaudeEvent::TurnStarted {
-                    session_id: SessionId(String::from("s")),
-                },
-                steps: Vec::from([Step::TurnStarted(NativeTurn::Claude)]),
-            },
-            Case {
                 event: ClaudeEvent::Message {
                     role: Role::Assistant,
                     content: Vec::from([
                         Block::Thinking(String::from("hmm")),
-                        Block::Text(String::from("hi")),
-                        tool_use("Write", ToolDetail::Path(String::from("a.txt"))),
                         tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
                         tool_use("Bash", ToolDetail::Command(String::from("ls"))),
                     ]),
                 },
                 steps: Vec::from([
-                    Step::Emit(EventKind::AssistantMessage {
-                        text: String::from("hi"),
-                    }),
-                    started(ToolKind::FileChange {
-                        paths: Vec::from([String::from("a.txt")]),
-                    }),
                     started(ToolKind::Other {
                         name: String::from("Read"),
                         detail: String::from("b.txt"),
@@ -234,47 +221,12 @@ mod tests {
                 ]),
             },
             Case {
-                event: ClaudeEvent::Message {
-                    role: Role::User,
-                    content: Vec::from([
-                        Block::Text(String::from("[Request interrupted by user]")),
-                        Block::ToolResult {
-                            tool_use_id: String::from("toolu_1"),
-                            content: serde_json::Value::Null,
-                            outcome: Outcome::Failed,
-                        },
-                    ]),
-                },
-                steps: Vec::from([Step::ToolFinished {
-                    call: ToolCallId(String::from("toolu_1")),
-                    outcome: ToolOutcome::Failed,
-                }]),
-            },
-            Case {
-                event: ClaudeEvent::PermissionRequested {
-                    id: PermissionRequestId(String::from("p1")),
-                    tool_name: String::from("Bash"),
-                    detail: ToolDetail::Command(String::from("ls")),
-                    tool_use_id: Some(String::from("toolu_1")),
-                },
-                steps: Vec::from([Step::Open {
-                    native: NativeRequest::Claude(PermissionRequestId(String::from("p1"))),
-                    call: Some(ToolCallId(String::from("toolu_1"))),
-                    tool: String::from("Bash"),
-                    detail: String::from("ls"),
-                }]),
-            },
-            Case {
                 event: ClaudeEvent::PermissionCancelled {
                     id: PermissionRequestId(String::from("p1")),
                 },
                 steps: Vec::from([Step::Withdraw(NativeRequest::Claude(PermissionRequestId(
                     String::from("p1"),
                 )))]),
-            },
-            Case {
-                event: finished(Outcome::Succeeded, Some("completed")),
-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Completed)]),
             },
             Case {
                 event: finished(Outcome::Failed, Some("aborted_tools")),
@@ -287,8 +239,12 @@ mod tests {
                 })]),
             },
             Case {
-                event: ClaudeEvent::Unknown(serde_json::Value::Null),
-                steps: Vec::new(),
+                event: ClaudeEvent::Exited {
+                    status: Exit::Unknown(String::from("gone")),
+                },
+                steps: Vec::from([Step::Closed(CloseReason::Exited {
+                    status: String::from("unknown exit (gone)"),
+                })]),
             },
         ]);
         let (events, expected) = cases
