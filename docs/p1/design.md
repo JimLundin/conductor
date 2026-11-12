@@ -631,8 +631,15 @@ Routing, as the hub's one `match` on `CodexEvent`:
 |---|---|
 | `Thread { thread, event }` with a route | send `event` to that session's channel |
 | `Thread { thread, event }` without a route | `tracing::debug!` and drop (a thread of a closed session) |
-| `Exited { status }` | drop every route, which ends every Codex session's `Feed` (`SessionClosed { Exited }`) |
+| `Exited { status }` | send the exit to every route and drop them all, so every Codex session logs `SessionClosed { Exited }` and ends |
 | `Unknown(_)` | `tracing::debug!` |
+
+**Lifecycle (unit 5).** The hub starts `codex app-server` with the first
+thread a session asks for, not at boot; availability comes from
+`codex --version`, as Claude's does. When the server exits, the hub marks it
+down after closing every Codex session, and the next `StartSession` runs a
+new server. A crash costs the sessions that were open, not the host's Codex
+until a restart.
 
 `respond` and `interrupt` need no hub: `CodexThread` and `CodexServer` are
 handles to the agents actor, which answers each approval exactly once.
@@ -977,8 +984,9 @@ recordings come from unit 2's new `s1` recording with
 |---|---|---|
 | `claude-approve.jsonl` | unit 1, rebuilt in unit 2 | built by `fixtures/e2e/build-claude.py` |
 | `claude-deny-interrupt.jsonl` | unit 2 | built by `fixtures/e2e/build-claude.py` from steps 2 and 3c; a `pong` turn follows the interrupt |
-| `codex-two-threads.jsonl` | unit 5 | |
-| `codex-interrupt.jsonl` | unit 5 | |
+| `codex-two-threads.jsonl` | unit 5 | built by `fixtures/e2e/build-codex.py` from `fixtures/codex/server1-u5.jsonl` (`s2`, 2026-11-12), steps 1 and 2 on two threads at once |
+| `codex-interrupt.jsonl` | unit 5 | built by `fixtures/e2e/build-codex.py`, step 3c and its `pong` |
+| `codex-held-interrupt.jsonl`, `codex-withdraw.jsonl`, `codex-exit.jsonl` | unit 5 | built by `fixtures/e2e/build-codex.py`: step 3 held for `release`, step 3b, and the two thread starts before the stand-in exits |
 
 Advisories from the unit 1 review (`docs/subset/reviews/p1-u1.md`):
 - `fake-cli.py` plays `serverRequest/resolved` after a 5 s fallback even with
@@ -1097,21 +1105,30 @@ against today).
 | `app/src/main.rs` (rewritten and split) | 1,754 | 255 | 11 |
 | **Total** | **15,874** | **2,359** | **327** |
 
-**Added (estimated):**
+**Added (estimated; three daemon rows re-baselined after unit 5, marked):**
 
 | Code | Tokens | Lines |
 |---|---|---|
 | `proto` new types | 1,050 | 220 |
-| `daemon` `log`, `registry`, `session`, `codex_hub` | 3,400 | 520 |
-| `daemon` `mapping` with its tables | 1,350 | 210 |
+| `daemon` `log`, `registry`, `session`, `codex_hub` (re-baselined; was 3,400) | 6,000 | 950 |
+| `daemon` `mapping` with its tables (re-baselined; was 1,350) | 1,700 | 240 |
 | `daemon` `serve`, `lib`, `main` | 3,200 | 480 |
 | `daemon` `wire`, `rtc`, `stun` (unit T) | 6,900 | 980 |
-| `daemon` unit tests and `tests/e2e.rs` | 4,100 | 590 |
+| `daemon` unit tests and `tests/e2e.rs` (re-baselined; was 4,100) | 9,500 | 1,400 |
 | `client/src/host_view.rs` with tests | 1,700 | 280 |
 | `app` (three files) | 3,200 | 430 |
 | `agents` deltas and `ToolDetail`, with tests | 900 | 140 |
-| **Total Rust** | **25,800** | **3,850** |
+| **Total Rust** (was 25,800 and 3,850) | **34,150** | **5,110** |
 | Not Rust: `fake-cli.py`, wrappers, `fixtures/e2e/`, `browser.mjs`, `e2e-browser.sh`, CSS, `smoke.md` | | about 450 |
+
+**Re-baselined after unit 5 (2026-11-12).** The original daemon budget was
+set before the actors existed, by scaling an earlier rewrite by +33%, and
+that factor is too low for actor code serving two providers (units 3, 4 and
+5 all ran over it). The three marked rows are the unit 5 review's figures
+(`docs/subset/reviews/p1-u5.md`), checked against the code after its fixes:
+`log`, `registry`, `session` and `codex_hub` measure 6,069 tokens, `mapping`'s
+code 1,713, and `e2e.rs` with `mapping`'s tests 9,096. Units 6 to 8 are held
+to these rows. The net figures below are from the original estimate.
 
 **Net:** about +9,900 tokens and +1,500 lines of Rust (estimated). Of that,
 unit T is about +1,400 tokens of pure subset inflation, which is the price of
@@ -1243,3 +1260,13 @@ Also approved: the hedged dial from the reconnect forensics (`docs/forensics/rec
   only performs awaited side effects; every other loop stays adapters.
 - **The fixture is gone from `crates/`**; unit 7 regenerates the screenshots
   from the real host running the fake CLIs.
+- **Open items for the next wire change** (from the unit 5 review; the app
+  is not changed until then):
+  - Claude's `Write` tool shows as "Edit" on its tool card, because
+    `ToolKind::FileChange` carries no tool name.
+  - The approval card drops Codex's `reason` (such as "needs escalated
+    permission to write outside the workspace"), which `ApprovalKind`
+    carries and `mapping` discards.
+  - Nothing tells the user that Codex works without asking inside the
+    session's directory (`OnRequest` with `WorkspaceWrite`). The New Session
+    screen or the session header needs a hint.

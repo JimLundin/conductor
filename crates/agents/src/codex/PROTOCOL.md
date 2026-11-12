@@ -71,8 +71,13 @@ not committed. Where this file disagrees with the JSON Schema or architecture
   said so and the turn completed normally. (Step 2.)
 - Codex sends `serverRequest/resolved` with the `requestId` after it reads
   our answer, before the item completes. The actor only reports
-  `ApprovalCancelled` when the request is still unanswered at that point. That
-  did not happen in any run. (Steps 1 and 2.)
+  `ApprovalCancelled` when the request is still unanswered at that point.
+  (Steps 1 and 2.)
+- `turn/interrupt` sent while a command approval is unanswered: Codex
+  answers `{}`, completes the turn `interrupted`, and only then sends
+  `serverRequest/resolved` for the request, so `ApprovalCancelled` arrives
+  after `TurnCompleted`. The command item never completes. Answering the
+  request afterwards fails with `UnknownApproval`. (Step 3b, 2026-11-12.)
 
 ## Interrupt
 

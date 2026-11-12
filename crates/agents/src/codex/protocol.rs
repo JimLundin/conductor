@@ -158,6 +158,8 @@ pub enum ThreadEvent {
     ApprovalRequested {
         id: ApprovalId,
         turn: TurnId,
+        /// The item the request is about, as in its `Item` event.
+        item: String,
         kind: ApprovalKind,
         /// Codex's own decision values, verbatim. For a command this is
         /// `availableDecisions`; without it, and for a file change, it is the
@@ -282,6 +284,7 @@ fn plain_decisions() -> Vec<Value> {
 struct Asked {
     thread: String,
     turn: String,
+    item: String,
     shape: AnswerShape,
     kind: ApprovalKind,
     options: Vec<Value>,
@@ -300,6 +303,7 @@ fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
             },
             thread: p.thread_id,
             turn: p.turn_id,
+            item: p.item_id,
             shape: AnswerShape::Command,
             kind: ApprovalKind::Command {
                 command: p.command,
@@ -310,6 +314,7 @@ fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
         ServerRequest::FileChangeApproval(p) => Some(Asked {
             thread: p.thread_id,
             turn: p.turn_id,
+            item: p.item_id,
             shape: AnswerShape::FileChange,
             kind: ApprovalKind::FileChange {
                 reason: p.reason,
@@ -322,6 +327,7 @@ fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
             Some(Asked {
                 thread: p.thread_id,
                 turn: p.turn_id,
+                item: p.item_id,
                 shape: AnswerShape::Permissions(requested.clone()),
                 kind: ApprovalKind::Permissions {
                     reason: p.reason,
@@ -333,6 +339,7 @@ fn asked(request: ServerRequest) -> serde_json::Result<Option<Asked>> {
         ServerRequest::ToolRequestUserInput(p) => Some(Asked {
             thread: p.thread_id,
             turn: p.turn_id,
+            item: p.item_id,
             shape: AnswerShape::UserInput,
             kind: ApprovalKind::UserInput {
                 questions: serde_json::to_value(&p.questions)?,
@@ -352,6 +359,7 @@ fn approval(rpc_id: RequestId, request: ServerRequest, raw: Value) -> Inbound {
             event: ThreadEvent::ApprovalRequested {
                 id: ApprovalId::of(&rpc_id),
                 turn: TurnId(asked.turn),
+                item: asked.item,
                 kind: asked.kind,
                 options: asked.options,
             },
@@ -1034,6 +1042,7 @@ mod tests {
                 event: ThreadEvent::ApprovalRequested {
                     id: ApprovalId(String::from("0")),
                     turn: TurnId(String::from("tu_1")),
+                    item: String::from("exec-1"),
                     kind: ApprovalKind::Command {
                         command: Some(String::from("printf hi > a.txt")),
                         cwd: Some(String::from("/tmp/s")),

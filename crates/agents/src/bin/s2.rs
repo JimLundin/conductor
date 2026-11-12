@@ -1,6 +1,7 @@
 //! S2 live checklist: drives the real `codex app-server` through approve,
-//! decline, interrupt, two concurrent threads on one process, resume in a new
-//! process and an unknown approval id, printing PASS/FAIL per step.
+//! decline, interrupt, interrupt with an approval open, two concurrent
+//! threads on one process, resume in a new process and an unknown approval
+//! id, printing PASS/FAIL per step.
 //!
 //! Usage: s2 [FIXTURE_DIR]
 //! Writes raw app-server stdout per process to FIXTURE_DIR/<name>.jsonl when given.
@@ -258,13 +259,19 @@ impl Run {
             ThreadEvent::TurnStarted { .. } => self.cue(thread, Cue::Start).await?,
             ThreadEvent::AgentDelta { .. } => self.cue(thread, Cue::Delta).await?,
             ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
-            ThreadEvent::ApprovalRequested { id, .. } => {
-                let decision = match &self.plan {
-                    Plan::Answer(policy) => policy.decision(),
-                    Plan::Interrupt(_) => Decision::Decline,
-                };
-                self.live.server.respond(id.clone(), decision).await?;
-            }
+            ThreadEvent::ApprovalRequested { id, .. } => match &self.plan {
+                Plan::Interrupt(Cue::Approval) => self.cue(thread, Cue::Approval).await?,
+                Plan::Answer(policy) => {
+                    let decision = policy.decision();
+                    self.live.server.respond(id.clone(), decision).await?;
+                }
+                Plan::Interrupt(_) => {
+                    self.live
+                        .server
+                        .respond(id.clone(), Decision::Decline)
+                        .await?;
+                }
+            },
         }
         Ok(())
     }
@@ -278,7 +285,8 @@ impl Run {
         match (&self.plan, cue, &self.interrupted) {
             (Plan::Interrupt(Cue::Send), Cue::Send, None)
             | (Plan::Interrupt(Cue::Start), Cue::Start, None)
-            | (Plan::Interrupt(Cue::Delta), Cue::Delta, None) => {
+            | (Plan::Interrupt(Cue::Delta), Cue::Delta, None)
+            | (Plan::Interrupt(Cue::Approval), Cue::Approval, None) => {
                 self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
             }
             _ => {}
@@ -382,6 +390,20 @@ async fn interrupted(
         ),
     )?;
     Ok((after.live, verdict))
+}
+
+/// Reads the server's events until Codex withdraws a request.
+async fn until_withdrawn(events: &mut mpsc::Receiver<CodexEvent>) -> Option<ApprovalId> {
+    loop {
+        match events.recv().await {
+            Some(CodexEvent::Thread {
+                event: ThreadEvent::ApprovalCancelled { id },
+                ..
+            }) => break Some(id),
+            Some(_) => {}
+            None => break None,
+        }
+    }
 }
 
 async fn spawn(stdout_log: Option<PathBuf>) -> Result<Live> {
@@ -494,6 +516,46 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let (live, at_send) =
         interrupted(live, &a, "3d interrupt at send", Cue::Send, Expect::Either).await?;
 
+    let s = single(
+        live,
+        &a,
+        "Create the file d.txt in the current directory containing exactly `d`. Do nothing else.",
+        Plan::Interrupt(Cue::Approval),
+    )
+    .await?;
+    let t = &s.turn;
+    // Codex withdraws the request only after the turn has completed.
+    let Live { server, mut events } = s.live;
+    let withdrawn = tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
+    let late = match t.answered.first() {
+        Some(id) => Some(server.respond(id.clone(), Decision::Accept).await),
+        None => None,
+    };
+    let withdraw = report(
+        "3b interrupt with an approval open",
+        match (
+            &s.interrupted,
+            &withdrawn,
+            &late,
+            &t.outcome,
+            presence(&scratch.join("d.txt")),
+        ) {
+            (
+                Some(Ok(())),
+                Ok(Some(_)),
+                Some(Err(_)),
+                Some(TurnOutcome::Interrupted),
+                Presence::Missing,
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "approvals={:?} interrupt()={:?} items={:?} outcome={:?} after the turn={withdrawn:?} respond-after={late:?}",
+            t.approvals, s.interrupted, t.items, t.outcome
+        ),
+    )?;
+    let live = Live { server, events };
+
     let b = live.server.start_thread(thread_opts.clone()).await?;
     let c = live.server.start_thread(thread_opts.clone()).await?;
     let (tb, tc) = n0_future::future::try_zip(
@@ -600,6 +662,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         interrupt,
         mid_stream,
         at_send,
+        withdraw,
         two_threads,
         resume,
         ids,

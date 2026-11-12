@@ -207,6 +207,11 @@ impl CodexThread {
         let _ = request(&self.server.commands, call).await?;
         Ok(())
     }
+
+    /// Answers one of this thread's open approvals exactly once.
+    pub async fn respond(&self, id: ApprovalId, decision: Decision) -> Result<(), Error> {
+        self.server.respond(id, decision).await
+    }
 }
 
 /// Sends `call` to the actor and waits for Codex's answer.
