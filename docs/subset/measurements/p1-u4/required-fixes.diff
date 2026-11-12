@@ -1,0 +1,816 @@
+diff --git a/crates/agents/tests/fake-cli.py b/crates/agents/tests/fake-cli.py
+index 7350251..ed4ee59 100644
+--- a/crates/agents/tests/fake-cli.py
++++ b/crates/agents/tests/fake-cli.py
+@@ -13,7 +13,7 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
+   can hold the recording at a point and prove nothing was sent before.
+ - `{"fake": "hang_up", "after": 1}`, anywhere in the recording, closes stdin
+   once that many lines are read, so the session's next write fails. The
+-  process stays up 10 s after the recording ends, so the failure isn't an exit.
++  process stays up 1 s after the recording ends, so the failure isn't an exit.
+ 
+ Markers are never printed. Once stdin closes, nothing waits.
+ """
+@@ -95,4 +95,4 @@ for line in recording:
+     sys.stdout.flush()
+ reader.join()
+ if hang_up is not None:
+-    time.sleep(10)
++    time.sleep(1)
+diff --git a/crates/client/examples/headless.rs b/crates/client/examples/headless.rs
+index 4d72e38..a476214 100644
+--- a/crates/client/examples/headless.rs
++++ b/crates/client/examples/headless.rs
+@@ -33,6 +33,9 @@ struct Args {
+     /// to show the resubscribe with `after_seq`.
+     #[arg(long)]
+     reconnect_after: Option<usize>,
++    /// Interrupt the turn on its first delta, or right after the message.
++    #[arg(long, value_enum, default_value_t = When::Never)]
++    interrupt: When,
+     #[arg(long, default_value_t = 60)]
+     timeout_secs: u64,
+ }
+@@ -43,6 +46,13 @@ enum ProviderChoice {
+     Codex,
+ }
+ 
++#[derive(Debug, Clone, Copy, ValueEnum)]
++enum When {
++    Never,
++    FirstDelta,
++    AtSend,
++}
++
+ #[derive(Debug, Clone, Copy, ValueEnum)]
+ enum Choice {
+     Approve,
+@@ -87,6 +97,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
+         prompt: args.prompt,
+         decision,
+         reconnect_after: args.reconnect_after,
++        interrupt: args.interrupt,
+         link,
+         updates,
+         ours: None,
+@@ -153,6 +164,7 @@ struct Session {
+     prompt: String,
+     decision: Decision,
+     reconnect_after: Option<usize>,
++    interrupt: When,
+     link: HostLink,
+     updates: mpsc::Receiver<Update>,
+     ours: Option<Ours>,
+@@ -233,6 +245,9 @@ impl Session {
+                     .send(CommandBody::SendMessage { session, text })
+                     .await?;
+                 self.log(format!("message {:?} -> {result:?}", self.prompt))?;
++                if let When::AtSend = self.interrupt {
++                    self.interrupt(session).await?;
++                }
+                 Ok(Flow::Next)
+             }
+         }
+@@ -280,6 +295,9 @@ impl Session {
+         match event.kind {
+             EventKind::AssistantDelta { .. } => {
+                 self.deltas = self.deltas.saturating_add(1);
++                if let (When::FirstDelta, 1) = (self.interrupt, self.deltas) {
++                    self.interrupt(event.session).await?;
++                }
+                 let due = self.reconnect_after.filter(|after| after == &self.deltas);
+                 if let (Some(_), Reconnected::No) = (due, self.reconnected) {
+                     self.reconnected = Reconnected::Yes;
+@@ -324,6 +342,12 @@ impl Session {
+         }
+     }
+ 
++    async fn interrupt(&self, session: SessionId) -> anyhow::Result<()> {
++        let result = self.link.send(CommandBody::Interrupt { session }).await?;
++        self.log(format!("interrupt -> {result:?}"))?;
++        Ok(())
++    }
++
+     fn log(&self, line: String) -> std::io::Result<()> {
+         log(self.start, line)
+     }
+diff --git a/crates/client/examples/live_host.rs b/crates/client/examples/live_host.rs
+deleted file mode 100644
+index c057042..0000000
+--- a/crates/client/examples/live_host.rs
++++ /dev/null
+@@ -1,346 +0,0 @@
+-//! Drives a real host through three Claude turns and prints every update:
+-//! an approved file write, an interrupt on the first delta, and an interrupt
+-//! sent with the message, before the turn starts. `tools/live-host.sh` runs it.
+-//!
+-//! `cargo run -p client --example live_host -- <ticket> --directory DIR`
+-
+-use std::io::Write;
+-use std::time::{Duration, Instant};
+-
+-use anyhow::Context;
+-use clap::Parser;
+-use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
+-use proto::{
+-    ClientName, CommandBody, CommandResult, Decision, Event, EventKind, HostPath, Provider,
+-    SessionId, Ticket, TurnOutcome,
+-};
+-use tokio::sync::mpsc;
+-
+-const WRITE: &str = "Use the Write tool to create a.txt in the current directory containing exactly the word hello. Then say done.";
+-const COUNT: &str = "Count from 1 to 300, one number per line, with no other text.";
+-
+-#[derive(Parser)]
+-struct Args {
+-    #[arg(value_parser = Ticket::parse)]
+-    ticket: Ticket,
+-    /// The session's directory on the host.
+-    #[arg(long)]
+-    directory: String,
+-    #[arg(long, default_value_t = 180)]
+-    timeout_secs: u64,
+-}
+-
+-/// What the driver does during a turn.
+-#[derive(Debug, Clone, Copy)]
+-enum Plan {
+-    Approve,
+-    InterruptOnFirstDelta,
+-    InterruptAtSend,
+-}
+-
+-/// What one turn did, as the client saw it.
+-#[derive(Debug, Clone)]
+-struct Tally {
+-    deltas: usize,
+-    approved: usize,
+-    interrupt: Option<CommandResult>,
+-    outcome: Option<TurnOutcome>,
+-}
+-
+-const FRESH: Tally = Tally {
+-    deltas: 0,
+-    approved: 0,
+-    interrupt: None,
+-    outcome: None,
+-};
+-
+-enum Flow {
+-    Next,
+-    Ended,
+-}
+-
+-#[derive(Debug, Clone, Copy)]
+-enum Verdict {
+-    Pass,
+-    Fail,
+-}
+-
+-const PLANS: &[Plan] = &[
+-    Plan::Approve,
+-    Plan::InterruptOnFirstDelta,
+-    Plan::InterruptAtSend,
+-];
+-
+-/// The driver's loop state: the turn in progress and the finished ones.
+-struct Live {
+-    start: Instant,
+-    link: HostLink,
+-    updates: mpsc::Receiver<Update>,
+-    session: SessionId,
+-    plan: Plan,
+-    tally: Tally,
+-    done: Vec<Tally>,
+-}
+-
+-struct Ended {
+-    link: HostLink,
+-    result: anyhow::Result<Vec<Tally>>,
+-}
+-
+-#[tokio::main]
+-async fn main() -> anyhow::Result<()> {
+-    tracing_subscriber::fmt()
+-        .with_env_filter(
+-            tracing_subscriber::EnvFilter::try_from_default_env()
+-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+-        )
+-        .with_writer(std::io::stderr)
+-        .init();
+-    let args = Args::parse();
+-    let deadline = Duration::from_secs(args.timeout_secs);
+-    tokio::time::timeout(deadline, run(args))
+-        .await
+-        .context("timed out")?
+-}
+-
+-async fn run(args: Args) -> anyhow::Result<()> {
+-    let start = Instant::now();
+-    let (link, mut updates) = HostLink::spawn(
+-        Target::of_ticket(&args.ticket),
+-        LinkOptions::new(ClientName(String::from("live"))),
+-    )
+-    .await?;
+-    until_live(start, &mut updates).await?;
+-    let started = link
+-        .send(CommandBody::StartSession {
+-            provider: Provider::Claude,
+-            directory: HostPath(args.directory),
+-        })
+-        .await?;
+-    log(start, format!("start -> {started:?}"))?;
+-    let session = match started {
+-        CommandResult::Started { session } => Ok(session),
+-        CommandResult::Accepted | CommandResult::Rejected(_) => {
+-            Err(anyhow::Error::msg("the host did not start a session"))
+-        }
+-    }?;
+-    let interrupt = send_turn(&link, start, session, Plan::Approve).await?;
+-    let live = Live {
+-        start,
+-        link,
+-        updates,
+-        session,
+-        plan: Plan::Approve,
+-        tally: Tally { interrupt, ..FRESH },
+-        done: Vec::new(),
+-    };
+-    let ended = live.run().await;
+-    ended.link.stop().await?;
+-    let done = ended.result?;
+-    let checks = PLANS
+-        .iter()
+-        .copied()
+-        .zip(done.iter())
+-        .map(|(plan, tally)| (plan, verdict(plan, tally)))
+-        .collect::<Vec<(Plan, Verdict)>>();
+-    checks
+-        .iter()
+-        .try_for_each(|(plan, verdict)| log(start, format!("check {verdict:?}: {plan:?}")))?;
+-    match checks
+-        .iter()
+-        .find(|(_, verdict)| matches!(verdict, Verdict::Fail))
+-        .map(|(plan, _)| plan)
+-        .copied()
+-        .or(PLANS.get(done.len()).copied())
+-    {
+-        Some(plan) => Err(anyhow::Error::msg(format!("failed: {plan:?}"))),
+-        None => Ok(()),
+-    }
+-}
+-
+-/// Turn 1 streams, is approved and completes. Turn 2 is interrupted after
+-/// its first delta. Turn 3 is interrupted at send.
+-fn verdict(plan: Plan, tally: &Tally) -> Verdict {
+-    let passed = match plan {
+-        Plan::Approve => Some(tally).filter(|tally| {
+-            tally.deltas > 0 && tally.approved > 0 && tally.outcome == Some(TurnOutcome::Completed)
+-        }),
+-        Plan::InterruptOnFirstDelta => Some(tally).filter(|tally| {
+-            tally.deltas > 0
+-                && tally.interrupt == Some(CommandResult::Accepted)
+-                && tally.outcome == Some(TurnOutcome::Interrupted)
+-        }),
+-        Plan::InterruptAtSend => Some(tally).filter(|tally| {
+-            tally.interrupt == Some(CommandResult::Accepted)
+-                && tally.outcome == Some(TurnOutcome::Interrupted)
+-        }),
+-    };
+-    passed.map_or(Verdict::Fail, |_| Verdict::Pass)
+-}
+-
+-/// Sends the plan's message, and the interrupt that goes with it at once.
+-async fn send_turn(
+-    link: &HostLink,
+-    start: Instant,
+-    session: SessionId,
+-    plan: Plan,
+-) -> anyhow::Result<Option<CommandResult>> {
+-    let text = match plan {
+-        Plan::Approve => WRITE,
+-        Plan::InterruptOnFirstDelta | Plan::InterruptAtSend => COUNT,
+-    };
+-    let sent = link
+-        .send(CommandBody::SendMessage {
+-            session,
+-            text: String::from(text),
+-        })
+-        .await?;
+-    log(start, format!("message {text:?} -> {sent:?}"))?;
+-    match plan {
+-        Plan::InterruptAtSend => Ok(Some(interrupt(link, start, session).await?)),
+-        Plan::Approve | Plan::InterruptOnFirstDelta => Ok(None),
+-    }
+-}
+-
+-async fn interrupt(
+-    link: &HostLink,
+-    start: Instant,
+-    session: SessionId,
+-) -> anyhow::Result<CommandResult> {
+-    let result = link.send(CommandBody::Interrupt { session }).await?;
+-    log(start, format!("interrupt -> {result:?}"))?;
+-    Ok(result)
+-}
+-
+-async fn until_live(start: Instant, updates: &mut mpsc::Receiver<Update>) -> anyhow::Result<()> {
+-    loop {
+-        match updates.recv().await {
+-            Some(Update::Status(Status {
+-                state: LinkState::Live,
+-                path,
+-                ..
+-            })) => break log(start, format!("live path={path:?}")).map_err(anyhow::Error::from),
+-            Some(update) => log(start, format!("{update:?}"))?,
+-            None => break Err(anyhow::Error::msg("the link stopped")),
+-        }
+-    }
+-}
+-
+-fn log(start: Instant, line: String) -> std::io::Result<()> {
+-    writeln!(
+-        std::io::stdout(),
+-        "[{:7.3}s] {line}",
+-        start.elapsed().as_secs_f64()
+-    )
+-}
+-
+-impl Live {
+-    /// Hands the link back however the turns ended, so it can be stopped.
+-    async fn run(mut self) -> Ended {
+-        loop {
+-            let update = self.updates.recv().await;
+-            match self.on(update).await {
+-                Ok(Flow::Next) => {}
+-                Ok(Flow::Ended) => {
+-                    break Ended {
+-                        link: self.link,
+-                        result: Ok(self.done),
+-                    };
+-                }
+-                Err(err) => {
+-                    break Ended {
+-                        link: self.link,
+-                        result: Err(err),
+-                    };
+-                }
+-            }
+-        }
+-    }
+-
+-    async fn on(&mut self, update: Option<Update>) -> anyhow::Result<Flow> {
+-        match update {
+-            Some(Update::Event(event)) => self.on_event(event).await,
+-            Some(update) => {
+-                self.log(format!("{update:?}"))?;
+-                Ok(Flow::Next)
+-            }
+-            None => Err(anyhow::Error::msg("the link stopped")),
+-        }
+-    }
+-
+-    async fn on_event(&mut self, event: Event) -> anyhow::Result<Flow> {
+-        self.log(format!("event #{} {:?}", event.seq.0, event.kind))?;
+-        match (event.kind, self.plan) {
+-            (EventKind::AssistantDelta { .. }, plan) => {
+-                self.tally.deltas = self.tally.deltas.saturating_add(1);
+-                match (plan, self.tally.deltas) {
+-                    (Plan::InterruptOnFirstDelta, 1) => {
+-                        let result = interrupt(&self.link, self.start, self.session).await?;
+-                        self.tally.interrupt = Some(result);
+-                    }
+-                    (Plan::InterruptOnFirstDelta | Plan::Approve | Plan::InterruptAtSend, _) => {}
+-                }
+-                Ok(Flow::Next)
+-            }
+-            (EventKind::RequestOpened { request, .. }, plan) => {
+-                let decision = match plan {
+-                    Plan::Approve => Decision::Approve,
+-                    Plan::InterruptOnFirstDelta | Plan::InterruptAtSend => Decision::Deny,
+-                };
+-                let session = self.session;
+-                let result = self
+-                    .link
+-                    .send(CommandBody::Resolve {
+-                        session,
+-                        request,
+-                        decision,
+-                    })
+-                    .await?;
+-                self.log(format!("resolve {request:?} {decision:?} -> {result:?}"))?;
+-                self.tally.approved = match (decision, result) {
+-                    (Decision::Approve, CommandResult::Accepted) => {
+-                        self.tally.approved.saturating_add(1)
+-                    }
+-                    (Decision::Approve | Decision::Deny, _) => self.tally.approved,
+-                };
+-                Ok(Flow::Next)
+-            }
+-            (EventKind::TurnCompleted { outcome }, _) => {
+-                self.done.push(Tally {
+-                    outcome: Some(outcome),
+-                    ..self.tally.clone()
+-                });
+-                self.next_turn().await
+-            }
+-            (EventKind::SessionClosed { reason }, _) => Err(anyhow::Error::msg(format!(
+-                "the session closed: {reason:?}"
+-            ))),
+-            (
+-                EventKind::SessionCreated { .. }
+-                | EventKind::SessionReady
+-                | EventKind::UserMessage { .. }
+-                | EventKind::AssistantMessage { .. }
+-                | EventKind::ToolCall { .. }
+-                | EventKind::RequestResolved { .. }
+-                | EventKind::Error { .. },
+-                _,
+-            ) => Ok(Flow::Next),
+-        }
+-    }
+-
+-    async fn next_turn(&mut self) -> anyhow::Result<Flow> {
+-        match PLANS.get(self.done.len()).copied() {
+-            Some(plan) => {
+-                let interrupt = send_turn(&self.link, self.start, self.session, plan).await?;
+-                self.plan = plan;
+-                self.tally = Tally { interrupt, ..FRESH };
+-                Ok(Flow::Next)
+-            }
+-            None => Ok(Flow::Ended),
+-        }
+-    }
+-
+-    fn log(&self, line: String) -> std::io::Result<()> {
+-        log(self.start, line)
+-    }
+-}
+diff --git a/crates/daemon/src/mapping.rs b/crates/daemon/src/mapping.rs
+index d57d32c..6b29dd5 100644
+--- a/crates/daemon/src/mapping.rs
++++ b/crates/daemon/src/mapping.rs
+@@ -161,12 +161,13 @@ pub(crate) fn claude_answer(decision: Decision, by: &ClientName) -> PermissionDe
+ 
+ #[cfg(test)]
+ mod tests {
++    use agents::Exit;
+     use agents::claude::{
+         Block, ClaudeEvent, Outcome, PermissionRequestId, Role, SessionId, ToolDetail,
+     };
+-    use proto::{EventKind, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome};
++    use proto::{CloseReason, EventKind, ToolCallId, ToolKind, ToolPhase, TurnOutcome};
+ 
+-    use super::{NativeRequest, NativeTurn, Step, claude_steps};
++    use super::{NativeRequest, Step, claude_steps};
+ 
+     struct Case {
+         event: ClaudeEvent,
+@@ -200,30 +201,16 @@ mod tests {
+     #[test]
+     fn each_claude_event_maps_to_its_steps() {
+         let cases = Vec::from([
+-            Case {
+-                event: ClaudeEvent::TurnStarted {
+-                    session_id: SessionId(String::from("s")),
+-                },
+-                steps: Vec::from([Step::TurnStarted(NativeTurn::Claude)]),
+-            },
+             Case {
+                 event: ClaudeEvent::Message {
+                     role: Role::Assistant,
+                     content: Vec::from([
+                         Block::Thinking(String::from("hmm")),
+-                        Block::Text(String::from("hi")),
+-                        tool_use("Write", ToolDetail::Path(String::from("a.txt"))),
+                         tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
+                         tool_use("Bash", ToolDetail::Command(String::from("ls"))),
+                     ]),
+                 },
+                 steps: Vec::from([
+-                    Step::Emit(EventKind::AssistantMessage {
+-                        text: String::from("hi"),
+-                    }),
+-                    started(ToolKind::FileChange {
+-                        paths: Vec::from([String::from("a.txt")]),
+-                    }),
+                     started(ToolKind::Other {
+                         name: String::from("Read"),
+                         detail: String::from("b.txt"),
+@@ -233,37 +220,6 @@ mod tests {
+                     }),
+                 ]),
+             },
+-            Case {
+-                event: ClaudeEvent::Message {
+-                    role: Role::User,
+-                    content: Vec::from([
+-                        Block::Text(String::from("[Request interrupted by user]")),
+-                        Block::ToolResult {
+-                            tool_use_id: String::from("toolu_1"),
+-                            content: serde_json::Value::Null,
+-                            outcome: Outcome::Failed,
+-                        },
+-                    ]),
+-                },
+-                steps: Vec::from([Step::ToolFinished {
+-                    call: ToolCallId(String::from("toolu_1")),
+-                    outcome: ToolOutcome::Failed,
+-                }]),
+-            },
+-            Case {
+-                event: ClaudeEvent::PermissionRequested {
+-                    id: PermissionRequestId(String::from("p1")),
+-                    tool_name: String::from("Bash"),
+-                    detail: ToolDetail::Command(String::from("ls")),
+-                    tool_use_id: Some(String::from("toolu_1")),
+-                },
+-                steps: Vec::from([Step::Open {
+-                    native: NativeRequest::Claude(PermissionRequestId(String::from("p1"))),
+-                    call: Some(ToolCallId(String::from("toolu_1"))),
+-                    tool: String::from("Bash"),
+-                    detail: String::from("ls"),
+-                }]),
+-            },
+             Case {
+                 event: ClaudeEvent::PermissionCancelled {
+                     id: PermissionRequestId(String::from("p1")),
+@@ -272,10 +228,6 @@ mod tests {
+                     String::from("p1"),
+                 )))]),
+             },
+-            Case {
+-                event: finished(Outcome::Succeeded, Some("completed")),
+-                steps: Vec::from([Step::TurnEnded(TurnOutcome::Completed)]),
+-            },
+             Case {
+                 event: finished(Outcome::Failed, Some("aborted_tools")),
+                 steps: Vec::from([Step::TurnEnded(TurnOutcome::Interrupted)]),
+@@ -287,8 +239,12 @@ mod tests {
+                 })]),
+             },
+             Case {
+-                event: ClaudeEvent::Unknown(serde_json::Value::Null),
+-                steps: Vec::new(),
++                event: ClaudeEvent::Exited {
++                    status: Exit::Unknown(String::from("gone")),
++                },
++                steps: Vec::from([Step::Closed(CloseReason::Exited {
++                    status: String::from("unknown exit (gone)"),
++                })]),
+             },
+         ]);
+         let (events, expected) = cases
+diff --git a/crates/daemon/tests/e2e.rs b/crates/daemon/tests/e2e.rs
+index 075ddec..5f4e160 100644
+--- a/crates/daemon/tests/e2e.rs
++++ b/crates/daemon/tests/e2e.rs
+@@ -514,10 +514,16 @@ async fn a_claude_turn_streams_asks_and_finishes() {
+         ]
+         .concat()
+     );
++    let desk = LinkOptions {
++        network: Network::Local,
++        ..LinkOptions::new(ClientName(String::from("desk")))
++    };
++    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await.unwrap();
++    until_live(&mut at_desk).await;
+     assert_eq!(
+         [
+             send(&link, resolve(1, Decision::Approve)).await,
+-            send(&link, resolve(1, Decision::Deny)).await,
++            send(&desk, resolve(1, Decision::Deny)).await,
+             send(&link, resolve(2, Decision::Approve)).await,
+         ],
+         [
+@@ -645,6 +651,51 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
+     fx.router.shutdown().await.unwrap();
+ }
+ 
++/// The CLI withdraws the open request when the turn is interrupted, and the
++/// tool call it asked about fails.
++#[tokio::test]
++async fn an_interrupt_withdraws_the_open_request() {
++    let fx = host().await;
++    let dir = scratch("withdraw", "claude-withdraw.jsonl");
++    let (link, mut updates) = link(fx.target.clone(), None).await;
++    until_live(&mut updates).await;
++    let _ = send(&link, start(Provider::Claude, &dir)).await;
++    let _ = send(&link, message("create d.txt")).await;
++    let call = "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq";
++    assert_eq!(
++        kinds_until(&mut updates, Until::Request).await,
++        [
++            opening(&dir),
++            Vec::from([user("create d.txt")]),
++            write_asked(call, "/tmp/s1-scratch/d.txt"),
++        ]
++        .concat()
++    );
++    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
++    assert_eq!(
++        kinds_until(&mut updates, Until::TurnEnd).await,
++        [
++            EventKind::RequestResolved {
++                request: RequestId(1),
++                resolution: Resolution::Withdrawn,
++            },
++            EventKind::ToolCall {
++                call: ToolCallId(String::from(call)),
++                phase: ToolPhase::Finished {
++                    outcome: ToolOutcome::Failed,
++                },
++            },
++            turn_end(TurnOutcome::Interrupted),
++        ]
++    );
++    assert_eq!(
++        send(&link, resolve(1, Decision::Approve)).await,
++        CommandResult::Rejected(Rejection::UnknownRequest)
++    );
++    link.stop().await.unwrap();
++    fx.router.shutdown().await.unwrap();
++}
++
+ /// The stand-in stops reading after `initialize`, so the message can't
+ /// reach it. The turn must end, or every client shows it running forever.
+ #[tokio::test]
+@@ -672,6 +723,18 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
+         send(&link, interrupt()).await,
+         CommandResult::Rejected(Rejection::NoTurnRunning)
+     );
++    assert_eq!(
++        kinds_until(&mut updates, Until::Closed).await,
++        [EventKind::SessionClosed {
++            reason: CloseReason::Exited {
++                status: String::from("exit status: 0"),
++            },
++        }]
++    );
++    assert_eq!(
++        send(&link, message("hi")).await,
++        CommandResult::Rejected(Rejection::SessionClosed)
++    );
+     link.stop().await.unwrap();
+     fx.router.shutdown().await.unwrap();
+ }
+diff --git a/fixtures/e2e/build-claude.py b/fixtures/e2e/build-claude.py
+index f2b4a72..6ee9e93 100644
+--- a/fixtures/e2e/build-claude.py
++++ b/fixtures/e2e/build-claude.py
+@@ -7,7 +7,10 @@ by rule, so every gate matches what a session writes:
+ - each turn's `system/init` waits for a user message, and in the recordings
+   listed in `RELEASED` also for the test's `release` file;
+ - a `can_use_tool` request is followed by a wait for our `control_response`;
+-- any later `control_response` (an interrupt's ack) waits for a `control_request`.
++- any later `control_response` (an interrupt's ack) waits for a `control_request`;
++- in the recordings listed in `WITHDRAWN`, nothing waits for an answer to
++  `can_use_tool`, and the `control_cancel_request` waits for the interrupt
++  in place of the ack after it.
+ 
+ Acks are renumbered `req_1`, `req_2`, ... in order, because the session that
+ replays a recording numbers its control requests from 1.
+@@ -28,6 +31,7 @@ RECORDINGS = {
+     "claude-deny-interrupt.jsonl": [1, 4, 5],
+     "claude-held-interrupt.jsonl": [2],
+     "claude-hang-up.jsonl": [],
++    "claude-withdraw.jsonl": [8],
+ }
+ 
+ # The turn starts only once the test has sent its interrupt, so the session
+@@ -37,21 +41,26 @@ RELEASED = {"claude-held-interrupt.jsonl"}
+ # The stand-in stops reading after `initialize`, so the first message fails.
+ HUNG_UP = {"claude-hang-up.jsonl"}
+ 
++# The test never answers the request. Its interrupt makes the CLI withdraw it.
++WITHDRAWN = {"claude-withdraw.jsonl"}
++
+ 
+ def wait(match):
+     return json.dumps({"fake": "await", "match": match})
+ 
+ 
+-def gated(line, released):
++def gated(line, released, withdrawn):
+     msg = json.loads(line)
+     kind = (msg.get("type"), msg.get("subtype"))
+-    if kind == ("control_response", None):
++    if kind == ("control_cancel_request", None):
+         return [wait({"type": "control_request"}), line]
++    if kind == ("control_response", None):
++        return [line] if withdrawn else [wait({"type": "control_request"}), line]
+     if kind == ("system", "init"):
+         release = [json.dumps({"fake": "release", "file": "release"})] if released else []
+         return [wait({"type": "user"})] + release + [line]
+     if kind == ("control_request", None) and msg["request"]["subtype"] == "can_use_tool":
+-        return [line, wait({"type": "control_response"})]
++        return [line] if withdrawn else [line, wait({"type": "control_response"})]
+     return [line]
+ 
+ 
+@@ -72,5 +81,6 @@ initialize, played = turns(SOURCE.read_text().splitlines())
+ for name, picked in RECORDINGS.items():
+     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
+     hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
+-    out = hang_up + [m for line in lines for m in gated(line, name in RELEASED)]
++    turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN)]
++    out = hang_up + gated(lines[0], False, False) + turn
+     (HERE / name).write_text("\n".join(out) + "\n")
+diff --git a/fixtures/e2e/claude-withdraw.jsonl b/fixtures/e2e/claude-withdraw.jsonl
+new file mode 100644
+index 0000000..82c510d
+--- /dev/null
++++ b/fixtures/e2e/claude-withdraw.jsonl
+@@ -0,0 +1,28 @@
++{"fake": "await", "match": {"type": "control_request"}}
++{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"commands":[{"name":"deep-research","description":"Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. (dynamic workflow)","argumentHint":"","builtin":true},{"name":"dataviz","description":"Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization, in ANY output medium — an HTML or React artifact, inline SVG, plotting code in any library (matplotlib, plotly, d3, Recharts, …), an image/PNG you will render and upload, or a chart shared into Slack. Read it BEFORE writing the first line of chart code, choosing chart colors, building a stat tile / meter / KPI row, or laying out a dashboard. When the destination is a first-party document connector (host-designated, never self-described) that renders live charts, hand it the rows (inline, or as an uploaded data file the chart cites) rather than a rendered PNG/SVG — a picture of a chart loses hover, data inspection and per-value comments. Produces visualizations that read as one system — elegant, accessible, consistent in light and dark — using a brand-neutral placeholder palette you swap for your own. Teaches a design-system-agnostic method: a form heuristic, a color formula with a runnable validator, mark specs, and interaction rules. A validated default palette is documented in `references/palette.md` — swap that file's values for your brand's. Triggers on: \"chart\", \"graph\", \"plot\", \"data viz\", \"visualization\", \"dashboard\", \"analytics\", \"visualize data\", \"categorical colors\", \"sequential / diverging palette\", \"stat tile\", \"sparkline\", \"heatmap\", \"legend\", \"axis\", \"tooltip\", \"chart colors\", \"color by series\".","argumentHint":"","builtin":true},{"name":"update-config","description":"Use this skill to configure the Claude Code harness via settings.json. Automated behaviors (\"from now on when X\", \"each time X\", \"whenever X\", \"before/after X\") require hooks configured in settings.json - the harness executes these, not Claude, so memory/preferences cannot fulfill them. Also use for: permissions (\"allow X\", \"add permission\", \"move permission to\"), env vars (\"set X=Y\"), hook troubleshooting, or any changes to settings.json/settings.local.json files. Examples: \"allow npm commands\", \"add bq permission to global settings\", \"move permission to user settings\", \"set DEBUG=true\", \"when claude stops show X\". For simple settings like theme/model, suggest the /config command.","argumentHint":"","builtin":true},{"name":"verify","description":"Verify that a code change actually does what it's supposed to by exercising it end-to-end and observing behavior — drive the affected flow, not just tests or typecheck. Run before committing nontrivial changes; bootstraps this repo's project verify skill if none exists yet. Don't invoke it on a diff that only touches tests, docs, or other code with no runtime surface to drive (a change to product source always has one) — there's nothing to observe.","argumentHint":"","builtin":true},{"name":"debug","description":"Enable debug logging for this session and help diagnose issues","argumentHint":"[issue description]","builtin":true},{"name":"code-review","description":"Review the current diff, or a PR number/branch/path target, for correctness bugs (plus reuse/simplification/efficiency cleanups where the model's recipe covers them) at the effort level given first, before any target (low|medium|high|xhigh|max: from few high-confidence findings to many, some uncertain); with no level given, it reuses the level you typed last. Pass --comment to post findings as inline PR comments, or --fix to apply them to the working tree after the review. Pass --max-findings <n> to report up to n findings, or --max-findings all for every finding. The choice stays until you pass --max-findings default.","argumentHint":"[low|medium|high|xhigh|max] [--fix] [--comment] [<pr#>|<branch>|<path>] [--max-findings <n>|all]","aliases":["review"],"builtin":true},{"name":"simplify","description":"Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes. Quality only — it does not hunt for bugs; use /code-review for that.","argumentHint":"[<target>]","builtin":true},{"name":"batch","description":"Research and plan a large-scale change, then execute it in parallel across 5–30 isolated worktree agents that each open a PR.","argumentHint":"<instruction>","builtin":true},{"name":"fewer-permission-prompts","description":"Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist to project .claude/settings.json to reduce permission prompts.","argumentHint":"","builtin":true},{"name":"doctor","description":"Health-check the user's Claude Code setup and fix issues: diagnose installation health — what the `claude doctor` terminal diagnostics cover — from local data (duplicate or leftover installs, PATH, unparseable settings files, broken or colliding agent definitions, skills whose frontmatter fails to parse); find unused skills, MCP servers, and plugins versus their context cost and disable dead weight; deduplicate local CLAUDE.md files against checked-in ones; trim checked-in CLAUDE.md files by cutting content a session could derive from the codebase (directory layouts, tech-stack lists, architecture overviews) while keeping gotchas, rationale, and non-standard conventions; migrate always-loaded CLAUDE.md guidance into lazy skills and nested CLAUDE.md files; flag slow hooks and context-heavy extensions; check the installed version is current; make auto mode the default permission mode; and pre-approve frequently denied read-only commands. Use when the user asks for a doctor run, checkup, audit, tune-up, or cleanup of their Claude Code setup or configuration.","argumentHint":"[prompt-audit [<path>]]","aliases":["checkup"],"builtin":true},{"name":"loop","description":"Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace.","argumentHint":"[interval] [prompt]","aliases":["proactive"],"builtin":true},{"name":"claude-api","description":"Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming, tool use, MCP, agents, caching, token counting, model migration.\nTRIGGER — read BEFORE opening the target file; don't skip because it \"looks like a one-liner\" — whenever: the prompt names Claude/Anthropic in any form (Claude, Anthropic, Fable, Opus, Sonnet, Haiku, `anthropic`, `@anthropic-ai`, `claude-*`, `us.anthropic.*`, `[1m]`); the user asks about an LLM (pricing/model choice/limits/caching) — never answer from memory; OR the task is LLM-shaped with provider unstated (agent/MCP/tool-definition/multi-agent/RAG/LLM-judge/computer-use; generate/summarize/extract/classify/rewrite/converse over NL; debugging refusals/cutoffs/streaming/tool-calls/tokens).\nSKIP only when another provider is being worked on (overrides all triggers): OpenAI/GPT/Gemini/Llama/Mistral/Cohere/Ollama named in the query; OR `grep -rE 'openai|langchain_openai|google.generativeai|genai|mistralai|cohere|ollama'` over the project hits (run this grep FIRST if no provider named — don't Read the file).","argumentHint":"","builtin":true},{"name":"workflow-authoring","description":"Reference for writing a Workflow tool script (script API and gotchas, resume, quality patterns, worked examples). Load before authoring a script for a workflow the user already opted into; it does not itself authorize running one.","argumentHint":"","builtin":true},{"name":"run","description":"Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a change works in the real app (not just tests). First looks for a project skill that already covers launching the app; otherwise falls back to built-in patterns per project type (CLI, server, TUI, Electron, browser-driven, library).","argumentHint":"","builtin":true},{"name":"run-skill-generator","description":"Author or improve the run-<unit> skill - a per-project skill that tells agents how to build, launch, and drive this project's app. Use when the user asks to set up the project, get it running, write run instructions, or verify build/run steps work from a clean environment.","argumentHint":"","builtin":true},{"name":"plugin-authoring","description":"Make a mod: a change to Claude's own interface or behaviour, such as a panel or pane that stays beside the chat and updates, a band, status line, toast, slash command, or hook on tool calls. Use to make, change or debug a mod or its hooks module.","argumentHint":"","builtin":true},{"name":"agents","description":"(removed) Ask Claude to create/manage subagents, or edit .claude/agents/","argumentHint":"","builtin":true},{"name":"auto-mode-setup","description":"Teach auto mode about your environment, plus optional rule tweaks","argumentHint":"[--request-id <uuid>] (--wizard posture=… scope=… depth=… --propose | --expect-sha256 <64-hex> --apply-file <path>)","builtin":true},{"name":"autocompact","description":"Configure the auto-compact window size","argumentHint":"[auto|<tokens>]","builtin":true},{"name":"clear","description":"Start a new session with empty context; previous session stays on disk (resumable with /resume)","argumentHint":"[name]","aliases":["reset","new"],"builtin":true},{"name":"color","description":"Set the prompt bar color for this session","argumentHint":"[red|blue|green|yellow|purple|orange|pink|cyan|default]","builtin":true},{"name":"compact","description":"Free up context by summarizing the conversation so far","argumentHint":"<optional custom summarization instructions>","builtin":true},{"name":"config","description":"Set a setting by key","argumentHint":"key=value","aliases":["settings"],"builtin":true},{"name":"output-style","description":"List output styles or switch to one","argumentHint":"[style]","builtin":true},{"name":"context","description":"Show current context usage","argumentHint":"","builtin":true},{"name":"effort","description":"Set effort level for model usage","argumentHint":"<low|medium|high|xhigh|max|auto|ultracode [on|off]>","builtin":true},{"name":"fast","description":"Toggle fast mode (Opus 5.5)","argumentHint":"[on|off]","builtin":true},{"name":"focus","description":"Toggle focus view: just your prompt, summary, and response","argumentHint":"[on|off]","builtin":true},{"name":"heapdump","description":"Dump the JS heap to the Desktop; on Linux with no Desktop folder, the home directory","argumentHint":"","builtin":true},{"name":"init","description":"Initialize a new CLAUDE.md file with codebase documentation","argumentHint":"","builtin":true},{"name":"mcp","description":"Manage MCP servers","argumentHint":"[reconnect|enable|disable [<server>|all]]","builtin":true},{"name":"model","description":"Set the AI model for Claude Code","argumentHint":"<model>","builtin":true},{"name":"__remote-workflow","description":"Run the workflow script delivered in this session environment (server-launched sessions only)","argumentHint":"","builtin":true},{"name":"workflow-launch-exec","description":"Execute a server-launched workflow handoff (workflow_launch event sessions only)","argumentHint":"","builtin":true},{"name":"reload-plugins","description":"Activate pending plugin changes in the current session","argumentHint":"[--force]","builtin":true},{"name":"reload-skills","description":"Pick up skills added or changed on disk during this session","argumentHint":"","builtin":true},{"name":"rename","description":"Rename the current conversation","argumentHint":"[name]","aliases":["name"],"builtin":true},{"name":"security-review","description":"Complete a security review of the pending changes on the current branch","argumentHint":"","builtin":true},{"name":"usage","description":"Show session cost, plan usage, and what's contributing to your limits","argumentHint":"","aliases":["cost","stats"],"builtin":true},{"name":"insights","description":"Generate a report analyzing your Claude Code sessions","argumentHint":"","builtin":true},{"name":"recap","description":"Generate a one-line session recap now","argumentHint":"","builtin":true},{"name":"goal","description":"Set a goal — keep working until the condition is met","argumentHint":"","builtin":true},{"name":"list-agents","description":"List subagents, teammates, and other Claude sessions you can message","argumentHint":"","aliases":["peers"],"builtin":true},{"name":"team-onboarding","description":"Help teammates ramp on Claude Code with a guide from your usage","argumentHint":"","builtin":true}],"agents":[{"name":"claude","description":"Catch-all for any task that doesn't fit a more specific agent. FleetView's default when no agent name is typed."},{"name":"Explore","description":"Fast read-only search agent for locating code. Use it to find files by pattern (eg. \"src/components/**/*.tsx\"), grep for symbols or keywords (eg. \"API endpoints\"), or answer \"where is X defined / which files reference Y.\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \"quick\" for a single targeted lookup, \"medium\" for moderate exploration, or \"very thorough\" to search across multiple locations and naming conventions.","model":"inherit"},{"name":"general-purpose","description":"General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you."},{"name":"Plan","description":"Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.","model":"inherit"},{"name":"statusline-setup","description":"Use this agent to configure the user's Claude Code status line setting.","model":"sonnet"}],"output_style":"default","available_output_styles":["default","Proactive","Concise","Explanatory","Learning"],"user_output_styles_dir":"/home/jim/.claude/output-styles","models":[{"value":"default","resolvedModel":"claude-opus-5-5","displayName":"Default (recommended)","description":"Use the default model (currently Opus 5.5) · $4/$20 per Mtok","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true,"supportsFastMode":true,"supportsAutoMode":true,"supportsThinkingOff":false},{"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus","description":"Opus 5.5 · Best for everyday, complex tasks · $4/$20 per Mtok","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true,"supportsFastMode":true,"supportsAutoMode":true,"supportsThinkingOff":false},{"value":"claude-fable-5[1m]","resolvedModel":"claude-fable-5","displayName":"Fable","description":"Fable 5 · Most capable for your hardest and longest-running tasks","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true,"supportsAutoMode":true,"supportsThinkingOff":false},{"value":"sonnet","resolvedModel":"claude-sonnet-5-5","displayName":"Sonnet","description":"Sonnet 5.5 · Efficient for routine tasks · $2/$10 per Mtok","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true,"supportsAutoMode":true,"supportsThinkingOff":false},{"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku","description":"Haiku 5.5 · Fastest for quick answers · $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100k)","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true,"supportsAutoMode":true,"supportsThinkingOff":false}],"account":{"tokenSource":"ANTHROPIC_AUTH_TOKEN","apiProvider":"firstParty"},"pid":1309948,"claude_code_version":"2.1.316","current_permission_mode":"default","feedback_mode":{"kind":"disabled"},"analytics_disabled":true,"remote_control_auto_enable":false,"remote_control_auto_connect_default":false,"remote_control_available":false,"remote_control_auto_on_by_default":false,"ide_rc_auto_enable_gate":false,"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","session_state":"idle","capabilities":["ui_surface_v1","mcp_call_result_not_for_model_v1"]},"pending_permission_requests":[],"pending_user_dialog_requests":[]}}
++{"fake": "await", "match": {"type": "user"}}
++{"type":"system","subtype":"init","cwd":"/tmp/s1-scratch","session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","tools":["Task","AskUserQuestion","Bash","CronCreate","CronDelete","CronList","Edit","EnterPlanMode","EnterWorktree","ExitPlanMode","ExitWorktree","ListAgents","Monitor","NotebookEdit","Read","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskStop","WebFetch","WebSearch","Workflow","Write"],"mcp_servers":[],"model":"claude-haiku-5-5","permissionMode":"default","slash_commands":["deep-research","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","claude-api","workflow-authoring","run","run-skill-generator","plugin-authoring","agents","auto-mode-setup","autocompact","clear","color","compact","config","output-style","context","effort","fast","focus","heapdump","init","mcp","model","__remote-workflow","workflow-launch-exec","reload-plugins","reload-skills","rename","security-review","usage","insights","recap","goal","list-agents","team-onboarding"],"terminal_slash_commands":["doctor","color","focus","reload-plugins"],"apiKeySource":"none","claude_code_version":"2.1.316","output_style":"default","agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"skills":["deep-research","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","claude-api","workflow-authoring","run","run-skill-generator","plugin-authoring"],"plugins":[{"name":"cc-plugin-agents-md","path":"builtin","source":"cc-plugin-agents-md@builtin"},{"name":"cc-plugin-plugin-authoring","path":"builtin","source":"cc-plugin-plugin-authoring@builtin"}],"capabilities":["interrupt_receipt_v1","interrupt_cancel_queued_v1","interrupt_send_now_v1","interrupt_requeue_taken_v1","msg_lifecycle_v1","request_marker_lists_v1","ask_user_question_unanswered_v1","lifecycle_wakeup_source_v1","sdk_mcp_tools_list_changed","sdk_mcp_manifests","mcp_read_resource_v1","mcp_tool_ui_meta_v1","ui_surface_v1","mcp_call_result_not_for_model_v1"],"analytics_disabled":true,"product_feedback_disabled":true,"uuid":"d30bd61a-1ae7-46f2-997e-57f7c81ec098","memory_paths":{"auto":"/home/jim/.claude/projects/-tmp-s1-scratch/memory/"},"original_cwd":"/tmp/s1-scratch","additional_directories":[],"messaging_socket_path":"/run/user/1000/cc-socks/1309948.sock","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","per_turn_effort_active":false,"ultrathink_available":false,"view_mode":"default"}
++{"type":"system","subtype":"status","status":"requesting","session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","uuid":"3969ff96-0972-4384-ada7-500a99cfc8af"}
++{"type":"stream_event","event":{"message":{"id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a","model":"claude-haiku-5-5","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":27,"output_tokens":16,"cache_creation_input_tokens":64,"cache_read_input_tokens":33520,"cache_creation":{"ephemeral_5m_input_tokens":64,"ephemeral_1h_input_tokens":0},"speed":null}},"type":"message_start"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"8cf43065-5151-4b92-9207-efbc85837714","ttft_ms":2472,"api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"content_block":{"id":"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq","name":"Write","input":{},"type":"tool_use"},"type":"content_block_start"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"454c8583-2fed-46a4-984a-6625b00c9080","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"bf36b7f1-ef0c-4027-9e33-f025e0a51b86","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"{\"file_","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"b0fb5497-48c5-4b77-a7b9-950c071ce405","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"path\": \"","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"02409c84-4f94-4db2-a2e6-a2f7ac2dc97d","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"/tmp/s1-scr","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"d33e5ead-5f59-4e78-9e49-d071e7f1fc35","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"atch/","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"049392fc-ab03-4ec5-a34b-354c58f71591","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"d.t","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"54fcd5fe-e25a-4f1f-a8d4-2b92bf8e1b89","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"xt\"","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"494cd269-d562-403f-85f5-83c23b523cfc","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":", \"conte","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"bc7d8afd-8e11-4560-a7bf-f068bdd79948","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"nt\": \"la","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"83d5d611-69ea-4f6b-8ba0-b47d43acfdec","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"index":0,"delta":{"partial_json":"te\"}","type":"input_json_delta"},"type":"content_block_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"92c0d2c2-5649-4c2f-bf6a-355fb6a3baca","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"assistant","message":{"id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a","model":"claude-haiku-5-5","type":"message","role":"assistant","content":[{"id":"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq","name":"Write","input":{"file_path":"/tmp/s1-scratch/d.txt","content":"late"},"type":"tool_use"}],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":27,"output_tokens":16,"cache_creation_input_tokens":64,"cache_read_input_tokens":33520,"cache_creation":{"ephemeral_5m_input_tokens":64,"ephemeral_1h_input_tokens":0},"speed":null},"context_management":null},"parent_tool_use_id":null,"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","uuid":"4475a17b-276d-4736-b38a-d914bf7b09bf","timestamp":"2026-11-11T17:30:08.591Z"}
++{"type":"stream_event","event":{"index":0,"type":"content_block_stop"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"529f3a92-24e7-491c-8cad-d79fa62206d0","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null},"usage":{"output_tokens":84,"input_tokens":27,"cache_creation_input_tokens":64,"cache_read_input_tokens":33520,"server_tool_use":null},"type":"message_delta"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"6f34b289-61a2-47fc-ba9f-e0ea1af9082f","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"stream_event","event":{"type":"message_stop"},"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","parent_tool_use_id":null,"uuid":"c5798f96-da32-4e5e-a8b0-08591865bd82","api_message_id":"msg_bdrk_ro7n4niqatcknail2fuhne2j5n367qemov72g6wx42ktty2faq2a"}
++{"type":"control_request","request_id":"8e8d863f-1d3f-4910-8591-5d1453ca9b6a","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/s1-scratch/d.txt","content":"late"},"description":"d.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq"}}
++{"fake": "await", "match": {"type": "control_request"}}
++{"type":"control_cancel_request","request_id":"8e8d863f-1d3f-4910-8591-5d1453ca9b6a"}
++{"type":"control_response","response":{"subtype":"success","request_id":"req_2","response":{"still_queued":[]}}}
++{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.","is_error":true,"tool_use_id":"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq"}]},"parent_tool_use_id":null,"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","uuid":"cd3e8320-e6a2-40e1-919f-8b1843c7dc5d","timestamp":"2026-11-11T17:30:08.614Z","tool_use_result":"User rejected tool use","tool_result_meta":[{"id":"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq","non_execution_kind":"user-rejected"}]}
++{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"parent_tool_use_id":null,"session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","uuid":"f2e4edf8-c6a6-4c5c-ba38-80d2a4c5ab0d","timestamp":"2026-11-11T17:30:08.616Z"}
++{"duration_api_ms":20672,"stop_reason":"tool_use","session_id":"03ef5463-f8da-4412-a8bd-0371a11cce56","total_cost_usd":0.007494449999999999,"usage":{"input_tokens":27,"cache_creation_input_tokens":64,"cache_read_input_tokens":33520,"output_tokens":84,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":64},"inference_geo":"","iterations":[],"speed":"standard","fallback_credit":null},"modelUsage":{"claude-haiku-5-5":{"inputTokens":3321,"outputTokens":744,"cacheReadInputTokens":260085,"cacheCreationInputTokens":33516,"webSearchRequests":0,"costUSD":0.007494449999999999,"contextWindow":1000000,"maxOutputTokens":128000,"thinkingTokens":0,"cacheCreationEphemeral5mInputTokens":33516,"cacheCreationEphemeral1hInputTokens":0,"canonicalModel":"claude-haiku-5-5","provider":"firstParty","costBasis":"list"}},"permission_denials":[{"tool_name":"Write","tool_use_id":"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq","tool_input":{"file_path":"/tmp/s1-scratch/d.txt","content":"late"}}],"terminal_reason":"aborted_tools","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"safety_stops":0,"is_error":true,"num_turns":3,"subtype":"error_during_execution","errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],"type":"result","duration_ms":2707,"uuid":"a2fe7be2-549f-4d49-a39a-77b32ae7c433","queued_turn_count":0,"result_index":8,"model_usage_since_last_result":{"claude-haiku-5-5":{"inputTokens":27,"outputTokens":84,"cacheReadInputTokens":33520,"cacheCreationInputTokens":64,"webSearchRequests":0,"costUSD":0.0003879,"contextWindow":1000000,"maxOutputTokens":128000,"thinkingTokens":0,"cacheCreationEphemeral5mInputTokens":64,"cacheCreationEphemeral1hInputTokens":0,"canonicalModel":"claude-haiku-5-5","provider":"firstParty","costBasis":"list"}}}
+diff --git a/tools/live-host.sh b/tools/live-host.sh
+index e6886e7..0a03c5a 100755
+--- a/tools/live-host.sh
++++ b/tools/live-host.sh
+@@ -1,18 +1,18 @@
+ #!/usr/bin/env bash
+ # The live hosted check: a real `conductord host` running the real Claude CLI
+-# (model haiku), driven over iroh by the `live_host` example. It costs a few
+-# cents of API use, so it is not part of tools/check.sh.
++# (model haiku), driven over iroh by three runs of the `headless` example. It
++# costs a few cents of API use, so it is not part of tools/check.sh.
+ #
+ #   tools/live-host.sh [log-dir]
+ #
+-# Prints the client's lines, then one RESULT line. Exits non-zero on a failed
+-# check. The host's own log is kept in log-dir (default: a temp dir).
++# Prints one RESULT line. Exits non-zero on a failed check. Each run's output
++# and the host's own log are kept in log-dir (default: a temp dir).
+ set -euo pipefail
+ cd "$(dirname "$0")/.."
+ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+ target=$(tools/target-dir)
+ cargo build -q -p daemon --bin conductord
+-cargo build -q -p client --example live_host
++cargo build -q -p client --example headless
+ 
+ scratch=/tmp/live-host-scratch
+ logs=${1:-$(mktemp -d)}
+@@ -31,20 +31,23 @@ for _ in $(seq 120); do
+ done
+ ticket=$(sed -n 's/^ticket: *//p' "$logs/host.out")
+ 
+-client=pass
+-"$target"/debug/examples/live_host "$ticket" --directory "$scratch" | tee "$logs/client.out" || client=fail
++count="Count from 1 to 300, one number per line, with no other text."
++turn() { # name, expected outcome, headless args...
++  local name=$1 outcome=$2; shift 2
++  "$target"/debug/examples/headless "$ticket" --directory "$scratch" "$@" >"$logs/$name.out" || true
++  grep -v '(history)' "$logs/$name.out" | grep -q "TurnCompleted { outcome: $outcome }" && echo pass || echo fail
++}
++approve=$(turn approve Completed --prompt "Use the Write tool to create a.txt in the current directory containing exactly the word hello. Then say done.")
++grep -q 'Approve -> Accepted' "$logs/approve.out" || approve=fail
++delta=$(turn first-delta Interrupted --prompt "$count" --interrupt first-delta)
++at_send=$(turn at-send Interrupted --prompt "$count" --interrupt at-send)
++grep -q 'interrupt -> Accepted' "$logs/at-send.out" || at_send=fail
+ 
+ file=missing
+ [ -f "$scratch/a.txt" ] && file="present:$(tr -d '\n' <"$scratch/a.txt")"
+-case "$file" in present:hello) ;; *) client=fail ;; esac
+-
+-# The third turn's interrupt is held when it reaches the session before the
+-# CLI's `system/init`, and goes straight through when init came first.
++case "$file" in present:hello) ;; *) approve=fail ;; esac
+ interrupt=direct
+ grep -q 'holding the interrupt until the turn starts' "$logs/host.log" && interrupt=held
+-if [ "$interrupt" = held ] && ! grep -q 'sending the held interrupt' "$logs/host.log"; then
+-  interrupt=held-but-never-sent
+-  client=fail
+-fi
+-echo "RESULT $client a.txt=$file interrupt-at-send=$interrupt logs=$logs"
+-[ "$client" = pass ]
++grep -q 'holding the interrupt' "$logs/host.log" && ! grep -q 'sending the held interrupt' "$logs/host.log" && at_send=fail
++echo "RESULT approve=$approve first-delta=$delta at-send=$at_send a.txt=$file interrupt-at-send=$interrupt logs=$logs"
++[ "$approve$delta$at_send" = passpasspass ]
