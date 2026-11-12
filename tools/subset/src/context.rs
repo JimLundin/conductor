@@ -24,7 +24,7 @@ pub struct Typing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum From {
     Id(&'static str),
-    /// Any type id but `type.lifetime`.
+    /// Any type id but the lifetimes.
     AnyType,
 }
 
@@ -32,7 +32,7 @@ impl From {
     pub fn covers(self, id: &str) -> bool {
         match self {
             From::Id(from) => id == from,
-            From::AnyType => id.starts_with("type.") && id != "type.lifetime",
+            From::AnyType => id.starts_with("type.") && !id.starts_with("type.lifetime"),
         }
     }
 }

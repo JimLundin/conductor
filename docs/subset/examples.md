@@ -579,6 +579,68 @@ method, as in `self.step(step).await?;` in
 form for running effects. A `then` chain stays for building a list from
 awaited steps, with the list's type in `try_collect`'s turbofish.
 
+## 27. A table scanned in order may hold strings
+
+```rust
+struct Row {
+    marker: &'static str,
+    name: &'static str,
+    touch_name: &'static str,
+}
+
+/// Checked in this order: an iPhone's user agent also says "Mac OS X".
+const DEVICES: &[Row] = &[
+    Row { marker: "iPhone", name: "iPhone", touch_name: "iPhone" },
+    Row { marker: "Macintosh", name: "Mac", touch_name: "iPad" },
+];
+
+pub fn browser_name(user_agent: &str, touch: Touch) -> ClientName {
+    let name = DEVICES
+        .iter()
+        .find(|row| user_agent.contains(row.marker))
+        .map_or("Browser", |row| match touch {
+            Touch::None => row.name,
+            Touch::Screen => row.touch_name,
+        });
+    ClientName(String::from(name))
+}
+
+pub fn os_name(os: String) -> ClientName {
+    ClientName(match os.as_str() {
+        "windows" => String::from("Windows"),
+        "macos" => String::from("Mac"),
+        _ => os,
+    })
+}
+```
+
+A `const` table that is scanned in order, with one predicate that tests
+the input against a field, may have `&'static str` fields (proposal 0042).
+The row struct is built only inside the `const`, and the order of the rows
+is the rule: here the first marker the user agent contains wins. A lookup
+keyed by a string is a `match`, as in `os_name`.
+`DEVICES.iter().find(|row| row.name == name)` is flagged, and so is
+`&'static str` anywhere else: in a signature, in a struct that isn't a
+table's row, or in a tuple row.
+
+## 28. Counting through numbers is `RangeInclusive::new`
+
+```rust
+use std::ops::RangeInclusive;
+
+pub fn candidates(first: u16, last: u16) -> Vec<u16> {
+    RangeInclusive::new(first, last).collect()
+}
+```
+
+`first..=last` is `expr.range`, which stays out. A range built by name
+stands only where it is iterated at once: as a `for`'s iterator, the
+receiver of an iterator method, or the argument of `zip` or `chain`.
+`bytes.get(RangeInclusive::new(1, 2))` is indexing by range under another
+name and is flagged, as are `Range { start, end }`, `RangeFull` and a pair
+of `Bound`s. Split bytes with `split_at_checked` (§A7 of the bootstrap
+review).
+
 ## Still outside the subset
 
 - Generic structs, enums and traits, and any bound other than the codec

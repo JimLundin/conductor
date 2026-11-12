@@ -13,6 +13,7 @@ mod report;
 mod rules;
 mod score;
 mod shape;
+mod table;
 mod weights;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -622,6 +623,15 @@ fn analyse(
     );
     let operators = named::operators(&config.fallible_operators);
     let readers = named::readers(&config.consuming_readers);
+    let adapters = config.weights.as_ref().map_or_else(
+        || {
+            weights::ITERATOR_ADAPTERS
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        },
+        |w| w.adapters.clone(),
+    );
     let mut out = Vec::new();
     for (relative_path, src, parsed) in parsed_files {
         let relative_path = relative_path.as_path();
@@ -652,6 +662,7 @@ fn analyse(
             endpoints: &config.endpoints,
             predicate_adapters: &config.predicate_adapters,
             closure_methods: &config.closure_methods,
+            adapters: &adapters,
             fallible_operators: &operators,
             consuming_readers: &readers,
         };

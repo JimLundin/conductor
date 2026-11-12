@@ -202,6 +202,13 @@ A list that is given replaces its default. To extend a default, copy it.
 | `item.impl.trait` | trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler` (proposal 0009) |
 | `generics.lifetime` | lifetime parameters only in a library trait impl (proposal 0009) |
 | `type.lifetime` | lifetimes only in a library trait impl, where its signature demands them (proposal 0009) |
+| `type.lifetime.static_str` | `&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042) |
+| `expr.method_call` | a `const` table searched for the row whose string field equals a value is a keyed lookup; write a `match` on the value, as in `match os { "macos" => .., _ => .. }` (proposal 0042) |
+| `expr.call` | a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review) |
+| `expr.struct` | a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review) |
+| `expr.path` | a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review) |
+| `expr.tuple` | a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review) |
+| `expr.tuple` | a table whose rows have more than two fields is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12) |
 | `attr.derive` | `thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010) |
 | `attr.derive` | `PartialOrd` and `Ord` only on a newtype struct whose order means something (proposal 0024) |
 | `expr.method_call` | compare an ordered newtype as a whole, `a.cmp(&b)`, never through `.0` (proposal 0024) |
@@ -597,6 +604,29 @@ commit whose files don't parse is left out, with a note on stderr.
   into `Vec<Result<(), E>>` that is then checked for errors runs effects
   too, but syntax can't tell it from a list of results that is kept, so it
   is a review check, as is a stream built by a helper fn.
+- **0042's tables are read from one file.** A struct is a table's row when
+  a `const` in the same file has the type `&[Row]`, `[Row; N]` or
+  `&[Row; N]`, and no struct literal of it stands outside a `const`
+  initializer. A keyed lookup is `find`, `rfind`, `position`, `rposition`
+  or `filter` on such a `const`, by name, behind `iter`, `into_iter`,
+  `copied`, `cloned` or `rev`, with a closure whose body is `==` or `.eq`
+  on one of the row's `&str` fields (a named field, or a tuple row's field
+  bound by a tuple pattern or read as `.0`). A table reached through a
+  binding or a helper fn, and a lookup written as `filter_map`, are left to
+  review. A row struct used outside the table, say passed to a fn, isn't
+  seen.
+- **A range built by name is matched by name.** `Range`,
+  `RangeInclusive`, `RangeFrom`, `RangeTo`, `RangeToInclusive` and
+  `RangeFull`, by any path that isn't ours, and a tuple of two `Included`,
+  `Excluded` or `Unbounded`. Each stands only where it is iterated at
+  once: as a `for`'s iterator, the receiver of `into_iter` or of a method
+  in `adapters`, `closure_methods` or `predicate_adapters`, or the argument
+  of `zip` or `chain`. A range bound to a name first, then iterated, is
+  flagged.
+- **A tuple table is an array literal.** An array literal with a tuple of
+  three or more fields in it is flagged anywhere (the owner's ruling on
+  0001, 2026-11-12). Rows built through `vec!` or another macro aren't
+  seen, and `vec!` is reported as a macro outside the subset anyway.
 - **`pat.wild` is allowed everywhere.** The rule in `subset.toml` that
   limits `_` to the positions clippy's wildcard lints allow is left to
   clippy.
@@ -776,6 +806,7 @@ part comes from the source.
 | `type.tuple` | tuple type |
 | `type.unit` | `()` type |
 | `type.lifetime` | lifetime in a type or bound |
+| `type.lifetime.static_str` | the `'static` of `&'static str` |
 | `generics.type_param` | generic type parameter |
 | `generics.lifetime` | lifetime parameter |
 | `generics.const_param` | const generic parameter |

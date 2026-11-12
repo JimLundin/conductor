@@ -1,8 +1,8 @@
 # Where the subset gives ground
 
 The thesis is that **every state is a named enum variant and every decision is
-a `match`**, protected by seven qualities (`docs/subset.md`). Version 7 accepts
-34 proposals, two of which (0038, 0039) only narrow the checker. Most keep all
+a `match`**, protected by seven qualities (`docs/subset.md`). Version 8 accepts
+35 proposals, two of which (0038, 0039) only narrow the checker. Most keep all
 the qualities. The ones below don't, or they bend
 the thesis at its edges. Each is confined by its rule, and this page is the
 list to revisit first when one of them starts to spread.
@@ -24,6 +24,7 @@ list to revisit first when one of them starts to spread.
 - **A second branching form.** 0027 allows `if let` for "act only on this case", because clippy's `single_match` rejects the `match` with an empty arm and no lint is switched off (0025 revised). It is confined to one branch: with an `else`, an `else if` or a let-chain it is a `match` again, so every two-way decision is still a `match`.
 - **`bool` comes back inside predicates.** 0028 and 0037 let a closure passed straight to a method in `predicate_adapters` (`filter`, `find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`, `retain` and tokio's `wait_for`) return a boolean expression: `matches!`, a comparison, `&&`, `||` or `!`. This is the one place a decision is written as a `bool` rather than a `match`. It is confined to the closure body, the adapter is the branch, and the `bool` never becomes a binding, field, parameter or return type of ours. `true` and `false` stay out of it.
 - **A guard on a match arm.** 0040 lets an arm carry a guard of one comparison or one `matches!`, because a pattern can't name a runtime value and equality of two runtime values had no `match` form. The guard is the 0028 boolean moved onto the arm it selects. It holds no `&&`, `||` or `!`, and a later arm with no guard must cover the same pattern, so the otherwise case is still a written-out arm. It replaces the `Some(x).filter(..)` and `a.eq(b).then_some(..)` lifts of one comparison. A lift that combines library booleans stays.
+- **A lifetime outside library impls.** 0042 lets a `const` table's row struct have `&'static str` fields, when the table is scanned in order with one predicate, because the alternative was an enum with one `match` per column (-17.6% score on `device.rs`). **One way** is at risk: a scan and a keyed lookup look alike, and a keyed lookup stays a `match`. The checker flags a table searched for the row whose string field equals a value, and `&'static str` anywhere but in such a row struct.
 - **Iteration outside adapters.** The actor `loop` (0007) and, since 0041, a `for` whose body only runs awaited calls with `?` are the two loops. A `for` produces no value: building or selecting values in one is a violation, and every other loop is still an adapter.
 
 ## Enforcement is partly by review
@@ -82,6 +83,7 @@ doesn't expand macros, so a reviewer still checks these:
   ordering. 0041's `try_collect` needs the list's type in its turbofish to
   be told from effects, and a stream bound to a name is followed only
   within one fn.
+- **What a table is.** 0042's row struct and keyed lookup are read from one file: a `const` of type `&[Row]` or `[Row; N]` and a struct literal of `Row` only inside a `const`. A lookup through a binding of the table, a helper fn or `filter_map`, and a row struct passed around outside the table, pass. The owner's ruling on 0001 (2026-11-12), that a table whose rows have more than two fields is a list of a named struct, is checked on array literals only; a table built through a macro is left to review. A range built by name (`RangeInclusive::new`) is recognised by its std type name and allowed only where it is iterated at once; one bound to a name and iterated later is flagged, which is stricter than the rule needs.
 - **Which trait a method belongs to.** 0038 matches a method call by
   name, and only in a file that imports a listed operator trait. A
   library prelude that re-exports one through a glob hides it, and in a

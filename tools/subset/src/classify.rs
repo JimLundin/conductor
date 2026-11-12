@@ -556,7 +556,11 @@ impl<'ast> Visit<'ast> for Classifier<'_, '_> {
                 };
                 self.emit(t.and_token.span, id);
                 if let Some(lifetime) = &t.lifetime {
-                    self.emit(lifetime.span(), "type.lifetime");
+                    let id = match crate::table::is_static_str(ty) {
+                        true => "type.lifetime.static_str",
+                        false => "type.lifetime",
+                    };
+                    self.emit(lifetime.span(), id);
                 }
             }
             Type::Slice(t) => self.emit(t.span(), "type.slice"),

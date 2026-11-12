@@ -195,6 +195,10 @@ pub const IDS: &[(&str, &str)] = &[
     ("type.tuple", "tuple type"),
     ("type.unit", "`()` type"),
     ("type.lifetime", "lifetime in a type or bound"),
+    (
+        "type.lifetime.static_str",
+        "the `'static` of `&'static str`",
+    ),
     ("generics.type_param", "generic type parameter"),
     ("generics.lifetime", "lifetime parameter"),
     ("generics.const_param", "const generic parameter"),

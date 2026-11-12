@@ -41,9 +41,13 @@ is rejected, however much code it saves.
    once. The forms are:
    - a `const` table of named structs whose fields are owned values
      (numbers, our enums and newtypes), with one adapter chain over it,
-     as in `const STUN_SCHEDULE: &[Probe] = &[..]`. A lookup keyed by a
-     string is written as a `match` instead: string fields in a `const`
-     would need `&'static str`, which the subset excludes, and the `match`
+     as in `const STUN_SCHEDULE: &[Probe] = &[..]`. A table that is
+     scanned in order, row by row, with one predicate that tests the input
+     against a field, may have `&'static str` fields (proposal 0042), as in
+     `const DEVICES: &[Row] = &[..]` scanned with
+     `find(|row| user_agent.contains(row.marker))`. A lookup keyed by a
+     string is written as a `match` instead, and the checker flags a table
+     searched for the row whose string field equals a value: the `match`
      measured about half the size (`docs/subset/reviews/p1-u2.md`);
    - one `match` that maps a variant to its data, used by every call site,
      as in `fn label(kind: Kind) -> String { match kind { .. } }`;
@@ -54,7 +58,8 @@ is rejected, however much code it saves.
      more than three tests, because the named struct that 0001 requires
      for a lasting table outweighs what the shared assertion saves
      (`docs/subset/reviews/v4-agents-proto.md`). Below four cases, the
-     tests stay separate.
+     tests stay separate. A case with more than two fields is a named
+     struct, never an inline tuple (Tuples, below).
 
 ## Core
 
@@ -71,7 +76,7 @@ The ids are those used in `subset.toml`.
 | Predicates | `macro.matches`, `expr.binary.{eq,ne,lt,le,gt,ge,and,or}`, `expr.unary.not` | Proposals 0028 and 0037. A closure passed straight to a method in `predicate_adapters` in `subset.toml` (`filter`, `find`, `rfind`, `any`, `all`, `position`, `take_while`, `skip_while`, `retain`, and tokio's `wait_for`) may have a boolean expression as its body: `matches!`, a comparison, `&&`, `\|\|`, `!`. The other place is a match guard (0040). Nowhere else, and never a `true`/`false` literal. Counting is `filter(\|x\| matches!(x, ..)).count()`. |
 | Guards | `expr.match.guard` | Proposal 0040. A match arm may have a guard that is one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) or one `matches!`, with no `&&`, `\|\|` or `!`, when the arm depends on a value its pattern bound being equal to, or ordered against, another runtime value. A later arm with no guard covers the same pattern, so the otherwise case is written out. A guard against a literal, a variant or a constant is a pattern instead, and a `matches!` guard takes a call on a bound value. The guard is the one form for choosing an arm by comparing two runtime values, and several equalities are one guard over a tuple: `Some(x).filter(\|x\| ..)` and `a.eq(b).then_some(..)` with one comparison, any comparison by name (`a.lt(&b)`, `a.cmp(&b).is_eq()`, `PartialEq::eq`) outside a predicate closure, and a `filter` of one comparison matched at once are violations. A `filter` or `then_some` that combines booleans with `&&`, `\|\|` or `!` stays, since a guard can't hold it. |
 | Bindings | `stmt.let` | Immutable, with a pattern. |
-| Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. |
+| Tuples | `expr.tuple`, `pat.tuple`, `type.tuple` | Proposal 0001. Matching on several values at once (`match (state, event)`) and short-lived pairs. A value that outlives its expression or crosses a public signature gets a named struct, so states stay named. The owner's ruling of 2026-11-12: a table whose rows have more than two fields, a test case table included, is a list of a named struct, even when the table is never bound. The checker flags an array literal that holds a tuple of three or more fields. |
 | Crate API | `vis.pub` | Proposal 0002. `pub` marks only what another crate uses, exported from the crate root. |
 | Crate-internal sharing | `vis.restricted` | Proposal 0003. Only `pub(crate)`, never `pub(super)` or `pub(in …)`, and a `pub(crate)` struct has no `pub` fields. |
 | Changed copies | `expr.struct.update` | Proposals 0004 and 0036. `..base` only where the base is an existing value of the same type, an external crate's `Default::default()` or named constructor, or a method call that returns a fresh value of the struct's type (`..self.outbox.current()`). A base used once is written in place, not bound first. |
@@ -81,6 +86,7 @@ The ids are those used in `subset.toml`.
 | Loop state | `item.fn.receiver.mut`, `stmt.let.mut`, `pat.ident.mut`, `expr.assign`, `expr.reference.mut`, `type.reference.mut` | Proposal 0008, widened in version 4. Mutation only of an actor's loop state, of a value that loop state owns (its methods may take `&mut self`, called on `self.field`), and of external values whose API takes `&mut`. A value is owned when its type is named in a field type of the loop state, or in a variant payload of an enum of ours that the loop state owns (version 5), so a value in `HashMap<_, Turn>` and one in `Phase::Connected(Connected)` count alike. Never a `&mut` parameter of our own types, never a `mut` parameter or `let mut` binding that holds a value of our own type outside loop state and `endpoints` (destructure the value and bind its library field `mut`), and never compound assignment. |
 | Stream endpoints | `item.fn.receiver.mut` | Proposal 0035. A type of ours on the `endpoints` list in `subset.toml` (`SendHalf`, `RecvHalf`, `ChannelRecv`, `FrameBuffer`) may have `&mut self` methods, called anywhere on a `let mut` binding, a `mut` pattern or a field. A type joins the list by review: it wraps a library stream or channel whose own API takes `&mut`, or it is the reassembly buffer of one. The rest of 0008 holds: no `&mut` parameter of our types, no compound assignment, and data types keep value-returning methods. |
 | Library traits | `item.impl.trait`, `generics.lifetime`, `type.lifetime` | Proposal 0009. Trait impls only for `Drop`, `Debug`, `Serialize`, `Deserialize` and `ProtocolHandler`, with lifetimes only where the trait's signature demands them. |
+| Scanned tables | `type.lifetime.static_str` | Proposal 0042, accepted narrow in version 8. `&'static str` only as a field type of a struct that is the row type of a `const` table (`&[Row]` or `[Row; N]`) and is built nowhere else, when the table is scanned in order with one predicate that tests the input against a field (`find`, `position`). A lookup keyed by a string stays a `match`: `find(\|row\| row.name == name)` on such a table is flagged. No other `'static`, and never in a signature. |
 | Error enums | `attr.derive` of `thiserror::Error`, `attr.error` | Proposal 0010. `thiserror::Error` on an error type, with one `#[error("…")]` message per variant. |
 | Error conversion | `attr.from` | Proposal 0011. `#[from]` only on the one variant of an enum that holds a given error type, ours or a library's. |
 | Wire types | `attr.derive.Serialize`, `attr.derive.Deserialize`, `attr.serde` | Proposal 0012. serde derives only in `crates/proto` and the agents' provider protocol modules, with `transparent`, `tag`, `content`, `rename_all` and `rename` only. |
@@ -125,7 +131,15 @@ Write `checked_*` or `saturating_*`. The total bitwise traits and `Not`
 stay allowed, so `BitXor::bitxor` is the form for an XOR. A consuming
 reader in `consuming_readers` (`bytes::Buf`) is never imported or named
 either (proposal 0039). Bytes are split with `split_at_checked` and
-matched, the form of the bootstrap review's §A7. Some of these may join
+matched, the form of the bootstrap review's §A7. A range stays out under
+its type names too: `RangeInclusive::new(a, b)`, `Range { start, end }`,
+`RangeFull` and a pair of `Bound`s are flagged as an index, a slice
+argument (`bytes.get(RangeInclusive::new(1, 2))`) or a value kept for
+later. `RangeInclusive::new(first, last)` is the form for counting through
+numbers, and it stands only where it is iterated at once: as a `for`'s
+iterator, the receiver of an iterator method
+(`RangeInclusive::new(first, last).collect()`), or the argument of `zip`
+or `chain` (version 8, the rtc-ports review). Some of these may join
 through proposals. Others, such as `unsafe` and interior mutability,
 conflict with the qualities and won't.
 
@@ -221,12 +235,15 @@ container as a primitive. Version 6 accepts 0038 (no fallible operator
 trait by name) and 0039 (no consuming reader) as checker changes that add
 no construct, and checks 0008's rule that a `mut` binding holds a value of
 our own type only as loop state or a listed endpoint. The rewrite works
-from `docs/subset/rewrite-report.txt`, now the report under version 7.
+from `docs/subset/rewrite-report.txt`, now the report under version 8.
 Version 7 accepts 0040 (a match guard of one comparison, which replaces
 the single-comparison lifts) and 0041 (a `for` of awaited calls, which
 replaces `stream::iter(..).then(..)` for effects), both as amended by the
 owner. The replaced forms are violations everywhere, and every site in
-`crates/` is rewritten.
+`crates/` is rewritten. Version 8 accepts 0042 narrow (`&'static str`
+fields only in a scanned `const` table's row struct), records the owner's
+ruling that a table whose rows have more than two fields is a named struct
+(0001), and flags a range built by name outside an iterator source.
 
 ## Growing the subset
 

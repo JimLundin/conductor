@@ -3,7 +3,7 @@
 # grows only through accepted proposals in docs/subset/proposals/. Each id is
 # documented in docs/subset.md.
 
-version = 7
+version = 8
 
 # All of our code is written in the subset. tools/ (the checker itself) and
 # vendor/ are outside it for now.
@@ -89,6 +89,7 @@ allowed = [
   "type.unit",                # proposals 0005, 0023
   "type.reference.mut",       # proposals 0008, 0023
   "type.lifetime",            # proposal 0009
+  "type.lifetime.static_str", # proposal 0042; only in a `const` table's row struct
   "type.slice",               # proposal 0014
   "type.array",               # proposal 0015
   "type.impl_trait.arg",      # proposal 0026; only `ask`'s `build` parameter
@@ -353,6 +354,7 @@ boundary = 1.0
 "generics.type_param" = "tolerated"   # 0013, 0026
 "generics.lifetime" = "tolerated"     # 0009
 "type.lifetime" = "tolerated"
+"type.lifetime.static_str" = "tolerated"  # 0042
 "item.impl.trait" = "tolerated"       # 0009
 "attr.cfg" = "tolerated"              # 0016
 "expr.tuple" = "tolerated"            # 0001

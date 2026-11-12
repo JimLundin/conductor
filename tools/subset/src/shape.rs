@@ -19,6 +19,7 @@ use crate::facts::{self, Facts};
 use crate::imports::{FileNames, use_paths};
 use crate::named::{Named, Operator};
 use crate::rules::{self, Rule};
+use crate::table::{self, Tables};
 
 pub struct Finding {
     pub rule: &'static Rule,
@@ -69,6 +70,8 @@ pub struct Lists<'a> {
     /// Methods that may take a closure argument, besides the predicate
     /// adapters.
     pub closure_methods: &'a [String],
+    /// The std `Iterator` methods (`[weights] adapters`).
+    pub adapters: &'a [String],
     /// Operator traits never named or called by name (proposal 0038).
     pub fallible_operators: &'a [Operator],
     /// Types and traits never named (proposal 0039).
@@ -82,6 +85,13 @@ impl Lists<'_> {
 
     fn takes_closure(&self, method: &str) -> bool {
         self.predicate(method) || self.closure_methods.iter().any(|m| m == method)
+    }
+
+    /// Whether a method called on a range iterates it.
+    fn iterates(&self, method: &str) -> bool {
+        method == "into_iter"
+            || self.takes_closure(method)
+            || self.adapters.iter().any(|m| m == method)
     }
 }
 
@@ -152,6 +162,9 @@ pub fn check(file: &syn::File, kind: &FileKind, facts: &Facts, lists: &Lists) ->
         types: HashMap::new(),
         cfg_hosts: HashMap::new(),
         cfg_items: CfgItems::gather(file),
+        tables: Tables::gather(file),
+        static_strs: HashSet::new(),
+        range_sources: HashSet::new(),
         names,
         operator_methods,
         root_allows: Vec::new(),
@@ -199,6 +212,9 @@ enum Slot {
     },
     MainReturn,
     ClapField,
+    /// A field type of a struct that is a `const` table's row (proposal
+    /// 0042).
+    RowField,
     /// The `build` parameter of an `ask` helper (proposal 0026).
     AskBuild,
 }
@@ -365,6 +381,13 @@ struct Checker<'a> {
     /// counterpart for.
     cfg_hosts: HashMap<*const Attribute, Option<CfgItem>>,
     cfg_items: CfgItems,
+    tables: Tables,
+    /// The `'static` of each `&'static str`, which proposal 0042's rule
+    /// checks in place of 0009's.
+    static_strs: HashSet<*const syn::Lifetime>,
+    /// Expressions that a `for`, an iterator method or `zip` / `chain`
+    /// iterate, where a range built by name may stand.
+    range_sources: HashSet<*const Expr>,
     names: FileNames,
     /// The methods of the fallible operator traits this file imports.
     operator_methods: BTreeSet<String>,
@@ -877,9 +900,13 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             .iter()
             .any(|a| derives(a, "Parser") || derives(a, "clap::Parser"));
         let crate_visible = is_pub_crate(&i.vis);
+        let row = self.tables.is_row(&i.ident.to_string());
         for field in &i.fields {
             if clap {
                 self.set_type(&field.ty, Slot::ClapField);
+            }
+            if row {
+                self.set_type(&field.ty, Slot::RowField);
             }
             if let (true, Visibility::Public(token)) = (crate_visible, &field.vis) {
                 self.flag(token.span, &rules::PUB_FIELD);
@@ -978,6 +1005,9 @@ impl<'ast> Visit<'ast> for Checker<'_> {
     fn visit_label(&mut self, _: &'ast syn::Label) {}
 
     fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
+        if self.static_strs.contains(&std::ptr::from_ref(lifetime)) {
+            return;
+        }
         if self.in_foreign_impl() {
             self.mark(lifetime.span(), Fixed::Always);
         }
@@ -1068,6 +1098,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 }
             }
             Type::Reference(t) => {
+                if let (Some(lifetime), true) = (&t.lifetime, table::is_static_str(ty)) {
+                    self.static_strs.insert(std::ptr::from_ref(lifetime));
+                    if slot != Slot::RowField {
+                        self.flag(lifetime.span(), &rules::STATIC_STR);
+                    }
+                }
                 if let (Some(token), Type::Path(p)) = (t.mutability, &*t.elem)
                     && self.facts.is_ours(&p.path)
                 {
@@ -1159,6 +1195,14 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 if drop && !named {
                     self.flag(e.func.span(), &rules::DROP_DISCARD);
                 }
+                if callee.path.len() >= 2
+                    && callee.last() == "new"
+                    && RANGE_TYPES.contains(&callee.path[callee.path.len() - 2].as_str())
+                    && !callee.ours
+                    && !self.range_sources.contains(&std::ptr::from_ref(expr))
+                {
+                    self.flag(e.func.span(), &rules::RANGE_CALL);
+                }
                 for arg in &e.args {
                     self.set_expr(arg, Slot::CallArg(callee.clone()));
                 }
@@ -1212,6 +1256,22 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 {
                     self.flag(e.method.span(), &rules::STREAM_EFFECTS);
                 }
+                if self.lists.iterates(&e.method.to_string()) {
+                    self.range_sources
+                        .insert(std::ptr::from_ref(unparen(&e.receiver)));
+                }
+                if e.method == "zip" || e.method == "chain" {
+                    for arg in &e.args {
+                        self.range_sources.insert(std::ptr::from_ref(unparen(arg)));
+                    }
+                }
+                if LOOKUPS.contains(&e.method.to_string().as_str())
+                    && let (Some(keys), Some(Expr::Closure(c))) =
+                        (self.tables.scanned(&e.receiver), e.args.first())
+                    && keyed(c, keys)
+                {
+                    self.flag(e.method.span(), &rules::KEYED_TABLE);
+                }
                 let on_self = matches!(&*e.receiver, Expr::Path(p) if p.path.is_ident("self"));
                 for arg in &e.args {
                     let slot = Slot::MethodArg {
@@ -1223,6 +1283,15 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             }
             Expr::Struct(e) => {
                 let ours = self.facts.is_ours(&e.path);
+                if !ours
+                    && e.path
+                        .segments
+                        .last()
+                        .is_some_and(|s| RANGE_TYPES.contains(&s.ident.to_string().as_str()))
+                    && !self.range_sources.contains(&std::ptr::from_ref(expr))
+                {
+                    self.flag(e.path.span(), &rules::RANGE_STRUCT);
+                }
                 for field in &e.fields {
                     self.set_expr(&field.expr, Slot::FieldValue { ours });
                 }
@@ -1290,6 +1359,18 @@ impl<'ast> Visit<'ast> for Checker<'_> {
             Expr::Tuple(e) if e.elems.is_empty() && !library_value(&slot) => {
                 self.flag(e.span(), &rules::UNIT_VALUE);
             }
+            Expr::Tuple(e) if e.elems.len() == 2 && e.elems.iter().all(bound) => {
+                self.flag(e.span(), &rules::RANGE_BOUNDS);
+            }
+            Expr::Path(e)
+                if e.path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "RangeFull")
+                    && !self.facts.is_ours(&e.path) =>
+            {
+                self.flag(e.span(), &rules::RANGE_PATH);
+            }
             // `&[a, b]` stands where its array would: `f(&[a, b])` passes the
             // list straight to a call, and `const L: &[T] = &[..]` is a const.
             Expr::Reference(e)
@@ -1302,6 +1383,12 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 self.set_expr(&e.expr, slot.clone());
             }
             Expr::Array(e) => {
+                if e.elems
+                    .iter()
+                    .any(|row| matches!(row, Expr::Tuple(t) if t.elems.len() > 2))
+                {
+                    self.flag(e.span(), &rules::TUPLE_TABLE);
+                }
                 if !matches!(
                     slot,
                     Slot::CallArg(_) | Slot::MethodArg { .. } | Slot::ConstInit
@@ -1348,6 +1435,8 @@ impl<'ast> Visit<'ast> for Checker<'_> {
                 self.flag(e.if_token.span, &rules::LIFT_MATCHED);
             }
             Expr::ForLoop(e) => {
+                self.range_sources
+                    .insert(std::ptr::from_ref(unparen(&e.expr)));
                 if e.body.stmts.is_empty() || !e.body.stmts.iter().all(effect_stmt) {
                     self.flag(e.for_token.span, &rules::FOR_BODY);
                 }
@@ -1525,6 +1614,106 @@ fn comparison(body: &Expr) -> bool {
 }
 
 /// Methods that compare by name, as `a.eq(&b)` (proposal 0040).
+/// The std range types, whose construction by name is a range expression.
+const RANGE_TYPES: &[&str] = &[
+    "Range",
+    "RangeInclusive",
+    "RangeFrom",
+    "RangeTo",
+    "RangeToInclusive",
+    "RangeFull",
+];
+/// The methods that find a row of a table by a predicate.
+const LOOKUPS: &[&str] = &["find", "rfind", "position", "rposition", "filter"];
+
+fn unparen(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(e) => unparen(&e.expr),
+        _ => expr,
+    }
+}
+
+/// `Bound::Included(x)`, `Bound::Excluded(x)` or `Bound::Unbounded`.
+fn bound(expr: &Expr) -> bool {
+    let last = |path: &syn::Path| path.segments.last().map(|s| s.ident.to_string());
+    match expr {
+        Expr::Call(c) => {
+            matches!(&*c.func, Expr::Path(p) if last(&p.path).is_some_and(|n| n == "Included" || n == "Excluded"))
+        }
+        Expr::Path(p) => last(&p.path).is_some_and(|n| n == "Unbounded"),
+        _ => false,
+    }
+}
+
+/// Whether a scan's closure tests one of the row's string fields for
+/// equality, as in `|row| row.name == name` or `|(name, _)| *name == key`.
+fn keyed(closure: &syn::ExprClosure, keys: &BTreeSet<String>) -> bool {
+    let row = match closure.inputs.first() {
+        Some(pat) => Row::of(pat, keys),
+        None => return false,
+    };
+    match unparen(&closure.body) {
+        Expr::Binary(e) if matches!(e.op, syn::BinOp::Eq(_)) => {
+            row.key(&e.left, keys) || row.key(&e.right, keys)
+        }
+        Expr::MethodCall(e) if e.method == "eq" => {
+            row.key(&e.receiver, keys) || e.args.iter().any(|a| row.key(a, keys))
+        }
+        _ => false,
+    }
+}
+
+/// How a scan's closure binds the row.
+enum Row {
+    /// The whole row, by name.
+    Whole(String),
+    /// A tuple row's string fields, by the names bound to them.
+    Parts(BTreeSet<String>),
+}
+
+impl Row {
+    fn of(pat: &syn::Pat, keys: &BTreeSet<String>) -> Row {
+        match pat {
+            syn::Pat::Ident(p) => Row::Whole(p.ident.to_string()),
+            syn::Pat::Reference(p) => Row::of(&p.pat, keys),
+            syn::Pat::Type(p) => Row::of(&p.pat, keys),
+            syn::Pat::Tuple(t) => Row::Parts(
+                t.elems
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| keys.contains(&i.to_string()))
+                    .filter_map(|(_, p)| match p {
+                        syn::Pat::Ident(p) => Some(p.ident.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => Row::Parts(BTreeSet::new()),
+        }
+    }
+
+    fn key(&self, expr: &Expr, keys: &BTreeSet<String>) -> bool {
+        match (self, expr) {
+            (_, Expr::Paren(e)) => self.key(&e.expr, keys),
+            (_, Expr::Reference(e)) => self.key(&e.expr, keys),
+            (_, Expr::Unary(e)) if matches!(e.op, syn::UnOp::Deref(_)) => self.key(&e.expr, keys),
+            (Row::Whole(name), Expr::Field(f)) => {
+                let field = match &f.member {
+                    syn::Member::Named(i) => i.to_string(),
+                    syn::Member::Unnamed(i) => i.index.to_string(),
+                };
+                keys.contains(&field)
+                    && matches!(unparen(&f.base), Expr::Path(p) if p.path.is_ident(name))
+            }
+            (Row::Parts(names), Expr::Path(p)) => p
+                .path
+                .get_ident()
+                .is_some_and(|i| names.contains(&i.to_string())),
+            _ => false,
+        }
+    }
+}
+
 const COMPARE_METHODS: &[&str] = &["eq", "ne", "lt", "le", "gt", "ge"];
 /// `Ordering`'s tests, as in `a.cmp(&b).is_eq()`.
 const ORDERING_TESTS: &[&str] = &["is_eq", "is_ne", "is_lt", "is_le", "is_gt", "is_ge"];

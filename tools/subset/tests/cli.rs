@@ -1522,7 +1522,7 @@ fn example_files() -> Vec<(String, String)> {
 #[test]
 fn every_example_passes_the_subset() {
     let files = example_files();
-    assert_eq!(files.len(), 26);
+    assert_eq!(files.len(), 28);
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, code)| (path.as_str(), code.as_str()))
@@ -2323,5 +2323,192 @@ impl SessionActor {
          crates/daemon/src/a_fail.rs:61:14: expr.method_call: awaited effects run in order as `for item in list { f(item).await?; }`, not `stream::iter(..).then(..).try_collect()` into `()` (proposal 0041)\n\
          crates/daemon/src/a_fail.rs:61:22: expr.unit: `()` as a value only as an argument or field value of a fn, method or struct we don't define, as in `Ok(())` (proposals 0005, 0023)\n\
          crates/daemon/src/a_fail.rs:66:25: expr.method_call: a loop whose body performs side effects is `for item in list { .. }`, not `for_each` or `try_for_each` (proposal 0041)\n"
+    );
+}
+
+#[test]
+fn a_range_built_by_name_only_feeds_an_iterator() {
+    const RULE: &str = "a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review)";
+    assert_eq!(
+        rule_case(
+            "range-by-name",
+            "crates/daemon/src/a.rs",
+            r#"use std::ops::RangeInclusive;
+
+fn candidates(first: u16, last: u16) -> Vec<u16> {
+    RangeInclusive::new(first, last).collect()
+}
+
+fn numbered(names: Vec<Name>) -> Vec<Numbered> {
+    RangeInclusive::new(1, 100).zip(names).map(Numbered::from).collect()
+}
+
+fn named(names: Vec<Name>) -> Vec<Numbered> {
+    names.into_iter().zip(RangeInclusive::new(1, 100)).map(Numbered::from).collect()
+}
+
+fn bind(sockets: &Sockets, first: u16, last: u16) {
+    for port in RangeInclusive::new(first, last) {
+        sockets.bind(port);
+    }
+}
+"#,
+            r#"use std::ops::{Bound, Range, RangeFull, RangeInclusive};
+
+fn header(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(RangeInclusive::new(1, 2)))
+}
+
+fn full(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(std::ops::RangeInclusive::new(1, 2)))
+}
+
+fn body(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(Range { start: 1, end: 2 }))
+}
+
+fn all(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(RangeFull))
+}
+
+fn bounded(bytes: &[u8]) -> Head {
+    Head::read(bytes.get((Bound::Included(1), Bound::Excluded(3))))
+}
+
+fn kept(first: u16, last: u16) -> Ports {
+    let range = RangeInclusive::new(first, last);
+    Ports { range }
+}
+
+fn spelled(bytes: &[u8]) -> Head {
+    Head::read(bytes.get(1..=2))
+}
+"#,
+        ),
+        format!(
+            "crates/daemon/src/a_fail.rs:4:26: expr.call: {RULE}\n\
+             crates/daemon/src/a_fail.rs:8:26: expr.call: {RULE}\n\
+             crates/daemon/src/a_fail.rs:12:26: expr.struct: {RULE}\n\
+             crates/daemon/src/a_fail.rs:16:26: expr.path: {RULE}\n\
+             crates/daemon/src/a_fail.rs:20:26: expr.tuple: {RULE}\n\
+             crates/daemon/src/a_fail.rs:24:17: expr.call: {RULE}\n\
+             crates/daemon/src/a_fail.rs:29:27: expr.range: range expression\n"
+        )
+    );
+}
+
+#[test]
+fn a_static_str_is_a_field_of_a_scanned_const_tables_row() {
+    const STATIC: &str = "`&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)";
+    const KEYED: &str = "a `const` table searched for the row whose string field equals a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)";
+    assert_eq!(
+        rule_case(
+            "static-str",
+            "crates/client/src/a.rs",
+            r#"struct Row {
+    marker: &'static str,
+    name: &'static str,
+}
+
+const DEVICES: &[Row] = &[
+    Row { marker: "iPhone", name: "iPhone" },
+    Row { marker: "Linux", name: "Linux" },
+];
+
+pub(crate) fn device_name(user_agent: &str) -> ClientName {
+    let name = DEVICES
+        .iter()
+        .find(|row| user_agent.contains(row.marker))
+        .map_or("Browser", |row| row.name);
+    ClientName(String::from(name))
+}
+"#,
+            r#"struct Row {
+    marker: &'static str,
+    name: &'static str,
+}
+
+const DEVICES: &[Row] = &[Row { marker: "iPhone", name: "iPhone" }];
+
+struct Label {
+    text: &'static str,
+}
+
+const PAIRS: &[(&'static str, Kind)] = &[("a", Kind::A)];
+
+fn extra() -> Row {
+    Row { marker: "Mac", name: "Mac" }
+}
+
+fn label(kind: Kind) -> &'static str {
+    match kind {
+        Kind::A => "a",
+    }
+}
+
+fn by_name(name: &str) -> Option<&Row> {
+    DEVICES.iter().find(|row| row.name == name)
+}
+
+fn by_eq(name: &str) -> Option<usize> {
+    DEVICES.iter().position(|row| name.eq(row.marker))
+}
+
+fn kind(name: &str) -> Option<usize> {
+    PAIRS.iter().position(|(key, _)| key.eq(&name))
+}
+"#,
+        ),
+        format!(
+            "crates/client/src/a_fail.rs:2:14: type.lifetime.static_str: {STATIC}\n\
+             crates/client/src/a_fail.rs:3:12: type.lifetime.static_str: {STATIC}\n\
+             crates/client/src/a_fail.rs:9:12: type.lifetime.static_str: {STATIC}\n\
+             crates/client/src/a_fail.rs:12:18: type.lifetime.static_str: {STATIC}\n\
+             crates/client/src/a_fail.rs:18:26: type.lifetime.static_str: {STATIC}\n\
+             crates/client/src/a_fail.rs:25:20: expr.method_call: {KEYED}\n\
+             crates/client/src/a_fail.rs:29:20: expr.method_call: {KEYED}\n\
+             crates/client/src/a_fail.rs:33:18: expr.method_call: {KEYED}\n"
+        )
+    );
+}
+
+#[test]
+fn a_table_with_more_than_two_fields_has_a_named_row() {
+    assert_eq!(
+        rule_case(
+            "tuple-table",
+            "crates/client/src/a.rs",
+            r#"#[cfg(test)]
+mod tests {
+    struct Case {
+        input: String,
+        touch: Touch,
+        name: String,
+    }
+
+    #[test]
+    fn names() {
+        let cases = Vec::from([
+            Case { input: String::from("a"), touch: Touch::None, name: String::from("A") },
+        ]);
+        let pairs = Vec::from([(String::from("a"), String::from("A"))]);
+        assert_eq!(cases.len(), pairs.len());
+    }
+}
+"#,
+            r#"#[cfg(test)]
+mod tests {
+    #[test]
+    fn names() {
+        let cases = Vec::from([
+            (String::from("a"), Touch::None, String::from("A")),
+            (String::from("b"), Touch::Screen, String::from("B")),
+        ]);
+        assert_eq!(cases.len(), 2);
+    }
+}
+"#,
+        ),
+        "crates/client/src/a_fail.rs:5:31: expr.tuple: a table whose rows have more than two fields is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)\n"
     );
 }

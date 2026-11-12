@@ -1,5 +1,6 @@
-# The rewrite to-do list: `subset report` on crates/ under subset.toml version 7.
+# The rewrite to-do list: `subset report` on crates/ under subset.toml version 8.
 # Regenerate with `cargo run -q -p subset -- report`, then restore this header.
 #
-# Total: 0 violations. Every site of the forms 0040 and 0041 replaced is
-# rewritten, in crates/daemon, crates/agents and crates/client.
+# Total: 0 violations. Version 8's checks (0042's `&'static str` and keyed
+# lookups, a range built by name, a tuple table of three or more fields)
+# find nothing in crates/ before or after device.rs moves to 0042's table.

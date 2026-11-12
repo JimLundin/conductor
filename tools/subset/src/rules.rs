@@ -176,6 +176,23 @@ pub const LIFETIME: Rule = rule(
     "type.lifetime",
     "lifetimes only in a library trait impl, where its signature demands them (proposal 0009)",
 );
+pub const STATIC_STR: Rule = rule(
+    "type.lifetime.static_str",
+    "`&'static str` only as a field type of a struct that is the row type of a `const` table and is built nowhere else (proposal 0042)",
+);
+pub const KEYED_TABLE: Rule = rule(
+    "expr.method_call",
+    "a `const` table searched for the row whose string field equals a value is a keyed lookup; write a `match` on the value, as in `match os { \"macos\" => .., _ => .. }` (proposal 0042)",
+);
+const RANGE_BY_NAME: &str = "a range built by name (`RangeInclusive::new`, `Range { .. }`, `RangeFull`, a pair of `Bound`s) is a range expression (`expr.range`) under another name; it stands only as the iterator of a `for`, the receiver of an iterator method or the argument of `zip` or `chain`, never as an index or a slice argument: split bytes with `split_at_checked` (bootstrap review §A7, rtc-ports review)";
+pub const RANGE_CALL: Rule = rule("expr.call", RANGE_BY_NAME);
+pub const RANGE_STRUCT: Rule = rule("expr.struct", RANGE_BY_NAME);
+pub const RANGE_PATH: Rule = rule("expr.path", RANGE_BY_NAME);
+pub const RANGE_BOUNDS: Rule = rule("expr.tuple", RANGE_BY_NAME);
+pub const TUPLE_TABLE: Rule = rule(
+    "expr.tuple",
+    "a table whose rows have more than two fields is a list of a named struct, not of tuples (proposal 0001, owner ruling 2026-11-12)",
+);
 pub const THISERROR_HOST: Rule = rule(
     "attr.derive",
     "`thiserror::Error` only on an enum or named struct that is an error type, named `…Error` or used as a `Result`'s error (proposal 0010)",
@@ -332,6 +349,13 @@ pub const RULES: &[&Rule] = &[
     &IMPL_TRAIT,
     &LIFETIME_PARAM,
     &LIFETIME,
+    &STATIC_STR,
+    &KEYED_TABLE,
+    &RANGE_CALL,
+    &RANGE_STRUCT,
+    &RANGE_PATH,
+    &RANGE_BOUNDS,
+    &TUPLE_TABLE,
     &THISERROR_HOST,
     &ORD_HOST,
     &ORD_INNER,
