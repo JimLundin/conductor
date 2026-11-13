@@ -6,7 +6,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use proto::{Answer, Effort, ModelChoice, ModelId, Models, Question, QuestionOption, Selection};
+use proto::{
+    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question, QuestionOption,
+    Selection, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -78,48 +81,25 @@ pub struct ThreadOptions {
     pub sandbox: Sandbox,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TurnOutcome {
-    Completed,
-    Interrupted,
-    Failed { message: Option<String> },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ItemPhase {
+/// The two item notification methods on the provider wire.
+#[derive(Debug, Clone, Copy)]
+enum ItemPhase {
     Started,
     Completed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum ChangeKind {
+enum ChangeKind {
     Add,
     Delete,
     Update,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct FileChange {
-    pub path: String,
-    pub kind: ChangeKind,
-}
-
-/// The items the daemon shows besides agent messages. `status` is Codex's own
-/// string (`inProgress`, `completed`, `failed`, `declined`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Item {
-    Command {
-        id: String,
-        command: String,
-        status: String,
-        exit_code: Option<i64>,
-    },
-    FileChange {
-        id: String,
-        changes: Vec<FileChange>,
-        status: String,
-    },
+#[derive(Deserialize)]
+struct WireFileChange {
+    path: String,
+    kind: ChangeKind,
 }
 
 /// What a permissions request asks the sandbox to allow beyond its own.
@@ -182,15 +162,15 @@ pub enum ThreadEvent {
         turn: TurnId,
         text: String,
     },
-    Item {
+    ToolCall {
         turn: TurnId,
-        phase: ItemPhase,
-        item: Item,
+        call: ToolCallId,
+        phase: ToolPhase,
     },
     ApprovalRequested {
         id: ApprovalId,
         turn: TurnId,
-        /// The item the request is about, as in its `Item` event.
+        /// The item the request is about, as in its `ToolCall` event.
         item: String,
         kind: ApprovalKind,
         /// Codex's own decision values, verbatim. For a command this is
@@ -443,12 +423,10 @@ enum ThreadItem {
         id: String,
         command: String,
         status: String,
-        #[serde(rename = "exitCode")]
-        exit_code: Option<i64>,
     },
     FileChange {
         id: String,
-        changes: Vec<FileChange>,
+        changes: Vec<WireFileChange>,
         status: String,
     },
 }
@@ -775,7 +753,10 @@ fn notification(raw: Value) -> Inbound {
                 TurnStatus::Completed => TurnOutcome::Completed,
                 TurnStatus::Interrupted => TurnOutcome::Interrupted,
                 TurnStatus::Failed | TurnStatus::InProgress => TurnOutcome::Failed {
-                    message: turn.error.map(|e| e.message),
+                    message: turn
+                        .error
+                        .map(|e| e.message)
+                        .unwrap_or_else(|| String::from("the turn failed")),
                 },
             };
             on_thread(
@@ -850,32 +831,55 @@ fn item_event(thread: String, turn: String, phase: ItemPhase, item: ThreadItem) 
                 id,
                 command,
                 status,
-                exit_code,
-            } => ThreadEvent::Item {
-                turn,
-                phase,
-                item: Item::Command {
-                    id,
-                    command,
-                    status,
-                    exit_code,
-                },
-            },
+            } => tool_event(turn, id, phase, ToolKind::Command { command }, status),
             ThreadItem::FileChange {
                 id,
                 changes,
                 status,
-            } => ThreadEvent::Item {
+            } => tool_event(
                 turn,
+                id,
                 phase,
-                item: Item::FileChange {
-                    id,
-                    changes,
-                    status,
+                ToolKind::FileChange {
+                    files: changes
+                        .into_iter()
+                        .map(|file| FileChange {
+                            path: file.path,
+                            change: match file.kind {
+                                ChangeKind::Add => Change::Write,
+                                ChangeKind::Update => Change::Edit,
+                                ChangeKind::Delete => Change::Delete,
+                            },
+                        })
+                        .collect(),
+                },
+                status,
+            ),
+        },
+    )
+}
+
+fn tool_event(
+    turn: TurnId,
+    id: String,
+    phase: ItemPhase,
+    tool: ToolKind,
+    status: String,
+) -> ThreadEvent {
+    ThreadEvent::ToolCall {
+        turn,
+        call: ToolCallId(id),
+        phase: match phase {
+            ItemPhase::Started => ToolPhase::Started { tool },
+            ItemPhase::Completed => ToolPhase::Finished {
+                outcome: match status.as_str() {
+                    "completed" => ToolOutcome::Succeeded,
+                    "declined" => ToolOutcome::Declined,
+                    _ => ToolOutcome::Failed,
                 },
             },
         },
-    )
+    }
 }
 
 /// A frame with a `params.threadId` belongs to that thread even when we do
@@ -1743,5 +1747,131 @@ mod tests {
                 rpc_id: RequestId::Integer(0),
             }
         );
+    }
+
+    #[test]
+    fn tool_notifications_emit_shared_phases_and_file_changes() {
+        use proto::{Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase};
+        let cases = Vec::from([
+            (
+                r#"{"method":"item/started","params":{"threadId":"th","turnId":"tu","item":{"type":"commandExecution","id":"call","command":"pwd","status":"inProgress"}}}"#,
+                ToolPhase::Started {
+                    tool: ToolKind::Command {
+                        command: String::from("pwd"),
+                    },
+                },
+            ),
+            (
+                r#"{"method":"item/started","params":{"threadId":"th","turnId":"tu","item":{"type":"fileChange","id":"call","changes":[{"path":"a","kind":{"type":"add"}},{"path":"b","kind":{"type":"update","move_path":"elsewhere"}},{"path":"c","kind":{"type":"delete"}}],"status":"inProgress"}}}"#,
+                ToolPhase::Started {
+                    tool: ToolKind::FileChange {
+                        files: Vec::from([
+                            FileChange {
+                                path: String::from("a"),
+                                change: Change::Write,
+                            },
+                            FileChange {
+                                path: String::from("b"),
+                                change: Change::Edit,
+                            },
+                            FileChange {
+                                path: String::from("c"),
+                                change: Change::Delete,
+                            },
+                        ]),
+                    },
+                },
+            ),
+            (
+                r#"{"method":"item/completed","params":{"threadId":"th","turnId":"tu","item":{"type":"commandExecution","id":"call","command":"pwd","status":"completed"}}}"#,
+                ToolPhase::Finished {
+                    outcome: ToolOutcome::Succeeded,
+                },
+            ),
+            (
+                r#"{"method":"item/completed","params":{"threadId":"th","turnId":"tu","item":{"type":"commandExecution","id":"call","command":"pwd","status":"declined"}}}"#,
+                ToolPhase::Finished {
+                    outcome: ToolOutcome::Declined,
+                },
+            ),
+            (
+                r#"{"method":"item/completed","params":{"threadId":"th","turnId":"tu","item":{"type":"commandExecution","id":"call","command":"pwd","status":"failed"}}}"#,
+                ToolPhase::Finished {
+                    outcome: ToolOutcome::Failed,
+                },
+            ),
+            (
+                r#"{"method":"item/completed","params":{"threadId":"th","turnId":"tu","item":{"type":"fileChange","id":"call","changes":[],"status":"new_status"}}}"#,
+                ToolPhase::Finished {
+                    outcome: ToolOutcome::Failed,
+                },
+            ),
+        ]);
+        let (got, want) = cases
+            .into_iter()
+            .map(|(line, phase)| {
+                (
+                    parse_line(line).unwrap(),
+                    Inbound::Event(CodexEvent::Thread {
+                        thread: super::ThreadId(String::from("th")),
+                        event: super::ThreadEvent::ToolCall {
+                            turn: super::TurnId(String::from("tu")),
+                            call: ToolCallId(String::from("call")),
+                            phase,
+                        },
+                    }),
+                )
+            })
+            .unzip::<Inbound, Inbound, Vec<Inbound>, Vec<Inbound>>();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn completed_turns_emit_shared_outcomes_with_failure_messages() {
+        use proto::TurnOutcome;
+        let cases = Vec::from([
+            (
+                r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"completed"}}}"#,
+                TurnOutcome::Completed,
+            ),
+            (
+                r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"interrupted"}}}"#,
+                TurnOutcome::Interrupted,
+            ),
+            (
+                r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"failed","error":{"message":"unavailable"}}}}"#,
+                TurnOutcome::Failed {
+                    message: String::from("unavailable"),
+                },
+            ),
+            (
+                r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"failed"}}}"#,
+                TurnOutcome::Failed {
+                    message: String::from("the turn failed"),
+                },
+            ),
+            (
+                r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"inProgress"}}}"#,
+                TurnOutcome::Failed {
+                    message: String::from("the turn failed"),
+                },
+            ),
+        ]);
+        let (got, want) = cases
+            .into_iter()
+            .map(|(line, outcome)| {
+                (
+                    parse_line(line).unwrap(),
+                    Inbound::Event(CodexEvent::Thread {
+                        thread: super::ThreadId(String::from("th")),
+                        event: super::ThreadEvent::TurnCompleted {
+                            turn: super::TurnId(String::from("tu")),
+                            outcome,
+                        },
+                    }),
+                )
+            })
+            .unzip::<Inbound, Inbound, Vec<Inbound>, Vec<Inbound>>();
+        assert_eq!(got, want);
     }
 }

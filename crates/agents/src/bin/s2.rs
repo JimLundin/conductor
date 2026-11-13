@@ -15,13 +15,13 @@ use std::time::Duration;
 use agents::Home;
 use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
-    Error, Item, Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId, TurnOutcome,
+    Error, Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId,
 };
 use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
-use proto::{Answer, Effort};
+use proto::{Answer, Effort, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -149,7 +149,7 @@ impl Turn {
                     earlier => format!("{earlier}\n{text}"),
                 };
             }
-            ThreadEvent::Item { phase, item, .. } => self.items.push(item_label(item, phase)),
+            ThreadEvent::ToolCall { phase, .. } => self.items.push(format!("{phase:?}")),
             ThreadEvent::ApprovalRequested {
                 id, kind, options, ..
             } => {
@@ -172,24 +172,12 @@ fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
         | ThreadEvent::AgentMessage { turn, .. }
         | ThreadEvent::ReasoningDelta { turn, .. }
         | ThreadEvent::Reasoning { turn, .. }
-        | ThreadEvent::Item { turn, .. }
+        | ThreadEvent::ToolCall { turn, .. }
         | ThreadEvent::ApprovalRequested { turn, .. }
         | ThreadEvent::SecretQuestionDeclined { turn } => Some(turn),
         ThreadEvent::Started | ThreadEvent::ApprovalCancelled { .. } | ThreadEvent::Unknown(_) => {
             None
         }
-    }
-}
-
-fn item_label(item: Item, phase: agents::codex::ItemPhase) -> String {
-    match item {
-        Item::Command { status, .. } => format!("{phase:?} command {status}"),
-        Item::FileChange {
-            changes, status, ..
-        } => format!(
-            "{phase:?} fileChange {:?} {status}",
-            changes.iter().map(|c| &c.path).collect::<Vec<&String>>()
-        ),
     }
 }
 
@@ -307,7 +295,7 @@ impl Run {
             | ThreadEvent::AgentMessage { .. }
             | ThreadEvent::ReasoningDelta { .. }
             | ThreadEvent::Reasoning { .. }
-            | ThreadEvent::Item { .. }
+            | ThreadEvent::ToolCall { .. }
             | ThreadEvent::ApprovalCancelled { .. }
             | ThreadEvent::SecretQuestionDeclined { .. } => {}
             ThreadEvent::TurnStarted { .. } => self.cue(thread, Cue::Start).await?,

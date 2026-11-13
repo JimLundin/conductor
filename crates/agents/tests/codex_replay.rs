@@ -12,12 +12,11 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::codex::{
-    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision, Item,
+    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
     Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
-    TurnOutcome,
 };
 use n0_future::StreamExt;
-use proto::{Answer, Effort};
+use proto::{Answer, Effort, ToolKind, ToolPhase, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -181,7 +180,7 @@ impl Recorder {
                         Progress::Playing
                     }
                     (
-                        ThreadEvent::AgentMessage { .. } | ThreadEvent::Item { .. },
+                        ThreadEvent::AgentMessage { .. } | ThreadEvent::ToolCall { .. },
                         Interrupt::AfterFirstOutput,
                     ) => {
                         expected.interrupt(turn.clone()).await.unwrap();
@@ -261,13 +260,13 @@ fn summary(event: &ThreadEvent) -> String {
         ThreadEvent::AgentMessage { text, .. } => format!("says {text:?}"),
         ThreadEvent::ReasoningDelta { text, .. } => format!("reasoning delta {text:?}"),
         ThreadEvent::Reasoning { text, .. } => format!("reasons {text:?}"),
-        ThreadEvent::Item { phase, item, .. } => match item {
-            Item::Command { status, .. } => format!("{phase:?} command {status}"),
-            Item::FileChange {
-                changes, status, ..
-            } => {
-                format!("{phase:?} fileChange {} {status}", changes.len())
-            }
+        ThreadEvent::ToolCall { phase, .. } => match phase {
+            ToolPhase::Started { tool } => match tool {
+                ToolKind::Command { .. } => String::from("started command"),
+                ToolKind::FileChange { files } => format!("started fileChange {}", files.len()),
+                ToolKind::Other { .. } => String::from("started other"),
+            },
+            ToolPhase::Finished { outcome } => format!("finished tool {outcome:?}"),
         },
         ThreadEvent::ApprovalRequested {
             id, kind, options, ..
@@ -402,12 +401,12 @@ async fn approve_decline_interrupt_and_two_threads() {
             "A turn started",
             "A streams [\"I\", \"’ll\", \" create\", \" the\", \" requested\", \" file\", \" with\", \" exactly\", \" that\", \" content\", \".\"]",
             "A says \"I’ll create the requested file with exactly that content.\"",
-            "A Started command inProgress",
-            "A Completed command failed",
+            "A started command",
+            "A finished tool Failed",
             "A reasons \"\"",
-            "A Started command inProgress",
+            "A started command",
             "A approval 0 command (3 options)",
-            "A Completed command completed",
+            "A finished tool Succeeded",
             "A streams [\"Created\", \" `\", \"a\", \".txt\", \"`\", \" containing\", \" exactly\", \" `\", \"hello\", \" from\", \" s\", \"2\", \"`.\"]",
             "A says \"Created `a.txt` containing exactly `hello from s2`.\"",
             "A turn completed",
@@ -416,9 +415,9 @@ async fn approve_decline_interrupt_and_two_threads() {
             "A reasons \"\"",
             "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
             "A says \"I’ll request permission to write `b.txt`; if it’s declined, I’ll stop.\"",
-            "A Started command inProgress",
+            "A started command",
             "A approval 1 command (3 options)",
-            "A Completed command declined",
+            "A finished tool Declined",
             "A streams [\"The\", \" request\", \" to\", \" create\", \" `\", \"b\", \".txt\", \"`\", \" was\", \" declined\", \".\"]",
             "A says \"The request to create `b.txt` was declined.\"",
             "A turn completed",
@@ -607,15 +606,15 @@ async fn questions_and_accept_for_session() {
             "A turn started",
             "A streams [\"I\", \"’ll\", \" run\", \" the\", \" command\", \" exactly\", \" as\", \" given\", \".\"]",
             "A says \"I’ll run the command exactly as given.\"",
-            "A Started command inProgress",
+            "A started command",
             "A approval 1 command (3 options)",
-            "A Completed command completed",
+            "A finished tool Succeeded",
             "A reasons \"\"",
             "A says \"\"",
             "A turn completed",
             "A turn started",
-            "A Started command inProgress",
-            "A Completed command completed",
+            "A started command",
+            "A finished tool Succeeded",
             "A says \"\"",
             "A turn completed",
             "A turn started",

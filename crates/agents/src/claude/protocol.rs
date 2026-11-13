@@ -2,7 +2,10 @@
 //! and mapped into our own types here, and every line we write is built here.
 //! Frames and fields we do not model are ignored or passed on as `Unknown`.
 
-use proto::{Answer, Effort, ModelChoice, ModelId, Models, Question, QuestionOption, Selection};
+use proto::{
+    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question, QuestionOption,
+    Selection, ToolKind, ToolOutcome, TurnOutcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -64,38 +67,37 @@ pub enum PermissionDecision {
     },
 }
 
-/// The CLI's `is_error` on a tool result or a turn's `result`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
-    Succeeded,
-    Failed,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Assistant,
     User,
 }
 
-/// What a tool call is about, read from the CLI's `input` by `tool_detail`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ToolDetail {
-    Command(String),
-    Path(String),
-    /// A listed text field, or the compact JSON input of a tool not listed.
-    Text(String),
-}
-
-/// The `input` field worth showing for each tool that has one, in its shape.
-pub(crate) fn tool_detail(tool: &str, input: &Value) -> ToolDetail {
-    let shown = match tool {
-        "Bash" => field(input, "command").map(ToolDetail::Command),
-        "Edit" | "Write" | "MultiEdit" | "Read" => field(input, "file_path").map(ToolDetail::Path),
-        "Grep" | "Glob" => field(input, "pattern").map(ToolDetail::Text),
-        "WebFetch" => field(input, "url").map(ToolDetail::Text),
+/// The part of each tool's `input` worth showing, as the shared tool kind.
+fn tool_kind(name: &str, input: &Value) -> ToolKind {
+    let shown = match name {
+        "Bash" => field(input, "command").map(|command| ToolKind::Command { command }),
+        "Write" => field(input, "file_path").map(|path| one_file(path, Change::Write)),
+        "Edit" | "MultiEdit" => field(input, "file_path").map(|path| one_file(path, Change::Edit)),
+        "Read" => field(input, "file_path").map(|detail| other_tool(name, detail)),
+        "Grep" | "Glob" => field(input, "pattern").map(|detail| other_tool(name, detail)),
+        "WebFetch" => field(input, "url").map(|detail| other_tool(name, detail)),
         _ => None,
     };
-    shown.unwrap_or_else(|| ToolDetail::Text(input.to_string()))
+    shown.unwrap_or_else(|| other_tool(name, input.to_string()))
+}
+
+fn one_file(path: String, change: Change) -> ToolKind {
+    ToolKind::FileChange {
+        files: Vec::from([FileChange { path, change }]),
+    }
+}
+
+fn other_tool(name: &str, detail: String) -> ToolKind {
+    ToolKind::Other {
+        name: String::from(name),
+        detail,
+    }
 }
 
 fn field(input: &Value, name: &str) -> Option<String> {
@@ -109,12 +111,12 @@ pub enum Block {
     ToolUse {
         id: String,
         name: String,
-        detail: ToolDetail,
+        tool: ToolKind,
     },
     ToolResult {
         tool_use_id: String,
         content: Value,
-        outcome: Outcome,
+        outcome: ToolOutcome,
     },
     Other(Value),
 }
@@ -144,7 +146,7 @@ pub enum ClaudeEvent {
     PermissionRequested {
         id: PermissionRequestId,
         tool_name: String,
-        detail: ToolDetail,
+        tool: ToolKind,
         /// The `ToolUse` block this asks about.
         tool_use_id: String,
         /// What `AllowForSession` adds, in the CLI's rule syntax
@@ -167,7 +169,7 @@ pub enum ClaudeEvent {
     /// `terminal_reason` (`aborted_streaming`, `aborted_tools`) says why.
     TurnFinished {
         subtype: String,
-        outcome: Outcome,
+        outcome: TurnOutcome,
         terminal_reason: Option<String>,
         session_id: SessionId,
         /// Why the CLI could not run the turn, as `No conversation found
@@ -473,8 +475,17 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
             session_id,
             errors,
         } => Inbound::Event(ClaudeEvent::TurnFinished {
+            outcome: match is_error
+                .unwrap_or(false)
+                .then_some(terminal_reason.as_deref())
+            {
+                None => TurnOutcome::Completed,
+                Some(Some("aborted_streaming" | "aborted_tools")) => TurnOutcome::Interrupted,
+                Some(_) => TurnOutcome::Failed {
+                    message: subtype.clone(),
+                },
+            },
             subtype,
-            outcome: outcome(is_error),
             terminal_reason,
             session_id: SessionId(session_id),
             errors: errors.unwrap_or_default(),
@@ -507,10 +518,10 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
     }
 }
 
-fn outcome(is_error: Option<bool>) -> Outcome {
-    match is_error.unwrap_or(false).then_some(Outcome::Failed) {
+fn tool_outcome(is_error: Option<bool>) -> ToolOutcome {
+    match is_error.unwrap_or(false).then_some(ToolOutcome::Failed) {
         Some(failed) => failed,
-        None => Outcome::Succeeded,
+        None => ToolOutcome::Succeeded,
     }
 }
 
@@ -554,7 +565,7 @@ fn control_request(request_id: String, request: Value) -> Inbound {
                     (
                         ClaudeEvent::PermissionRequested {
                             id: id.clone(),
-                            detail: tool_detail(&tool_name, &input),
+                            tool: tool_kind(&tool_name, &input),
                             tool_name,
                             tool_use_id,
                             for_session: grant.as_ref().map(|grant| grant.label.clone()),
@@ -600,7 +611,7 @@ fn block(raw: Value) -> Block {
         Ok(ContentBlock::Text { text }) => Block::Text(text),
         Ok(ContentBlock::Thinking { thinking }) => Block::Thinking(thinking),
         Ok(ContentBlock::ToolUse { id, name, input }) => Block::ToolUse {
-            detail: tool_detail(&name, &input),
+            tool: tool_kind(&name, &input),
             id,
             name,
         },
@@ -611,7 +622,7 @@ fn block(raw: Value) -> Block {
         }) => Block::ToolResult {
             tool_use_id,
             content: content.unwrap_or(Value::Null),
-            outcome: outcome(is_error),
+            outcome: tool_outcome(is_error),
         },
         Err(_) => Block::Other(raw),
     }
@@ -921,11 +932,14 @@ fn answered(input: Value, answers: Vec<Answer>) -> serde_json::Result<Value> {
 mod tests {
     use serde_json::Value;
 
-    use proto::{Answer, Question, QuestionOption, Selection};
+    use proto::{
+        Answer, Change, FileChange, Question, QuestionOption, Selection, ToolKind, ToolOutcome,
+        TurnOutcome,
+    };
 
     use super::{
         AfterDeny, ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision,
-        PermissionMode, PermissionRequestId, ToolDetail, encode, parse_line, tool_detail,
+        PermissionMode, PermissionRequestId, encode, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -989,7 +1003,9 @@ mod tests {
             ClaudeEvent::PermissionRequested {
                 id: PermissionRequestId(String::from("r1")),
                 tool_name: String::from("Bash"),
-                detail: ToolDetail::Command(String::from("touch t1.txt")),
+                tool: ToolKind::Command {
+                    command: String::from("touch t1.txt")
+                },
                 tool_use_id: String::from("toolu_1"),
                 for_session: Some(String::from("Bash(touch t1.txt)")),
             }
@@ -1014,7 +1030,12 @@ mod tests {
                 ClaudeEvent::PermissionRequested {
                     id: PermissionRequestId(String::from("r1")),
                     tool_name: String::from("Write"),
-                    detail: ToolDetail::Path(String::from("/tmp/a.txt")),
+                    tool: ToolKind::FileChange {
+                        files: Vec::from([FileChange {
+                            path: String::from("/tmp/a.txt"),
+                            change: Change::Write
+                        }])
+                    },
                     tool_use_id: String::from("toolu_2"),
                     for_session: None,
                 },
@@ -1163,28 +1184,6 @@ mod tests {
     }
 
     #[test]
-    fn tool_input_becomes_a_tool_detail() {
-        let details = Vec::from([
-            ("Bash", r#"{"command":"ls -a","description":"list"}"#),
-            ("Grep", r#"{"pattern":"fn main"}"#),
-            ("Write", r#"{"content":"no path"}"#),
-            ("TodoWrite", r#"{"todos":[]}"#),
-        ])
-        .into_iter()
-        .map(|(tool, input)| tool_detail(tool, &json(input)))
-        .collect::<Vec<ToolDetail>>();
-        assert_eq!(
-            details,
-            [
-                ToolDetail::Command(String::from("ls -a")),
-                ToolDetail::Text(String::from("fn main")),
-                ToolDetail::Text(String::from(r#"{"content":"no path"}"#)),
-                ToolDetail::Text(String::from(r#"{"todos":[]}"#)),
-            ]
-        );
-    }
-
-    #[test]
     fn unknown_type_becomes_unknown_event_with_the_raw_json() {
         let line = r#"{"type":"brand_new_frame","x":1}"#;
         assert_eq!(
@@ -1241,5 +1240,197 @@ mod tests {
                 subtype: String::from("hook_callback")
             }
         );
+    }
+
+    #[test]
+    fn tool_inputs_become_shared_tool_kinds() {
+        struct Case {
+            name: String,
+            input: Value,
+            want: ToolKind,
+        }
+        let cases = Vec::from([
+            Case {
+                name: String::from("Bash"),
+                input: json(r#"{"command":"ls -a"}"#),
+                want: ToolKind::Command {
+                    command: String::from("ls -a"),
+                },
+            },
+            Case {
+                name: String::from("Write"),
+                input: json(r#"{"file_path":"a.txt"}"#),
+                want: ToolKind::FileChange {
+                    files: Vec::from([FileChange {
+                        path: String::from("a.txt"),
+                        change: Change::Write,
+                    }]),
+                },
+            },
+            Case {
+                name: String::from("Edit"),
+                input: json(r#"{"file_path":"b.txt"}"#),
+                want: ToolKind::FileChange {
+                    files: Vec::from([FileChange {
+                        path: String::from("b.txt"),
+                        change: Change::Edit,
+                    }]),
+                },
+            },
+            Case {
+                name: String::from("MultiEdit"),
+                input: json(r#"{"file_path":"c.txt"}"#),
+                want: ToolKind::FileChange {
+                    files: Vec::from([FileChange {
+                        path: String::from("c.txt"),
+                        change: Change::Edit,
+                    }]),
+                },
+            },
+            Case {
+                name: String::from("Read"),
+                input: json(r#"{"file_path":"d.txt"}"#),
+                want: ToolKind::Other {
+                    name: String::from("Read"),
+                    detail: String::from("d.txt"),
+                },
+            },
+            Case {
+                name: String::from("Grep"),
+                input: json(r#"{"pattern":"fn main"}"#),
+                want: ToolKind::Other {
+                    name: String::from("Grep"),
+                    detail: String::from("fn main"),
+                },
+            },
+            Case {
+                name: String::from("Glob"),
+                input: json(r#"{"pattern":"*.rs"}"#),
+                want: ToolKind::Other {
+                    name: String::from("Glob"),
+                    detail: String::from("*.rs"),
+                },
+            },
+            Case {
+                name: String::from("WebFetch"),
+                input: json(r#"{"url":"https://example.com"}"#),
+                want: ToolKind::Other {
+                    name: String::from("WebFetch"),
+                    detail: String::from("https://example.com"),
+                },
+            },
+            Case {
+                name: String::from("Write"),
+                input: json(r#"{"content":"no path"}"#),
+                want: ToolKind::Other {
+                    name: String::from("Write"),
+                    detail: String::from(r#"{"content":"no path"}"#),
+                },
+            },
+            Case {
+                name: String::from("Bash"),
+                input: json(r#"{"command":7}"#),
+                want: ToolKind::Other {
+                    name: String::from("Bash"),
+                    detail: String::from(r#"{"command":7}"#),
+                },
+            },
+            Case {
+                name: String::from("TodoWrite"),
+                input: json(r#"{"todos":[]}"#),
+                want: ToolKind::Other {
+                    name: String::from("TodoWrite"),
+                    detail: String::from(r#"{"todos":[]}"#),
+                },
+            },
+        ]);
+        let (got, want) = cases.into_iter().map(|case| {
+            let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"call","name":{},"input":{}}}]}}}}"#, serde_json::to_string(&case.name).unwrap(), case.input);
+            let got = match parse_line(&line).unwrap() {
+                Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
+                    super::Block::ToolUse { tool, .. } => Some(tool),
+                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolResult { .. } | super::Block::Other(_) => None,
+                }),
+                Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
+            };
+            (got, Some(case.want))
+        }).unzip::<Option<ToolKind>, Option<ToolKind>, Vec<Option<ToolKind>>, Vec<Option<ToolKind>>>();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn turn_results_distinguish_errors_from_interrupts() {
+        struct Case {
+            is_error: String,
+            reason: Option<String>,
+            want: TurnOutcome,
+        }
+        let cases = Vec::from([
+            Case {
+                is_error: String::from("null"),
+                reason: None,
+                want: TurnOutcome::Completed,
+            },
+            Case {
+                is_error: String::from("false"),
+                reason: Some(String::from("aborted_tools")),
+                want: TurnOutcome::Completed,
+            },
+            Case {
+                is_error: String::from("true"),
+                reason: Some(String::from("aborted_tools")),
+                want: TurnOutcome::Interrupted,
+            },
+            Case {
+                is_error: String::from("true"),
+                reason: Some(String::from("aborted_streaming")),
+                want: TurnOutcome::Interrupted,
+            },
+            Case {
+                is_error: String::from("true"),
+                reason: None,
+                want: TurnOutcome::Failed {
+                    message: String::from("error_during_execution"),
+                },
+            },
+            Case {
+                is_error: String::from("true"),
+                reason: Some(String::from("new_reason")),
+                want: TurnOutcome::Failed {
+                    message: String::from("error_during_execution"),
+                },
+            },
+        ]);
+        let (got, want) = cases.into_iter().map(|case| {
+            let line = format!(r#"{{"type":"result","subtype":"error_during_execution","session_id":"s","is_error":{},"terminal_reason":{}}}"#, case.is_error, serde_json::to_string(&case.reason).unwrap());
+            let got = match parse_line(&line).unwrap() {
+                Inbound::Event(ClaudeEvent::TurnFinished { outcome, .. }) => Some(outcome),
+                Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
+            };
+            (got, Some(case.want))
+        }).unzip::<Option<TurnOutcome>, Option<TurnOutcome>, Vec<Option<TurnOutcome>>, Vec<Option<TurnOutcome>>>();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn tool_results_use_the_shared_outcome_and_default_to_success() {
+        let cases = Vec::from([
+            ("", ToolOutcome::Succeeded),
+            (r#","is_error":null"#, ToolOutcome::Succeeded),
+            (r#","is_error":false"#, ToolOutcome::Succeeded),
+            (r#","is_error":true"#, ToolOutcome::Failed),
+        ]);
+        let (got, want) = cases.into_iter().map(|(field, want)| {
+            let line = format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"call"{field}}}]}}}}"#);
+            let got = match parse_line(&line).unwrap() {
+                Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
+                    super::Block::ToolResult { outcome, .. } => Some(outcome),
+                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolUse { .. } | super::Block::Other(_) => None,
+                }),
+                Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
+            };
+            (got, Some(want))
+        }).unzip::<Option<ToolOutcome>, Option<ToolOutcome>, Vec<Option<ToolOutcome>>, Vec<Option<ToolOutcome>>>();
+        assert_eq!(got, want);
     }
 }

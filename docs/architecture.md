@@ -52,8 +52,10 @@ preview, cloud workers, multi-user use.
 
 ## 3. The model: one session shape for both agents
 
-The daemon translates each provider's protocol into one provider-neutral
-model (`crates/daemon/src/mapping.rs`). The app only ever sees that model,
+The adapters translate provider tool calls, file changes and outcomes into
+the shared `proto` types. The daemon maps their events into session steps
+(`crates/daemon/src/mapping.rs`), assigns request ids and applies session
+state and approval wording. The app only ever sees the provider-neutral model,
 so one UI and one set of commands work for both agents.
 
 - **Commands:** `StartSession { provider, directory, model, effort }`,

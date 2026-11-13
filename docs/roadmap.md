@@ -7,6 +7,9 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Subset v9** (#24). The checker pins `0a5aaca`, with shape-based wire
   enums, optional fields omitted by serde, wire booleans and `@` patterns.
   The adapters use the accepted wire constructs to remove duplicate shapes.
+- **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,
+  file changes and outcomes. The daemon keeps request ids, session state and
+  approval wording.
 - **Agents.** `crates/agents` drives the `claude` CLI (stream-json control
   protocol) and `codex app-server` (JSON-RPC): messages, streaming deltas,
   tool calls, approvals, interrupts. `s1` and `s2` are the live checks.

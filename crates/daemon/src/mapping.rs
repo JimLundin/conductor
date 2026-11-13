@@ -1,15 +1,11 @@
 //! Agent events to protocol events. Pure: a provider event in, the steps the
 //! session applies out. Request ids and the turn belong to the session.
 
-use agents::claude::{
-    ASK_USER_QUESTION, AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, Role, ToolDetail,
-};
-use agents::codex::{
-    self, ApprovalKind, ChangeKind, CodexEvent, Item, ItemPhase, PermissionAsk, ThreadEvent,
-};
+use agents::claude::{ASK_USER_QUESTION, AfterDeny, Block, ClaudeEvent, PermissionDecision, Role};
+use agents::codex::{self, ApprovalKind, CodexEvent, PermissionAsk, ThreadEvent};
 use proto::{
-    Change, ClientName, CloseReason, Decision, EventKind, FileChange, Question, ToolCallId,
-    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    ClientName, CloseReason, Decision, EventKind, Question, ToolCallId, ToolKind, ToolOutcome,
+    ToolPhase, TurnOutcome,
 };
 
 use crate::session::Reply;
@@ -77,14 +73,14 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
         ClaudeEvent::ThinkingDelta { text } => reasoning_delta(text).into_iter().collect(),
         ClaudeEvent::PermissionRequested {
             id,
-            tool_name,
-            detail,
+            tool,
+            tool_name: _,
             tool_use_id,
             for_session,
         } => Vec::from([Step::Open {
             native: NativeRequest(id.0),
             call: ToolCallId(tool_use_id),
-            tool: tool_kind(tool_name, detail),
+            tool,
             reason: None,
             for_session,
         }]),
@@ -93,20 +89,7 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             questions,
         }]),
         ClaudeEvent::PermissionCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
-        ClaudeEvent::TurnFinished {
-            subtype,
-            outcome,
-            terminal_reason,
-            ..
-        } => Vec::from([Step::TurnEnded(
-            match (outcome, terminal_reason.as_deref()) {
-                (Outcome::Succeeded, _) => TurnOutcome::Completed,
-                (Outcome::Failed, Some("aborted_streaming" | "aborted_tools")) => {
-                    TurnOutcome::Interrupted
-                }
-                (Outcome::Failed, _) => TurnOutcome::Failed { message: subtype },
-            },
-        )]),
+        ClaudeEvent::TurnFinished { outcome, .. } => Vec::from([Step::TurnEnded(outcome)]),
         ClaudeEvent::Exited { status } => Vec::from([Step::Closed(CloseReason::Exited {
             status: status.describe(),
         })]),
@@ -126,13 +109,11 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
             Some(Step::Emit(EventKind::AssistantMessage { text }))
         }
         (Role::Assistant, Block::Thinking(text)) => reasoning(text),
-        (Role::Assistant, Block::ToolUse { id, name, detail }) => match name.as_str() {
+        (Role::Assistant, Block::ToolUse { id, name, tool }) => match name.as_str() {
             ASK_USER_QUESTION => None,
-            name => Some(Step::Emit(EventKind::ToolCall {
+            _ => Some(Step::Emit(EventKind::ToolCall {
                 call: ToolCallId(id),
-                phase: ToolPhase::Started {
-                    tool: tool_kind(String::from(name), detail),
-                },
+                phase: ToolPhase::Started { tool },
             })),
         },
         (
@@ -144,10 +125,7 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
             },
         ) => Some(Step::ToolFinished {
             call: ToolCallId(tool_use_id),
-            outcome: match outcome {
-                Outcome::Succeeded => ToolOutcome::Succeeded,
-                Outcome::Failed => ToolOutcome::Failed,
-            },
+            outcome,
         }),
         (Role::User, Block::Text(_) | Block::ToolUse { .. })
         | (Role::Assistant, Block::ToolResult { .. })
@@ -170,23 +148,6 @@ fn reasoning_delta(text: String) -> Option<Step> {
     Some(text)
         .filter(|text| !text.is_empty())
         .map(|text| Step::Emit(EventKind::ReasoningDelta { text }))
-}
-
-fn tool_kind(name: String, detail: ToolDetail) -> ToolKind {
-    match (name.as_str(), detail) {
-        ("Write", ToolDetail::Path(path)) => one_file(path, Change::Write),
-        ("Edit" | "MultiEdit", ToolDetail::Path(path)) => one_file(path, Change::Edit),
-        (_, ToolDetail::Command(command)) => ToolKind::Command { command },
-        (_, ToolDetail::Path(detail) | ToolDetail::Text(detail)) => {
-            ToolKind::Other { name, detail }
-        }
-    }
-}
-
-fn one_file(path: String, change: Change) -> ToolKind {
-    ToolKind::FileChange {
-        files: Vec::from([FileChange { path, change }]),
-    }
 }
 
 pub(crate) fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
@@ -230,19 +191,19 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         }
         ThreadEvent::ReasoningDelta { text, .. } => reasoning_delta(text).into_iter().collect(),
         ThreadEvent::Reasoning { text, .. } => reasoning(text).into_iter().collect(),
-        ThreadEvent::Item {
-            phase: ItemPhase::Started,
-            item,
+        ThreadEvent::ToolCall {
+            call,
+            phase: ToolPhase::Started { tool },
             ..
-        } => Vec::from([Step::Emit(codex_item(item))]),
-        ThreadEvent::Item {
-            phase: ItemPhase::Completed,
-            item: Item::Command { id, status, .. } | Item::FileChange { id, status, .. },
+        } => Vec::from([Step::Emit(EventKind::ToolCall {
+            call,
+            phase: ToolPhase::Started { tool },
+        })]),
+        ThreadEvent::ToolCall {
+            call,
+            phase: ToolPhase::Finished { outcome },
             ..
-        } => Vec::from([Step::ToolFinished {
-            call: ToolCallId(id),
-            outcome: codex_outcome(&status),
-        }]),
+        } => Vec::from([Step::ToolFinished { call, outcome }]),
         ThreadEvent::ApprovalRequested { id, item, kind, .. } => {
             Vec::from([approval_step(NativeRequest(id.0), ToolCallId(item), kind)])
         }
@@ -250,52 +211,11 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         ThreadEvent::SecretQuestionDeclined { .. } => Vec::from([Step::Emit(EventKind::Error {
             message: String::from(SECRET_DECLINED),
         })]),
-        ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(match outcome {
-            codex::TurnOutcome::Completed => TurnOutcome::Completed,
-            codex::TurnOutcome::Interrupted => TurnOutcome::Interrupted,
-            codex::TurnOutcome::Failed { message } => TurnOutcome::Failed {
-                message: message.unwrap_or_else(|| String::from("the turn failed")),
-            },
-        })]),
+        ThreadEvent::TurnCompleted { outcome, .. } => Vec::from([Step::TurnEnded(outcome)]),
         ThreadEvent::Unknown(frame) => {
             tracing::trace!(%frame, "unmapped codex thread frame");
             Vec::new()
         }
-    }
-}
-
-fn codex_item(item: Item) -> EventKind {
-    let (id, tool) = match item {
-        Item::Command { id, command, .. } => (id, ToolKind::Command { command }),
-        Item::FileChange { id, changes, .. } => (
-            id,
-            ToolKind::FileChange {
-                files: changes
-                    .into_iter()
-                    .map(|file| FileChange {
-                        path: file.path,
-                        change: match file.kind {
-                            ChangeKind::Add => Change::Write,
-                            ChangeKind::Update => Change::Edit,
-                            ChangeKind::Delete => Change::Delete,
-                        },
-                    })
-                    .collect(),
-            },
-        ),
-    };
-    EventKind::ToolCall {
-        call: ToolCallId(id),
-        phase: ToolPhase::Started { tool },
-    }
-}
-
-/// Codex's item `status`, as a tool call's outcome.
-fn codex_outcome(status: &str) -> ToolOutcome {
-    match status {
-        "completed" => ToolOutcome::Succeeded,
-        "declined" => ToolOutcome::Declined,
-        _ => ToolOutcome::Failed,
     }
 }
 
@@ -366,16 +286,14 @@ pub(crate) fn codex_answer(reply: Reply) -> codex::Decision {
 mod tests {
     use agents::Exit;
     use agents::claude::{
-        AfterDeny, Block, ClaudeEvent, Outcome, PermissionDecision, PermissionRequestId, Role,
-        SessionId, ToolDetail,
+        AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionRequestId, Role,
     };
     use agents::codex::{
-        self, ApprovalId, ApprovalKind, ChangeKind, CodexEvent, FileChange, Item, ItemPhase,
-        PermissionAsk, ThreadEvent, ThreadId, TurnId,
+        self, ApprovalId, ApprovalKind, CodexEvent, PermissionAsk, ThreadEvent, ThreadId, TurnId,
     };
     use proto::{
-        Answer, Change, ClientName, CloseReason, Decision, EventKind, Question, QuestionOption,
-        Selection, ToolCallId, ToolKind, ToolPhase, TurnOutcome,
+        Answer, ClientName, CloseReason, Decision, EventKind, Question, QuestionOption, Selection,
+        ToolCallId, ToolKind,
     };
 
     use super::{NativeRequest, Step, claude_answer, claude_steps, codex_answer, codex_steps};
@@ -387,29 +305,12 @@ mod tests {
         want: Vec<Step>,
     }
 
-    fn finished(outcome: Outcome, terminal_reason: Option<&str>) -> ClaudeEvent {
-        ClaudeEvent::TurnFinished {
-            subtype: String::from("error_during_execution"),
-            outcome,
-            terminal_reason: terminal_reason.map(String::from),
-            session_id: SessionId(String::from("s")),
-            errors: Vec::new(),
-        }
-    }
-
-    fn tool_use(name: &str, detail: ToolDetail) -> Block {
+    fn tool_use(name: &str, tool: ToolKind) -> Block {
         Block::ToolUse {
             id: String::from("toolu_1"),
             name: String::from(name),
-            detail,
+            tool,
         }
-    }
-
-    fn started(id: &str, tool: ToolKind) -> Step {
-        Step::Emit(EventKind::ToolCall {
-            call: ToolCallId(String::from(id)),
-            phase: ToolPhase::Started { tool },
-        })
     }
 
     fn on_thread(event: ThreadEvent) -> Vec<Step> {
@@ -522,50 +423,12 @@ mod tests {
                     role: Role::Assistant,
                     content: Vec::from([
                         Block::Thinking(String::from("hmm")),
-                        // Claude's signature alone, without the text.
                         Block::Thinking(String::new()),
-                        tool_use("Read", ToolDetail::Path(String::from("b.txt"))),
-                        tool_use("Bash", ToolDetail::Command(String::from("ls"))),
-                        tool_use("Write", ToolDetail::Path(String::from("c.txt"))),
-                        tool_use("Edit", ToolDetail::Path(String::from("d.txt"))),
                     ]),
                 }),
-                want: Vec::from([
-                    Step::Emit(EventKind::Reasoning {
-                        text: String::from("hmm"),
-                    }),
-                    started(
-                        "toolu_1",
-                        ToolKind::Other {
-                            name: String::from("Read"),
-                            detail: String::from("b.txt"),
-                        },
-                    ),
-                    started(
-                        "toolu_1",
-                        ToolKind::Command {
-                            command: String::from("ls"),
-                        },
-                    ),
-                    started(
-                        "toolu_1",
-                        ToolKind::FileChange {
-                            files: Vec::from([proto::FileChange {
-                                path: String::from("c.txt"),
-                                change: Change::Write,
-                            }]),
-                        },
-                    ),
-                    started(
-                        "toolu_1",
-                        ToolKind::FileChange {
-                            files: Vec::from([proto::FileChange {
-                                path: String::from("d.txt"),
-                                change: Change::Edit,
-                            }]),
-                        },
-                    ),
-                ]),
+                want: Vec::from([Step::Emit(EventKind::Reasoning {
+                    text: String::from("hmm"),
+                })]),
             },
             Case {
                 got: claude_steps(ClaudeEvent::PermissionCancelled {
@@ -574,65 +437,12 @@ mod tests {
                 want: Vec::from([Step::Withdraw(NativeRequest(String::from("p1")))]),
             },
             Case {
-                got: claude_steps(finished(Outcome::Failed, Some("aborted_tools"))),
-                want: Vec::from([Step::TurnEnded(TurnOutcome::Interrupted)]),
-            },
-            Case {
-                got: claude_steps(finished(Outcome::Failed, None)),
-                want: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
-                    message: String::from("error_during_execution"),
-                })]),
-            },
-            Case {
                 got: claude_steps(ClaudeEvent::Exited {
                     status: Exit::Unknown(String::from("gone")),
                 }),
                 want: Vec::from([Step::Closed(CloseReason::Exited {
                     status: String::from("unknown exit (gone)"),
                 })]),
-            },
-            Case {
-                got: on_thread(ThreadEvent::Item {
-                    turn: turn(),
-                    phase: ItemPhase::Started,
-                    item: Item::FileChange {
-                        id: String::from("patch-1"),
-                        changes: Vec::from([
-                            FileChange {
-                                path: String::from("a.txt"),
-                                kind: ChangeKind::Add,
-                            },
-                            FileChange {
-                                path: String::from("b.txt"),
-                                kind: ChangeKind::Update,
-                            },
-                            FileChange {
-                                path: String::from("c.txt"),
-                                kind: ChangeKind::Delete,
-                            },
-                        ]),
-                        status: String::from("inProgress"),
-                    },
-                }),
-                want: Vec::from([started(
-                    "patch-1",
-                    ToolKind::FileChange {
-                        files: Vec::from([
-                            proto::FileChange {
-                                path: String::from("a.txt"),
-                                change: Change::Write,
-                            },
-                            proto::FileChange {
-                                path: String::from("b.txt"),
-                                change: Change::Edit,
-                            },
-                            proto::FileChange {
-                                path: String::from("c.txt"),
-                                change: Change::Delete,
-                            },
-                        ]),
-                    },
-                )]),
             },
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {
@@ -706,7 +516,10 @@ mod tests {
                     role: Role::Assistant,
                     content: Vec::from([tool_use(
                         "AskUserQuestion",
-                        ToolDetail::Text(String::from("{}")),
+                        ToolKind::Other {
+                            name: String::from("AskUserQuestion"),
+                            detail: String::from("{}"),
+                        },
                     )]),
                 }),
                 want: Vec::new(),
@@ -726,7 +539,9 @@ mod tests {
                 got: claude_steps(ClaudeEvent::PermissionRequested {
                     id: PermissionRequestId(String::from("p3")),
                     tool_name: String::from("Bash"),
-                    detail: ToolDetail::Command(String::from("touch t1.txt")),
+                    tool: ToolKind::Command {
+                        command: String::from("touch t1.txt"),
+                    },
                     tool_use_id: String::from("toolu_3"),
                     for_session: Some(String::from("Bash(touch t1.txt)")),
                 }),
@@ -746,15 +561,6 @@ mod tests {
                     message: String::from(
                         "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.",
                     ),
-                })]),
-            },
-            Case {
-                got: on_thread(ThreadEvent::TurnCompleted {
-                    turn: turn(),
-                    outcome: codex::TurnOutcome::Failed { message: None },
-                }),
-                want: Vec::from([Step::TurnEnded(TurnOutcome::Failed {
-                    message: String::from("the turn failed"),
                 })]),
             },
         ]);

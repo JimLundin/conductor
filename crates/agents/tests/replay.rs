@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Outcome, PermissionDecision,
+    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionDecision,
     PermissionMode, PermissionRequestId, Role, SettingSource, VersionPolicy,
 };
 use n0_future::StreamExt;
@@ -72,20 +72,12 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
     }
 }
 
-/// The CLI's own `is_error` spelling, so the summaries read like its JSON.
-fn is_error(outcome: &Outcome) -> &str {
-    match outcome {
-        Outcome::Succeeded => "false",
-        Outcome::Failed => "true",
-    }
-}
-
 fn block_summary(block: &Block) -> String {
     match block {
         Block::Text(t) => format!("text {t:?}"),
         Block::Thinking(t) => format!("thinking {t:?}"),
-        Block::ToolUse { name, detail, .. } => format!("tool_use {name} {detail:?}"),
-        Block::ToolResult { outcome, .. } => format!("tool_result error={}", is_error(outcome)),
+        Block::ToolUse { name, tool, .. } => format!("tool_use {name} {tool:?}"),
+        Block::ToolResult { outcome, .. } => format!("tool_result {outcome:?}"),
         Block::Other(_) => String::from("other"),
     }
 }
@@ -103,10 +95,10 @@ fn summary(event: &ClaudeEvent) -> String {
         }
         ClaudeEvent::PermissionRequested {
             tool_name,
-            detail,
+            tool,
             tool_use_id,
             ..
-        } => format!("permission {tool_name} {detail:?} for {tool_use_id:?}"),
+        } => format!("permission {tool_name} {tool:?} for {tool_use_id:?}"),
         ClaudeEvent::QuestionAsked {
             questions,
             tool_use_id,
@@ -126,10 +118,7 @@ fn summary(event: &ClaudeEvent) -> String {
             outcome,
             terminal_reason,
             ..
-        } => format!(
-            "finished {subtype} is_error={} {terminal_reason:?}",
-            is_error(outcome)
-        ),
+        } => format!("finished {subtype} {outcome:?} {terminal_reason:?}"),
         ClaudeEvent::Exited { status } => format!("exited {}", status.describe()),
         ClaudeEvent::Unknown(v) => format!("unknown {}", frame(v)),
     }
@@ -342,55 +331,55 @@ async fn approve_deny_interrupt_recording() {
         [
             // 1: approve a Write. Only text streams; tool input stays Unknown.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
-            "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/a.txt\") for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
-            "user: tool_result error=false",
+            "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/a.txt\", change: Write }] }",
+            "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/a.txt\", change: Write }] } for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
+            "user: tool_result Succeeded",
             "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             // 2: deny a Write.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
-            "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/b.txt\") for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
-            "user: tool_result error=true",
+            "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/b.txt\", change: Write }] }",
+            "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/b.txt\", change: Write }] } for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
+            "user: tool_result Failed",
             "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
             "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             // 3: interrupt as the turn starts, then a normal turn.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "user: text \"[Request interrupted by user]\"",
-            "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
+            "finished error_during_execution Interrupted Some(\"aborted_streaming\")",
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             // 3c: interrupt on the first delta; the cut-off message repeats it.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"1\"]",
             "assistant: text \"1\"",
             "user: text \"[Request interrupted by user]\"",
-            "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
+            "finished error_during_execution Interrupted Some(\"aborted_streaming\")",
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             // 3d: interrupt right after sending; this time the CLI ran the turn.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"1\\n2\\n3\\n4\", \"\\n5\\n6\\n7\\n8\", \"\\n9\\n10\\n11\\n12\", \"\\n13\\n14\\n15\\n16\", \"\\n17\\n18\\n19\\n20\", \"\\n21\\n22\\n23\\n24\", \"\\n25\\n26\\n27\\n28\", \"\\n29\\n30\\n31\\n32\", \"\\n33\\n34\\n35\\n36\", \"\\n37\\n38\\n39\\n40\", \"\\n41\\n42\\n43\\n44\", \"\\n45\\n46\\n47\\n48\", \"\\n49\\n50\\n51\\n52\", \"\\n53\\n54\\n55\\n56\", \"\\n57\\n58\\n59\\n60\", \"\\n61\\n62\\n63\\n64\", \"\\n65\\n66\\n67\\n68\", \"\\n69\\n70\\n71\\n72\", \"\\n73\\n74\\n75\\n76\", \"\\n77\\n78\\n79\\n80\", \"\\n81\\n82\\n83\\n84\", \"\\n85\\n86\\n87\\n88\", \"\\n89\\n90\\n91\\n92\", \"\\n93\\n94\\n95\\n96\", \"\\n97\\n98\\n99\\n100\", \"\\n101\\n102\\n103\\n104\", \"\\n105\\n106\\n107\\n108\", \"\\n109\\n110\\n111\\n112\", \"\\n113\\n114\\n115\\n116\", \"\\n117\\n118\\n119\\n120\", \"\\n121\\n122\\n123\\n124\", \"\\n125\\n126\\n127\\n128\", \"\\n129\\n130\\n131\\n132\", \"\\n133\\n134\\n135\\n136\", \"\\n137\\n138\\n139\\n140\", \"\\n141\\n142\\n143\\n144\", \"\\n145\\n146\\n147\\n148\", \"\\n149\\n150\\n151\\n152\", \"\\n153\\n154\\n155\\n156\", \"\\n157\\n158\\n159\\n160\", \"\\n161\\n162\\n163\\n164\", \"\\n165\\n166\\n167\\n168\", \"\\n169\\n170\\n171\\n172\", \"\\n173\\n174\\n175\\n176\", \"\\n177\\n178\\n179\\n180\", \"\\n181\\n182\\n183\\n184\", \"\\n185\\n186\\n187\\n188\", \"\\n189\\n190\\n191\\n192\", \"\\n193\\n194\\n195\\n196\", \"\\n197\\n198\\n199\\n200\"]",
             "assistant: text \"1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n19\\n20\\n21\\n22\\n23\\n24\\n25\\n26\\n27\\n28\\n29\\n30\\n31\\n32\\n33\\n34\\n35\\n36\\n37\\n38\\n39\\n40\\n41\\n42\\n43\\n44\\n45\\n46\\n47\\n48\\n49\\n50\\n51\\n52\\n53\\n54\\n55\\n56\\n57\\n58\\n59\\n60\\n61\\n62\\n63\\n64\\n65\\n66\\n67\\n68\\n69\\n70\\n71\\n72\\n73\\n74\\n75\\n76\\n77\\n78\\n79\\n80\\n81\\n82\\n83\\n84\\n85\\n86\\n87\\n88\\n89\\n90\\n91\\n92\\n93\\n94\\n95\\n96\\n97\\n98\\n99\\n100\\n101\\n102\\n103\\n104\\n105\\n106\\n107\\n108\\n109\\n110\\n111\\n112\\n113\\n114\\n115\\n116\\n117\\n118\\n119\\n120\\n121\\n122\\n123\\n124\\n125\\n126\\n127\\n128\\n129\\n130\\n131\\n132\\n133\\n134\\n135\\n136\\n137\\n138\\n139\\n140\\n141\\n142\\n143\\n144\\n145\\n146\\n147\\n148\\n149\\n150\\n151\\n152\\n153\\n154\\n155\\n156\\n157\\n158\\n159\\n160\\n161\\n162\\n163\\n164\\n165\\n166\\n167\\n168\\n169\\n170\\n171\\n172\\n173\\n174\\n175\\n176\\n177\\n178\\n179\\n180\\n181\\n182\\n183\\n184\\n185\\n186\\n187\\n188\\n189\\n190\\n191\\n192\\n193\\n194\\n195\\n196\\n197\\n198\\n199\\n200\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             // 3b: interrupt with a permission request open; the CLI withdraws it.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
-            "assistant: tool_use Write Path(\"/tmp/s1-scratch/d.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/d.txt\") for \"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq\"",
+            "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/d.txt\", change: Write }] }",
+            "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/d.txt\", change: Write }] } for \"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq\"",
             "permission_cancelled",
-            "user: tool_result error=true",
+            "user: tool_result Failed",
             "user: text \"[Request interrupted by user for tool use]\"",
-            "finished error_during_execution is_error=true Some(\"aborted_tools\")",
+            "finished error_during_execution Interrupted Some(\"aborted_tools\")",
         ]
     );
     assert_eq!(
@@ -422,13 +411,13 @@ async fn resume_and_accept_edits_recording() {
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"a.txt\"]",
             "assistant: text \"a.txt\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
-            "assistant: tool_use Write Path(\"/tmp/s1-scratch/c.txt\")",
-            "user: tool_result error=false",
+            "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/c.txt\", change: Write }] }",
+            "user: tool_result Succeeded",
             "streams [\"I created `c.txt`\", \" in `/tmp/s\", \"1-scratch` with the\", \" content `accepted`.\"]",
             "assistant: text \"I created `c.txt` in `/tmp/s1-scratch` with the content `accepted`.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
         ]
     );
     assert_eq!(
@@ -480,7 +469,7 @@ async fn summarized_thinking_recording() {
             format!("assistant: thinking {thought:?}"),
             String::from("streams [\"18\"]"),
             String::from("assistant: text \"18\""),
-            String::from("finished success is_error=false Some(\"completed\")"),
+            String::from("finished success Completed Some(\"completed\")"),
         ]
     );
 }
@@ -537,32 +526,32 @@ async fn questions_and_session_approval_recording() {
         replayed.events,
         [
             "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
-            "assistant: tool_use AskUserQuestion Text(\"{\\\"questions\\\":[{\\\"header\\\":\\\"Color\\\",\\\"multiSelect\\\":false,\\\"options\\\":[{\\\"description\\\":\\\"Choose red as your preferred color.\\\",\\\"label\\\":\\\"Red\\\"},{\\\"description\\\":\\\"Choose blue as your preferred color.\\\",\\\"label\\\":\\\"Blue\\\"}],\\\"question\\\":\\\"Which color do you prefer?\\\"}]}\")",
+            "assistant: tool_use AskUserQuestion Other { name: \"AskUserQuestion\", detail: \"{\\\"questions\\\":[{\\\"header\\\":\\\"Color\\\",\\\"multiSelect\\\":false,\\\"options\\\":[{\\\"description\\\":\\\"Choose red as your preferred color.\\\",\\\"label\\\":\\\"Red\\\"},{\\\"description\\\":\\\"Choose blue as your preferred color.\\\",\\\"label\\\":\\\"Blue\\\"}],\\\"question\\\":\\\"Which color do you prefer?\\\"}]}\" }",
             "question [\"Which color do you prefer?\"] for \"toolu_bdrk_01CcDpZHC4vQ3AZi8neyebkS\"",
-            "user: tool_result error=false",
+            "user: tool_result Succeeded",
             "streams [\"Blue\"]",
             "assistant: text \"Blue\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
-            "assistant: tool_use Bash Command(\"touch t1.txt\")",
-            "permission Bash Command(\"touch t1.txt\") for \"toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf\"",
-            "user: tool_result error=false",
+            "assistant: tool_use Bash Command { command: \"touch t1.txt\" }",
+            "permission Bash Command { command: \"touch t1.txt\" } for \"toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf\"",
+            "user: tool_result Succeeded",
             "streams [\"Ran `touch t1.\", \"txt`. It completed with\", \" no output.\"]",
             "assistant: text \"Ran `touch t1.txt`. It completed with no output.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
-            "assistant: tool_use Bash Command(\"touch t1.txt\")",
-            "user: tool_result error=false",
+            "assistant: tool_use Bash Command { command: \"touch t1.txt\" }",
+            "user: tool_result Succeeded",
             "streams [\"Ran `touch t1\", \".txt` again. It complet\", \"ed with no output.\", \" Since `touch` only\", \" updates the\", \" timestamp on\", \" an\", \" existing file, the\", \" file's\", \" contents are unchanged.\"]",
             "assistant: text \"Ran `touch t1.txt` again. It completed with no output. Since `touch` only updates the timestamp on an existing file, the file's contents are unchanged.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             "turn_started ad0a8582-6b4f-4260-ad75-a641b9adefdb",
-            "assistant: tool_use AskUserQuestion Text(\"{\\\"questions\\\":[{\\\"header\\\":\\\"Fruit\\\",\\\"multiSelect\\\":false,\\\"options\\\":[{\\\"description\\\":\\\"Choose apple as your preferred fruit.\\\",\\\"label\\\":\\\"Apple\\\"},{\\\"description\\\":\\\"Choose pear as your preferred fruit.\\\",\\\"label\\\":\\\"Pear\\\"}],\\\"question\\\":\\\"Which fruit do you prefer?\\\"}]}\")",
+            "assistant: tool_use AskUserQuestion Other { name: \"AskUserQuestion\", detail: \"{\\\"questions\\\":[{\\\"header\\\":\\\"Fruit\\\",\\\"multiSelect\\\":false,\\\"options\\\":[{\\\"description\\\":\\\"Choose apple as your preferred fruit.\\\",\\\"label\\\":\\\"Apple\\\"},{\\\"description\\\":\\\"Choose pear as your preferred fruit.\\\",\\\"label\\\":\\\"Pear\\\"}],\\\"question\\\":\\\"Which fruit do you prefer?\\\"}]}\" }",
             "question [\"Which fruit do you prefer?\"] for \"toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa\"",
             "permission_cancelled",
-            "user: tool_result error=true",
+            "user: tool_result Failed",
             "user: text \"[Request interrupted by user for tool use]\"",
-            "finished error_during_execution is_error=true Some(\"aborted_tools\")",
+            "finished error_during_execution Interrupted Some(\"aborted_tools\")",
         ]
     );
     assert_eq!(
@@ -612,7 +601,7 @@ async fn unknown_control_request_gets_an_error_reply() {
     played.session.shutdown().await.unwrap();
     assert_eq!(
         played.seen,
-        ["finished success is_error=false Some(\"completed\")"]
+        ["finished success Completed Some(\"completed\")"]
     );
     assert_eq!(
         played.unknown,
@@ -780,12 +769,12 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
         r.seen,
         [
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
-            "assistant: tool_use Write Path(\"/tmp/s1-scratch/a.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/a.txt\") for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
-            "user: tool_result error=false",
+            "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/a.txt\", change: Write }] }",
+            "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/a.txt\", change: Write }] } for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
+            "user: tool_result Succeeded",
             "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
         ]
     );
     assert_eq!(
@@ -831,21 +820,21 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
         r.seen,
         [
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
-            "assistant: tool_use Write Path(\"/tmp/s1-scratch/b.txt\")",
-            "permission Write Path(\"/tmp/s1-scratch/b.txt\") for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
-            "user: tool_result error=true",
+            "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/b.txt\", change: Write }] }",
+            "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/b.txt\", change: Write }] } for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
+            "user: tool_result Failed",
             "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
             "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"1\"]",
             "assistant: text \"1\"",
             "user: text \"[Request interrupted by user]\"",
-            "finished error_during_execution is_error=true Some(\"aborted_streaming\")",
+            "finished error_during_execution Interrupted Some(\"aborted_streaming\")",
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
-            "finished success is_error=false Some(\"completed\")",
+            "finished success Completed Some(\"completed\")",
         ]
     );
     assert_eq!(

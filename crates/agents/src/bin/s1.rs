@@ -12,14 +12,13 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, Outcome,
-    PermissionDecision, PermissionMode, PermissionRequestId, Role, SessionId, SettingSource,
-    VersionPolicy,
+    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, PermissionDecision,
+    PermissionMode, PermissionRequestId, Role, SessionId, SettingSource, VersionPolicy,
 };
 use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
 use anyhow::{Context, Result};
-use proto::{Answer, Effort, Question};
+use proto::{Answer, Effort, Question, ToolOutcome, TurnOutcome};
 use tokio::sync::mpsc;
 
 /// Where the pinned CLIs are installed for the live checks, under this
@@ -86,7 +85,7 @@ enum Progress {
 #[derive(Debug)]
 struct Finished {
     subtype: String,
-    outcome: Outcome,
+    outcome: TurnOutcome,
     terminal_reason: Option<String>,
 }
 
@@ -197,7 +196,7 @@ impl Turn {
                     .extend(content.into_iter().filter_map(|block| match block {
                         Block::ToolResult {
                             content,
-                            outcome: Outcome::Failed,
+                            outcome: ToolOutcome::Failed,
                             ..
                         } => Some(content.to_string()),
                         Block::ToolResult { .. }
@@ -350,10 +349,10 @@ impl Turn {
     }
 
     /// The turn's `result` subtype and outcome, for matching.
-    fn result(&self) -> Option<(&str, Outcome)> {
+    fn result(&self) -> Option<(&str, &TurnOutcome)> {
         self.finished
             .as_ref()
-            .map(|finished| (finished.subtype.as_str(), finished.outcome))
+            .map(|finished| (finished.subtype.as_str(), &finished.outcome))
     }
 }
 
@@ -438,7 +437,7 @@ async fn chosen_and_killed(
     let reasoning = report(
         "12 reasoning",
         match (t.thinking.concat(), t.thinking.first(), t.result()) {
-            (joined, Some(_), Some(("success", Outcome::Succeeded))) if joined == t.thought => {
+            (joined, Some(_), Some(("success", TurnOutcome::Completed))) if joined == t.thought => {
                 Verdict::Pass
             }
             _ => Verdict::Fail,
@@ -473,7 +472,7 @@ async fn chosen_and_killed(
     let resumed = report(
         "13 killed and resumed",
         match (&killed.exited, t.text.find("18"), t.result(), &t.session_id) {
-            (Some(_), Some(_), Some(("success", Outcome::Succeeded)), Some(id))
+            (Some(_), Some(_), Some(("success", TurnOutcome::Completed)), Some(id))
                 if id == &session_id =>
             {
                 Verdict::Pass
@@ -528,22 +527,22 @@ async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result
             interrupted,
             t.finished
                 .as_ref()
-                .map(|finished| (finished.outcome, finished.terminal_reason())),
+                .map(|finished| (&finished.outcome, finished.terminal_reason())),
             after.result(),
             after.text.to_lowercase().find("pong"),
         ) {
             (
                 Expect::Interrupted | Expect::Either,
                 Ok(()),
-                Some((Outcome::Failed, Some("aborted_streaming"))),
-                Some(("success", Outcome::Succeeded)),
+                Some((TurnOutcome::Interrupted, Some("aborted_streaming"))),
+                Some(("success", TurnOutcome::Completed)),
                 Some(_),
             )
             | (
                 Expect::Either,
                 Ok(()),
-                Some((Outcome::Succeeded, Some("completed"))),
-                Some(("success", Outcome::Succeeded)),
+                Some((TurnOutcome::Completed, Some("completed"))),
+                Some(("success", TurnOutcome::Completed)),
                 Some(_),
             ) => Verdict::Pass,
             _ => Verdict::Fail,
@@ -585,7 +584,7 @@ async fn questions(
     let question = report(
         "7 question",
         match (&asked, t.result(), t.text.find("Blue")) {
-            (asked, Some(("success", Outcome::Succeeded)), Some(_))
+            (asked, Some(("success", TurnOutcome::Completed)), Some(_))
                 if asked == &Vec::from([Vec::from([2])]) =>
             {
                 Verdict::Pass
@@ -621,7 +620,7 @@ async fn questions(
             again.permissions.first(),
             again.result(),
         ) {
-            (first, Presence::Present, None, Some(("success", Outcome::Succeeded)))
+            (first, Presence::Present, None, Some(("success", TurnOutcome::Completed)))
                 if first
                     == &(
                         Vec::from([String::from("Bash")]),
@@ -669,14 +668,14 @@ async fn questions(
             &late,
             t.finished
                 .as_ref()
-                .map(|finished| (finished.outcome, finished.terminal_reason())),
+                .map(|finished| (&finished.outcome, finished.terminal_reason())),
         ) {
             (
                 1,
                 Some(Ok(())),
                 1,
                 Some(Err(_)),
-                Some((Outcome::Failed, Some("aborted_tools" | "aborted_streaming"))),
+                Some((TurnOutcome::Interrupted, Some("aborted_tools" | "aborted_streaming"))),
             ) => Verdict::Pass,
             _ => Verdict::Fail,
         },
@@ -737,7 +736,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let approve = report(
         "1 approve",
         match (presence(&a), t.result(), (&t.permissions, &t.streamed)) {
-            (Presence::Present, Some(("success", Outcome::Succeeded)), seen)
+            (Presence::Present, Some(("success", TurnOutcome::Completed)), seen)
                 if seen == (&Vec::from([String::from("Write")]), &t.text) =>
             {
                 Verdict::Pass
@@ -850,7 +849,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let resume = report(
         "4 resume",
         match (t.text.find("a.txt"), t.result()) {
-            (Some(_), Some(("success", Outcome::Succeeded))) => Verdict::Pass,
+            (Some(_), Some(("success", TurnOutcome::Completed))) => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(
