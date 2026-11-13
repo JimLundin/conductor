@@ -32,11 +32,17 @@ fn fixture(name: &str) -> PathBuf {
 /// another test thread may have just written fails with "Text file busy" when
 /// a concurrent fork still holds it open.
 fn fake_codex_dir(fixture: &Path) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "agents-codex-replay-{}-{}",
-        std::process::id(),
-        fixture.file_stem().unwrap().to_str().unwrap()
-    ));
+    let dir = std::env::current_exe()
+        .unwrap()
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .join("tmp")
+        .join(format!(
+            "agents-codex-replay-{}-{}",
+            std::process::id(),
+            fixture.file_stem().unwrap().to_str().unwrap()
+        ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::copy(fixture, dir.join("stdout.jsonl")).unwrap();
     dir

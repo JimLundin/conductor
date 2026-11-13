@@ -36,7 +36,13 @@ struct FakeClaude {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("agents-replay-{}-{name}", std::process::id()));
+    let dir = std::env::current_exe()
+        .unwrap()
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .join("tmp")
+        .join(format!("agents-replay-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

@@ -115,10 +115,24 @@ async fn host_of(launchers: Launchers) -> Fixture {
     serve(endpoint, launchers, &data)
 }
 
+/// `tmp` in the build directory, found from this test binary at
+/// `target/debug/deps/`, so scratch stays out of `/tmp` and `cargo clean` or
+/// removing the worktree clears it.
+fn target_tmp() -> PathBuf {
+    let dir = std::env::current_exe()
+        .unwrap()
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .join("tmp");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 /// An empty data dir for a host. Its name has `conductor-test` in it, so
 /// the fake CLIs show the paths under it (fake-cli.py).
 fn data_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("conductor-test-{}-{name}", std::process::id()));
+    let dir = target_tmp().join(format!("conductor-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -481,7 +495,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
 /// A session directory holding `fixtures/e2e/<recording>` as the fake's
 /// `stdout.jsonl`.
 fn scratch(name: &str, recording: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("conductor-e2e-{}-{name}", std::process::id()));
+    let dir = target_tmp().join(format!("conductor-e2e-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e");
@@ -1845,8 +1859,7 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
 /// Sends this thread's logs, at debug and above, to a file named after
 /// `test`. A `tokio::test` runs on one thread, so they include the host's.
 fn capture_log(test: &str) -> (PathBuf, tracing::subscriber::DefaultGuard) {
-    let path =
-        std::env::temp_dir().join(format!("conductor-e2e-{test}-{}.log", std::process::id()));
+    let path = target_tmp().join(format!("conductor-e2e-{test}-{}.log", std::process::id()));
     let log = std::fs::File::create(&path).unwrap();
     let guard = tracing::subscriber::set_default(
         tracing_subscriber::fmt()
