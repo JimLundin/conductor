@@ -77,7 +77,7 @@ pub fn choose(
         (Some(effort), Some(choice)) => choice
             .efforts
             .iter()
-            .find(|offered| offered == &&effort)
+            .find(|&&offered| offered == effort)
             .map(|_| Choice {
                 model: model.clone(),
                 effort: Some(effort),

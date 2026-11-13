@@ -251,12 +251,12 @@ impl RegistryActor {
             RegistryMsg::Continue { session, reply } => {
                 let relaunch = match self.sessions.get(&session) {
                     None => Err(Rejection::UnknownSession),
-                    Some((provider, handle)) => self
-                        .ready(provider.to_owned())
-                        .map(|(launch, _)| {
-                            (handle.clone(), launch, self.models(provider.to_owned()))
-                        })
-                        .map_err(|reason| Rejection::ProviderUnavailable { reason }),
+                    Some((provider, handle)) => {
+                        let &provider = provider;
+                        self.ready(provider)
+                            .map(|(launch, _)| (handle.clone(), launch, self.models(provider)))
+                            .map_err(|reason| Rejection::ProviderUnavailable { reason })
+                    }
                 };
                 let _ = reply.send(relaunch);
             }

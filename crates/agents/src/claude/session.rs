@@ -520,15 +520,10 @@ async fn refusal(
     events: &mut mpsc::Receiver<ClaudeEvent>,
     last_stderr: tokio::task::JoinHandle<Option<String>>,
 ) -> String {
-    let errors = Box::pin(n0_future::stream::unfold(events, |events| async move {
-        events.try_recv().ok().map(|event| (event, events))
-    }))
-    .filter_map(|event| match event {
+    let errors = std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| match event {
         ClaudeEvent::TurnFinished { errors, .. } => errors.first().map(|_| errors.join("; ")),
         _ => None,
-    })
-    .next()
-    .await;
+    });
     match errors {
         Some(errors) => errors,
         None => stderr_reason(last_stderr).await,

@@ -1596,12 +1596,12 @@ mod tests {
     }
 
     fn plain_answers(shape: &AnswerShape) -> Vec<Value> {
-        Vec::from([
+        [
             Decision::Accept,
             Decision::AcceptForSession,
             Decision::Decline,
             Decision::Cancel,
-        ])
+        ]
         .into_iter()
         .map(|decision| answered(shape, decision))
         .collect()
@@ -1609,7 +1609,7 @@ mod tests {
 
     #[test]
     fn command_and_file_change_decisions() {
-        let expected = Vec::from(["accept", "acceptForSession", "decline", "cancel"])
+        let expected = ["accept", "acceptForSession", "decline", "cancel"]
             .into_iter()
             .map(|wire| {
                 json(&format!(
@@ -1872,7 +1872,7 @@ mod tests {
     #[test]
     fn tool_notifications_emit_shared_phases_and_file_changes() {
         use proto::{Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase};
-        let cases = Vec::from([
+        let cases = [
             (
                 r#"{"method":"item/started","params":{"threadId":"th","turnId":"tu","item":{"type":"commandExecution","id":"call","command":"pwd","status":"inProgress"}}}"#,
                 ToolPhase::Started {
@@ -1926,7 +1926,7 @@ mod tests {
                     outcome: ToolOutcome::Failed,
                 },
             ),
-        ]);
+        ];
         let (got, want) = cases
             .into_iter()
             .map(|(line, phase)| {
@@ -1949,7 +1949,7 @@ mod tests {
     #[test]
     fn completed_turns_emit_shared_outcomes_with_failure_messages() {
         use proto::TurnOutcome;
-        let cases = Vec::from([
+        let cases = [
             (
                 r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"completed"}}}"#,
                 TurnOutcome::Completed,
@@ -1976,7 +1976,7 @@ mod tests {
                     message: String::from("the turn failed"),
                 },
             ),
-        ]);
+        ];
         let (got, want) = cases
             .into_iter()
             .map(|(line, outcome)| {

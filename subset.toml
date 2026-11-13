@@ -3,7 +3,7 @@
 # grows only through accepted proposals in JimLundin/subset (docs/proposals/). Each id is
 # documented in docs/subset.md there.
 
-version = 14
+version = 15
 
 # All of our code is written in the subset. tools/ (the checker itself) is
 # outside it.
@@ -52,7 +52,7 @@ allowed = [
   "expr.reference.mut",       # proposals 0008, 0023
   "expr.array",               # 0015, 0047, 0050; immutable values, arguments, receivers and constants
   "expr.repeat",              # proposal 0015
-  "expr.closure",             # proposals 0006, 0017, 0018, 0026, 0046; listed calls or a confined immutable local
+  "expr.closure",             # 0006, 0017, 0018, 0026, 0046, 0058; listed calls, a confined local or eager receiver drain
   "expr.lit.bool",            # proposals 0021, 0023
   "expr.if_let.single",       # proposal 0027; `if let` with no `else`, `else if` or let-chain
   "expr.match.guard",         # proposal 0040; one comparison or one `matches!`, with an unguarded arm after
@@ -362,7 +362,7 @@ boundary = 1.0
 "expr.unary.not" = "tolerated"
 "macro.matches" = "tolerated"
 "type.impl_trait.arg" = "tolerated"   # 0026
-"expr.closure" = "tolerated"          # 0006, 0017, 0018, 0026, 0046
+"expr.closure" = "tolerated"          # 0006, 0017, 0018, 0026, 0046, 0058
 "pat.type" = "tolerated"              # 0046
 "generics.type_param" = "tolerated"   # 0013, 0026, 0052
 "generics.lifetime" = "tolerated"     # 0009

@@ -1015,7 +1015,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let (chosen, reasoning, resumed) =
         chosen_and_killed(&codex, fixtures, thread_opts.clone()).await?;
     let undo = undo_history(&codex, fixtures, thread_opts).await?;
-    let failed = Vec::from([
+    let failed = [
         approve,
         decline,
         interrupt,
@@ -1032,7 +1032,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         reasoning,
         resumed,
         undo,
-    ])
+    ]
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))
     .count();

@@ -1617,10 +1617,10 @@ async fn two_codex_sessions_share_one_server() {
         ],
         [CommandResult::Accepted, CommandResult::Accepted]
     );
-    let asked = Vec::from([
+    let asked = [
         legacy_events_until(&mut updates, Until::Request).await,
         legacy_events_until(&mut updates, Until::Request).await,
-    ])
+    ]
     .concat();
     assert_eq!(
         [
@@ -1629,12 +1629,12 @@ async fn two_codex_sessions_share_one_server() {
         ],
         [CommandResult::Accepted, CommandResult::Accepted]
     );
-    let ended = Vec::from([
+    let ended = [
         legacy_events_until(&mut updates, Until::TurnEnd).await,
         legacy_events_until(&mut updates, Until::TurnEnd).await,
-    ])
+    ]
     .concat();
-    let view = fold(Vec::from([first, second, asked, ended]).concat());
+    let view = fold([first, second, asked, ended].concat());
     let a_call = "exec-f4c7c6d4-8255-4bcc-972d-9f106cda7991";
     assert_eq!(
         items(&view, first_session),
@@ -1806,11 +1806,11 @@ async fn the_app_server_exiting_closes_every_codex_session() {
     let first = legacy_events_until(&mut updates, Until::Ready).await;
     let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
     assert_ne!(first_session, second_session);
-    let seen = Vec::from([
+    let seen = [
         first,
         legacy_events_until(&mut updates, Until::Closed).await,
         legacy_events_until(&mut updates, Until::Closed).await,
-    ])
+    ]
     .concat();
     let closed = EventKind::SessionClosed {
         reason: CloseReason::Exited {
@@ -2615,7 +2615,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
     let reasoning = EventKind::Reasoning {
         text: String::from(THOUGHT),
     };
-    let stored = Vec::from([
+    let stored = [
         opening(Provider::Claude, &dir),
         Vec::from([
             user("sheep?"),
@@ -2623,7 +2623,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
             reply("18"),
             turn_end(TurnOutcome::Completed),
         ]),
-    ])
+    ]
     .concat();
     assert_eq!(
         (
@@ -2802,7 +2802,7 @@ async fn a_killed_claude_session_continues_its_conversation() {
             ),
         ]
     );
-    let view = fold(Vec::from([first, killed, ready, after]).concat());
+    let view = fold([first, killed, ready, after].concat());
     assert_eq!(
         items(&view, session)
             .into_iter()

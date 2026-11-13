@@ -1237,7 +1237,7 @@ mod tests {
                 outcome: ToolOutcome::Succeeded,
             },
         };
-        let cases = Vec::from([
+        let cases = [
             WorkingCase {
                 events: Vec::new(),
                 working: Working::Hidden,
@@ -1281,12 +1281,12 @@ mod tests {
                 ]),
                 working: Working::Hidden,
             },
-        ]);
+        ];
         let (got, want) = cases
             .into_iter()
             .map(|case| {
                 let view = fold(
-                    Vec::from([created("/a"), EventKind::SessionReady])
+                    [created("/a"), EventKind::SessionReady]
                         .into_iter()
                         .chain(case.events)
                         .map(|kind| (1, kind))

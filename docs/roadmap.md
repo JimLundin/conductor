@@ -4,6 +4,12 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Subset simplifications** (JimLundin/subset#5). Use local closures,
+  array receivers and structural patterns to remove repeated code. The
+  receiver drain follows owner-accepted proposal 0058 for v15. Configuration
+  declares v15, but the pinned v14 checker still rejects that one form until
+  its successor is published; the owner authorized this interim state.
+
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
   actual turn. The phone shows bounded immutable diffs and can undo files

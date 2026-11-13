@@ -323,12 +323,7 @@ impl LogActor {
             // Live only, so it takes no seq (see `EventKind::AssistantDelta`).
             LogMsg::Append {
                 session,
-                kind: kind @ EventKind::AssistantDelta { .. },
-                reply,
-            }
-            | LogMsg::Append {
-                session,
-                kind: kind @ EventKind::ReasoningDelta { .. },
+                kind: kind @ (EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. }),
                 reply,
             } => {
                 let event = Event {
@@ -493,6 +488,14 @@ mod tests {
             .await
             .unwrap();
         log.append(SessionId(1), delta("a")).await.unwrap();
+        log.append(
+            SessionId(1),
+            EventKind::ReasoningDelta {
+                text: String::from("thinking"),
+            },
+        )
+        .await
+        .unwrap();
         log.append(SessionId(1), message("a")).await.unwrap();
         assert_eq!(
             log.welcome(providers()).await.unwrap(),
@@ -503,11 +506,12 @@ mod tests {
                 providers: providers(),
             }
         );
-        let seen = Vec::from([
+        let seen = [
             live.recv().await.unwrap(),
             live.recv().await.unwrap(),
             live.recv().await.unwrap(),
-        ]);
+            live.recv().await.unwrap(),
+        ];
         assert_eq!(
             seen.into_iter()
                 .map(|event| (event.seq, event.kind))
@@ -515,6 +519,12 @@ mod tests {
             [
                 (HostSeq(1), EventKind::SessionReady),
                 (HostSeq(1), delta("a")),
+                (
+                    HostSeq(1),
+                    EventKind::ReasoningDelta {
+                        text: String::from("thinking"),
+                    },
+                ),
                 (HostSeq(2), message("a")),
             ]
         );

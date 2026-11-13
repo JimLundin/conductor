@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn a_user_agent_names_its_device() {
-        let cases = Vec::from([
+        let cases = [
             case(
                 "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
                 Touch::Screen,
@@ -142,7 +142,7 @@ mod tests {
                 "Linux",
             ),
             case("", Touch::None, "Browser"),
-        ]);
+        ];
         let (got, want) = cases
             .into_iter()
             .map(|case| {

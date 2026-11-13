@@ -238,10 +238,12 @@ async fn unpack(
     dir: &Path,
     binary: &Path,
 ) -> Result<(), InstallError> {
+    let download_error = |error| io(download, error);
+    let dir_error = |error| io(dir, error);
     match package {
         Package::Binary => {
-            std::fs::create_dir_all(dir).map_err(|error| io(dir, error))?;
-            make_executable(download).map_err(|error| io(download, error))?;
+            std::fs::create_dir_all(dir).map_err(dir_error)?;
+            make_executable(download).map_err(download_error)?;
             std::fs::rename(download, binary).map_err(|error| io(binary, error))
         }
         Package::Archive => {
@@ -255,13 +257,13 @@ async fn unpack(
                 .arg(&staging)
                 .status()
                 .await
-                .map_err(|error| io(download, error))?;
+                .map_err(download_error)?;
             match status.code() {
                 Some(0) => {
                     // An earlier run may have left the directory without its binary.
                     let _ = std::fs::remove_dir_all(dir);
-                    std::fs::rename(&staging, dir).map_err(|error| io(dir, error))?;
-                    std::fs::remove_file(download).map_err(|error| io(download, error))
+                    std::fs::rename(&staging, dir).map_err(dir_error)?;
+                    std::fs::remove_file(download).map_err(download_error)
                 }
                 _ => Err(InstallError::Unpack {
                     archive: download.display().to_string(),
@@ -310,12 +312,11 @@ async fn drain(
 
 /// The SHA-256 of the file at `path` as it is on disk, in hex.
 async fn sha256(path: &Path) -> Result<String, InstallError> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|error| io(path, error))?;
+    let path_error = |error| io(path, error);
+    let file = tokio::fs::File::open(path).await.map_err(path_error)?;
     digest(BufReader::with_capacity(READ_BUFFER, file), Sha256::new())
         .await
-        .map_err(|error| io(path, error))
+        .map_err(path_error)
 }
 
 async fn digest(

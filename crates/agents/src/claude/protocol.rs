@@ -1322,7 +1322,7 @@ mod tests {
             input: Value,
             want: ToolKind,
         }
-        let cases = Vec::from([
+        let cases = [
             Case {
                 name: String::from("Bash"),
                 input: json(r#"{"command":"ls -a"}"#),
@@ -1416,7 +1416,7 @@ mod tests {
                     detail: String::from(r#"{"todos":[]}"#),
                 },
             },
-        ]);
+        ];
         let (got, want) = cases.into_iter().map(|case| {
             let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"call","name":{},"input":{}}}]}}}}"#, serde_json::to_string(&case.name).unwrap(), case.input);
             let got = match parse_line(&line).unwrap() {
@@ -1438,7 +1438,7 @@ mod tests {
             reason: Option<String>,
             want: TurnOutcome,
         }
-        let cases = Vec::from([
+        let cases = [
             Case {
                 is_error: String::from("null"),
                 reason: None,
@@ -1473,7 +1473,7 @@ mod tests {
                     message: String::from("error_during_execution"),
                 },
             },
-        ]);
+        ];
         let (got, want) = cases.into_iter().map(|case| {
             let line = format!(r#"{{"type":"result","subtype":"error_during_execution","session_id":"s","is_error":{},"terminal_reason":{}}}"#, case.is_error, serde_json::to_string(&case.reason).unwrap());
             let got = match parse_line(&line).unwrap() {
@@ -1487,12 +1487,12 @@ mod tests {
 
     #[test]
     fn tool_results_use_the_shared_outcome_and_default_to_success() {
-        let cases = Vec::from([
+        let cases = [
             ("", ToolOutcome::Succeeded),
             (r#","is_error":null"#, ToolOutcome::Succeeded),
             (r#","is_error":false"#, ToolOutcome::Succeeded),
             (r#","is_error":true"#, ToolOutcome::Failed),
-        ]);
+        ];
         let (got, want) = cases.into_iter().map(|(field, want)| {
             let line = format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"call"{field}}}]}}}}"#);
             let got = match parse_line(&line).unwrap() {

@@ -2,8 +2,6 @@
 //! Callers own the I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`],
 //! read that many bytes, pass them to [`decode`].
 
-use std::cmp::Ordering;
-
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -22,13 +20,13 @@ pub enum FrameError {
 
 pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, FrameError> {
     let body = postcard::to_allocvec(msg)?;
-    match u32::try_from(body.len()).map(|len| (len, len.cmp(&MAX_FRAME_LEN))) {
-        Ok((len, Ordering::Less | Ordering::Equal)) => Ok(len
+    match u32::try_from(body.len()) {
+        Ok(len @ ..=MAX_FRAME_LEN) => Ok(len
             .to_be_bytes()
             .into_iter()
             .chain(body)
             .collect::<Vec<u8>>()),
-        Ok((_, Ordering::Greater)) | Err(_) => Err(FrameError::TooLarge(
+        Ok(_) | Err(_) => Err(FrameError::TooLarge(
             u64::try_from(body.len()).unwrap_or(u64::MAX),
         )),
     }
@@ -36,11 +34,9 @@ pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, FrameError> {
 
 pub fn body_len(header: [u8; HEADER_LEN]) -> Result<usize, FrameError> {
     let len = u32::from_be_bytes(header);
-    match len.cmp(&MAX_FRAME_LEN) {
-        Ordering::Less | Ordering::Equal => {
-            usize::try_from(len).map_err(|_| FrameError::TooLarge(u64::from(len)))
-        }
-        Ordering::Greater => Err(FrameError::TooLarge(u64::from(len))),
+    match len {
+        ..=MAX_FRAME_LEN => usize::try_from(len).map_err(|_| FrameError::TooLarge(u64::from(len))),
+        _ => Err(FrameError::TooLarge(u64::from(len))),
     }
 }
 

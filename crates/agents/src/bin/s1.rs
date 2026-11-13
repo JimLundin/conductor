@@ -406,14 +406,6 @@ const CHOSEN_EFFORT: Effort = Effort::High;
 /// The model `get_settings` reports for [`CHOSEN_MODEL`].
 const CHOSEN_RESOLVED: &str = "claude-sonnet-5-5";
 
-fn chosen(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
-    ClaudeOptions {
-        model: Some(String::from(CHOSEN_MODEL)),
-        effort: Some(CHOSEN_EFFORT),
-        ..options(claude, resume, stdout_log)
-    }
-}
-
 /// Steps 11 to 13, in a fourth session started with a chosen model and
 /// effort: the CLI reports them, a turn reasons, and the CLI killed in the
 /// middle of a turn is resumed in a new process that remembers the first
@@ -422,8 +414,13 @@ async fn chosen_and_killed(
     claude: &Path,
     fixtures: Option<&Path>,
 ) -> Result<(Verdict, Verdict, Verdict)> {
+    let chosen = |resume, stdout_log| ClaudeOptions {
+        model: Some(String::from(CHOSEN_MODEL)),
+        effort: Some(CHOSEN_EFFORT),
+        ..options(claude, resume, stdout_log)
+    };
     let log = log_path(fixtures, "session4-chosen-killed");
-    let (session, events) = ClaudeSession::spawn(chosen(claude, None, log)).await?;
+    let (session, events) = ClaudeSession::spawn(chosen(None, log)).await?;
     let applied = session.applied().await;
     let model = report(
         "11 chosen model and effort",
@@ -466,7 +463,6 @@ async fn chosen_and_killed(
     )
     .await?;
     let (session, events) = ClaudeSession::spawn(chosen(
-        claude,
         Some(session_id.clone()),
         log_path(fixtures, "session5-resumed"),
     ))
@@ -998,7 +994,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         questions(&claude, scratch, fixtures).await?;
     let (chosen, reasoning, resumed) = chosen_and_killed(&claude, fixtures).await?;
     let undo = undo_history(&claude, fixtures).await?;
-    let failed = Vec::from([
+    let failed = [
         approve,
         deny,
         interrupt,
@@ -1016,7 +1012,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         reasoning,
         resumed,
         undo,
-    ])
+    ]
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))
     .count();

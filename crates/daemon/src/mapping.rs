@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn each_provider_event_maps_to_its_steps() {
-        let cases = Vec::from([
+        let cases = [
             Case {
                 got: claude_steps(ClaudeEvent::ThinkingDelta {
                     text: String::from("hm"),
@@ -573,7 +573,7 @@ mod tests {
                     ),
                 })]),
             },
-        ]);
+        ];
         let (got, want) = cases
             .into_iter()
             .map(|case| (case.got, case.want))

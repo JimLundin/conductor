@@ -246,12 +246,12 @@ fn TranscriptItem(
                                     ToolLine { tool, state }
                                     Reason { reason }
                                     div { class: "actions",
-                                        button { class: "deny", onclick: move |_| { on_decide((request, Decision::Deny)); document::eval(&focus_on(request)); }, "Deny" }
-                                        button { class: "approve", onclick: move |_| { on_decide((request, Decision::Approve)); document::eval(&focus_on(request)); }, "Approve" }
+                                        button { class: "deny", onclick: move |_| decide_and_focus(on_decide, request, Decision::Deny), "Deny" }
+                                        button { class: "approve", onclick: move |_| decide_and_focus(on_decide, request, Decision::Approve), "Approve" }
                                     }
                                     match for_session {
                                         Some(allows) => rsx! {
-                                            button { class: "for-session", onclick: move |_| { on_decide((request, Decision::ApproveForSession)); document::eval(&focus_on(request)); },
+                                            button { class: "for-session", onclick: move |_| decide_and_focus(on_decide, request, Decision::ApproveForSession),
                                                 span { class: "for-session-title", "Allow for this session" }
                                                 span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
                                             }
@@ -299,6 +299,16 @@ fn TranscriptItem(
         Item::ModelChanged(reason) => rsx! { p { class: "model-changed", "{reason}" } },
         Item::Error(message) => rsx! { p { class: "error", "{message}" } },
     }
+}
+
+/// Sends the decision before focusing the card that remains after it resolves.
+fn decide_and_focus(
+    on_decide: EventHandler<(RequestId, Decision)>,
+    request: RequestId,
+    decision: Decision,
+) {
+    on_decide((request, decision));
+    document::eval(&focus_on(request));
 }
 
 /// A request card's element id, unique in the pane, which shows one session.

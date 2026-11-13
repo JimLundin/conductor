@@ -902,14 +902,14 @@ mod tests {
 
     #[test]
     fn a_base_url_may_not_hide_a_secret() {
-        let checked = Vec::from([
+        let checked = [
             "https://gateway.example/v1",
             "https://user:pw@gateway.example",
             "https://gateway.example/?key=1",
             "https://gateway.example/#k",
             "ftp://gateway.example",
             "gateway.example",
-        ])
+        ]
         .into_iter()
         .map(|base_url| {
             Credential::Claude(ClaudeCredential::Gateway {
