@@ -46,7 +46,7 @@ Each item ends in something to try. The fleet design is
    within a running host; a host restart waits for item 4. Next: plans,
    and the effort changed between turns. *Try:* restart a session's CLI and
    continue it (`tools/live-host.sh` checks it as `continue=pass`).
-3. **Sign in from the app** (§6.3), on one host. Built first, on
+3. **Sign in from the app** (#12) (§6.3), on one host. Built first, on
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
    app's credentials screen and stored encrypted under `<data>/store.key`;
@@ -55,25 +55,25 @@ Each item ends in something to try. The fleet design is
    entered on the phone, and the platform keystores for the host key.
    `Welcome` reports each provider's sign-in kind. *Try:* on a fresh host, sign in to Claude and
    Codex from the iPhone without touching the host's keyboard.
-4. **Durability.** The log, receipts and open requests survive a host
+4. **Durability.** (#11) The log, receipts and open requests survive a host
    restart (redb + postcard); clients resume from their cursors. Session
    ids become ULIDs (§6.7) before the tables key on them, with
    `CLAUDE_CODE_PROJECT_DIR_NAME` (§6.2), and the store keeps each
    session's conversation id, so `Continue` works after a host restart too.
    *Try:* restart the host mid-session and continue from the phone.
-5. **Worktrees.** One git worktree per session on `conductor/<ulid>`, a
+5. **Worktrees.** (#13) One git worktree per session on `conductor/<ulid>`, a
    checkpoint per turn, diffs and revert from the phone. *Try:* revert a
    turn from the phone.
-6. **Fleet and pairing** (§6.1, §6.4 to §6.6). A fleet root key signs
+6. **Fleet and pairing** (#14) (§6.1, §6.4 to §6.6). A fleet root key signs
    device and host certificates and replaces the shared ticket token;
    `conductord join` and *Add host*; a signed fleet config with the roster,
    pins, settings, API keys and the Claude token, served by any host; a
    per-host Codex ChatGPT sign-in after a join; several hosts in one
    sidebar. *Try:* add a second host from the phone and run a Claude
    session on it with the fleet's token, without signing in again.
-7. **Push.** Web Push from the host when an approval or question opens.
+7. **Push.** (#15) Web Push from the host when an approval or question opens.
    *Try:* lock the phone and get the approval notification.
-8. **Move a session** (§6.8), after experiments E4 and E5 (§6.9). Bundle
+8. **Move a session** (#16) (§6.8), after experiments E4 and E5 (§6.9). Bundle
    the branch, copy the transcript and the events, resume on the target.
    *Try:* move a session from WSL to the Mac between turns and continue it
    from the phone.
@@ -81,7 +81,9 @@ Each item ends in something to try. The fleet design is
 ## Known bugs
 
 - A fresh connection sometimes gets no `Welcome` and dies at the 30 s idle
-  timeout. Not reproduced yet.
+  timeout. Not reproduced yet (#6).
+
+Open issues are tracked at https://github.com/JimLundin/conductor/issues.
 
 ## Known risks
 
