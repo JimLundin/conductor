@@ -6,16 +6,16 @@ use std::convert::Infallible;
 
 use agents::claude::Sandbox;
 use proto::{
-    Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandResult, Credential,
-    Credentials, Effort, EventKind, HostPath, ModelId, Models, Provider, Providers, Rejection,
-    SessionId,
+    Auth, Availability, ClaudeCredential, ClientName, CloseReason, CodexCredential, CommandResult,
+    Credential, Credentials, Effort, Event, EventKind, HostPath, ModelId, Models, Provider,
+    Providers, Rejection, SessionId, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session, choose, list_models};
+use crate::session::{Choice, ClaudeLaunch, CodexLaunch, Launch, Session, choose, list_models};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -90,6 +90,7 @@ pub struct Registry {
 }
 
 enum RegistryMsg {
+    Restore,
     Start {
         provider: Provider,
         directory: HostPath,
@@ -119,13 +120,21 @@ enum RegistryMsg {
     },
 }
 
+enum RecoverTurn {
+    Running,
+    Idle,
+}
+enum RecoverAgent {
+    Running,
+    Closed,
+}
+
 struct RegistryActor {
     log: Log,
     launchers: Launchers,
     store: Store,
     stored: Stored,
     sessions: BTreeMap<SessionId, (Provider, Session)>,
-    last: SessionId,
 }
 
 impl Registry {
@@ -141,8 +150,8 @@ impl Registry {
             store,
             stored,
             sessions: BTreeMap::new(),
-            last: SessionId(0),
         };
+        let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
         Registry { inbox }
     }
@@ -227,6 +236,7 @@ impl RegistryActor {
 
     async fn on(&mut self, msg: RegistryMsg) -> Result<(), Stopped> {
         match msg {
+            RegistryMsg::Restore => self.restore().await?,
             RegistryMsg::Start {
                 provider,
                 directory,
@@ -287,6 +297,129 @@ impl RegistryActor {
                     }
                 };
                 let _ = reply.send(result);
+            }
+        }
+        Ok(())
+    }
+
+    async fn restore(&mut self) -> Result<(), Stopped> {
+        let history = self.log.history().await?;
+        let created = history
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::SessionCreated { .. }))
+            .cloned()
+            .collect::<Vec<Event>>();
+        for event in created {
+            self.restore_session(event, &history).await?;
+        }
+        Ok(())
+    }
+
+    async fn restore_session(&mut self, event: Event, history: &[Event]) -> Result<(), Stopped> {
+        if let EventKind::SessionCreated {
+            provider,
+            directory,
+            model,
+            effort,
+            ..
+        } = event.kind
+        {
+            let id = event.session;
+            let events = history
+                .iter()
+                .filter(|event| event.session == id)
+                .cloned()
+                .collect::<Vec<Event>>();
+            let choice = events
+                .iter()
+                .fold(Choice { model, effort }, |choice, event| {
+                    match &event.kind {
+                        EventKind::ModelChanged { model, effort, .. } => Choice {
+                            model: model.clone(),
+                            effort: effort.to_owned(),
+                        },
+                        _ => choice,
+                    }
+                });
+            let conversation = match events
+                .iter()
+                .find(|event| matches!(event.kind, EventKind::UserMessage { .. }))
+            {
+                Some(_) => self.log.saved_conversation(id).await?,
+                None => None,
+            };
+            let session = Session::restore(
+                id,
+                directory,
+                choice,
+                conversation,
+                &events,
+                self.log.clone(),
+            );
+            self.sessions.insert(id, (provider, session));
+            let open = events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::RequestOpened { request, .. }
+                    | EventKind::QuestionAsked { request, .. } => Some(request.to_owned()),
+                    _ => None,
+                })
+                .filter(|request| {
+                    !events
+                        .iter()
+                        .filter_map(|event| match &event.kind {
+                            EventKind::RequestResolved { request, .. } => Some(request),
+                            _ => None,
+                        })
+                        .any(|resolved| resolved == request)
+                })
+                .collect::<Vec<proto::RequestId>>();
+            for request in open {
+                self.log
+                    .append(
+                        id,
+                        EventKind::RequestResolved {
+                            request,
+                            resolution: proto::Resolution::Withdrawn,
+                        },
+                    )
+                    .await?;
+            }
+            let running = events.iter().rev().find_map(|event| match &event.kind {
+                EventKind::UserMessage { .. } => Some(RecoverTurn::Running),
+                EventKind::TurnCompleted { .. } | EventKind::SessionClosed { .. } => {
+                    Some(RecoverTurn::Idle)
+                }
+                _ => None,
+            });
+            if let Some(RecoverTurn::Running) = running {
+                self.log
+                    .append(
+                        id,
+                        EventKind::TurnCompleted {
+                            outcome: TurnOutcome::Interrupted,
+                        },
+                    )
+                    .await?;
+            }
+            let closed = events.iter().rev().find_map(|event| match &event.kind {
+                EventKind::SessionClosed { .. } => Some(RecoverAgent::Closed),
+                EventKind::SessionCreated { .. } | EventKind::SessionReady => {
+                    Some(RecoverAgent::Running)
+                }
+                _ => None,
+            });
+            if let Some(RecoverAgent::Running) = closed {
+                self.log
+                    .append(
+                        id,
+                        EventKind::SessionClosed {
+                            reason: CloseReason::Stopped {
+                                reason: String::from("the host restarted"),
+                            },
+                        },
+                    )
+                    .await?;
             }
         }
         Ok(())
@@ -456,8 +589,7 @@ impl RegistryActor {
                 Ok(CommandResult::Rejected(Rejection::NotOffered { reason }))
             }
             (Ok(_), Ok(launch), Ok(choice)) => {
-                let id = self.last.next();
-                self.last = id;
+                let id = SessionId(u128::from(ulid::Ulid::new()));
                 let created = EventKind::SessionCreated {
                     provider,
                     directory: directory.clone(),
@@ -485,5 +617,174 @@ fn warn_unprotected(credentials: &Credentials) {
         tracing::warn!(
             "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use agents::Home;
+    use proto::{
+        ClientName, CloseReason, CommandResult, EventKind, HostPath, HostSeq, Models, Provider,
+        RequestId, Resolution, SessionId, ToolCallId, TurnOutcome,
+    };
+
+    use super::{Launcher, Launchers, OwnSignIn, Registry};
+    use crate::credentials::Store;
+    use crate::log::Log;
+    use crate::session::{ClaudeLaunch, Launch, Order};
+
+    fn launcher() -> Launcher {
+        Launcher::Ready {
+            launch: Launch::Claude(ClaudeLaunch {
+                claude_path: Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../agents/tests/fake-claude.sh"),
+                home: Home::User,
+                credential: None,
+            }),
+            own: OwnSignIn::Unmanaged,
+            models: Models::none(),
+            chosen: None,
+        }
+    }
+
+    fn directory() -> PathBuf {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/tmp")
+            .join(format!("conductor-test-restart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/claude-resumed.jsonl"),
+            directory.join("stdout.jsonl"),
+        )
+        .unwrap();
+        directory
+    }
+
+    async fn seed(log: &Log, id: SessionId, kinds: Vec<EventKind>) -> Result<(), crate::Stopped> {
+        for kind in kinds {
+            log.append(id, kind).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes() {
+        let directory = directory();
+        let path = directory.join("conductor.redb");
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        let first = Log::open(String::from("test"), &path).unwrap();
+        seed(
+            &first,
+            id,
+            Vec::from([
+                EventKind::SessionCreated {
+                    provider: Provider::Claude,
+                    directory: HostPath(directory.display().to_string()),
+                    by: ClientName(String::from("phone")),
+                    model: None,
+                    effort: None,
+                },
+                EventKind::SessionReady,
+                EventKind::UserMessage {
+                    text: String::from("before restart"),
+                    by: ClientName(String::from("phone")),
+                },
+                EventKind::RequestOpened {
+                    request: RequestId(8),
+                    call: ToolCallId(String::from("tool")),
+                    tool: proto::ToolKind::Other {
+                        name: String::from("test"),
+                        detail: String::new(),
+                    },
+                    reason: None,
+                    for_session: None,
+                },
+            ]),
+        )
+        .await
+        .unwrap();
+        first
+            .conversation(id, String::from("restored-native-conversation"))
+            .await
+            .unwrap();
+        let epoch = first
+            .welcome(proto::Providers {
+                claude: proto::Availability::Unavailable {
+                    reason: String::from("test"),
+                },
+                codex: proto::Availability::Unavailable {
+                    reason: String::from("test"),
+                },
+            })
+            .await
+            .unwrap()
+            .epoch;
+        first.shutdown().await.unwrap();
+        let second = Log::open(String::from("test"), &path).unwrap();
+        let (store, stored) = Store::open(&directory).unwrap();
+        let registry = Registry::spawn(
+            second.clone(),
+            Launchers {
+                claude: launcher(),
+                codex: Launcher::Unavailable(String::from("test")),
+            },
+            store,
+            stored,
+        );
+        let providers = registry.providers().await.unwrap();
+        assert_eq!(second.welcome(providers).await.unwrap().epoch, epoch);
+        let replay = second.subscribe(HostSeq(4)).await.unwrap().replay;
+        assert_eq!(
+            replay
+                .iter()
+                .map(|event| (event.seq, event.kind.clone()))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    HostSeq(5),
+                    EventKind::RequestResolved {
+                        request: RequestId(8),
+                        resolution: Resolution::Withdrawn
+                    }
+                ),
+                (
+                    HostSeq(6),
+                    EventKind::TurnCompleted {
+                        outcome: TurnOutcome::Interrupted
+                    }
+                ),
+                (
+                    HostSeq(7),
+                    EventKind::SessionClosed {
+                        reason: CloseReason::Stopped {
+                            reason: String::from("the host restarted")
+                        }
+                    }
+                ),
+            ]
+        );
+        let (session, launch, models) = registry.relaunch(id).await.unwrap().unwrap();
+        assert_eq!(
+            session.order(Order::Start(launch, models)).await.unwrap(),
+            CommandResult::Accepted
+        );
+        let arguments = std::fs::read_to_string(directory.join("argv.txt")).unwrap();
+        assert_eq!(
+            arguments
+                .lines()
+                .find(|argument| argument.starts_with("--resume=")),
+            Some("--resume=restored-native-conversation")
+        );
+        let ready = second.subscribe(HostSeq(7)).await.unwrap().replay;
+        assert_eq!(
+            ready.iter().map(|event| &event.kind).collect::<Vec<_>>(),
+            [&EventKind::SessionReady]
+        );
+        second.shutdown().await.unwrap();
+        drop(session);
+        drop(registry);
     }
 }

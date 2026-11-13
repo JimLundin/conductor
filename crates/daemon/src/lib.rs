@@ -8,6 +8,7 @@ mod mapping;
 pub mod registry;
 pub mod serve;
 pub mod session;
+mod storage;
 
 use std::io::{ErrorKind, Write};
 use std::path::Path;
@@ -28,6 +29,16 @@ pub fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from_bytes(&load_or_create_secret(
         data_dir, "host.key",
     )?))
+}
+
+/// Keeps the ticket's authentication token stable across host restarts.
+/// It is stored with the same private-file and sync guarantees as the host key.
+pub fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
+    let secret = load_or_create_secret(data_dir, "auth.key")?;
+    let (bytes, _) = secret
+        .split_at_checked(16)
+        .context("a token has 16 bytes")?;
+    Ok(AuthToken::from_bytes(bytes.try_into()?))
 }
 
 /// Loads 32 secret bytes from `<data_dir>/<name>` as hex, creating them on
@@ -164,7 +175,7 @@ pub fn random_epoch() -> Epoch {
 mod tests {
     use agents::Home;
 
-    use super::{homes, load_or_create_key};
+    use super::{homes, load_or_create_key, load_or_create_token};
 
     #[test]
     fn homes_get_their_config_once() {
@@ -194,6 +205,22 @@ mod tests {
             )
         );
         assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ticket_token_is_created_once_then_reloaded() {
+        let dir = std::env::temp_dir().join(format!("conductord-token-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let first = load_or_create_token(&dir).unwrap();
+        assert_eq!(load_or_create_token(&dir).unwrap(), first);
+        std::fs::write(dir.join("auth.key"), "not a key").unwrap();
+        assert_eq!(
+            load_or_create_token(&dir)
+                .err()
+                .map(|_| String::from("refused")),
+            Some(String::from("refused"))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

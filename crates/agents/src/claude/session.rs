@@ -64,6 +64,8 @@ pub struct ClaudeOptions {
     pub effort: Option<Effort>,
     pub permission_mode: PermissionMode,
     pub resume: Option<SessionId>,
+    /// Conductor's stable session ULID isolates its transcript directory.
+    pub project_name: Option<String>,
     /// `None` leaves the CLI default, which loads user, project and local settings.
     pub setting_sources: Option<Vec<SettingSource>>,
     /// Append every raw stdout line to this file.
@@ -148,7 +150,7 @@ impl ClaudeSession {
             .resume
             .clone()
             .unwrap_or_else(|| SessionId(uuid::Uuid::new_v4().to_string()));
-        let mut child = command(&opts, &id).spawn()?;
+        let mut child = command(&opts, &id).kill_on_drop(true).spawn()?;
         let pid = child.id();
         let ((stdin, stdout), stderr) = child
             .stdin
@@ -297,6 +299,7 @@ const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_PROJECT_DIR_NAME",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_SESSION_ATTENDED",
     "CLAUDE_CODE_MESSAGING_SOCKET",
@@ -380,6 +383,9 @@ pub fn login(claude_path: &Path, home: &Home) -> Command {
 
 pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
     let mut cmd = cli(&opts.claude_path, &opts.home);
+    if let Some(name) = &opts.project_name {
+        cmd.env("CLAUDE_CODE_PROJECT_DIR_NAME", name);
+    }
     match &opts.credential {
         Some(ClaudeCredential::Gateway { base_url, token }) => {
             cmd.env("ANTHROPIC_BASE_URL", base_url)
@@ -750,6 +756,7 @@ mod tests {
                 effort: Some(Effort::XHigh),
                 permission_mode: PermissionMode::Default,
                 resume: Some(SessionId(String::from("0b1c"))),
+                project_name: Some(String::from("01JCDZ6Q0Y3K7V8M2N4P5R6S7T")),
                 setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
                 stdout_log: None,
                 versions: VersionPolicy::SupportedOnly,
@@ -803,9 +810,10 @@ mod tests {
                     None,
                 ) => Some((key, None)),
                 (Some("CLAUDE_CODE_SESSION_ID"), None) => Some((key, None)),
-                (Some("CLAUDE_CONFIG_DIR" | "DISABLE_UPDATES"), Some(value)) => {
-                    Some((key, value.to_str()))
-                }
+                (
+                    Some("CLAUDE_CONFIG_DIR" | "CLAUDE_CODE_PROJECT_DIR_NAME" | "DISABLE_UPDATES"),
+                    Some(value),
+                ) => Some((key, value.to_str())),
                 _ => None,
             })
             .map(|(key, value)| (key.to_str().unwrap(), value))
@@ -816,6 +824,10 @@ mod tests {
                 ("ANTHROPIC_BASE_URL", None),
                 ("CLAUDECODE", None),
                 ("CLAUDE_CODE_OAUTH_TOKEN", None),
+                (
+                    "CLAUDE_CODE_PROJECT_DIR_NAME",
+                    Some("01JCDZ6Q0Y3K7V8M2N4P5R6S7T")
+                ),
                 ("CLAUDE_CODE_SESSION_ID", None),
                 ("CLAUDE_CODE_USE_BEDROCK", None),
                 ("CLAUDE_CODE_USE_FOUNDRY", None),

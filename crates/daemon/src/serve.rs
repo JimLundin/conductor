@@ -10,7 +10,7 @@ use proto::{
 use tokio::sync::broadcast;
 
 use crate::Stopped;
-use crate::log::Log;
+use crate::log::{BeginCommand, Log};
 use crate::registry::Registry;
 use crate::session::{Order, Reply};
 
@@ -143,7 +143,15 @@ impl Conductor {
         match wire::read::<Open>(&mut recv).await? {
             Some(Open::Command(command)) => {
                 tracing::info!(client = client.0, ?command, "command");
-                let result = self.command(command.body, client).await?;
+                let key = command.id;
+                let result = match self.log.begin(key).await? {
+                    BeginCommand::Cached(result) => result,
+                    BeginCommand::Execute(lease) => {
+                        let result = self.command(command.body, client).await?;
+                        lease.finish(result.clone()).await?;
+                        result
+                    }
+                };
                 wire::write(&mut send, &result).await?;
                 send.finish()?;
             }
