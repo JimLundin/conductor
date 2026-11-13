@@ -38,7 +38,8 @@ impl ApprovalId {
 }
 
 /// A JSON-RPC id, which Codex sends as a number or a string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
 pub(crate) enum RequestId {
     Integer(i64),
     String(String),
@@ -46,18 +47,7 @@ pub(crate) enum RequestId {
 
 impl RequestId {
     fn read(id: &Value) -> Option<RequestId> {
-        match id {
-            Value::Number(n) => n.as_i64().map(RequestId::Integer),
-            Value::String(s) => Some(RequestId::String(s.clone())),
-            _ => None,
-        }
-    }
-
-    fn wire(self) -> Value {
-        match self {
-            RequestId::Integer(n) => Value::from(n),
-            RequestId::String(s) => Value::from(s),
-        }
+        serde_json::from_value(id.clone()).ok()
     }
 }
 
@@ -932,45 +922,38 @@ struct ClientInfo {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Capabilities {
-    experimental_api: Value,
+    experimental_api: bool,
 }
 
-/// `thread/start` and `thread/resume`; a missing value goes out as `null`,
-/// which `params` then drops.
+/// `thread/start` and `thread/resume`; absent optional values are omitted.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
     thread_id: Option<String>,
     approval_policy: ApprovalPolicy,
     sandbox: Sandbox,
     cwd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
-    config: Value,
+    config: ThreadConfig,
 }
 
 /// The `config` overrides of every thread: the reasoning effort, if set;
 /// reasoning summaries, which a custom model provider gets none of by
 /// default (PROTOCOL.md); and the feature that lets the model ask the user
 /// questions outside plan mode, which Codex 0.166 marks under development.
-fn thread_config(effort: Option<Effort>) -> Value {
-    let features = serde_json::Map::from_iter([(
-        String::from("default_mode_request_user_input"),
-        Value::Bool(true),
-    )]);
-    Value::Object(
-        std::iter::once((String::from("features"), Value::Object(features)))
-            .chain([(
-                String::from("model_reasoning_summary"),
-                Value::String(String::from("auto")),
-            )])
-            .chain(effort.map(|effort| {
-                (
-                    String::from("model_reasoning_effort"),
-                    Value::String(String::from(effort.wire())),
-                )
-            }))
-            .collect(),
-    )
+#[derive(Serialize)]
+struct ThreadConfig {
+    features: Features,
+    model_reasoning_summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_reasoning_effort: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Features {
+    default_mode_request_user_input: bool,
 }
 
 #[derive(Serialize)]
@@ -1013,7 +996,7 @@ impl Call {
                     version: String::from(env!("CARGO_PKG_VERSION")),
                 },
                 capabilities: Capabilities {
-                    experimental_api: Value::Bool(true),
+                    experimental_api: true,
                 },
             }),
             Self::ModelList => Ok(Value::Object(serde_json::Map::new())),
@@ -1032,22 +1015,19 @@ impl Call {
 }
 
 fn thread_params(thread_id: Option<String>, opts: &ThreadOptions) -> serde_json::Result<Value> {
-    let params = serde_json::to_value(ThreadParams {
+    serde_json::to_value(ThreadParams {
         thread_id,
         approval_policy: opts.approval_policy,
         sandbox: opts.sandbox,
         cwd: opts.cwd.display().to_string(),
         model: opts.model.clone(),
-        config: thread_config(opts.effort),
-    })?;
-    Ok(match params {
-        Value::Object(fields) => Value::Object(
-            fields
-                .into_iter()
-                .filter(|(_, value)| !value.is_null())
-                .collect(),
-        ),
-        other => other,
+        config: ThreadConfig {
+            features: Features {
+                default_mode_request_user_input: true,
+            },
+            model_reasoning_summary: String::from("auto"),
+            model_reasoning_effort: opts.effort.map(|effort| String::from(effort.wire())),
+        },
     })
 }
 
@@ -1280,27 +1260,24 @@ const METHOD_NOT_FOUND: i64 = 32_601_i64.wrapping_neg();
 
 // Fields are in alphabetical order, the order `serde_json::json!` wrote them in.
 #[derive(Serialize)]
-struct RequestFrame {
-    id: i64,
-    method: String,
-    params: Value,
-}
-
-#[derive(Serialize)]
-struct NotificationFrame {
-    method: String,
-}
-
-#[derive(Serialize)]
-struct AnswerFrame {
-    id: Value,
-    result: Value,
-}
-
-#[derive(Serialize)]
-struct RejectFrame {
-    error: RpcError,
-    id: Value,
+#[serde(untagged)]
+enum OutboundFrame {
+    Request {
+        id: RequestId,
+        method: String,
+        params: Value,
+    },
+    Notification {
+        method: String,
+    },
+    Answer {
+        id: RequestId,
+        result: Value,
+    },
+    Reject {
+        error: RpcError,
+        id: RequestId,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1310,27 +1287,24 @@ struct RpcError {
 }
 
 pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
-    match msg {
-        Outbound::Request { id, call } => serde_json::to_string(&RequestFrame {
-            id,
+    serde_json::to_string(&match msg {
+        Outbound::Request { id, call } => OutboundFrame::Request {
+            id: RequestId::Integer(id),
             method: String::from(call.method()),
             params: call.params()?,
-        }),
-        Outbound::Initialized => serde_json::to_string(&NotificationFrame {
+        },
+        Outbound::Initialized => OutboundFrame::Notification {
             method: String::from("initialized"),
-        }),
-        Outbound::Answer { rpc_id, result } => serde_json::to_string(&AnswerFrame {
-            id: rpc_id.wire(),
-            result,
-        }),
-        Outbound::Reject { rpc_id, message } => serde_json::to_string(&RejectFrame {
+        },
+        Outbound::Answer { rpc_id, result } => OutboundFrame::Answer { id: rpc_id, result },
+        Outbound::Reject { rpc_id, message } => OutboundFrame::Reject {
             error: RpcError {
                 code: METHOD_NOT_FOUND,
                 message,
             },
-            id: rpc_id.wire(),
-        }),
-    }
+            id: rpc_id,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -1366,6 +1340,60 @@ mod tests {
             approval_policy: ApprovalPolicy::OnRequest,
             sandbox: Sandbox::ReadOnly,
         }
+    }
+
+    #[test]
+    fn request_ids_accept_only_integer_and_string_shapes() {
+        let cases = Vec::from([
+            ("0", Some(RequestId::Integer(0))),
+            ("-9", Some(RequestId::Integer(9_i64.wrapping_neg()))),
+            (r#""rpc-1""#, Some(RequestId::String(String::from("rpc-1")))),
+            ("1.0", None),
+            ("9223372036854775808", None),
+            ("true", None),
+            ("null", None),
+            ("{}", None),
+        ]);
+        assert_eq!(
+            cases
+                .iter()
+                .map(|(wire, _)| RequestId::read(&json(wire)))
+                .collect::<Vec<Option<RequestId>>>(),
+            cases
+                .into_iter()
+                .map(|(_, expected)| expected)
+                .collect::<Vec<Option<RequestId>>>()
+        );
+    }
+
+    #[test]
+    fn replies_keep_a_null_result_and_a_string_id() {
+        assert_eq!(
+            encode(Outbound::Answer {
+                rpc_id: RequestId::String(String::from("rpc-1")),
+                result: Value::Null,
+            })
+            .unwrap(),
+            r#"{"id":"rpc-1","result":null}"#
+        );
+    }
+
+    #[test]
+    fn thread_start_omits_absent_model_thread_and_effort() {
+        let options = ThreadOptions {
+            model: None,
+            effort: None,
+            ..opts()
+        };
+        assert_eq!(
+            request(Call::ThreadStart(options)),
+            json(
+                r#"{"id":7,"method":"thread/start","params":{
+                "approvalPolicy":"on-request","sandbox":"read-only","cwd":"/tmp/s2-scratch",
+                "config":{"features":{"default_mode_request_user_input":true},
+                "model_reasoning_summary":"auto"}}}"#
+            )
+        );
     }
 
     #[test]

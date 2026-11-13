@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=https://github.com/JimLundin/subset
-REV=ece845d2ef337af2a17dfaa60cff29684e9e22a8
+REV=0a5aacace28cff3e9123711ae78f68aabd5c7bf0
 root="$(tools/target-dir)/subset-$REV"
 if [ ! -x "$root/bin/subset" ]; then
   cargo install --quiet --locked --git "$REPO" --rev "$REV" --root "$root" subset

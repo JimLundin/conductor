@@ -3,7 +3,7 @@
 # grows only through accepted proposals in JimLundin/subset (docs/proposals/). Each id is
 # documented in docs/subset.md there.
 
-version = 8
+version = 9
 
 # All of our code is written in the subset. tools/ (the checker itself) is
 # outside it.
@@ -72,6 +72,7 @@ allowed = [
 
   # Patterns
   "pat.ident",
+  "pat.ident.at",              # proposal 0044
   "pat.path",                 # unit variants and consts
   "pat.struct",
   "pat.tuple_struct",         # Some(x), Ok(x), Variant(x)
@@ -265,6 +266,7 @@ boundary = 1.0
 "type.field" = "encouraged"
 "expr.match" = "encouraged"
 "pat.ident" = "encouraged"
+"pat.ident.at" = "encouraged"
 "pat.path" = "encouraged"
 "pat.struct" = "encouraged"
 "pat.tuple_struct" = "encouraged"

@@ -815,22 +815,14 @@ enum Verdict {
     Allow {
         #[serde(rename = "updatedInput")]
         updated_input: Value,
-    },
-    #[serde(rename = "allow")]
-    AllowWithUpdates {
-        #[serde(rename = "updatedInput")]
-        updated_input: Value,
-        #[serde(rename = "updatedPermissions")]
-        updated_permissions: Vec<Update>,
+        #[serde(rename = "updatedPermissions", skip_serializing_if = "Option::is_none")]
+        updated_permissions: Option<Vec<Update>>,
     },
     Deny {
         message: String,
-    },
-    /// `interrupt` is only sent when it is `true`.
-    #[serde(rename = "deny")]
-    DenyAndInterrupt {
-        message: String,
-        interrupt: Value,
+        /// `interrupt` is only sent when it is `true`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        interrupt: Option<bool>,
     },
 }
 
@@ -878,24 +870,29 @@ fn verdict(decision: PermissionDecision, open: Open) -> serde_json::Result<Verdi
     Ok(match decision {
         PermissionDecision::Allow => Verdict::Allow {
             updated_input: open.input,
+            updated_permissions: None,
         },
-        PermissionDecision::AllowForSession => Verdict::AllowWithUpdates {
+        PermissionDecision::AllowForSession => Verdict::Allow {
             updated_input: open.input,
-            updated_permissions: open.grant.into_iter().map(|grant| grant.update).collect(),
+            updated_permissions: Some(open.grant.into_iter().map(|grant| grant.update).collect()),
         },
         PermissionDecision::Answer(answers) => Verdict::Allow {
             updated_input: answered(open.input, answers)?,
+            updated_permissions: None,
         },
         PermissionDecision::Deny {
             message,
             then: AfterDeny::Continue,
-        } => Verdict::Deny { message },
+        } => Verdict::Deny {
+            message,
+            interrupt: None,
+        },
         PermissionDecision::Deny {
             message,
             then: AfterDeny::Interrupt,
-        } => Verdict::DenyAndInterrupt {
+        } => Verdict::Deny {
             message,
-            interrupt: Value::Bool(true),
+            interrupt: Some(true),
         },
     })
 }
