@@ -12,11 +12,13 @@ What is built and what comes next. Update it in the commit that changes it.
   in their original directory. Claude uses UUID prefix forks, Codex uses
   verified `thread/revert` prefixes.
 
-- **Subset v14.** The checker pins `64352fd`, adopting accepted local
+- **Subset v14** (#24). The checker pins `64352fd`, adopting accepted local
   closures, structural and range patterns, immutable domain arrays, shared
   slice outputs and unbounded domain generics. Wire conversions also gain
   scoped boolean patterns, Serde defaults and fallback variants; const
-  embedded strings and typed error sources are allowed.
+  embedded strings and typed error sources are allowed. Callback APIs, runtime
+  comparisons, actor setup and platform attributes remain under review in
+  JimLundin/subset#5.
 - **Subset v10** introduced one shared `ask<M, T>` free function in a crate
   whose actor handles share a stopped error type (subset issue #3).
 
