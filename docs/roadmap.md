@@ -4,11 +4,10 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
-- **Subset simplifications** (JimLundin/subset#5). Use local closures,
-  array receivers and structural patterns to remove repeated code. The
-  receiver drain follows owner-accepted proposal 0058 for v15. Configuration
-  declares v15, but the pinned v14 checker still rejects that one form until
-  its successor is published; the owner authorized this interim state.
+- **Subset v15** (JimLundin/subset#5). The checker pins `b02997b`. Local
+  closures, array receivers and structural patterns remove repeated code.
+  The receiver drain uses owner-accepted proposal 0058's eager pull iterator.
+  Returned error factories (0059) remain proposed.
 
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
@@ -18,13 +17,12 @@ What is built and what comes next. Update it in the commit that changes it.
   in their original directory. Claude uses UUID prefix forks, Codex uses
   verified `thread/revert` prefixes.
 
-- **Subset v14** (#24). The checker pins `64352fd`, adopting accepted local
+- **Subset v14** (#24) adopted accepted local
   closures, structural and range patterns, immutable domain arrays, shared
   slice outputs and unbounded domain generics. Wire conversions also gain
   scoped boolean patterns, Serde defaults and fallback variants; const
-  embedded strings and typed error sources are allowed. Callback APIs, runtime
-  comparisons, actor setup and platform attributes remain under review in
-  JimLundin/subset#5.
+  embedded strings and typed error sources are allowed. Actor setup and
+  blocking-library calls remain friction points in JimLundin/subset#5.
 - **Subset v10** introduced one shared `ask<M, T>` free function in a crate
   whose actor handles share a stopped error type (subset issue #3).
 
