@@ -2,7 +2,6 @@
 //! relays off so the test needs no network.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -14,7 +13,7 @@ use agents::Home;
 use agents::claude::Sandbox;
 use agents::codex::ServerOptions;
 use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, SessionStatus, SessionView, ToolState,
+    Approval, HostView, Item, ReplyState, RequestState, SessionStatus, ToolState,
 };
 use client::{Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use daemon::Stopped;
@@ -143,7 +142,10 @@ async fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture
     let (store, stored) = Store::open(data).unwrap();
     let log = Log::spawn(String::from("test-host"), Epoch(11));
     let registry = Registry::spawn(log.clone(), launchers, store, stored);
-    let _ = registry.providers().await.unwrap();
+    let _ = tokio::time::timeout(STEP, registry.providers())
+        .await
+        .expect("registry restoration within the step timeout")
+        .unwrap();
     let target = Target {
         addr: endpoint.addr(),
         token: AuthToken::from_bytes(TOKEN),
@@ -194,7 +196,10 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fixture {
         store,
         stored,
     );
-    let _ = registry.providers().await.unwrap();
+    let _ = tokio::time::timeout(STEP, registry.providers())
+        .await
+        .expect("registry restoration within the step timeout")
+        .unwrap();
     let target = Target {
         addr: endpoint.addr(),
         token,
@@ -303,25 +308,6 @@ fn seqs(events: &[Event]) -> Vec<HostSeq> {
 
 fn fold(events: Vec<Event>) -> HostView {
     events.into_iter().fold(HostView::empty(), HostView::apply)
-}
-
-/// The view of session 1 after `created()` and the reply `text` at
-/// `activity`.
-fn replied(text: &str, activity: u64) -> HostView {
-    HostView {
-        sessions: BTreeMap::from([(
-            SessionId(1),
-            SessionView {
-                provider: Provider::Claude,
-                directory: HostPath(String::from("/work")),
-                model: None,
-                effort: None,
-                status: SessionStatus::Starting,
-                items: Vec::from([done(text)]),
-                activity: HostSeq(activity),
-            },
-        )]),
-    }
 }
 
 /// One command and the host's literal answer.
@@ -544,9 +530,65 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
             Update::Status(_) | Update::Reset(_) => None,
         })
         .collect::<Vec<Event>>();
-    assert_eq!(fold(replayed), replied("Hi", 2));
+    let view = fold(replayed);
+    assert_eq!(view.sessions.len(), 1);
+    assert_eq!(
+        view.sessions.get(&SessionId(1)).map(|session| (
+            session.provider,
+            session.directory.clone(),
+            session.status.clone(),
+            session.items.clone(),
+            session.activity,
+        )),
+        Some((
+            Provider::Claude,
+            HostPath(String::from("/work")),
+            SessionStatus::Starting,
+            Vec::from([done("Hi")]),
+            HostSeq(2)
+        ))
+    );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
+}
+
+/// Git commands use this test repository's identity, never the user's config.
+fn git(directory: &Path, arguments: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C")
+        .arg(directory)
+        .args([
+            "-c",
+            "user.name=Conductor test",
+            "-c",
+            "user.email=test@example.invalid",
+        ])
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn committed_repository(directory: &Path) {
+    git(directory, &["init", "--quiet"]);
+    std::fs::write(directory.join("baseline.txt"), "committed baseline\n").unwrap();
+    git(directory, &["add", "baseline.txt"]);
+    git(
+        directory,
+        &[
+            "commit",
+            "--quiet",
+            "-m",
+            "test baseline\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+        ],
+    );
 }
 
 /// A session directory holding `fixtures/e2e/<recording>` as the fake's
@@ -557,6 +599,7 @@ fn scratch(name: &str, recording: &str) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e");
     std::fs::copy(fixture.join(recording), dir.join("stdout.jsonl")).unwrap();
+    committed_repository(&dir);
     dir
 }
 
@@ -569,6 +612,8 @@ enum Until {
     Delta,
     TurnEnd,
     Closed,
+    Undone,
+    UndoFailure,
 }
 
 enum Reached {
@@ -584,7 +629,9 @@ fn reached(until: &Until, kind: &EventKind) -> Reached {
         | (Until::Resolved, EventKind::RequestResolved { .. })
         | (Until::Delta, EventKind::AssistantDelta { .. })
         | (Until::TurnEnd, EventKind::TurnCompleted { .. })
-        | (Until::Closed, EventKind::SessionClosed { .. }) => Reached::Yes,
+        | (Until::Closed, EventKind::SessionClosed { .. })
+        | (Until::Undone, EventKind::TurnsUndone { .. })
+        | (Until::UndoFailure, EventKind::UndoFailed { .. }) => Reached::Yes,
         _ => Reached::No,
     }
 }
@@ -592,10 +639,29 @@ fn reached(until: &Until, kind: &EventKind) -> Reached {
 /// The kinds of the events the link receives, through the first that
 /// reaches `until`, for tests that start one session.
 async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<EventKind> {
-    events_until(updates, until)
+    legacy_events_until(updates, until)
         .await
         .into_iter()
         .map(|event| event.kind)
+        .collect()
+}
+
+/// Preserve existing protocol assertions while workspace metadata has dedicated
+/// raw-event coverage below.
+async fn legacy_events_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<Event> {
+    events_until(updates, until)
+        .await
+        .into_iter()
+        .filter(|event| {
+            !matches!(
+                event.kind,
+                EventKind::WorkspaceCreated { .. }
+                    | EventKind::CheckpointCreated { .. }
+                    | EventKind::CheckpointReserved { .. }
+                    | EventKind::HistoryMaterialized { .. }
+                    | EventKind::NativeTurnStarted { .. }
+            )
+        })
         .collect()
 }
 
@@ -623,11 +689,24 @@ fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
         .iter()
         .filter(|event| event.session == session)
         .map(|event| event.kind.clone())
+        .filter(|kind| {
+            !matches!(
+                kind,
+                EventKind::WorkspaceCreated { .. }
+                    | EventKind::CheckpointCreated { .. }
+                    | EventKind::CheckpointReserved { .. }
+                    | EventKind::HistoryMaterialized { .. }
+                    | EventKind::NativeTurnStarted { .. }
+            )
+        })
         .collect()
 }
 
 async fn send(link: &HostLink, body: CommandBody) -> CommandResult {
-    link.send(body).await.unwrap()
+    tokio::time::timeout(STEP, link.send(body))
+        .await
+        .expect("a command result within the step timeout")
+        .unwrap()
 }
 
 fn started_session(result: CommandResult) -> SessionId {
@@ -1345,12 +1424,12 @@ async fn an_interrupt_withdraws_an_open_question() {
     until_live(&mut updates).await;
     let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "ask me")).await;
-    let mut events = events_until(&mut updates, Until::Question).await;
+    let mut events = legacy_events_until(&mut updates, Until::Question).await;
     assert_eq!(
         send(&link, interrupt(session)).await,
         CommandResult::Accepted
     );
-    events.extend(events_until(&mut updates, Until::TurnEnd).await);
+    events.extend(legacy_events_until(&mut updates, Until::TurnEnd).await);
     assert_eq!(
         events
             .iter()
@@ -1488,7 +1567,7 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
 #[tokio::test]
 async fn a_missing_claude_binary_closes_the_session() {
     let fx = host_with(PathBuf::from("/nonexistent/claude")).await;
-    let dir = std::env::temp_dir();
+    let dir = scratch("missing-binary", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
@@ -1527,10 +1606,10 @@ async fn two_codex_sessions_share_one_server() {
     let first_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
     // The second session starts once the first has its thread, so the first
     // gets the recording's first thread.
-    let first = events_until(&mut updates, Until::Ready).await;
+    let first = legacy_events_until(&mut updates, Until::Ready).await;
     let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
     assert_ne!(first_session, second_session);
-    let second = events_until(&mut updates, Until::Ready).await;
+    let second = legacy_events_until(&mut updates, Until::Ready).await;
     assert_eq!(
         [
             send(&link, message(first_session, "create a.txt")).await,
@@ -1539,8 +1618,8 @@ async fn two_codex_sessions_share_one_server() {
         [CommandResult::Accepted, CommandResult::Accepted]
     );
     let asked = Vec::from([
-        events_until(&mut updates, Until::Request).await,
-        events_until(&mut updates, Until::Request).await,
+        legacy_events_until(&mut updates, Until::Request).await,
+        legacy_events_until(&mut updates, Until::Request).await,
     ])
     .concat();
     assert_eq!(
@@ -1551,8 +1630,8 @@ async fn two_codex_sessions_share_one_server() {
         [CommandResult::Accepted, CommandResult::Accepted]
     );
     let ended = Vec::from([
-        events_until(&mut updates, Until::TurnEnd).await,
-        events_until(&mut updates, Until::TurnEnd).await,
+        legacy_events_until(&mut updates, Until::TurnEnd).await,
+        legacy_events_until(&mut updates, Until::TurnEnd).await,
     ])
     .concat();
     let view = fold(Vec::from([first, second, asked, ended]).concat());
@@ -1724,13 +1803,13 @@ async fn the_app_server_exiting_closes_every_codex_session() {
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let first_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
-    let first = events_until(&mut updates, Until::Ready).await;
+    let first = legacy_events_until(&mut updates, Until::Ready).await;
     let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
     assert_ne!(first_session, second_session);
     let seen = Vec::from([
         first,
-        events_until(&mut updates, Until::Closed).await,
-        events_until(&mut updates, Until::Closed).await,
+        legacy_events_until(&mut updates, Until::Closed).await,
+        legacy_events_until(&mut updates, Until::Closed).await,
     ])
     .concat();
     let closed = EventKind::SessionClosed {
@@ -2076,7 +2155,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
         "the models are listed again, with the new credential"
     );
     let _ = started_session(send(&link, start(Provider::Claude, &dir)).await);
-    let events = events_until(&mut updates, Until::Ready).await;
+    let events = legacy_events_until(&mut updates, Until::Ready).await;
     assert_eq!(
         read(&dir.join("env.txt")),
         format!(
@@ -2235,7 +2314,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
         codex_gateway()
     );
     let _ = started_session(send(&link, start(Provider::Codex, &server)).await);
-    let first = events_until(&mut updates, Until::Ready).await;
+    let first = legacy_events_until(&mut updates, Until::Ready).await;
     let home = data.join("home/codex");
     assert_eq!(
         read(&server.join("env.txt")),
@@ -2263,7 +2342,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
         }]
     );
     let _ = started_session(send(&link, start(Provider::Codex, &server)).await);
-    let second = events_until(&mut updates, Until::Ready).await;
+    let second = legacy_events_until(&mut updates, Until::Ready).await;
     assert_eq!(
         read(&server.join("env.txt")),
         format!(
@@ -2571,6 +2650,14 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
         caught_up
             .iter()
             .map(|event| event.kind.clone())
+            .filter(|kind| !matches!(
+                kind,
+                EventKind::WorkspaceCreated { .. }
+                    | EventKind::CheckpointCreated { .. }
+                    | EventKind::CheckpointReserved { .. }
+                    | EventKind::NativeTurnStarted { .. }
+                    | EventKind::HistoryMaterialized { .. }
+            ))
             .collect::<Vec<EventKind>>(),
         stored
     );
@@ -2599,7 +2686,7 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
     until_live(&mut updates).await;
     let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
     let _ = send(&phone, message(session, "sheep?")).await;
-    let turn = events_until(&mut updates, Until::TurnEnd).await;
+    let turn = legacy_events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         (
             turn.iter()
@@ -2651,13 +2738,13 @@ async fn a_killed_claude_session_continues_its_conversation() {
         .await,
     );
     let _ = send(&link, message(session, "sheep?")).await;
-    let first = events_until(&mut updates, Until::TurnEnd).await;
+    let first = legacy_events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         send(&link, continued(session)).await,
         CommandResult::Accepted
     );
     let _ = send(&link, message(session, "count")).await;
-    let killed = events_until(&mut updates, Until::Closed).await;
+    let killed = legacy_events_until(&mut updates, Until::Closed).await;
     assert_eq!(
         killed
             .iter()
@@ -2680,9 +2767,9 @@ async fn a_killed_claude_session_continues_its_conversation() {
         send(&link, continued(session)).await,
         CommandResult::Accepted
     );
-    let ready = events_until(&mut updates, Until::Ready).await;
+    let ready = legacy_events_until(&mut updates, Until::Ready).await;
     let _ = send(&link, message(session, "how many sheep?")).await;
-    let after = events_until(&mut updates, Until::TurnEnd).await;
+    let after = legacy_events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         after
             .iter()
@@ -2745,9 +2832,9 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
     until_live(&mut updates).await;
     let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "sheep?")).await;
-    let _ = events_until(&mut updates, Until::TurnEnd).await;
+    let _ = legacy_events_until(&mut updates, Until::TurnEnd).await;
     let _ = send(&link, message(session, "count")).await;
-    let _ = events_until(&mut updates, Until::Closed).await;
+    let _ = legacy_events_until(&mut updates, Until::Closed).await;
     assert_eq!(
         send(&link, continued(session)).await,
         CommandResult::Accepted
@@ -3055,7 +3142,7 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation() 
     until_live(&mut updates).await;
     let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
     let _ = send(&phone, message(session, "create a.txt")).await;
-    let before = events_until(&mut updates, Until::Request).await;
+    let before = legacy_events_until(&mut updates, Until::Request).await;
     let cursor = before.last().unwrap().seq;
     let conversation = argv(&dir)
         .first()
@@ -3091,7 +3178,13 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation() 
             HostSeq(cursor.0.checked_add(1).unwrap()),
             HostSeq(cursor.0.checked_add(2).unwrap()),
             HostSeq(cursor.0.checked_add(3).unwrap()),
+            HostSeq(cursor.0.checked_add(4).unwrap()),
+            HostSeq(cursor.0.checked_add(5).unwrap()),
         ])
+    );
+    assert_eq!(
+        checkpoint(&cleanup, proto::CheckpointId(1)).parent,
+        Some(proto::CheckpointId(0))
     );
     assert_eq!(
         of(session, &cleanup),
@@ -3246,4 +3339,900 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     router.shutdown().await.unwrap();
     drop(router);
     log.shutdown().await.unwrap();
+}
+
+fn checkpoint(events: &[Event], id: proto::CheckpointId) -> proto::Checkpoint {
+    events
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::CheckpointCreated { checkpoint } if checkpoint.id == id => {
+                Some(checkpoint.clone())
+            }
+            _ => None,
+        })
+        .expect("the requested checkpoint was published")
+}
+
+fn workspace(events: &[Event]) -> proto::Workspace {
+    events
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::WorkspaceCreated { workspace } => Some(workspace.clone()),
+            _ => None,
+        })
+        .expect("the managed worktree was published")
+}
+
+fn diff_result(result: CommandResult) -> proto::CheckpointDiff {
+    match result {
+        CommandResult::Diff(diff) => Some(diff),
+        _ => None,
+    }
+    .expect("a checkpoint diff")
+}
+
+/// File undo and the lazy native fork survive restart together. All Git
+/// staging/checkpoint operations stay out of the source repository's index.
+#[tokio::test]
+async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_restart() {
+    let source = scratch("workspace-undo", "claude-worktrees.jsonl");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-worktrees-fork.jsonl"),
+        source.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    std::fs::copy(source.join("stdout.2.jsonl"), source.join("stdout.3.jsonl")).unwrap();
+    std::fs::write(source.join("baseline.txt"), "source staged\n").unwrap();
+    git(&source, &["add", "baseline.txt"]);
+    std::fs::write(source.join("baseline.txt"), "source unstaged\n").unwrap();
+    std::fs::write(source.join("source-only.txt"), "never enter a session\n").unwrap();
+    let index = std::fs::read(source.join(".git/index")).unwrap();
+    let staged = git(&source, &["diff", "--cached"]);
+    let unstaged = git(&source, &["diff"]);
+    let data = data_dir("workspace-undo");
+    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first
+        .target
+        .addr
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let ticket = first.target.clone();
+    let (phone, mut updates) = link(ticket.clone(), None).await;
+    until_live(&mut updates).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let opening = events_until(&mut updates, Until::Ready).await;
+    let managed = workspace(&opening);
+    assert_eq!(checkpoint(&opening, proto::CheckpointId(0)).parent, None);
+    assert_eq!(managed.original.0, source.display().to_string());
+    assert_eq!(
+        managed.branch,
+        format!("conductor/{}", ulid::Ulid::from(session.0))
+    );
+    let worktree = PathBuf::from(&managed.worktree.0);
+    assert_ne!(worktree, source);
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("baseline.txt")).unwrap(),
+        "committed baseline\n"
+    );
+    assert_eq!(
+        std::fs::metadata(worktree.join("source-only.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
+    let other = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let other_opening = events_until(&mut updates, Until::Ready).await;
+    let other_workspace = workspace(&other_opening);
+    let other_path = PathBuf::from(&other_workspace.worktree.0);
+    assert_ne!(session, other);
+    assert_ne!(managed.worktree, other_workspace.worktree);
+    assert_ne!(managed.branch, other_workspace.branch);
+    let _ = send(&phone, message(session, "turn one")).await;
+    let first_turn = events_until(&mut updates, Until::TurnEnd).await;
+    let retained = checkpoint(&first_turn, proto::CheckpointId(1));
+    let _ = send(&phone, message(session, "turn two")).await;
+    let second_turn = events_until(&mut updates, Until::TurnEnd).await;
+    let discarded = checkpoint(&second_turn, proto::CheckpointId(2));
+    assert_eq!(discarded.parent, Some(retained.id));
+    let diff = diff_result(
+        send(
+            &phone,
+            CommandBody::GetDiff {
+                session,
+                checkpoint: discarded.id,
+            },
+        )
+        .await,
+    );
+    assert_eq!(diff.parent, retained.id);
+    assert_eq!(diff.extent, proto::DiffExtent::Complete);
+    assert_eq!(
+        diff.files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<String>>(),
+        ["changed.txt", "deleted.txt", "exec.sh", "introduced.txt"]
+    );
+    assert_ne!(
+        diff.files
+            .iter()
+            .filter_map(|file| match &file.patch {
+                proto::FilePatch::Text(patch) => Some(patch.as_str()),
+                _ => None,
+            })
+            .collect::<String>()
+            .find("+turn two"),
+        None
+    );
+    assert_eq!(
+        git(&worktree, &["ls-tree", &discarded.commit, "exec.sh"])
+            .split_whitespace()
+            .next(),
+        Some("100755")
+    );
+    let _ = send(&phone, message(session, "turn three")).await;
+    let third_turn = events_until(&mut updates, Until::TurnEnd).await;
+    checkpoint(&third_turn, proto::CheckpointId(3));
+    assert_eq!(std::fs::read(source.join(".git/index")).unwrap(), index);
+    assert_eq!(git(&source, &["diff", "--cached"]), staged);
+    assert_eq!(git(&source, &["diff"]), unstaged);
+    assert_eq!(
+        std::fs::metadata(other_path.join("changed.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
+    let _ = send(&phone, message(other, "an independent second session")).await;
+    let other_turn = events_until(&mut updates, Until::TurnEnd).await;
+    checkpoint(&other_turn, proto::CheckpointId(1));
+    assert_eq!(
+        std::fs::read_to_string(other_path.join("after-undo.txt")).unwrap(),
+        "continued from retained prefix\n"
+    );
+    assert_eq!(
+        std::fs::metadata(worktree.join("after-undo.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
+    let retry_endpoint = endpoint().await;
+    let retry = authenticated(&retry_endpoint, &ticket).await;
+    let undo = proto::Command {
+        id: proto::CommandId(1301),
+        body: CommandBody::UndoTurn {
+            session,
+            checkpoint: discarded.id,
+        },
+    };
+    let receipt = retry_command(&retry, &undo).await;
+    assert_eq!(receipt, CommandResult::Accepted);
+    let undone = events_until(&mut updates, Until::Undone).await;
+    assert_eq!(
+        of(session, &undone).last(),
+        Some(&EventKind::TurnsUndone {
+            checkpoint: discarded.id,
+            restored: retained.id
+        })
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("changed.txt")).unwrap(),
+        "turn one\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("deleted.txt")).unwrap(),
+        "restore me\n"
+    );
+    assert_eq!(
+        std::fs::metadata(worktree.join("introduced.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
+    assert_eq!(
+        std::fs::metadata(worktree.join("later.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
+    assert_eq!(
+        git(&worktree, &["ls-files", "--stage", "exec.sh"])
+            .split_whitespace()
+            .next(),
+        Some("100644")
+    );
+    retry_endpoint.close().await;
+    let Fixture { router, log, .. } = first;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+    let second = durable_host(&data, address).await;
+    phone.reconnect().await;
+    until_live(&mut updates).await;
+    let restarted_retry_endpoint = endpoint().await;
+    let restarted_retry = authenticated(&restarted_retry_endpoint, &ticket).await;
+    assert_eq!(retry_command(&restarted_retry, &undo).await, receipt);
+    assert_eq!(
+        send(&phone, continued(session)).await,
+        CommandResult::Accepted
+    );
+    events_until(&mut updates, Until::Ready).await;
+    let _ = send(&phone, message(session, "remember retained prefix")).await;
+    let after = events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        of(session, &after)
+            .iter()
+            .filter(|kind| matches!(kind, EventKind::AssistantMessage { .. }))
+            .cloned()
+            .collect::<Vec<EventKind>>(),
+        [reply("Retained turn one.")]
+    );
+    let runs = argv(&source);
+    let resumed = runs.last().unwrap();
+    assert_eq!(
+        resumed
+            .iter()
+            .find(|arg| arg.starts_with("--resume-session-at="))
+            .cloned(),
+        Some(String::from(
+            "--resume-session-at=00000000-0000-4000-8000-000000000201"
+        ))
+    );
+    assert_eq!(
+        resumed
+            .iter()
+            .find(|arg| arg.as_str() == "--fork-session")
+            .cloned(),
+        Some(String::from("--fork-session"))
+    );
+    assert_eq!(std::fs::read(source.join(".git/index")).unwrap(), index);
+    restarted_retry_endpoint.close().await;
+    phone.stop().await.unwrap();
+    let Fixture { router, log, .. } = second;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn new_sessions_require_an_existing_repository_with_a_commit() {
+    let host = host().await;
+    let (phone, mut updates) = link(host.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let plain = data_dir("not-a-repository");
+    // Stop Git discovery at this fixture instead of finding the enclosing checkout.
+    std::fs::write(plain.join(".git"), "gitdir: no-such-git-directory\n").unwrap();
+    assert_eq!(
+        send(&phone, start(Provider::Claude, &plain)).await,
+        CommandResult::Rejected(Rejection::NotGitRepository)
+    );
+    std::fs::remove_file(plain.join(".git")).unwrap();
+    git(&plain, &["init", "--quiet"]);
+    assert_eq!(
+        send(&phone, start(Provider::Claude, &plain)).await,
+        CommandResult::Rejected(Rejection::NotGitRepository)
+    );
+    phone.stop().await.unwrap();
+    host.router.shutdown().await.unwrap();
+}
+
+/// Old persisted sessions have no workspace metadata. Continue still starts
+/// their CLI in the original directory, even when it is not a Git repository.
+#[tokio::test]
+async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
+    let source = data_dir("legacy-session-source");
+    std::fs::write(source.join(".git"), "gitdir: no-such-git-directory\n").unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-worktrees-fork.jsonl"),
+        source.join("stdout.jsonl"),
+    )
+    .unwrap();
+    let data = data_dir("legacy-session-host");
+    let path = data.join("conductor.redb");
+    let log = Log::open(String::from("test-host"), &path).unwrap();
+    let session = SessionId(1310);
+    log.append(
+        session,
+        EventKind::SessionCreated {
+            provider: Provider::Claude,
+            directory: HostPath(source.display().to_string()),
+            by: test_client(),
+            model: None,
+            effort: None,
+        },
+    )
+    .await
+    .unwrap();
+    log.append(
+        session,
+        EventKind::SessionClosed {
+            reason: CloseReason::Stopped {
+                reason: String::from("old host stopped"),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    log.shutdown().await.unwrap();
+    let host = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let (phone, mut updates) = link(host.target.clone(), None).await;
+    until_live(&mut updates).await;
+    assert_eq!(
+        send(
+            &phone,
+            CommandBody::UndoTurn {
+                session,
+                checkpoint: proto::CheckpointId(0)
+            }
+        )
+        .await,
+        CommandResult::Rejected(Rejection::CheckpointUnavailable)
+    );
+    assert_eq!(
+        send(&phone, continued(session)).await,
+        CommandResult::Accepted
+    );
+    let ready = events_until(&mut updates, Until::Ready).await;
+    assert_eq!(
+        ready
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::WorkspaceCreated { .. })),
+        None
+    );
+    let _ = send(&phone, message(session, "legacy directory")).await;
+    events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        std::fs::read_to_string(source.join("after-undo.txt")).unwrap(),
+        "continued from retained prefix\n"
+    );
+    phone.stop().await.unwrap();
+    let Fixture { router, log, .. } = host;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+/// A crash after durable undo intent/failure retains the original transcript
+/// and blocks normal commands until the same undo completes on retry.
+#[tokio::test]
+async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_retry() {
+    let source = scratch("pending-undo", "claude-worktrees.jsonl");
+    let data = data_dir("pending-undo");
+    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first
+        .target
+        .addr
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let ticket = first.target.clone();
+    let (phone, mut updates) = link(ticket.clone(), None).await;
+    until_live(&mut updates).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    events_until(&mut updates, Until::Ready).await;
+    let _ = send(&phone, message(session, "turn one")).await;
+    let retained = checkpoint(
+        &events_until(&mut updates, Until::TurnEnd).await,
+        proto::CheckpointId(1),
+    );
+    let _ = send(&phone, message(session, "turn two")).await;
+    let discarded = checkpoint(
+        &events_until(&mut updates, Until::TurnEnd).await,
+        proto::CheckpointId(2),
+    );
+    let history = match retained.history {
+        proto::HistoryAnchor::Claude {
+            conversation,
+            message: Some(through),
+        } => Some(proto::HistoryAnchor::ClaudeFork {
+            source: conversation,
+            through,
+            target: String::from("00000000-0000-4000-8000-000000000300"),
+        }),
+        _ => None,
+    }
+    .expect("a verified retained Claude transcript boundary");
+    first
+        .log
+        .append(
+            session,
+            EventKind::UndoStarted {
+                checkpoint: discarded.id,
+                restore: retained.id,
+                history,
+            },
+        )
+        .await
+        .unwrap();
+    first
+        .log
+        .append(
+            session,
+            EventKind::UndoFailed {
+                checkpoint: discarded.id,
+                reason: String::from("injected failure before files were restored"),
+            },
+        )
+        .await
+        .unwrap();
+    let Fixture { router, log, .. } = first;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+    let second = durable_host(&data, address).await;
+    phone.reconnect().await;
+    until_live(&mut updates).await;
+    let replay = second.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let view = fold(replay);
+    assert_eq!(
+        view.sessions
+            .get(&session)
+            .map(|session| session.undo.clone()),
+        Some(client::host_view::UndoState::Failed {
+            checkpoint: discarded.id,
+            reason: String::from("injected failure before files were restored")
+        })
+    );
+    assert_eq!(
+        items(&view, session)
+            .iter()
+            .filter(|item| matches!(item, Item::User { .. }))
+            .count(),
+        2
+    );
+    assert_eq!(
+        send(&phone, message(session, "blocked while recovering")).await,
+        CommandResult::Rejected(Rejection::UndoInProgress)
+    );
+    assert_eq!(
+        send(&phone, continued(session)).await,
+        CommandResult::Rejected(Rejection::UndoInProgress)
+    );
+    assert_eq!(
+        send(
+            &phone,
+            CommandBody::UndoTurn {
+                session,
+                checkpoint: discarded.id
+            }
+        )
+        .await,
+        CommandResult::Accepted
+    );
+    events_until(&mut updates, Until::Undone).await;
+    let after = fold(second.log.subscribe(HostSeq(0)).await.unwrap().replay);
+    assert_eq!(
+        items(&after, session)
+            .iter()
+            .filter(|item| matches!(item, Item::User { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        after
+            .sessions
+            .get(&session)
+            .map(|session| session.undo.clone()),
+        Some(client::host_view::UndoState::Undone)
+    );
+    phone.stop().await.unwrap();
+    let Fixture { router, log, .. } = second;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+fn undo_failure(result: CommandResult) -> String {
+    match result {
+        CommandResult::Rejected(Rejection::UndoFailed { reason }) => Some(reason),
+        _ => None,
+    }
+    .expect("an honest undo phase failure")
+}
+
+#[tokio::test]
+async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart() {
+    let source = scratch("actual-undo-failures", "claude-worktrees.jsonl");
+    let data = data_dir("actual-undo-failures");
+    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first
+        .target
+        .addr
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let ticket = first.target.clone();
+    let (phone, mut updates) = link(ticket.clone(), None).await;
+    until_live(&mut updates).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let managed = workspace(&events_until(&mut updates, Until::Ready).await);
+    let worktree = PathBuf::from(&managed.worktree.0);
+    let _ = send(&phone, message(session, "turn one")).await;
+    let retained = checkpoint(
+        &events_until(&mut updates, Until::TurnEnd).await,
+        proto::CheckpointId(1),
+    );
+    let _ = send(&phone, message(session, "turn two")).await;
+    let selected = checkpoint(
+        &events_until(&mut updates, Until::TurnEnd).await,
+        proto::CheckpointId(2),
+    );
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-worktrees-fork-refused.jsonl"),
+        source.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let undo = CommandBody::UndoTurn {
+        session,
+        checkpoint: selected.id,
+    };
+    assert_ne!(
+        undo_failure(send(&phone, undo.clone()).await).find("temporary fake native fork refusal"),
+        None
+    );
+    let native_failure = events_until(&mut updates, Until::UndoFailure).await;
+    assert_eq!(
+        native_failure
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::UndoHistoryRestored { .. })),
+        None
+    );
+    assert_ne!(
+        std::fs::read_to_string(worktree.join("changed.txt"))
+            .unwrap()
+            .find("turn two"),
+        None
+    );
+    assert_eq!(
+        send(&phone, message(session, "blocked after native refusal")).await,
+        CommandResult::Rejected(Rejection::UndoInProgress)
+    );
+    let git_dir = PathBuf::from(git(&worktree, &["rev-parse", "--absolute-git-dir"]).trim());
+    let lock = git_dir.join("index.lock");
+    std::fs::write(&lock, "owned test lock\n").unwrap();
+    assert_ne!(
+        undo_failure(send(&phone, undo.clone()).await).find("index.lock"),
+        None
+    );
+    let files_failure = events_until(&mut updates, Until::UndoFailure).await;
+    assert_eq!(
+        files_failure
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::UndoHistoryRestored { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        files_failure
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::TurnsUndone { .. })),
+        None
+    );
+    assert_eq!(
+        send(&phone, continued(session)).await,
+        CommandResult::Rejected(Rejection::UndoInProgress)
+    );
+    let Fixture { router, log, .. } = first;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+    let second = durable_host(&data, address).await;
+    phone.reconnect().await;
+    until_live(&mut updates).await;
+    assert_eq!(
+        send(&phone, message(session, "blocked after restart")).await,
+        CommandResult::Rejected(Rejection::UndoInProgress)
+    );
+    std::fs::remove_file(&lock).unwrap();
+    assert_eq!(send(&phone, undo).await, CommandResult::Accepted);
+    let recovered = events_until(&mut updates, Until::Undone).await;
+    assert_eq!(
+        recovered
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::UndoHistoryRestored { .. })),
+        None
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("changed.txt")).unwrap(),
+        "turn one\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("deleted.txt")).unwrap(),
+        "restore me\n"
+    );
+    assert_eq!(
+        std::fs::metadata(worktree.join("introduced.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
+    let restored = fold(second.log.subscribe(HostSeq(0)).await.unwrap().replay);
+    assert_eq!(
+        items(&restored, session)
+            .iter()
+            .filter(|item| matches!(item, Item::User { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        send(&phone, message(session, "retained prefix after recovery")).await,
+        CommandResult::Accepted
+    );
+    let after = events_until(&mut updates, Until::TurnEnd).await;
+    assert_ne!(checkpoint(&after, proto::CheckpointId(3)).id, retained.id);
+    assert_eq!(
+        of(session, &after)
+            .iter()
+            .filter(|kind| matches!(kind, EventKind::AssistantMessage { .. }))
+            .cloned()
+            .collect::<Vec<EventKind>>(),
+        [reply("Retained turn one.")]
+    );
+    phone.stop().await.unwrap();
+    let Fixture { router, log, .. } = second;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+async fn drive_materialization(path: &Path) -> std::io::Result<()> {
+    loop {
+        match tokio::fs::metadata(path).await {
+            Ok(_) => break Ok(()),
+            Err(error) => match error.kind() {
+                std::io::ErrorKind::NotFound => tokio::time::sleep(Duration::from_millis(10)).await,
+                _ => break Err(error),
+            },
+        }
+    }
+}
+
+/// The provider persisted the first post-undo input before it notified the
+/// daemon. After restart, resume that existing target instead of forking the
+/// older prefix again and silently discarding the newly persisted input.
+#[tokio::test]
+async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost() {
+    let source = scratch("materialized-fork-crash", "claude-worktrees.jsonl");
+    let data = data_dir("materialized-fork-crash");
+    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first
+        .target
+        .addr
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let ticket = first.target.clone();
+    let (phone, mut updates) = link(ticket.clone(), None).await;
+    until_live(&mut updates).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let managed = workspace(&events_until(&mut updates, Until::Ready).await);
+    let worktree = PathBuf::from(&managed.worktree.0);
+    let _ = send(&phone, message(session, "turn one")).await;
+    events_until(&mut updates, Until::TurnEnd).await;
+    let _ = send(&phone, message(session, "turn two")).await;
+    events_until(&mut updates, Until::TurnEnd).await;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-worktrees-fork-held.jsonl"),
+        source.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    assert_eq!(
+        send(
+            &phone,
+            CommandBody::UndoTurn {
+                session,
+                checkpoint: proto::CheckpointId(2)
+            }
+        )
+        .await,
+        CommandResult::Accepted
+    );
+    let undone = events_until(&mut updates, Until::Undone).await;
+    let after_undo = undone.last().unwrap().seq;
+    let target = undone
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::UndoHistoryRestored {
+                history: proto::HistoryAnchor::ClaudeFork { target, .. },
+                ..
+            } => Some(target.clone()),
+            _ => None,
+        })
+        .expect("the durable lazy fork target");
+    assert_eq!(
+        send(&phone, message(session, "first post undo input")).await,
+        CommandResult::Accepted
+    );
+    tokio::time::timeout(
+        STEP,
+        drive_materialization(&source.join("fork-materialized")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let native_transcript =
+        std::fs::read_to_string(source.join(".fake-sessions").join(&target)).unwrap();
+    assert_ne!(native_transcript.find("first post undo input"), None);
+    let unnotified = first.log.subscribe(after_undo).await.unwrap().replay;
+    assert_eq!(
+        unnotified.iter().find(|event| matches!(
+            event.kind,
+            EventKind::NativeTurnStarted { .. } | EventKind::HistoryMaterialized { .. }
+        )),
+        None
+    );
+    let before_runs = argv(&source).len();
+    let Fixture { router, log, .. } = first;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+    let second = durable_host(&data, address).await;
+    phone.reconnect().await;
+    until_live(&mut updates).await;
+    let recovery = second.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let unknown = checkpoint(&recovery, proto::CheckpointId(3));
+    assert_eq!(unknown.history, proto::HistoryAnchor::Unknown);
+    assert_ne!(
+        Some(&unknown.undo)
+            .filter(|undo| matches!(undo, proto::UndoAvailability::Unavailable { .. })),
+        None
+    );
+    assert_eq!(
+        git(
+            &worktree,
+            &["show", &format!("{}:unnotified.txt", unknown.commit)]
+        ),
+        "provider wrote before notification\n"
+    );
+    assert_eq!(
+        send(
+            &phone,
+            CommandBody::UndoTurn {
+                session,
+                checkpoint: unknown.id
+            }
+        )
+        .await,
+        CommandResult::Rejected(Rejection::CheckpointUnavailable)
+    );
+    assert_eq!(
+        send(&phone, continued(session)).await,
+        CommandResult::Accepted
+    );
+    events_until(&mut updates, Until::Ready).await;
+    let runs = argv(&source);
+    assert_eq!(runs.len(), before_runs.checked_add(1).unwrap());
+    let resumed = runs.last().unwrap();
+    assert_eq!(
+        resumed
+            .iter()
+            .find(|arg| arg.starts_with("--resume="))
+            .cloned(),
+        Some(format!("--resume={target}"))
+    );
+    assert_eq!(
+        resumed.iter().find(|arg| arg.as_str() == "--fork-session"),
+        None
+    );
+    std::fs::write(source.join("fork-release"), "").unwrap();
+    let _ = send(&phone, message(session, "continue existing target")).await;
+    let after = events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        checkpoint(&after, proto::CheckpointId(4)).history,
+        proto::HistoryAnchor::Claude {
+            conversation: target,
+            message: Some(String::from("00000000-0000-4000-8000-000000000204"))
+        }
+    );
+    phone.stop().await.unwrap();
+    let Fixture { router, log, .. } = second;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
+    let source = scratch("snapshot-retry", "claude-worktrees.jsonl");
+    let host = host().await;
+    let (phone, mut updates) = link(host.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let managed = workspace(&events_until(&mut updates, Until::Ready).await);
+    let worktree = PathBuf::from(&managed.worktree.0);
+    let _ = send(&phone, message(session, "turn one")).await;
+    let retained = checkpoint(
+        &events_until(&mut updates, Until::TurnEnd).await,
+        proto::CheckpointId(1),
+    );
+    git(&worktree, &["symbolic-ref", "HEAD", "refs/heads/unrelated"]);
+    let _ = send(&phone, message(session, "turn two")).await;
+    let failed = events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        failed
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::CheckpointCreated { .. })),
+        None
+    );
+    assert_eq!(
+        failed
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::Error { .. }))
+            .count(),
+        1
+    );
+    let before = host.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let users = before
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::UserMessage { .. }))
+        .count();
+    let rejected = send(&phone, message(session, "must not enter native history")).await;
+    assert_ne!(
+        Some(rejected).filter(|result| matches!(
+            result,
+            CommandResult::Rejected(Rejection::WorkspaceFailure { .. })
+        )),
+        None
+    );
+    let still = host.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    assert_eq!(
+        still
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::UserMessage { .. }))
+            .count(),
+        users
+    );
+    git(
+        &worktree,
+        &[
+            "symbolic-ref",
+            "HEAD",
+            &format!("refs/heads/{}", managed.branch),
+        ],
+    );
+    assert_eq!(
+        send(&phone, message(session, "turn three")).await,
+        CommandResult::Accepted
+    );
+    let after = events_until(&mut updates, Until::TurnEnd).await;
+    let checkpoints = after
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::CheckpointCreated { checkpoint } => Some(checkpoint.clone()),
+            _ => None,
+        })
+        .collect::<Vec<proto::Checkpoint>>();
+    assert_eq!(checkpoints.len(), 2);
+    let recovered = checkpoints.first().unwrap();
+    let latest = checkpoints.last().unwrap();
+    assert_eq!(recovered.parent, Some(retained.id));
+    assert_eq!(latest.parent, Some(recovered.id));
+    assert_eq!(recovered.id.cmp(&proto::CheckpointId(2)), Ordering::Greater);
+    let diff = diff_result(
+        send(
+            &phone,
+            CommandBody::GetDiff {
+                session,
+                checkpoint: latest.id,
+            },
+        )
+        .await,
+    );
+    assert_eq!(
+        diff.files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<String>>(),
+        ["changed.txt", "later.txt"]
+    );
+    phone.stop().await.unwrap();
+    host.router.shutdown().await.unwrap();
 }

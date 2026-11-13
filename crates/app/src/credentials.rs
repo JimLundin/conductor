@@ -225,9 +225,9 @@ fn submit(link: Signal<Link>, mut sent: Signal<Sent>, body: CommandBody, done: S
         sent.set(match send(link(), body).await {
             Ok(CommandResult::Providers(_)) => done,
             Ok(CommandResult::Rejected(rejection)) => Sent::Failed(rejection.label()),
-            Ok(CommandResult::Accepted | CommandResult::Started { .. }) => {
-                Sent::Failed(String::from("The host gave an unexpected answer."))
-            }
+            Ok(
+                CommandResult::Accepted | CommandResult::Started { .. } | CommandResult::Diff(_),
+            ) => Sent::Failed(String::from("The host gave an unexpected answer.")),
             Err(err) => Sent::Failed(err),
         });
     });

@@ -18,16 +18,19 @@ use agents::codex::{
     ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadId, ThreadOptions, TurnId,
 };
 use proto::{
-    Answer, ClaudeCredential, ClientName, CloseReason, CommandResult, Decision, Effort, EventKind,
-    HostPath, ModelId, Models, Rejection, RequestId, Resolution, SessionId, ToolCallId,
-    ToolOutcome, ToolPhase, TurnOutcome,
+    Answer, Checkpoint, CheckpointId, ClaudeCredential, ClientName, CloseReason, CommandResult,
+    Decision, Effort, EventKind, HistoryAnchor, HostPath, HostSeq, ModelId, Models, Rejection,
+    RequestId, Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    UndoAvailability,
 };
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
+use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
 use crate::codex_hub::{CodexHub, HubError, Routed};
 use crate::log::Log;
 use crate::mapping::{self, NativeRequest, NativeTurn, Step};
+use crate::workspace;
 
 /// How the host runs Claude. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -105,6 +108,8 @@ pub enum Order {
         by: ClientName,
     },
     Interrupt,
+    Diff(CheckpointId),
+    Undo(CheckpointId, Launch),
     Reply {
         request: RequestId,
         reply: Reply,
@@ -209,6 +214,9 @@ struct SessionActor {
     turn: Turn,
     requests: HashMap<RequestId, Pending>,
     last_request: RequestId,
+    book: Book,
+    turn_start: Option<HostSeq>,
+    boundary: Option<String>,
     /// Tool calls the user denied, whose failed result means `Declined`.
     declined: HashSet<ToolCallId>,
 }
@@ -234,9 +242,10 @@ impl Session {
         choice: Choice,
         launch: (Launch, Models),
         log: Log,
+        history: &[proto::Event],
     ) -> Session {
         let (inbox, messages) = mpsc::channel(16);
-        let actor = Self::state(id, directory, choice, log, None, &[]);
+        let actor = Self::state(id, directory, choice, log, None, history);
         // The first order starts the agent, so the actor's loop does it all.
         let (reply, _) = oneshot::channel();
         let (launch, offered) = launch;
@@ -270,11 +279,56 @@ impl Session {
         conversation: Option<String>,
         history: &[proto::Event],
     ) -> SessionActor {
+        let book = Book::replay(history);
+        let resume = match (
+            &book.resume,
+            &conversation,
+            history.iter().rev().find(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::UserMessage { .. } | EventKind::UndoHistoryRestored { .. }
+                )
+            }),
+        ) {
+            (
+                Some(HistoryAnchor::Fresh),
+                Some(conversation),
+                Some(proto::Event {
+                    kind: EventKind::UserMessage { .. },
+                    ..
+                }),
+            ) => history.iter().find_map(|event| match event.kind {
+                EventKind::SessionCreated {
+                    provider: proto::Provider::Claude,
+                    ..
+                } => Some(HistoryAnchor::Claude {
+                    conversation: conversation.clone(),
+                    message: None,
+                }),
+                EventKind::SessionCreated {
+                    provider: proto::Provider::Codex,
+                    ..
+                } => Some(HistoryAnchor::Codex {
+                    conversation: conversation.clone(),
+                    turn: None,
+                }),
+                _ => None,
+            }),
+            _ => book.resume.clone(),
+        };
+        let book = Book { resume, ..book };
+        let directory = book
+            .workspace
+            .as_ref()
+            .map_or(directory, |workspace| workspace.directory.clone());
         SessionActor {
             id,
             directory,
             choice,
             agent: Agent::Down,
+            book,
+            turn_start: None,
+            boundary: None,
             conversation: conversation.map(Conversation),
             log,
             turn: Turn::Idle,
@@ -355,6 +409,7 @@ async fn start(
     directory: &HostPath,
     choice: &Choice,
     conversation: Option<Conversation>,
+    history: Option<HistoryAnchor>,
     launch: Launch,
 ) -> Result<Agent, AgentError> {
     match launch {
@@ -363,7 +418,8 @@ async fn start(
             home,
             credential,
         }) => {
-            let (session, events) = ClaudeSession::spawn(ClaudeOptions {
+            let history_boundary = history.clone();
+            let options = ClaudeOptions {
                 claude_path,
                 home,
                 credential,
@@ -371,7 +427,24 @@ async fn start(
                 model: choice.model.clone().map(|model| model.0),
                 effort: choice.effort,
                 permission_mode: PermissionMode::Default,
-                resume: conversation.map(|conversation| agents::claude::SessionId(conversation.0)),
+                resume: match history {
+                    Some(HistoryAnchor::Fresh) => agents::claude::Resume::Fresh,
+                    Some(HistoryAnchor::ClaudeFork {
+                        source,
+                        through,
+                        target,
+                    }) => agents::claude::Resume::Fork {
+                        session: agents::claude::SessionId(source),
+                        through: agents::claude::MessageId(through),
+                        target: agents::claude::SessionId(target),
+                    },
+                    Some(HistoryAnchor::Claude { conversation, .. }) => {
+                        agents::claude::Resume::Session(agents::claude::SessionId(conversation))
+                    }
+                    _ => conversation.map_or(agents::claude::Resume::Fresh, |conversation| {
+                        agents::claude::Resume::Session(agents::claude::SessionId(conversation.0))
+                    }),
+                },
                 project_name: Some(ulid::Ulid::from(id.0).to_string()),
                 // The user level is the host's private home (§6.2).
                 setting_sources: Some(Vec::from([
@@ -381,8 +454,44 @@ async fn start(
                 ])),
                 stdout_log: None,
                 versions: VersionPolicy::AllowUntested,
-            })
-            .await?;
+            };
+            let started = match &options.resume {
+                agents::claude::Resume::Fork { target, .. } => {
+                    let probe = ClaudeOptions {
+                        resume: agents::claude::Resume::Session(target.clone()),
+                        ..options.clone()
+                    };
+                    match ClaudeSession::spawn(probe).await {
+                        Err(agents::claude::Error::MissingSession(missing))
+                            if &missing == target =>
+                        {
+                            ClaudeSession::spawn(options).await
+                        }
+                        started => started,
+                    }
+                }
+                agents::claude::Resume::Session(target) => {
+                    match ClaudeSession::spawn(options.clone()).await {
+                        Err(agents::claude::Error::MissingSession(missing))
+                            if &missing == target =>
+                        {
+                            match &history_boundary {
+                                Some(HistoryAnchor::Claude { message: None, .. }) => {
+                                    ClaudeSession::spawn(ClaudeOptions {
+                                        resume: agents::claude::Resume::Fresh,
+                                        ..options
+                                    })
+                                    .await
+                                }
+                                _ => Err(agents::claude::Error::MissingSession(missing)),
+                            }
+                        }
+                        started => started,
+                    }
+                }
+                _ => ClaudeSession::spawn(options).await,
+            };
+            let (session, events) = started?;
             Ok(Agent::Claude { session, events })
         }
         // Paseo's preset: Codex asks before leaving the workspace.
@@ -396,7 +505,13 @@ async fn start(
                         approval_policy: ApprovalPolicy::OnRequest,
                         sandbox: Sandbox::WorkspaceWrite,
                     },
-                    conversation.map(|conversation| ThreadId(conversation.0)),
+                    match history {
+                        Some(HistoryAnchor::Fresh) => None,
+                        Some(HistoryAnchor::Codex { conversation, .. }) => {
+                            Some(ThreadId(conversation))
+                        }
+                        _ => conversation.map(|conversation| ThreadId(conversation.0)),
+                    },
                 )
                 .await?;
             Ok(Agent::Codex { thread, events })
@@ -429,7 +544,7 @@ async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Model
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: None,
+        resume: agents::claude::Resume::Fresh,
         project_name: None,
         setting_sources: None,
         stdout_log: None,
@@ -518,7 +633,16 @@ impl SessionActor {
     /// whether it runs.
     async fn start(&mut self, launch: Launch) -> Result<(), Stopped> {
         let resume = self.conversation.clone();
-        match start(self.id, &self.directory, &self.choice, resume, launch).await {
+        match start(
+            self.id,
+            &self.directory,
+            &self.choice,
+            resume,
+            self.book.resume.clone(),
+            launch,
+        )
+        .await
+        {
             Ok(agent) => {
                 self.agent = agent;
                 if let Some(conversation) = self.agent.conversation() {
@@ -567,42 +691,37 @@ impl SessionActor {
     }
 
     async fn order(&mut self, order: Order) -> Result<CommandResult, Stopped> {
+        match order {
+            Order::Diff(checkpoint) => self.diff(checkpoint).await,
+            Order::Undo(checkpoint, launch) => self.undo(checkpoint, launch).await,
+            order => match &self.book.recovery {
+                Some(_) => Ok(CommandResult::Rejected(Rejection::UndoInProgress)),
+                None => self.normal_order(order).await,
+            },
+        }
+    }
+
+    async fn normal_order(&mut self, order: Order) -> Result<CommandResult, Stopped> {
         match (order, &self.turn, &self.agent) {
-            (Order::Start(launch, offered), _, Agent::Down) => {
-                self.offered(offered).await?;
-                self.start(launch).await?;
-                Ok(CommandResult::Accepted)
-            }
+            (Order::Start(launch, offered), _, Agent::Down) => match self.save_snapshot().await? {
+                Ok(()) => {
+                    self.offered(offered).await?;
+                    self.start(launch).await?;
+                    Ok(CommandResult::Accepted)
+                }
+                Err(reason) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
+                    reason,
+                })),
+            },
             // Continue is idempotent: the agent already runs.
             (Order::Start(_, _), _, _) => Ok(CommandResult::Accepted),
             (_, _, Agent::Down) => Ok(CommandResult::Rejected(Rejection::SessionClosed)),
-            (Order::Send { text, by }, Turn::Idle, _) => {
-                self.emit(EventKind::UserMessage {
-                    text: text.clone(),
-                    by,
-                })
-                .await?;
-                let sent = self.send(text).await;
-                // A message the agent never got starts no turn.
-                match sent {
-                    Ok(()) => {
-                        self.conversation = self.agent.conversation();
-                        if let Some(conversation) = &self.conversation {
-                            self.log
-                                .conversation(self.id, conversation.0.clone())
-                                .await?;
-                        }
-                        self.turn = Turn::Starting(Held::Nothing);
-                    }
-                    Err(err) => {
-                        let outcome = TurnOutcome::Failed {
-                            message: err.to_string(),
-                        };
-                        self.emit(EventKind::TurnCompleted { outcome }).await?;
-                    }
-                }
-                Ok(CommandResult::Accepted)
-            }
+            (Order::Send { text, by }, Turn::Idle, _) => match self.save_snapshot().await? {
+                Ok(()) => self.send_order(text, by).await,
+                Err(reason) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
+                    reason,
+                })),
+            },
             (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
                 Ok(CommandResult::Rejected(Rejection::TurnInProgress))
             }
@@ -623,7 +742,49 @@ impl SessionActor {
                 Ok(CommandResult::Accepted)
             }
             (Order::Reply { request, reply, by }, _, _) => self.reply(request, reply, by).await,
+            (Order::Diff(_) | Order::Undo(_, _), _, _) => {
+                Ok(CommandResult::Rejected(Rejection::CheckpointUnavailable))
+            }
         }
+    }
+
+    async fn send_order(&mut self, text: String, by: ClientName) -> Result<CommandResult, Stopped> {
+        let event = self
+            .log
+            .record(
+                self.id,
+                EventKind::UserMessage {
+                    text: text.clone(),
+                    by,
+                },
+            )
+            .await?;
+        self.turn_start = Some(event.seq);
+        self.book.snapshot = Some(Snapshot {
+            history: HistoryAnchor::Unknown,
+            turn_start: self.turn_start,
+        });
+        self.boundary = None;
+        let sent = self.send(text).await;
+        // A message the agent never got starts no turn.
+        match sent {
+            Ok(()) => {
+                self.conversation = self.agent.conversation();
+                if let Some(conversation) = &self.conversation {
+                    self.log
+                        .conversation(self.id, conversation.0.clone())
+                        .await?;
+                }
+                self.turn = Turn::Starting(Held::Nothing);
+            }
+            Err(err) => {
+                let outcome = TurnOutcome::Failed {
+                    message: err.to_string(),
+                };
+                self.emit(EventKind::TurnCompleted { outcome }).await?;
+            }
+        }
+        Ok(CommandResult::Accepted)
     }
 
     async fn reply(
@@ -785,8 +946,21 @@ impl SessionActor {
             // more: Codex withdraws it only after `TurnCompleted`, and an
             // answer in between would log a decision for a command that
             // never runs. Its later withdrawal then finds nothing open.
+            Step::HistoryBoundary(boundary) => {
+                self.boundary = boundary;
+                match &self.boundary {
+                    Some(_) => {
+                        let history = self.anchor(None);
+                        self.book.resume = Some(history.clone());
+                        self.emit(EventKind::HistoryMaterialized { history }).await
+                    }
+                    None => Ok(()),
+                }
+            }
             Step::TurnEnded(outcome) => {
+                self.checkpoint().await?;
                 self.turn = Turn::Idle;
+                self.turn_start = None;
                 self.emit(EventKind::TurnCompleted { outcome }).await?;
                 let open = self
                     .requests
@@ -801,11 +975,34 @@ impl SessionActor {
                 Ok(())
             }
             Step::TurnStarted(native) => {
+                self.turn_start = match &self.turn {
+                    Turn::Idle => None,
+                    _ => self.turn_start,
+                };
+                self.boundary = None;
                 self.conversation = self.agent.conversation();
                 if let Some(conversation) = &self.conversation {
                     self.log
                         .conversation(self.id, conversation.0.clone())
                         .await?;
+                }
+                if let (Some(_), Agent::Codex { .. }) = (&self.book.workspace, &self.agent) {
+                    let history = self.anchor(Some(&native));
+                    self.book.resume = Some(history.clone());
+                    self.emit(EventKind::HistoryMaterialized { history })
+                        .await?;
+                }
+                if let Some(proto::Workspace { .. }) = &self.book.workspace {
+                    let history = self.anchor(Some(&native));
+                    self.book.snapshot = Some(Snapshot {
+                        history: history.clone(),
+                        turn_start: self.turn_start,
+                    });
+                    self.emit(EventKind::NativeTurnStarted {
+                        history,
+                        turn_start: self.turn_start,
+                    })
+                    .await?;
                 }
                 let before = std::mem::replace(&mut self.turn, Turn::Running(native.clone()));
                 match before {
@@ -823,8 +1020,12 @@ impl SessionActor {
             // Nothing the gone agent asked can be answered, and a turn it
             // ran is over; clients mark both when they see the close.
             Step::Closed(reason) => {
+                if let Turn::Running(_) = &self.turn {
+                    self.checkpoint().await?;
+                }
                 self.agent = Agent::Down;
                 self.turn = Turn::Idle;
+                self.turn_start = None;
                 self.declined.clear();
                 self.requests = std::mem::take(&mut self.requests)
                     .into_iter()
@@ -835,6 +1036,453 @@ impl SessionActor {
                     .collect();
                 self.emit(EventKind::SessionClosed { reason }).await
             }
+        }
+    }
+
+    fn anchor(&self, native: Option<&NativeTurn>) -> HistoryAnchor {
+        match &self.agent {
+            Agent::Claude { session, .. } => HistoryAnchor::Claude {
+                conversation: session.id().0.clone(),
+                message: self.boundary.clone(),
+            },
+            Agent::Codex { thread, .. } => HistoryAnchor::Codex {
+                conversation: thread.id.0.clone(),
+                turn: native.map(|turn| turn.0.clone()),
+            },
+            Agent::Down => self.book.resume.clone().unwrap_or(HistoryAnchor::Fresh),
+        }
+    }
+
+    async fn checkpoint(&mut self) -> Result<(), Stopped> {
+        if let Turn::Running(native) = &self.turn {
+            self.book.snapshot = Some(Snapshot {
+                history: self.anchor(Some(native)),
+                turn_start: self.turn_start,
+            });
+        }
+        match self.save_snapshot().await? {
+            Ok(()) => Ok(()),
+            Err(message) => {
+                self.emit(EventKind::Error {
+                    message: format!("checkpoint failed: {message}"),
+                })
+                .await
+            }
+        }
+    }
+
+    async fn save_snapshot(&mut self) -> Result<Result<(), String>, Stopped> {
+        match self
+            .book
+            .workspace
+            .as_ref()
+            .zip(self.book.snapshot.as_ref())
+        {
+            Some((workspace, snapshot)) => {
+                let workspace = workspace.clone();
+                let snapshot = snapshot.clone();
+                let previous = self.book.last().cloned();
+                let id = self.book.highwater.next();
+                self.book.highwater = id;
+                self.emit(EventKind::CheckpointReserved { checkpoint: id })
+                    .await?;
+                self.log.barrier().await?;
+                match workspace::snapshot(
+                    &workspace,
+                    self.id,
+                    id,
+                    previous
+                        .as_ref()
+                        .map(|checkpoint| checkpoint.commit.as_str()),
+                )
+                .await
+                {
+                    Ok(commit) => {
+                        let undo = self.book.availability(&snapshot.history);
+                        let checkpoint = Checkpoint {
+                            id,
+                            parent: previous.map(|checkpoint| checkpoint.id),
+                            turn_start: snapshot.turn_start,
+                            commit,
+                            history: snapshot.history,
+                            undo,
+                        };
+                        self.book.active.push(id);
+                        self.book.checkpoints.insert(id, checkpoint.clone());
+                        self.book.snapshot = None;
+                        self.emit(EventKind::CheckpointCreated { checkpoint })
+                            .await?;
+                        Ok(Ok(()))
+                    }
+                    Err(err) => Ok(Err(err.to_string())),
+                }
+            }
+            None => Ok(Ok(())),
+        }
+    }
+
+    async fn diff(&self, id: CheckpointId) -> Result<CommandResult, Stopped> {
+        match self
+            .book
+            .workspace
+            .as_ref()
+            .zip(self.book.checkpoints.get(&id))
+            .and_then(|(workspace, checkpoint)| {
+                checkpoint
+                    .parent
+                    .and_then(|parent| self.book.checkpoints.get(&parent))
+                    .map(|parent| (workspace, checkpoint, parent))
+            }) {
+            Some((workspace, checkpoint, parent)) => {
+                Ok(match workspace::diff(workspace, checkpoint, parent).await {
+                    Ok(diff) => CommandResult::Diff(diff),
+                    Err(err) => CommandResult::Rejected(Rejection::WorkspaceFailure {
+                        reason: err.to_string(),
+                    }),
+                })
+            }
+            None => Ok(CommandResult::Rejected(Rejection::CheckpointUnavailable)),
+        }
+    }
+
+    fn plan(&self, selected: CheckpointId) -> Result<Undo, Rejection> {
+        match &self.book.recovery {
+            Some(Recovery::Native(undo) | Recovery::Files(undo)) if undo.selected == selected => {
+                Ok(undo.clone())
+            }
+            Some(_) => Err(Rejection::UndoInProgress),
+            None => match &self.turn {
+                Turn::Idle => {
+                    let _ = self
+                        .book
+                        .active
+                        .iter()
+                        .find(|id| id == &&selected)
+                        .ok_or(Rejection::CheckpointUnavailable)?;
+                    let checkpoint = self
+                        .book
+                        .checkpoints
+                        .get(&selected)
+                        .ok_or(Rejection::CheckpointUnavailable)?;
+                    match &checkpoint.undo {
+                        UndoAvailability::Unavailable { .. } => {
+                            Err(Rejection::CheckpointUnavailable)
+                        }
+                        UndoAvailability::Available => {
+                            let parent = checkpoint
+                                .parent
+                                .and_then(|id| self.book.checkpoints.get(&id))
+                                .ok_or(Rejection::CheckpointUnavailable)?;
+                            let history = match (&parent.history, &checkpoint.history) {
+                                (HistoryAnchor::Fresh, _) => Ok(HistoryAnchor::Fresh),
+                                (
+                                    HistoryAnchor::Claude {
+                                        conversation,
+                                        message: Some(message),
+                                    },
+                                    _,
+                                ) => Ok(HistoryAnchor::ClaudeFork {
+                                    source: conversation.clone(),
+                                    through: message.clone(),
+                                    target: uuid::Uuid::new_v4().to_string(),
+                                }),
+                                (
+                                    _,
+                                    HistoryAnchor::Codex {
+                                        conversation,
+                                        turn: Some(turn),
+                                    },
+                                ) => Ok(HistoryAnchor::Codex {
+                                    conversation: conversation.clone(),
+                                    turn: Some(turn.clone()),
+                                }),
+                                _ => Err(Rejection::CheckpointUnavailable),
+                            }?;
+                            Ok(Undo {
+                                selected,
+                                restored: parent.id,
+                                history,
+                            })
+                        }
+                    }
+                }
+                _ => Err(Rejection::TurnInProgress),
+            },
+        }
+    }
+
+    async fn undo(
+        &mut self,
+        selected: CheckpointId,
+        launch: Launch,
+    ) -> Result<CommandResult, Stopped> {
+        let preflight = match self.plan(selected) {
+            Err(reason) => Err(reason),
+            Ok(undo) => match &self.book.recovery {
+                Some(_) => Ok(()),
+                None => match self
+                    .book
+                    .workspace
+                    .as_ref()
+                    .zip(self.book.checkpoints.get(&undo.restored))
+                {
+                    Some((workspace, checkpoint)) => {
+                        workspace::preflight(workspace, &checkpoint.commit)
+                            .await
+                            .map_err(|err| Rejection::WorkspaceFailure {
+                                reason: err.to_string(),
+                            })
+                    }
+                    None => Err(Rejection::CheckpointUnavailable),
+                },
+            },
+        };
+        match preflight {
+            Ok(()) => self.execute_undo(selected, launch).await,
+            Err(reason) => Ok(CommandResult::Rejected(reason)),
+        }
+    }
+
+    async fn begin_undo(&mut self, undo: &Undo) -> Result<(), Stopped> {
+        match &self.book.recovery {
+            Some(_) => Ok(()),
+            None => {
+                self.emit(EventKind::UndoStarted {
+                    checkpoint: undo.selected,
+                    restore: undo.restored,
+                    history: undo.history.clone(),
+                })
+                .await?;
+                self.book.recovery = Some(Recovery::Native(undo.clone()));
+                self.log.barrier().await
+            }
+        }
+    }
+
+    async fn execute_undo(
+        &mut self,
+        selected: CheckpointId,
+        launch: Launch,
+    ) -> Result<CommandResult, Stopped> {
+        match self.plan(selected) {
+            Err(reason) => Ok(CommandResult::Rejected(reason)),
+            Ok(undo) => {
+                self.begin_undo(&undo).await?;
+                let restored = match self.book.recovery.clone() {
+                    Some(Recovery::Native(plan)) => {
+                        self.restore_history(plan, launch.clone()).await
+                    }
+                    Some(Recovery::Files(plan)) => Ok(plan.history),
+                    None => Err(String::from("undo has no durable plan")),
+                };
+                match restored {
+                    Err(reason) => self.undo_failed(selected, reason).await,
+                    Ok(history) => {
+                        if let Some(Recovery::Native(_)) = &self.book.recovery {
+                            self.emit(EventKind::UndoHistoryRestored {
+                                checkpoint: selected,
+                                history: history.clone(),
+                            })
+                            .await?;
+                            self.book.resume = Some(history.clone());
+                            self.book.recovery = Some(Recovery::Files(Undo {
+                                history,
+                                ..undo.clone()
+                            }));
+                            self.log.barrier().await?;
+                        }
+                        match self
+                            .book
+                            .workspace
+                            .as_ref()
+                            .zip(self.book.checkpoints.get(&undo.restored))
+                        {
+                            Some((workspace, checkpoint)) => {
+                                match workspace::restore(workspace, &checkpoint.commit).await {
+                                    Ok(()) => self.complete_undo(&undo, launch).await,
+                                    Err(err) => self.undo_failed(selected, err.to_string()).await,
+                                }
+                            }
+                            None => {
+                                self.undo_failed(
+                                    selected,
+                                    String::from("restore checkpoint is unavailable"),
+                                )
+                                .await
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn complete_undo(
+        &mut self,
+        undo: &Undo,
+        launch: Launch,
+    ) -> Result<CommandResult, Stopped> {
+        let running = match &self.agent {
+            Agent::Down => start(
+                self.id,
+                &self.directory,
+                &self.choice,
+                self.conversation.clone(),
+                self.book.resume.clone(),
+                launch,
+            )
+            .await
+            .map_err(|err| err.to_string())
+            .map(|agent| {
+                self.agent = agent;
+            }),
+            _ => Ok(()),
+        };
+        match running {
+            Err(reason) => self.undo_failed(undo.selected, reason).await,
+            Ok(()) => {
+                self.emit(EventKind::TurnsUndone {
+                    checkpoint: undo.selected,
+                    restored: undo.restored,
+                })
+                .await?;
+                self.book.active.retain(|id| id <= &undo.restored);
+                self.book.recovery = None;
+                self.book.snapshot = None;
+                self.turn_start = None;
+                self.boundary = None;
+                Ok(CommandResult::Accepted)
+            }
+        }
+    }
+
+    async fn undo_failed(
+        &self,
+        checkpoint: CheckpointId,
+        reason: String,
+    ) -> Result<CommandResult, Stopped> {
+        self.emit(EventKind::UndoFailed {
+            checkpoint,
+            reason: reason.clone(),
+        })
+        .await?;
+        Ok(CommandResult::Rejected(Rejection::UndoFailed { reason }))
+    }
+
+    async fn restore_history(
+        &mut self,
+        undo: Undo,
+        launch: Launch,
+    ) -> Result<HistoryAnchor, String> {
+        let directory = match std::fs::read_dir(&self.directory.0) {
+            Ok(_) => self.directory.clone(),
+            Err(_) => self.book.workspace.as_ref().map_or_else(
+                || self.directory.clone(),
+                |workspace| workspace.worktree.clone(),
+            ),
+        };
+        let restored = match &undo.history {
+            HistoryAnchor::Codex {
+                conversation,
+                turn: Some(turn),
+            } => {
+                let agent = start(
+                    self.id,
+                    &directory,
+                    &self.choice,
+                    None,
+                    Some(HistoryAnchor::Codex {
+                        conversation: conversation.clone(),
+                        turn: None,
+                    }),
+                    launch,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+                self.agent = agent;
+                let desired = self
+                    .book
+                    .active
+                    .iter()
+                    .filter(|id| id <= &&undo.restored)
+                    .filter_map(|id| self.book.checkpoints.get(id))
+                    .filter_map(|checkpoint| match &checkpoint.history {
+                        HistoryAnchor::Codex {
+                            turn: Some(turn), ..
+                        } => Some(TurnId(turn.clone())),
+                        _ => None,
+                    })
+                    .collect::<Vec<TurnId>>();
+                match &self.agent {
+                    Agent::Codex { thread, .. } => {
+                        let turns = thread
+                            .history_turns()
+                            .await
+                            .map_err(|err| err.to_string())?;
+                        if let Some(TurnId(_)) =
+                            turns.iter().find(|native| native == &&TurnId(turn.clone()))
+                        {
+                            thread
+                                .revert(TurnId(turn.clone()))
+                                .await
+                                .map_err(|err| err.to_string())?;
+                        }
+                        let turns = thread
+                            .history_turns()
+                            .await
+                            .map_err(|err| err.to_string())?;
+                        match turns {
+                            turns if turns == desired => Ok(HistoryAnchor::Codex {
+                                conversation: conversation.clone(),
+                                turn: desired.last().map(|turn| turn.0.clone()),
+                            }),
+                            _ => Err(String::from(
+                                "native history does not match the retained turn prefix",
+                            )),
+                        }
+                    }
+                    _ => Err(String::from("Codex undo started another provider")),
+                }
+            }
+            HistoryAnchor::Fresh | HistoryAnchor::ClaudeFork { .. } => {
+                if let Agent::Claude { session, .. } =
+                    std::mem::replace(&mut self.agent, Agent::Down)
+                {
+                    session.shutdown().await.map_err(|err| err.to_string())?;
+                }
+                self.agent = Agent::Down;
+                let agent = start(
+                    self.id,
+                    &directory,
+                    &self.choice,
+                    None,
+                    Some(undo.history.clone()),
+                    launch,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+                self.agent = agent;
+                self.conversation = None;
+                if let Some(conversation) = self.agent.conversation() {
+                    self.log
+                        .conversation(self.id, conversation.0)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                }
+                Ok(undo.history)
+            }
+            _ => Err(String::from("native undo boundary is unavailable")),
+        };
+        match (restored, directory) {
+            (Ok(history), directory) if directory != self.directory => {
+                if let Agent::Claude { session, .. } =
+                    std::mem::replace(&mut self.agent, Agent::Down)
+                {
+                    session.shutdown().await.map_err(|err| err.to_string())?;
+                }
+                Ok(history)
+            }
+            (restored, _) => restored,
         }
     }
 
@@ -886,6 +1534,94 @@ mod tests {
             call: ToolCallId(String::from("toolu_1")),
             for_session: for_session.map(String::from),
         }
+    }
+
+    fn recovery_event(kind: proto::EventKind) -> proto::Event {
+        proto::Event {
+            seq: proto::HostSeq(1),
+            session: proto::SessionId(1),
+            kind,
+        }
+    }
+
+    fn recovered(history: &[proto::Event], saved: &str) -> super::SessionActor {
+        super::Session::state(
+            proto::SessionId(1),
+            proto::HostPath(String::from("/work")),
+            super::Choice {
+                model: None,
+                effort: None,
+            },
+            crate::log::Log::spawn(String::from("test"), proto::Epoch(1)),
+            Some(String::from(saved)),
+            history,
+        )
+    }
+
+    #[tokio::test]
+    async fn unknown_checkpoint_preserves_fork_recipe_and_fresh_accepted_send_resume_id() {
+        let created = recovery_event(proto::EventKind::SessionCreated {
+            provider: proto::Provider::Claude,
+            directory: proto::HostPath(String::from("/work")),
+            by: proto::ClientName(String::from("phone")),
+            model: None,
+            effort: None,
+        });
+        let user = recovery_event(proto::EventKind::UserMessage {
+            text: String::from("edit"),
+            by: proto::ClientName(String::from("phone")),
+        });
+        let unknown = recovery_event(proto::EventKind::CheckpointCreated {
+            checkpoint: proto::Checkpoint {
+                id: proto::CheckpointId(1),
+                parent: Some(proto::CheckpointId(0)),
+                turn_start: Some(proto::HostSeq(1)),
+                commit: String::from("snapshot"),
+                history: proto::HistoryAnchor::Unknown,
+                undo: proto::UndoAvailability::Unavailable {
+                    reason: String::from("boundary not observed"),
+                },
+            },
+        });
+        let fork = proto::HistoryAnchor::ClaudeFork {
+            source: String::from("source"),
+            through: String::from("boundary"),
+            target: String::from("target"),
+        };
+        let state = recovered(
+            &[
+                created.clone(),
+                recovery_event(proto::EventKind::UndoHistoryRestored {
+                    checkpoint: proto::CheckpointId(2),
+                    history: fork.clone(),
+                }),
+                user.clone(),
+                unknown.clone(),
+            ],
+            "target",
+        );
+        assert_eq!(state.book.resume, Some(fork));
+        assert_eq!(
+            state.conversation,
+            Some(super::Conversation(String::from("target")))
+        );
+        state.log.shutdown().await.unwrap();
+        let fresh = recovery_event(proto::EventKind::UndoHistoryRestored {
+            checkpoint: proto::CheckpointId(2),
+            history: proto::HistoryAnchor::Fresh,
+        });
+        let state = recovered(&[created.clone(), fresh.clone()], "new-id");
+        assert_eq!(state.book.resume, Some(proto::HistoryAnchor::Fresh));
+        state.log.shutdown().await.unwrap();
+        let state = recovered(&[created, fresh, user, unknown], "new-id");
+        assert_eq!(
+            state.book.resume,
+            Some(proto::HistoryAnchor::Claude {
+                conversation: String::from("new-id"),
+                message: None
+            })
+        );
+        state.log.shutdown().await.unwrap();
     }
 
     #[test]

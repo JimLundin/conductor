@@ -1,0 +1,20 @@
+{"fake": "await", "match": {"type": "control_request"}}
+{"type": "control_response", "response": {"subtype": "success", "request_id": "req_1", "response": {"claude_code_version": "2.1.316", "models": []}}}
+{"fake": "await", "match": {"type": "user"}}
+{"type": "system", "subtype": "init", "session_id": "$session"}
+{"type": "user", "uuid": "00000000-0000-4000-8000-000000000101", "message": {"content": [{"type": "text", "text": "turn 1"}]}}
+{"fake": "files", "write": {"changed.txt": "turn one\n", "deleted.txt": "restore me\n", "exec.sh": "#!/bin/sh\necho initial\n"}, "mode": {"exec.sh": 420}}
+{"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000201", "message": {"content": [{"type": "text", "text": "Completed turn 1."}]}}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}
+{"fake": "await", "match": {"type": "user"}}
+{"type": "system", "subtype": "init", "session_id": "$session"}
+{"type": "user", "uuid": "00000000-0000-4000-8000-000000000102", "message": {"content": [{"type": "text", "text": "turn 2"}]}}
+{"fake": "files", "write": {"changed.txt": "turn two\ndiff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling \n", "introduced.txt": "remove on undo\n", "exec.sh": "#!/bin/sh\necho executable\n"}, "delete": ["deleted.txt"], "mode": {"exec.sh": 493}}
+{"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000202", "message": {"content": [{"type": "text", "text": "Completed turn 2."}]}}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}
+{"fake": "await", "match": {"type": "user"}}
+{"type": "system", "subtype": "init", "session_id": "$session"}
+{"type": "user", "uuid": "00000000-0000-4000-8000-000000000103", "message": {"content": [{"type": "text", "text": "turn 3"}]}}
+{"fake": "files", "write": {"later.txt": "later removed too\n", "changed.txt": "turn three\n"}}
+{"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000203", "message": {"content": [{"type": "text", "text": "Completed turn 3."}]}}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}

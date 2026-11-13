@@ -51,6 +51,7 @@ pub(crate) enum Step {
     Withdraw(NativeRequest),
     /// The session goes idle and logs `TurnCompleted`.
     TurnEnded(TurnOutcome),
+    HistoryBoundary(Option<String>),
     /// The session runs the turn, and sends an interrupt it held.
     TurnStarted(NativeTurn),
     /// The agent process is gone: the session logs this and waits for a
@@ -63,7 +64,7 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
         ClaudeEvent::TurnStarted { session_id } => {
             Vec::from([Step::TurnStarted(NativeTurn(session_id.0))])
         }
-        ClaudeEvent::Message { role, content } => content
+        ClaudeEvent::Message { role, content, .. } => content
             .into_iter()
             .filter_map(|block| claude_block(role, block))
             .collect(),
@@ -89,7 +90,14 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             questions,
         }]),
         ClaudeEvent::PermissionCancelled { id } => Vec::from([Step::Withdraw(NativeRequest(id.0))]),
-        ClaudeEvent::TurnFinished { outcome, .. } => Vec::from([Step::TurnEnded(outcome)]),
+        ClaudeEvent::TurnFinished {
+            outcome,
+            last_message,
+            ..
+        } => Vec::from([
+            Step::HistoryBoundary(last_message.map(|message| message.0)),
+            Step::TurnEnded(outcome),
+        ]),
         ClaudeEvent::Exited { status } => Vec::from([Step::Closed(CloseReason::Exited {
             status: status.describe(),
         })]),
@@ -420,6 +428,7 @@ mod tests {
             },
             Case {
                 got: claude_steps(ClaudeEvent::Message {
+                    uuid: None,
                     role: Role::Assistant,
                     content: Vec::from([
                         Block::Thinking(String::from("hmm")),
@@ -513,6 +522,7 @@ mod tests {
             },
             Case {
                 got: claude_steps(ClaudeEvent::Message {
+                    uuid: None,
                     role: Role::Assistant,
                     content: Vec::from([tool_use(
                         "AskUserQuestion",

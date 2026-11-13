@@ -9,6 +9,9 @@
 //! `--then-continue PROMPT` waits after the turn for the session to close,
 //! as when something kills its CLI, then continues the session and sends
 //! `PROMPT` as a second turn.
+//!
+//! `--then-undo PROMPT` sends a second edit turn, reads its diff and undoes
+//! it, then checks the retained amber/discarded unknown codeword history.
 
 use std::cmp::Ordering;
 use std::io::Write;
@@ -18,9 +21,9 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    Answer, Auth, Availability, ClaudeCredential, ClientName, CodexCredential, CommandBody,
-    CommandResult, Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId,
-    Ticket,
+    Answer, Auth, Availability, Change, CheckpointId, ClaudeCredential, ClientName,
+    CodexCredential, CommandBody, CommandResult, Credential, Decision, Event, EventKind, HostPath,
+    HostSeq, Provider, SessionId, Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -52,6 +55,9 @@ struct Args {
     /// this.
     #[arg(long)]
     then_continue: Option<String>,
+    /// Send this second turn, undo it, then check retained conversation history.
+    #[arg(long, conflicts_with = "then_continue")]
+    then_undo: Option<String>,
 }
 
 /// Where a run with `--then-continue` is.
@@ -63,6 +69,8 @@ enum Stage {
     /// `Continue` sent; waiting for `SessionReady`.
     Continuing,
     SecondTurn,
+    Undoing,
+    VerifyTurn,
 }
 
 /// Whether to set the provider's credential on the host before the session.
@@ -136,6 +144,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
         interrupt: args.interrupt,
         register: args.register,
         then_continue: args.then_continue,
+        then_undo: args.then_undo,
+        undo_receipt: UndoReceipt::new(),
+        reply: String::new(),
         stage: Stage::FirstTurn,
         link,
         updates,
@@ -206,6 +217,9 @@ struct Session {
     interrupt: When,
     register: Register,
     then_continue: Option<String>,
+    then_undo: Option<String>,
+    undo_receipt: UndoReceipt,
+    reply: String,
     stage: Stage,
     link: HostLink,
     updates: mpsc::Receiver<Update>,
@@ -333,7 +347,9 @@ impl Session {
                     CommandResult::Rejected(rejection) => {
                         Err(anyhow::Error::msg(rejection.label()))
                     }
-                    CommandResult::Accepted | CommandResult::Started { .. } => {
+                    CommandResult::Accepted
+                    | CommandResult::Started { .. }
+                    | CommandResult::Diff(_) => {
                         Err(anyhow::Error::msg("the host gave an unexpected answer"))
                     }
                 }?;
@@ -356,11 +372,12 @@ impl Session {
         self.log(format!("start {:?} -> {result:?}", self.directory.0))?;
         match result {
             CommandResult::Started { session } => Ok(session),
-            CommandResult::Accepted | CommandResult::Providers(_) | CommandResult::Rejected(_) => {
-                Err(anyhow::Error::msg(format!(
-                    "the host did not start a session: {result:?}"
-                )))
-            }
+            CommandResult::Accepted
+            | CommandResult::Providers(_)
+            | CommandResult::Rejected(_)
+            | CommandResult::Diff(_) => Err(anyhow::Error::msg(format!(
+                "the host did not start a session: {result:?}"
+            ))),
         }
     }
 
@@ -441,19 +458,47 @@ impl Session {
                 self.log(format!("answer {request:?} {answers:?} -> {result:?}"))?;
                 Ok(Flow::Next)
             }
-            EventKind::TurnCompleted { .. } => match (&self.then_continue, self.stage) {
-                (Some(_), Stage::FirstTurn) => {
-                    self.stage = Stage::Open;
-                    self.log(String::from(
-                        "turn completed; waiting for the agent to exit",
-                    ))?;
+            EventKind::TurnCompleted { outcome } => self.completed(event.session, outcome).await,
+            EventKind::WorkspaceCreated { workspace } => {
+                self.log(format!("workspace {}", workspace.directory.0))?;
+                Ok(Flow::Next)
+            }
+            EventKind::CheckpointCreated { checkpoint } => {
+                self.undo_receipt = self
+                    .undo_receipt
+                    .checkpoint(checkpoint.turn_start, checkpoint.id);
+                self.try_undo(event.session).await
+            }
+            EventKind::UserMessage { .. } => {
+                if let Stage::SecondTurn = self.stage {
+                    self.undo_receipt = self.undo_receipt.started(event.seq);
+                }
+                Ok(Flow::Next)
+            }
+            EventKind::AssistantMessage { text } => {
+                self.reply.push_str(&text);
+                Ok(Flow::Next)
+            }
+            EventKind::TurnsUndone { .. } => match self.stage {
+                Stage::Undoing => {
+                    self.stage = Stage::VerifyTurn;
+                    self.reply.clear();
+                    let text = String::from(
+                        "What are my retained and discarded codewords? If a codeword was never supplied, use unknown. Reply with exactly retained=WORD discarded=WORD, lowercase, no other text, and use no tools.",
+                    );
+                    accepted(
+                        self.link
+                            .send(CommandBody::SendMessage {
+                                session: event.session,
+                                text,
+                            })
+                            .await?,
+                    )?;
                     Ok(Flow::Next)
                 }
-                (_, _) => {
-                    self.log(String::from("turn completed"))?;
-                    Ok(Flow::Finished)
-                }
+                _ => Ok(Flow::Next),
             },
+            EventKind::UndoFailed { reason, .. } => Err(anyhow::Error::msg(reason)),
             EventKind::SessionClosed { reason } => match self.stage {
                 Stage::Open => {
                     self.stage = Stage::Continuing;
@@ -466,9 +511,13 @@ impl Session {
                     self.log(format!("continue after {reason:?} -> {result:?}"))?;
                     Ok(Flow::Next)
                 }
-                Stage::FirstTurn | Stage::Continuing | Stage::SecondTurn => Err(
-                    anyhow::Error::msg(format!("the session closed: {reason:?}")),
-                ),
+                Stage::FirstTurn
+                | Stage::Continuing
+                | Stage::SecondTurn
+                | Stage::Undoing
+                | Stage::VerifyTurn => Err(anyhow::Error::msg(format!(
+                    "the session closed: {reason:?}"
+                ))),
             },
             EventKind::SessionReady => match (&self.then_continue, self.stage) {
                 (Some(text), Stage::Continuing) => {
@@ -487,14 +536,114 @@ impl Session {
                 (_, _) => Ok(Flow::Next),
             },
             EventKind::SessionCreated { .. }
-            | EventKind::UserMessage { .. }
-            | EventKind::AssistantMessage { .. }
             | EventKind::ReasoningDelta { .. }
             | EventKind::Reasoning { .. }
             | EventKind::ToolCall { .. }
             | EventKind::RequestResolved { .. }
             | EventKind::ModelChanged { .. }
+            | EventKind::CheckpointReserved { .. }
+            | EventKind::HistoryMaterialized { .. }
+            | EventKind::NativeTurnStarted { .. }
+            | EventKind::UndoStarted { .. }
+            | EventKind::UndoHistoryRestored { .. }
             | EventKind::Error { .. } => Ok(Flow::Next),
+        }
+    }
+
+    async fn completed(
+        &mut self,
+        session: SessionId,
+        outcome: TurnOutcome,
+    ) -> anyhow::Result<Flow> {
+        match (&self.then_undo, self.stage, outcome) {
+            (Some(text), Stage::FirstTurn, TurnOutcome::Completed) => {
+                self.stage = Stage::SecondTurn;
+                let text = text.clone();
+                accepted(
+                    self.link
+                        .send(CommandBody::SendMessage { session, text })
+                        .await?,
+                )?;
+                Ok(Flow::Next)
+            }
+            (Some(_), Stage::SecondTurn, TurnOutcome::Completed) => {
+                self.undo_receipt = self.undo_receipt.completed();
+                self.try_undo(session).await
+            }
+            (Some(_), Stage::VerifyTurn, TurnOutcome::Completed) => match self.reply.trim() {
+                "retained=amber discarded=unknown" => {
+                    self.log(String::from("undo verified retained history"))?;
+                    Ok(Flow::Finished)
+                }
+                reply => Err(anyhow::Error::msg(format!(
+                    "undo history check failed: {reply}"
+                ))),
+            },
+            (Some(_), _, _) => Err(anyhow::Error::msg("the undo smoke turn did not complete")),
+            (None, Stage::FirstTurn, _) => match &self.then_continue {
+                Some(_) => {
+                    self.stage = Stage::Open;
+                    self.log(String::from(
+                        "turn completed; waiting for the agent to exit",
+                    ))?;
+                    Ok(Flow::Next)
+                }
+                None => {
+                    self.log(String::from("turn completed"))?;
+                    Ok(Flow::Finished)
+                }
+            },
+            (None, _, _) => {
+                self.log(String::from("turn completed"))?;
+                Ok(Flow::Finished)
+            }
+        }
+    }
+
+    async fn try_undo(&mut self, session: SessionId) -> anyhow::Result<Flow> {
+        match (&self.then_undo, self.stage, self.undo_receipt.ready()) {
+            (Some(_), Stage::SecondTurn, Some(checkpoint)) => {
+                match self
+                    .link
+                    .send(CommandBody::GetDiff {
+                        session,
+                        checkpoint,
+                    })
+                    .await?
+                {
+                    CommandResult::Diff(diff) => {
+                        let _ = diff
+                            .files
+                            .iter()
+                            .find(|file| file.path == "undo.txt")
+                            .context("the second turn diff has no undo.txt")?;
+                        let _ = diff
+                            .files
+                            .iter()
+                            .find(|file| {
+                                file.path == "discarded-only.txt"
+                                    && matches!(file.change, Change::Write)
+                            })
+                            .context("the second turn diff has no added discarded-only.txt")?;
+                        self.log(format!(
+                            "undo diff checkpoint={} files={:?}",
+                            checkpoint.0, diff.files
+                        ))?;
+                    }
+                    result => Err(anyhow::Error::msg(format!("diff failed: {result:?}")))?,
+                }
+                self.stage = Stage::Undoing;
+                accepted(
+                    self.link
+                        .send(CommandBody::UndoTurn {
+                            session,
+                            checkpoint,
+                        })
+                        .await?,
+                )?;
+                Ok(Flow::Next)
+            }
+            _ => Ok(Flow::Next),
         }
     }
 
@@ -513,4 +662,113 @@ impl Session {
 /// variable only.
 fn var(name: &str) -> anyhow::Result<String> {
     std::env::var(name).with_context(|| format!("{name} is not set"))
+}
+
+fn accepted(result: CommandResult) -> anyhow::Result<()> {
+    match result {
+        CommandResult::Accepted => Ok(()),
+        result => Err(anyhow::Error::msg(format!(
+            "command was not accepted: {result:?}"
+        ))),
+    }
+}
+
+/// Completion and snapshot can arrive in either order; only the same turn counts.
+#[derive(Debug, Clone, Copy)]
+struct UndoReceipt {
+    start: Option<HostSeq>,
+    checkpoint: Option<SeenCheckpoint>,
+    completion: Completion,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SeenCheckpoint {
+    start: HostSeq,
+    id: CheckpointId,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Completion {
+    Pending,
+    Completed,
+}
+
+impl UndoReceipt {
+    fn new() -> UndoReceipt {
+        UndoReceipt {
+            start: None,
+            checkpoint: None,
+            completion: Completion::Pending,
+        }
+    }
+
+    fn started(self, start: HostSeq) -> UndoReceipt {
+        UndoReceipt {
+            start: Some(start),
+            ..self
+        }
+    }
+
+    fn checkpoint(self, start: Option<HostSeq>, id: CheckpointId) -> UndoReceipt {
+        UndoReceipt {
+            checkpoint: start.map(|start| SeenCheckpoint { start, id }),
+            ..self
+        }
+    }
+
+    fn completed(self) -> UndoReceipt {
+        UndoReceipt {
+            completion: Completion::Completed,
+            ..self
+        }
+    }
+
+    fn ready(self) -> Option<CheckpointId> {
+        match (self.start, self.checkpoint, self.completion) {
+            (Some(start), Some(checkpoint), Completion::Completed) if start == checkpoint.start => {
+                Some(checkpoint.id)
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UndoReceipt;
+    use proto::{CheckpointId, HostSeq};
+
+    #[test]
+    fn undo_waits_for_completion_and_the_matching_turn_snapshot_in_either_order() {
+        let second = UndoReceipt::new().started(HostSeq(20));
+        let stale = second
+            .checkpoint(Some(HostSeq(10)), CheckpointId(1))
+            .completed();
+        assert_eq!(
+            [
+                second.completed().ready(),
+                second
+                    .checkpoint(Some(HostSeq(20)), CheckpointId(2))
+                    .ready(),
+                stale.ready(),
+                second
+                    .completed()
+                    .checkpoint(Some(HostSeq(20)), CheckpointId(2))
+                    .ready(),
+                second
+                    .checkpoint(Some(HostSeq(20)), CheckpointId(2))
+                    .completed()
+                    .ready(),
+                stale.checkpoint(Some(HostSeq(20)), CheckpointId(2)).ready(),
+            ],
+            [
+                None,
+                None,
+                None,
+                Some(CheckpointId(2)),
+                Some(CheckpointId(2)),
+                Some(CheckpointId(2))
+            ]
+        );
+    }
 }

@@ -5,9 +5,9 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use proto::{
-    ClientName, CloseReason, Effort, Event, EventKind, HostPath, HostSeq, ModelId, Provider,
-    Question, RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath, HostSeq, ModelId,
+    Provider, Question, RequestId, Resolution, SessionId, ToolCallId, ToolKind, ToolOutcome,
+    ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,9 +23,33 @@ pub struct SessionView {
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
+    pub workspace: Option<Workspace>,
+    pub checkpoints: Vec<TurnCheckpoint>,
+    pub undo: UndoState,
+    turn_starts: BTreeMap<HostSeq, usize>,
     pub items: Vec<Item>,
     /// The last event that touched this session.
     pub activity: HostSeq,
+}
+
+/// A completed turn and its transcript boundaries; provider identifiers stay opaque.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnCheckpoint {
+    pub checkpoint: CheckpointId,
+    pub start: usize,
+    pub end: usize,
+    pub undo: UndoAvailability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UndoState {
+    Ready,
+    Undoing(CheckpointId),
+    Failed {
+        checkpoint: CheckpointId,
+        reason: String,
+    },
+    Undone,
 }
 
 /// Derived from the events, never sent.
@@ -200,6 +224,10 @@ impl HostView {
                 model,
                 effort,
                 status: SessionStatus::Starting,
+                workspace: None,
+                checkpoints: Vec::new(),
+                undo: UndoState::Ready,
+                turn_starts: BTreeMap::new(),
                 items: Vec::new(),
                 activity: event.seq,
             }),
@@ -213,7 +241,7 @@ impl HostView {
             }
             (Some(view), kind) => Some(SessionView {
                 activity: event.seq,
-                ..view.apply(kind)
+                ..view.apply(kind, event.seq)
             }),
             (None, _) => None,
         };
@@ -249,11 +277,14 @@ impl HostView {
 
 impl SessionView {
     pub fn controls(&self) -> Controls {
-        let (composer, interrupt, resume) = match self.status {
-            SessionStatus::Starting => (Composer::Busy, Interrupt::Hidden, Resume::Hidden),
-            SessionStatus::Idle => (Composer::Open, Interrupt::Hidden, Resume::Hidden),
-            SessionStatus::Running => (Composer::Busy, Interrupt::Offered, Resume::Hidden),
-            SessionStatus::Closed(_) => (Composer::Closed, Interrupt::Hidden, Resume::Offered),
+        let (composer, interrupt, resume) = match (&self.undo, &self.status) {
+            (UndoState::Undoing(_) | UndoState::Failed { .. }, _) => {
+                (Composer::Busy, Interrupt::Hidden, Resume::Hidden)
+            }
+            (_, SessionStatus::Starting) => (Composer::Busy, Interrupt::Hidden, Resume::Hidden),
+            (_, SessionStatus::Idle) => (Composer::Open, Interrupt::Hidden, Resume::Hidden),
+            (_, SessionStatus::Running) => (Composer::Busy, Interrupt::Offered, Resume::Hidden),
+            (_, SessionStatus::Closed(_)) => (Composer::Closed, Interrupt::Hidden, Resume::Offered),
         };
         Controls {
             composer,
@@ -266,6 +297,13 @@ impl SessionView {
     /// its last item is live already: a reply or reasoning streaming in, or
     /// a tool call running.
     pub fn working(&self) -> Working {
+        match self.undo {
+            UndoState::Undoing(_) | UndoState::Failed { .. } => Working::Hidden,
+            UndoState::Ready | UndoState::Undone => self.turn_working(),
+        }
+    }
+
+    fn turn_working(&self) -> Working {
         match (&self.status, self.attention(), self.items.last()) {
             (
                 SessionStatus::Running,
@@ -319,7 +357,7 @@ impl SessionView {
         }
     }
 
-    fn apply(self, kind: EventKind) -> SessionView {
+    fn apply(self, kind: EventKind, seq: HostSeq) -> SessionView {
         match kind {
             EventKind::SessionCreated { .. } => self,
             EventKind::SessionReady => match self.status.clone() {
@@ -344,9 +382,17 @@ impl SessionView {
                 .change(Change::End)
                 .settle()
                 .status(SessionStatus::Closed(reason)),
-            EventKind::UserMessage { text, by } => self
+            EventKind::UserMessage { text, by } => {
+                let mut turn_starts = self.turn_starts;
+                turn_starts.insert(seq, self.items.len());
+                SessionView {
+                    turn_starts,
+                    undo: UndoState::Ready,
+                    ..self
+                }
                 .status(SessionStatus::Running)
-                .push(Item::User { text, by }),
+                .push(Item::User { text, by })
+            }
             EventKind::AssistantDelta { text } => self.reply(text, ReplyState::Streaming),
             EventKind::AssistantMessage { text } => self.reply(text, ReplyState::Done),
             EventKind::ReasoningDelta { text } => self.reasoning(text, ReplyState::Streaming),
@@ -393,6 +439,79 @@ impl SessionView {
                 .change(Change::End)
                 .status(SessionStatus::Idle)
                 .push(Item::TurnCompleted(outcome)),
+            EventKind::WorkspaceCreated { workspace } => SessionView {
+                workspace: Some(workspace),
+                ..self
+            },
+            EventKind::CheckpointCreated { checkpoint } => {
+                let start = checkpoint
+                    .turn_start
+                    .and_then(|seq| self.turn_starts.get(&seq).copied())
+                    .or_else(|| {
+                        checkpoint.parent.map(|_| {
+                            self.checkpoints
+                                .last()
+                                .map_or(0, |turn| turn.end.saturating_add(1))
+                        })
+                    });
+                match start {
+                    Some(start) => {
+                        let mut checkpoints = self.checkpoints;
+                        checkpoints.push(TurnCheckpoint {
+                            checkpoint: checkpoint.id,
+                            undo: checkpoint.undo,
+                            start,
+                            end: self.items.len().saturating_sub(1),
+                        });
+                        SessionView {
+                            checkpoints,
+                            ..self
+                        }
+                    }
+                    None => self,
+                }
+            }
+            EventKind::UndoHistoryRestored { .. }
+            | EventKind::CheckpointReserved { .. }
+            | EventKind::HistoryMaterialized { .. }
+            | EventKind::NativeTurnStarted { .. } => self,
+            EventKind::UndoStarted { checkpoint, .. } => SessionView {
+                undo: UndoState::Undoing(checkpoint),
+                ..self
+            },
+            EventKind::UndoFailed { checkpoint, reason } => SessionView {
+                undo: UndoState::Failed { checkpoint, reason },
+                ..self
+            },
+            EventKind::TurnsUndone { checkpoint, .. } => {
+                match self
+                    .checkpoints
+                    .iter()
+                    .find(|turn| turn.checkpoint == checkpoint)
+                    .map(|turn| turn.start)
+                {
+                    Some(start) => SessionView {
+                        items: self.items.into_iter().take(start).collect(),
+                        checkpoints: self
+                            .checkpoints
+                            .into_iter()
+                            .filter(|turn| turn.start < start)
+                            .collect(),
+                        turn_starts: self
+                            .turn_starts
+                            .into_iter()
+                            .filter(|(_, index)| index < &start)
+                            .collect(),
+                        undo: UndoState::Undone,
+                        status: SessionStatus::Idle,
+                        ..self
+                    },
+                    None => SessionView {
+                        undo: UndoState::Undone,
+                        ..self
+                    },
+                }
+            }
             EventKind::Error { message } => self.push(Item::Error(message)),
         }
     }
@@ -612,8 +731,8 @@ mod tests {
     };
 
     use super::{
-        Approval, Attention, HostView, Item, ReplyState, RequestState, Resume, SessionStatus,
-        SessionView, ToolState, Working,
+        Approval, Attention, Composer, HostView, Interrupt, Item, ReplyState, RequestState, Resume,
+        SessionStatus, SessionView, ToolState, UndoState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -801,6 +920,10 @@ mod tests {
                             },
                             Item::TurnCompleted(TurnOutcome::Completed),
                         ]),
+                        workspace: None,
+                        checkpoints: Vec::new(),
+                        undo: UndoState::Ready,
+                        turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
                         activity: HostSeq(13),
                     },
                 ),
@@ -813,6 +936,10 @@ mod tests {
                         effort: None,
                         status: SessionStatus::Closed(CloseReason::Exited { status: text("1") }),
                         items: Vec::from([Item::Error(text("odd"))]),
+                        workspace: None,
+                        checkpoints: Vec::new(),
+                        undo: UndoState::Ready,
+                        turn_starts: BTreeMap::new(),
                         activity: HostSeq(15),
                     },
                 ),
@@ -1356,5 +1483,214 @@ mod tests {
                 Some(Attention::Quiet),
             )
         );
+    }
+
+    fn checkpoint(id: u64, start: u64, parent: u64) -> EventKind {
+        EventKind::CheckpointCreated {
+            checkpoint: proto::Checkpoint {
+                id: proto::CheckpointId(id),
+                parent: Some(proto::CheckpointId(parent)),
+                turn_start: Some(HostSeq(start)),
+                commit: text("opaque"),
+                history: proto::HistoryAnchor::Fresh,
+                undo: proto::UndoAvailability::Available,
+            },
+        }
+    }
+
+    fn checkpoint_events() -> Vec<EventKind> {
+        Vec::from([
+            created("/a"),
+            EventKind::SessionReady,
+            EventKind::UserMessage {
+                text: text("first"),
+                by: ClientName(text("phone")),
+            },
+            EventKind::AssistantMessage {
+                text: text("first reply"),
+            },
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Completed,
+            },
+            checkpoint(1, 3, 0),
+            EventKind::UserMessage {
+                text: text("second"),
+                by: ClientName(text("phone")),
+            },
+            EventKind::AssistantMessage {
+                text: text("second reply"),
+            },
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Completed,
+            },
+            checkpoint(2, 7, 1),
+            EventKind::UserMessage {
+                text: text("third"),
+                by: ClientName(text("phone")),
+            },
+            EventKind::AssistantMessage {
+                text: text("third reply"),
+            },
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Completed,
+            },
+            checkpoint(3, 11, 2),
+        ])
+    }
+
+    fn numbered(kinds: Vec<EventKind>) -> Vec<Event> {
+        kinds
+            .into_iter()
+            .enumerate()
+            .map(|(index, kind)| Event {
+                seq: HostSeq(u64::try_from(index).unwrap().saturating_add(1)),
+                session: SessionId(1),
+                kind,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn undo_removes_selected_and_later_turns_on_live_fold_replay_and_reconnect() {
+        let events = numbered(
+            checkpoint_events()
+                .into_iter()
+                .chain([
+                    EventKind::UndoStarted {
+                        checkpoint: proto::CheckpointId(2),
+                        restore: proto::CheckpointId(1),
+                        history: proto::HistoryAnchor::Fresh,
+                    },
+                    EventKind::UndoHistoryRestored {
+                        checkpoint: proto::CheckpointId(2),
+                        history: proto::HistoryAnchor::Fresh,
+                    },
+                    EventKind::TurnsUndone {
+                        checkpoint: proto::CheckpointId(2),
+                        restored: proto::CheckpointId(1),
+                    },
+                ])
+                .collect(),
+        );
+        let live = events
+            .clone()
+            .into_iter()
+            .fold(HostView::empty(), HostView::apply);
+        let reconnect = events
+            .iter()
+            .take(15)
+            .cloned()
+            .fold(HostView::empty(), HostView::apply);
+        let reconnect = events.into_iter().skip(15).fold(reconnect, HostView::apply);
+        assert_eq!(live, reconnect);
+        let session = live.sessions.get(&SessionId(1)).unwrap();
+        assert_eq!(session.items.len(), 3);
+        assert_eq!(session.checkpoints.len(), 1);
+        assert_eq!(
+            session.checkpoints.first().unwrap().checkpoint,
+            proto::CheckpointId(1)
+        );
+        assert_eq!(session.undo, super::UndoState::Undone);
+        assert_eq!(session.controls().composer, Composer::Open);
+    }
+
+    #[test]
+    fn in_progress_and_failed_undo_preserve_transcript_and_block_controls() {
+        let original = numbered(checkpoint_events())
+            .into_iter()
+            .fold(HostView::empty(), HostView::apply);
+        let pending = original.clone().apply(Event {
+            seq: HostSeq(15),
+            session: SessionId(1),
+            kind: EventKind::UndoStarted {
+                checkpoint: proto::CheckpointId(2),
+                restore: proto::CheckpointId(1),
+                history: proto::HistoryAnchor::Fresh,
+            },
+        });
+        let session = pending.sessions.get(&SessionId(1)).unwrap();
+        assert_eq!(session.items.len(), 9);
+        assert_eq!(
+            session.controls(),
+            super::Controls {
+                composer: Composer::Busy,
+                interrupt: Interrupt::Hidden,
+                resume: Resume::Hidden
+            }
+        );
+        let failed = pending.apply(Event {
+            seq: HostSeq(16),
+            session: SessionId(1),
+            kind: EventKind::UndoFailed {
+                checkpoint: proto::CheckpointId(2),
+                reason: text("restore failed"),
+            },
+        });
+        let session = failed.sessions.get(&SessionId(1)).unwrap();
+        assert_eq!(
+            session.items,
+            original.sessions.get(&SessionId(1)).unwrap().items
+        );
+        assert_eq!(session.checkpoints.len(), 3);
+        assert_eq!(
+            session.undo,
+            super::UndoState::Failed {
+                checkpoint: proto::CheckpointId(2),
+                reason: text("restore failed")
+            }
+        );
+        assert_eq!(session.controls().composer, Composer::Busy);
+    }
+
+    #[test]
+    fn legacy_session_stays_usable_without_workspace_or_checkpoint_controls() {
+        let view = fold(Vec::from([
+            (1, created("/legacy")),
+            (1, EventKind::SessionReady),
+        ]));
+        let session = view.sessions.get(&SessionId(1)).unwrap();
+        assert_eq!(session.workspace, None);
+        assert_eq!(session.checkpoints, Vec::new());
+        assert_eq!(session.controls().composer, Composer::Open);
+    }
+
+    #[test]
+    fn autonomous_checkpoint_has_a_turn_boundary_but_initial_checkpoint_does_not() {
+        let initial = EventKind::CheckpointCreated {
+            checkpoint: proto::Checkpoint {
+                id: proto::CheckpointId(0),
+                parent: None,
+                turn_start: None,
+                commit: text("initial"),
+                history: proto::HistoryAnchor::Fresh,
+                undo: proto::UndoAvailability::Available,
+            },
+        };
+        let autonomous = EventKind::CheckpointCreated {
+            checkpoint: proto::Checkpoint {
+                id: proto::CheckpointId(1),
+                parent: Some(proto::CheckpointId(0)),
+                turn_start: None,
+                commit: text("autonomous"),
+                history: proto::HistoryAnchor::Fresh,
+                undo: proto::UndoAvailability::Available,
+            },
+        };
+        let events = numbered(Vec::from([
+            created("/a"),
+            initial,
+            EventKind::AssistantMessage {
+                text: text("autonomous reply"),
+            },
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Completed,
+            },
+            autonomous,
+        ]));
+        let view = events.into_iter().fold(HostView::empty(), HostView::apply);
+        let session = view.sessions.get(&SessionId(1)).unwrap();
+        assert_eq!(session.checkpoints.len(), 1);
+        assert_eq!(session.checkpoints.first().unwrap().start, 0);
+        assert_eq!(session.checkpoints.first().unwrap().end, 1);
     }
 }

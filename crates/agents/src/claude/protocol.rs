@@ -15,6 +15,11 @@ use crate::Exit;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(pub String);
 
+/// A top-level transcript-entry UUID, accepted by `--resume-session-at`.
+/// This is not the API's `message.id` (`msg_…`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MessageId(pub String);
+
 /// The CLI's `request_id` for a `can_use_tool` request.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PermissionRequestId(pub String);
@@ -131,6 +136,7 @@ pub enum ClaudeEvent {
     Message {
         role: Role,
         content: Vec<Block>,
+        uuid: Option<MessageId>,
     },
     /// A piece of assistant text as it streams (`--include-partial-messages`).
     /// The whole text follows in a `Message`.
@@ -175,6 +181,9 @@ pub enum ClaudeEvent {
         /// Why the CLI could not run the turn, as `No conversation found
         /// with session ID: …` for a `--resume` with no transcript.
         errors: Vec<String>,
+        /// Last top-level user or assistant entry of this turn, including
+        /// an interrupted marker. None means no safe retained prefix is known.
+        last_message: Option<MessageId>,
     },
     Exited {
         status: Exit,
@@ -219,9 +228,13 @@ enum Frame {
     },
     Assistant {
         message: Message,
+        uuid: Option<String>,
+        parent_tool_use_id: Option<String>,
     },
     User {
         message: Message,
+        uuid: Option<String>,
+        parent_tool_use_id: Option<String>,
     },
     StreamEvent {
         event: StreamEvent,
@@ -451,8 +464,24 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
         } => Inbound::Event(ClaudeEvent::TurnStarted {
             session_id: SessionId(session_id),
         }),
-        Frame::Assistant { message } => message_event(Role::Assistant, message),
-        Frame::User { message } => message_event(Role::User, message),
+        Frame::Assistant {
+            message,
+            uuid,
+            parent_tool_use_id: None,
+        } => message_event(Role::Assistant, message, uuid),
+        Frame::User {
+            message,
+            uuid,
+            parent_tool_use_id: None,
+        } => message_event(Role::User, message, uuid),
+        Frame::Assistant {
+            parent_tool_use_id: Some(_),
+            ..
+        }
+        | Frame::User {
+            parent_tool_use_id: Some(_),
+            ..
+        } => Inbound::Event(ClaudeEvent::Unknown(raw)),
         Frame::StreamEvent {
             event:
                 StreamEvent {
@@ -489,6 +518,7 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
             terminal_reason,
             session_id: SessionId(session_id),
             errors: errors.unwrap_or_default(),
+            last_message: None,
         }),
         Frame::ControlRequest {
             request_id,
@@ -599,9 +629,10 @@ fn control_request(request_id: String, request: Value) -> Inbound {
     }
 }
 
-fn message_event(role: Role, message: Message) -> Inbound {
+fn message_event(role: Role, message: Message, uuid: Option<String>) -> Inbound {
     Inbound::Event(ClaudeEvent::Message {
         role,
+        uuid: uuid.map(MessageId),
         content: message.content.into_iter().map(block).collect(),
     })
 }
@@ -938,8 +969,8 @@ mod tests {
     };
 
     use super::{
-        AfterDeny, ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision,
-        PermissionMode, PermissionRequestId, encode, parse_line,
+        AfterDeny, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
+        PermissionDecision, PermissionMode, PermissionRequestId, encode, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -982,6 +1013,48 @@ mod tests {
     const BASH: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"touch t1.txt","description":"Create empty file t1.txt"},"description":"Create empty file t1.txt","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch t1.txt"}],"behavior":"allow","destination":"localSettings"},{"type":"addDirectories","directories":["/tmp/s1-scratch"],"destination":"session"},{"type":"setMode","mode":"acceptEdits","destination":"session"}],"blocked_path":"/tmp/s1-scratch/t1.txt","tool_use_id":"toolu_1"}}"#;
 
     const WRITE: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/a.txt","content":"hi"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_2"}}"#;
+
+    #[test]
+    fn message_boundaries_read_transcript_uuid_not_api_message_id() {
+        let cases = Vec::from([
+            (
+                r#"{"type":"assistant","uuid":"assistant-entry","message":{"id":"msg_api","content":[]}}"#,
+                Some(MessageId(String::from("assistant-entry"))),
+            ),
+            (
+                r#"{"type":"user","uuid":"user-entry","message":{"content":[]}}"#,
+                Some(MessageId(String::from("user-entry"))),
+            ),
+            (
+                r#"{"type":"assistant","message":{"id":"msg_api","content":[]}}"#,
+                None,
+            ),
+            (
+                r#"{"type":"assistant","uuid":"nested-entry","parent_tool_use_id":"toolu_agent","message":{"content":[]}}"#,
+                None,
+            ),
+        ]);
+        assert_eq!(
+            cases
+                .into_iter()
+                .map(|(line, expected)| {
+                    let actual = match parse_line(line).unwrap() {
+                        Inbound::Event(ClaudeEvent::Message { uuid, .. }) => uuid,
+                        Inbound::Event(ClaudeEvent::Unknown(_)) => None,
+                        frame => {
+                            assert_eq!(format!("{frame:?}"), "expected message boundary");
+                            None
+                        }
+                    };
+                    (actual, expected)
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .all(|(actual, expected)| actual == expected)
+                .then_some(()),
+            Some(())
+        );
+    }
 
     const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","display_name":"AskUserQuestion","input":{"questions":[{"question":"Which fruits do you like?","header":"Fruits","options":[{"label":"Apple","description":"Crisp"},{"label":"Pear","description":"Soft"}],"multiSelect":true},{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false}]},"tool_use_id":"toolu_3","requires_user_interaction":true}}"#;
 

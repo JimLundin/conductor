@@ -210,3 +210,25 @@ provider.
   its last nonempty line for requests whose app-server exits before replying.
   JSON-RPC rejections report the request method and `error.message`.
   Start and resume failures with both paths are covered by fake-CLI tests.
+
+## Native conversation undo
+
+Verified against 0.166.0 on 2026-11-13; `s2` step 13 drives the adapter.
+
+- We request `historyMode: "paginated"` at `thread/start`. `thread/revert`
+  requires persisted paginated history; removed `thread/rollback` is not used.
+- `thread/revert {threadId, beforeTurnId}` excludes that native turn and
+  all later turns, preserving the thread id. Its response has thread
+  metadata with empty `turns`; `thread/reverted` remains `Unknown`. Files
+  are restored separately by the host's Git checkpoints.
+- `thread/turns/list` with `sortDirection: "asc"` returns chronological
+  native turn ids. `CodexThread::history_turns` follows `nextCursor` using
+  pages of 100, at most 100 pages, and fails rather than return a truncated
+  prefix. A missing or malformed required `nextCursor` also fails.
+- Recovery can compare the entire native prefix with the requested retained
+  checkpoint ids before retrying a revert. A missing target alone is not
+  proof that a prior revert succeeded.
+- Two turns followed by a revert before the second retained the first
+  codeword and forgot the second, with the exact native prefix verified
+  both before and after app-server restart/resume. Undoing the first turn
+  instead starts a fresh native thread.

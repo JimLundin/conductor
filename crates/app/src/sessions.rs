@@ -1,6 +1,6 @@
 //! The session list and the form that starts a session.
 
-use client::host_view::{Attention, HostView, SessionView};
+use client::host_view::{Attention, HostView, SessionView, UndoState};
 use client::new_session::{
     Attempt, PROVIDERS, ProviderNote, Refusal, default_label, efforts, kept_effort, label, models,
     note,
@@ -66,14 +66,24 @@ fn SessionRow(
     screen: Screen,
     on_select: EventHandler<Screen>,
 ) -> Element {
-    let (status, text, badge) = match session.attention() {
-        Attention::Quiet => (session.status.word(), session.status.word(), String::new()),
-        Attention::Requests(1) => (
+    let (status, text, badge) = match (&session.undo, session.attention()) {
+        (UndoState::Undoing(_), _) => (
+            String::from("undoing"),
+            String::from("undoing"),
+            String::new(),
+        ),
+        (UndoState::Failed { .. }, _) => (
+            String::from("recovering"),
+            String::from("recovery needed"),
+            String::new(),
+        ),
+        (_, Attention::Quiet) => (session.status.word(), session.status.word(), String::new()),
+        (_, Attention::Requests(1)) => (
             String::from("approval"),
             String::from("needs you"),
             String::from("1"),
         ),
-        Attention::Requests(open) => (
+        (_, Attention::Requests(open)) => (
             String::from("approval"),
             format!("{open} requests need you"),
             format!("{open}"),
@@ -90,6 +100,9 @@ fn SessionRow(
                 span { class: "row-text",
                     span { class: "row-title", "{short(&session.directory)}" }
                     span { class: "row-sub", "{label(session.provider)}, {text}" }
+                    if let Some(workspace) = session.workspace {
+                        span { class: "row-branch", "{workspace.branch}" }
+                    }
                 }
                 span { class: "badge", "{badge}" }
             }

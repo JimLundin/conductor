@@ -6,6 +6,7 @@
 // rsx! expands each "{text}" node to format!, which clippy flags.
 #![allow(clippy::useless_format)]
 
+mod checkpoints;
 mod credentials;
 mod session;
 mod sessions;
@@ -258,7 +259,8 @@ pub(crate) fn run_command(
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
-                | CommandResult::Providers(_),
+                | CommandResult::Providers(_)
+                | CommandResult::Diff(_),
             ) => None,
             Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
             Err(err) => Some(err),

@@ -30,7 +30,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/9";
+pub const ALPN: &[u8] = b"conductor/10";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -431,6 +431,16 @@ pub enum CommandBody {
     ClearCredential {
         provider: Provider,
     },
+    /// A bounded diff between this checkpoint and its predecessor.
+    GetDiff {
+        session: SessionId,
+        checkpoint: CheckpointId,
+    },
+    /// Removes this turn and every later turn, restoring its predecessor.
+    UndoTurn {
+        session: SessionId,
+        checkpoint: CheckpointId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -458,6 +468,7 @@ pub enum CommandResult {
     /// runs now. Another client learns it from its next `Welcome`.
     Providers(Providers),
     Rejected(Rejection),
+    Diff(CheckpointDiff),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -490,6 +501,15 @@ pub enum Rejection {
     InvalidCredential {
         reason: String,
     },
+    NotGitRepository,
+    CheckpointUnavailable,
+    UndoInProgress,
+    UndoFailed {
+        reason: String,
+    },
+    WorkspaceFailure {
+        reason: String,
+    },
 }
 
 impl Rejection {
@@ -513,6 +533,16 @@ impl Rejection {
             }
             Rejection::InvalidCredential { reason } => {
                 format!("the credential is not valid: {reason}")
+            }
+            Rejection::NotGitRepository => {
+                String::from("choose a Git repository with a committed HEAD")
+            }
+            Rejection::CheckpointUnavailable => String::from("this checkpoint cannot be undone"),
+            Rejection::UndoInProgress => {
+                String::from("finish recovering the interrupted undo first")
+            }
+            Rejection::UndoFailed { reason } | Rejection::WorkspaceFailure { reason } => {
+                reason.clone()
             }
         }
     }
@@ -613,6 +643,132 @@ pub enum EventKind {
         effort: Option<Effort>,
         reason: String,
     },
+    /// Appended metadata: legacy sessions keep their original directory.
+    WorkspaceCreated {
+        workspace: Workspace,
+    },
+    CheckpointCreated {
+        checkpoint: Checkpoint,
+    },
+    /// Durable intent before changing either files or provider history.
+    UndoStarted {
+        checkpoint: CheckpointId,
+        restore: CheckpointId,
+        history: HistoryAnchor,
+    },
+    UndoFailed {
+        checkpoint: CheckpointId,
+        reason: String,
+    },
+    /// Successful native-history phase; the new conversation is the resume target.
+    UndoHistoryRestored {
+        checkpoint: CheckpointId,
+        history: HistoryAnchor,
+    },
+    /// Both files and native history were restored; remove this turn and later.
+    TurnsUndone {
+        checkpoint: CheckpointId,
+        restored: CheckpointId,
+    },
+    /// Reserves an ID before a filesystem snapshot; failed snapshots never reuse refs.
+    CheckpointReserved {
+        checkpoint: CheckpointId,
+    },
+    /// A prepared native history descriptor has materialized on an actual turn.
+    HistoryMaterialized {
+        history: HistoryAnchor,
+    },
+    NativeTurnStarted {
+        history: HistoryAnchor,
+        turn_start: Option<HostSeq>,
+    },
+}
+
+/// Monotonic per session, including discarded checkpoints; zero is initial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CheckpointId(pub u64);
+
+impl CheckpointId {
+    pub fn next(self) -> CheckpointId {
+        CheckpointId(self.0.saturating_add(1))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workspace {
+    pub repository: HostPath,
+    pub original: HostPath,
+    pub worktree: HostPath,
+    pub directory: HostPath,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub id: CheckpointId,
+    pub parent: Option<CheckpointId>,
+    /// The existing UserMessage event for this turn; None for initial/autonomous turns.
+    pub turn_start: Option<HostSeq>,
+    pub commit: String,
+    /// Opaque provider metadata; clients never present these IDs as controls.
+    pub history: HistoryAnchor,
+    pub undo: UndoAvailability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HistoryAnchor {
+    Fresh,
+    Claude {
+        conversation: String,
+        message: Option<String>,
+    },
+    Codex {
+        conversation: String,
+        turn: Option<String>,
+    },
+    /// Lazy inclusive fork: initialize alone does not create the target transcript.
+    ClaudeFork {
+        source: String,
+        through: String,
+        target: String,
+    },
+    /// Files may have changed before an actual native turn boundary was observed.
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UndoAvailability {
+    Available,
+    Unavailable { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointDiff {
+    pub checkpoint: CheckpointId,
+    pub parent: CheckpointId,
+    pub files: Vec<CheckpointFile>,
+    pub extent: DiffExtent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointFile {
+    pub path: String,
+    pub change: Change,
+    pub patch: FilePatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FilePatch {
+    Text(String),
+    Binary,
+    TooLarge,
+    Unsupported { reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffExtent {
+    Complete,
+    Truncated,
 }
 
 /// One question. Both agents take any typed text as an answer, so every
@@ -714,6 +870,35 @@ pub enum CloseReason {
 #[cfg(test)]
 mod tests {
     use super::{ClaudeCredential, Credential};
+
+    #[test]
+    fn durability_v9_bytes_keep_their_original_meaning() {
+        assert_eq!(
+            postcard::from_bytes::<super::Event>(&[1, 1, 1]).unwrap(),
+            super::Event {
+                seq: super::HostSeq(1),
+                session: super::SessionId(1),
+                kind: super::EventKind::SessionReady,
+            }
+        );
+        assert_eq!(
+            postcard::from_bytes::<super::CommandResult>(&[0]).unwrap(),
+            super::CommandResult::Accepted
+        );
+        assert_eq!(
+            postcard::from_bytes::<super::CommandResult>(&[3, 3]).unwrap(),
+            super::CommandResult::Rejected(super::Rejection::SessionClosed)
+        );
+        assert_eq!(
+            postcard::to_stdvec(&super::Event {
+                seq: super::HostSeq(1),
+                session: super::SessionId(1),
+                kind: super::EventKind::SessionReady,
+            })
+            .unwrap(),
+            Vec::from([1, 1, 1])
+        );
+    }
 
     #[test]
     fn a_base_url_may_not_hide_a_secret() {

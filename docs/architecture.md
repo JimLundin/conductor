@@ -261,7 +261,7 @@ the parsers and assert the exact events. `cargo run --bin s1` and `s2` drive
 the real CLIs and re-record the fixtures; run them after changing an adapter
 or upgrading a CLI.
 
-### 5.3 Durability; planned worktrees and checkpoints
+### 5.3 Durability, worktrees and checkpoints
 
 - **Store (built):** `<data>/conductor.redb`, with typed redb table constants
   and postcard values (storage option C). The tables are `events`,
@@ -276,9 +276,14 @@ or upgrading a CLI.
   `CommandId`s (128 random bits), so a hedge onto a new transport identity
   still finds the same receipt. One command at a time stages its durable
   events and conversation/request writes, then commits them with its receipt
-  in one transaction before replying or broadcasting. A retry returns the
-  stored result. If execution is cancelled or a write fails, the log rolls
-  back and the host stops its transport and provider processes. Provider
+  before replying. Ordinary commands use one transaction. Undo commits its
+  intent and native-history phase separately before their external effects,
+  and checkpoint reservations commit before snapshot effects; these explicit
+  boundaries broadcast the committed prefix while retaining the command
+  lease. A retry with a completed receipt returns its stored result. If
+  execution is cancelled or a write fails, the log rolls back only its
+  uncommitted suffix and the host stops its transport and provider processes.
+  Previously committed undo phases remain pending for recovery. Provider
   stdin writes and the separate credential file are external effects: a
   crash before the database commit can leave a CLI action sent without a
   receipt. Restart withdraws its requests and interrupts its turn; it does
@@ -292,13 +297,44 @@ or upgrading a CLI.
   killed when their owning tasks are dropped.
 - **Planned tables:** `raw_events` (provider wire for remapping), `roster`
   and `push_tokens`, when their features land.
-- **Worktrees and checkpoints:** one worktree per session under
-  `<data>/worktrees/<project>/<session>`. At the end of each turn, snapshot it
-  without touching the user's index (`GIT_INDEX_FILE=<tmp> git add -A`,
-  `git write-tree`, `git commit-tree`, `git update-ref
-  refs/conductor/<session>/<turn>`). Diffs are `git diff` between refs;
-  revert is `git restore --source=<ref>` plus Claude's `rewind_files` or
-  Codex's `thread/rollback`. This is T3 Code's mechanism (`GitVcsDriver.ts`).
+- **Worktrees and checkpoints (built):** new sessions require a committed
+  Git repository and get `<data>/worktrees/<ulid>` on `conductor/<ulid>`,
+  initially from committed HEAD. The original working tree and index stay
+  untouched. The selected subdirectory is resolved within the managed tree.
+  An initial snapshot and each actual finished, failed or interrupted turn
+  get immutable `refs/conductor/<ulid>/<checkpoint>` refs. A temporary index
+  reads the previous snapshot before `add -A`, `write-tree`, `commit-tree`
+  and `update-ref`; branch HEAD never moves. Durable reservations prevent
+  checkpoint id reuse after undo or a failed snapshot. A failed snapshot
+  retains its native turn boundary and retries before Send or a closed
+  session's Continue; an unsuccessful retry rejects that command before
+  another turn can change the files. This preserves per-turn diff parents.
+- **Diff and undo (built):** immutable checkpoint diffs have bounded file
+  counts and patch sizes; binary and oversized files get markers. `GetDiff`
+  bypasses durable receipts so patches are never copied into the event log
+  or receipt table. Undo removes the selected turn and all later turns from
+  the client projection and restores the preceding snapshot. Native history
+  restoration runs first: Codex uses `thread/revert {beforeTurnId}` and
+  verifies the exact retained native turn-id prefix. Claude forks through
+  the preceding top-level message UUID with `--resume-session-at` and a
+  chosen target id; undoing the first turn starts fresh. Claude creates a
+  fork transcript lazily, so its source/through/target recipe stays durable
+  until native materialization is confirmed. Restart first tries the chosen
+  target and replays the recipe only for the CLI's exact missing-session
+  refusal, preserving a target written before its first result was observed.
+  An acknowledged message also leaves filesystem snapshot intent before a
+  native start notification. If that notification is lost, recovery captures
+  the files with an `Unknown` native boundary and disables unsafe historical
+  undo; its saved conversation or fork recipe still controls Continue.
+- **Undo recovery:** `UndoStarted` commits before provider effects;
+  `UndoHistoryRestored` commits before file effects. Files restore with
+  `git restore --source=<commit> --staged --worktree -- .` and an
+  ownership-verified nonignored clean, preserving ignored files and branch
+  HEAD. A recovered file phase also restarts a stopped agent before
+  `TurnsUndone` completes recovery. A failed or crashed phase blocks
+  Send and Continue, allows immutable diffs and retry of the same target,
+  and never silently discards the pending undo. Legacy sessions without
+  workspace events continue in their original directory without checkpoints.
 
 ## 6. Planned: the fleet
 
@@ -386,8 +422,10 @@ against the recorded hash.
    checks each against GitHub's published digest and
    `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
    `cosign` is installed. Both write only `crates/agents/src/pins.rs`,
-   including the verification result in doc comments; the subset has no
-   `include_str!`. Updating one provider preserves the other provider's pin.
+   including the verification result in doc comments. Versions, platform
+   hashes and verification provenance stay together in compiled Rust values.
+   Subset v14 also permits `include_str!` in const initializers (proposal
+   0056). Updating one provider preserves the other provider's pin.
 2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
    is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
    package unpacked whole, with `bin/codex`. It downloads to a temporary
@@ -889,7 +927,7 @@ that moves keeps its id, and the app merges sessions from every host.
   random bits. Ids sort by creation time, which the sidebar uses.
 - **Branch.** `conductor/<ulid>`. A session can carry a title, but the title
   is not in the branch name, so renaming never touches git.
-- **Worktree.** `<data>/worktrees/<project>/<ulid>`.
+- **Worktree.** `<data>/worktrees/<ulid>`.
 - **Checkpoints.** `refs/conductor/<ulid>/<turn>`, as in §5.3.
 - **Short form.** The UI shows the last 6 characters where space is tight,
   and the full id on hover or long-press.
@@ -898,8 +936,8 @@ that moves keeps its id, and the app merges sessions from every host.
 so the same id can appear in two hosts' logs after a move (§6.8).
 
 The id change landed with durability, before redb tables keyed on it. It
-changes the wire format, so the protocol ALPN is `conductor/9`. Worktree
-branches and checkpoint names above remain planned with roadmap item 5.
+changes the wire format. The current protocol ALPN is `conductor/10`,
+including the appended workspace, checkpoint, diff and undo wire variants.
 
 ### 6.8 Move a session to another host
 
@@ -936,7 +974,7 @@ under a `MoveId`, and every step is safe to repeat.
 5. **Send the events.** The source sends the session's durable events. The
    target appends them to its log with its own seqs, after a
    `SessionArrived { from, move_id, source_epoch, source_last_seq }` event,
-   and creates the worktree at its own `<data>/worktrees/<project>/<ulid>`
+   and creates the worktree at its own `<data>/worktrees/<ulid>`
    from the last checkpoint.
 6. **Commit.** The target registers the session and acknowledges. The
    source then appends `SessionMoved { to, move_id }`, removes its worktree

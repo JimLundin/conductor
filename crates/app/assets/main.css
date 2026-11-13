@@ -732,3 +732,34 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .pair { display: flex; gap: 0.5rem; }
 .pair input { flex: 1; min-height: 48px; padding: 0 0.9rem; }
 .empty .error { color: var(--red); }
+
+/* Worktree context stays readable on a narrow screen; only controls prevent
+   selection. Patches retain native text selection and horizontal scrolling. */
+.workspace-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.workspace-directory { width: 100%; min-width: 0; }
+.workspace-directory summary { min-height: 44px; display: list-item; align-content: center; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.workspace-directory summary:active { background: var(--raised); }
+.workspace-directory code { display: block; padding: 0.3rem 0; font-family: var(--mono); user-select: text; -webkit-user-select: text; }
+.workspace-branch { color: var(--ink); }
+.undo-status { padding: 0.75rem 1rem; background: var(--raised); font-size: 0.85rem; }
+.turn-changes { margin: 0.5rem 0 1.5rem; }
+.show-changes, .close-diff { background: var(--raised); color: var(--ink); font-size: 0.85rem; }
+.diff-panel { margin-top: 0.6rem; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.diff-heading { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; padding: 0.75rem; }
+.diff-heading h2 { font-size: 1rem; }
+.diff-files { max-height: min(50dvh, 32rem); overflow: auto; overscroll-behavior: contain; }
+.diff-file { border-top: 1px solid var(--line); }
+.diff-path { display: block; padding: 0.65rem 0.75rem; background: var(--raised); overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.8rem; }
+.diff-patch { margin: 0; padding: 0.75rem; overflow-x: auto; font: 0.75rem/1.6 var(--mono); white-space: pre; user-select: text; -webkit-user-select: text; overscroll-behavior: contain; }
+.diff-note, .undo-scope, .undo-hint { padding: 0.6rem 0.75rem; color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.undo-turn { margin: 0.25rem 0.75rem; background: var(--red); color: var(--surface); }
+.row-branch { display: block; font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

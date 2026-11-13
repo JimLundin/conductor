@@ -207,6 +207,55 @@ if (scenario === 'turn') {
   await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
   check(true, 'pairing again after Change host reaches Live');
   await fresh.close();
+} else if (scenario === 'worktrees') {
+  // Harness provides one idle session with three completed checkpointed turns.
+  await page.locator('.session-row').first().tap();
+  await pane.locator('.turn-changes').nth(2).waitFor({ timeout: 30_000 });
+  check((await pane.locator('.user').count()) === 3, 'three turns before undo');
+  check((await pane.locator('.workspace-branch').innerText()).startsWith('Branch: '), 'session branch context');
+  const directory = pane.locator('.workspace-directory');
+  check(!(await directory.evaluate(el => el.open)), 'working directory stays compact initially');
+  await directory.locator('summary').tap();
+  check((await directory.locator('code').innerText()).includes('/worktrees/'), 'full working directory accessible through disclosure');
+  check((await directory.locator('code').evaluate(el => getComputedStyle(el).userSelect)) === 'text', 'full working directory remains selectable');
+  await directory.locator('summary').tap();
+  const turns = pane.locator('.turn-changes');
+  const changesButton = turns.nth(1).getByRole('button', { name: 'Changes', exact: true });
+  await changesButton.focus();
+  await page.keyboard.press('Enter');
+  const closeButton = turns.nth(1).getByRole('button', { name: 'Close changes', exact: true });
+  await closeButton.waitFor({ timeout: 30_000 });
+  const closedWhileLoading = (await turns.nth(1).innerText()).includes('Loading changes…');
+  await closeButton.focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(id => document.activeElement?.id === id, await changesButton.getAttribute('id'));
+  check(true, `keyboard Close returns focus to Changes (${closedWhileLoading ? 'during loading' : 'after fast response'})`);
+  await page.waitForTimeout(250);
+  check((await turns.nth(1).locator('.diff-panel').count()) === 0, 'closed preview remains closed after pending response');
+  await page.keyboard.press('Enter');
+  const diff = turns.nth(1).locator('.diff-panel');
+  await diff.waitFor({ timeout: 30_000 });
+  check((await diff.locator('.undo-scope').innerText()).includes('every later turn'), 'full undo scope visible before action');
+  const preview = diff.locator('.diff-files');
+  check((await preview.evaluate(el => getComputedStyle(el).overscrollBehavior)).includes('contain'), 'diff scrolling is contained');
+  const patches = diff.locator('.diff-patch');
+  if (await patches.count()) {
+    check((await patches.first().evaluate(el => getComputedStyle(el).userSelect)) === 'text', 'patch text remains selectable');
+  }
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page overflow at phone width');
+  await page.screenshot({ path: out, fullPage: true });
+  await diff.getByRole('button', { name: 'Undo this turn', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await pane.getByRole('status').filter({ hasText: 'Turn and all later file and conversation changes undone.' }).waitFor({ timeout: 30_000 });
+  await page.waitForFunction(() => document.activeElement?.matches('.composer textarea:not(:disabled), .undo-status'));
+  check(true, 'undo moves keyboard focus to surviving composer or status');
+  check((await pane.locator('.user').count()) === 1, 'selected and later conversation turns removed');
+  check((await pane.locator('.turn-changes').count()) === 1, 'selected and later checkpoint controls removed');
+  await page.reload();
+  await waitFor('header.status[data-state="Live"]', 60_000);
+  await page.locator('.session-row').first().tap();
+  await pane.locator('.user').waitFor();
+  check((await pane.locator('.user').count()) === 1, 'undo survives reconnect and durable replay');
 } else if (scenario === 'codex') {
   // fixtures/e2e/codex-two-threads.jsonl: two threads start, then a turn on
   // each; the first asks to run a command and is approved, the second is

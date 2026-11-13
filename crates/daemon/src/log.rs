@@ -95,6 +95,9 @@ enum LogMsg {
     Append {
         session: SessionId,
         kind: EventKind,
+        reply: oneshot::Sender<Event>,
+    },
+    Barrier {
         reply: oneshot::Sender<()>,
     },
     Welcome {
@@ -155,12 +158,27 @@ impl Log {
     /// Acknowledges after the durable write, or after staging in the active
     /// command's transaction. The command receipt commits its staged events.
     pub async fn append(&self, session: SessionId, kind: EventKind) -> Result<(), Stopped> {
+        let _ = self.record(session, kind).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn record(
+        &self,
+        session: SessionId,
+        kind: EventKind,
+    ) -> Result<Event, Stopped> {
         self.ask(|reply| LogMsg::Append {
             session,
             kind,
             reply,
         })
         .await
+    }
+
+    /// Undo's durable intent/phase boundary before external Git/provider effects.
+    /// Keeps the command active, but commits its explicit recovery state now.
+    pub(crate) async fn barrier(&self) -> Result<(), Stopped> {
+        self.ask(|reply| LogMsg::Barrier { reply }).await
     }
 
     pub(crate) async fn begin(&self, key: CommandId) -> Result<BeginCommand, Stopped> {
@@ -245,6 +263,14 @@ impl LogActor {
 
     fn on(&mut self, msg: LogMsg) -> anyhow::Result<()> {
         match msg {
+            LogMsg::Barrier { reply } => {
+                self.commit()?;
+                if let Some(active) = &self.active {
+                    let _ = active;
+                    self.transaction = self.storage.as_ref().map(Storage::begin).transpose()?;
+                }
+                let _ = reply.send(());
+            }
             LogMsg::Shutdown { reply } => {
                 let _ = reply.send(());
             }
@@ -261,13 +287,10 @@ impl LogActor {
             LogMsg::Finish { key, result, reply } => {
                 if let Some(write) = self.transaction.take() {
                     storage::receipt(&write, key, &result)?;
-                    write.commit()?;
+                    self.transaction = Some(write);
                 }
+                self.commit()?;
                 self.active = None;
-                let staged = std::mem::take(&mut self.staged);
-                for event in staged {
-                    self.publish(event);
-                }
                 let _ = reply.send(());
                 if let Some(start) = self.waiting.pop_front() {
                     self.begin(start)?;
@@ -313,13 +336,14 @@ impl LogActor {
                     session,
                     kind,
                 };
+                let recorded = event.clone();
                 match &self.active {
                     Some(_) => self.staged.push(event),
                     None => {
                         let _ = self.live.send(event);
                     }
                 }
-                let _ = reply.send(());
+                let _ = reply.send(recorded);
             }
             LogMsg::Append {
                 session,
@@ -335,6 +359,7 @@ impl LogActor {
                     session,
                     kind,
                 };
+                let recorded = event.clone();
                 match (&self.storage, &self.transaction) {
                     (_, Some(write)) => {
                         storage::event(write, &event)?;
@@ -351,7 +376,7 @@ impl LogActor {
                         None => self.publish(event),
                     },
                 }
-                let _ = reply.send(());
+                let _ = reply.send(recorded);
             }
             LogMsg::Welcome { providers, reply } => {
                 let _ = reply.send(Welcome {
@@ -400,6 +425,17 @@ impl LogActor {
                 };
                 let _ = start.reply.send(BeginCommand::Execute(lease));
             }
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) -> anyhow::Result<()> {
+        if let Some(write) = self.transaction.take() {
+            write.commit()?;
+        }
+        let staged = std::mem::take(&mut self.staged);
+        for event in staged {
+            self.publish(event);
         }
         Ok(())
     }
@@ -577,6 +613,63 @@ mod durability_tests {
             BeginCommand::Execute(_) => None,
         };
         assert_eq!(cached, Some(CommandResult::Accepted));
+        reopened.shutdown().await.unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn cancelled_undo_preserves_committed_intent_but_rolls_back_its_suffix() {
+        let path = std::env::temp_dir().join(format!(
+            "conductor-undo-barrier-{}.redb",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let log = Log::open(String::from("test"), &path).unwrap();
+        let command = lease(&log, 9).await.unwrap();
+        let started = EventKind::UndoStarted {
+            checkpoint: proto::CheckpointId(2),
+            restore: proto::CheckpointId(1),
+            history: proto::HistoryAnchor::Fresh,
+        };
+        log.append(SessionId(1), started.clone()).await.unwrap();
+        log.barrier().await.unwrap();
+        assert_eq!(
+            log.subscribe(HostSeq(0))
+                .await
+                .unwrap()
+                .replay
+                .into_iter()
+                .map(|event| event.kind)
+                .collect::<Vec<EventKind>>(),
+            Vec::from([started.clone()])
+        );
+        log.append(
+            SessionId(1),
+            EventKind::UndoHistoryRestored {
+                checkpoint: proto::CheckpointId(2),
+                history: proto::HistoryAnchor::Fresh,
+            },
+        )
+        .await
+        .unwrap();
+        let inbox = log.inbox.clone();
+        drop(command);
+        tokio::time::timeout(Duration::from_secs(2), inbox.closed())
+            .await
+            .unwrap();
+        let reopened = Log::open(String::from("test"), &path).unwrap();
+        assert_eq!(
+            reopened
+                .history()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|event| event.kind)
+                .collect::<Vec<EventKind>>(),
+            Vec::from([started])
+        );
+        let retried = lease(&reopened, 9).await.unwrap();
+        retried.finish(CommandResult::Accepted).await.unwrap();
         reopened.shutdown().await.unwrap();
         let _ = std::fs::remove_file(path);
     }

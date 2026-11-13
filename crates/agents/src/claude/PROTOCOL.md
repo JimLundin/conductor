@@ -228,3 +228,36 @@ From the 2026-11-12 `s1` run, steps 11 to 13, and probes the same day.
   a content block array without `session_id`, where the SDK sends a string
   with `"session_id": "default"`. The CLI accepts both. (Every session.)
 - stderr was empty in every run.
+
+## Native conversation undo
+
+Verified against 2.1.316 on 2026-11-13; `s1` step 14 drives the adapter.
+
+- `--resume=<source> --resume-session-at=<entry UUID> --fork-session`
+  loads a prefix **including** that entry into a new conversation. The
+  boundary is the top-level transcript `uuid`, never `message.id` (`msg_…`).
+  Files are restored separately by the host's Git checkpoints.
+- `--session-id <target UUID>` with that fork selects the new native id.
+  `initialize` accepts the fork but does not persist a target transcript;
+  an immediate restart with `--resume=<target>` fails. Persist and replay
+  the source, boundary and target recipe until a real user turn creates the
+  new transcript. `ClaudeSession::id()` alone does not prove persistence.
+  Recovery can first resume the target. Only the exact missing-transcript
+  reason for that requested id becomes `Error::MissingSession`; other
+  failures stay errors and must not trigger an implicit prefix fork.
+- The first actual turn reports the chosen target in `system/init` and
+  `result`. After that turn, `--resume=<target>` keeps the prefix. A two-turn
+  codeword probe retained the first word and forgot the second, including
+  after ordinary Continue. `s1` also restarts the unmaterialized fork recipe.
+- We always pass `--replay-user-messages`. Top-level assistant and user
+  entries expose transcript UUIDs; subagent entries with
+  `parent_tool_use_id` stay `Unknown`. The actor resets its boundary on each
+  successfully sent user command and attaches the latest root entry to
+  `TurnFinished.last_message`. Missing UUIDs yield no safe retained anchor.
+- An interrupted turn with no assistant reply persisted a user entry and
+  the user marker `[Request interrupted by user]`; a prefix fork through the
+  marker retained the interrupted prompt. A user transcript entry is a
+  valid inclusive boundary, including tool-result entries; the dedicated
+  interrupt probe verified the no-assistant case.
+- Undoing the first turn starts a fresh conversation. No retained entry
+  exists. `rewind_files` is file-only and is not used for conversation undo.

@@ -5,7 +5,7 @@
 # turns and continues the session. It costs a few cents of API use, so it is
 # not part of tools/check.sh.
 #
-#   tools/live-host.sh [--provider claude|codex] [--register] [--data-dir DIR] [log-dir]
+#   tools/live-host.sh [--provider claude|codex] [--register] [--undo] [--data-dir DIR] [log-dir]
 #
 # The host runs the pinned CLIs in its private homes, so it needs a
 # credential or a sign-in there. --register sends the credentials this
@@ -18,6 +18,9 @@
 # used and removed; not under /tmp, where Codex refuses to create its
 # helper binaries in CODEX_HOME.
 #
+# --undo adds two edit/codeword turns, reads the second diff, undoes that
+# turn, and checks restored files plus retained conversation history.
+#
 # Prints one RESULT line. Exits non-zero on a failed check. Each run's output
 # and the host's own log are kept in log-dir (default: a temp dir).
 set -euo pipefail
@@ -25,10 +28,12 @@ cd "$(dirname "$0")/.."
 provider=claude
 data_dir=
 register=keep
+undo_check=no
 while [ $# -gt 0 ]; do
   case $1 in
     --provider) provider=$2; shift 2 ;;
     --register) register=env; shift ;;
+    --undo) undo_check=yes; shift ;;
     --data-dir) data_dir=$2; shift 2 ;;
     *) break ;;
   esac
@@ -45,11 +50,15 @@ target=$(tools/target-dir)
 cargo build -q -p daemon --bin conductord
 cargo build -q -p client --example headless
 
-scratch=/tmp/live-host-scratch
+scratch=$(mktemp -d /tmp/live-host-scratch.XXXXXX)
 logs=${1:-$(mktemp -d)}
 mkdir -p "$logs"
-rm -rf "$scratch"
-mkdir -p "$scratch"
+git -C "$scratch" init -q
+printf 'source stays untouched\n' > "$scratch/source.txt"
+git -C "$scratch" add source.txt
+git -C "$scratch" -c user.name=Conductor -c user.email=conductor@example.invalid \
+  commit -q -m "Live check baseline" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+source_index=$(git -C "$scratch" hash-object .git/index)
 cleanup=
 if [ -z "$data_dir" ]; then
   data_dir=$(mktemp -d "$target/live-host.XXXXXX")
@@ -62,7 +71,7 @@ models=(--claude-model haiku --codex-model gpt-6-luna)
   >"$logs/host.out" 2>"$logs/host.log" &
 host_pid=$!
 # SIGINT lets the host stop its CLIs, which keep writing in the data dir.
-trap 'kill -INT $host_pid 2>/dev/null || true; wait $host_pid 2>/dev/null || true; [ -z "$cleanup" ] || rm -rf "$cleanup"' EXIT
+trap 'kill -INT $host_pid 2>/dev/null || true; wait $host_pid 2>/dev/null || true; [ -z "$cleanup" ] || { rm -rf "$cleanup"; rm -rf "$scratch"; }' EXIT
 # The first start in a data dir downloads the pinned CLIs.
 for _ in $(seq 600); do
   grep -q '^ticket:' "$logs/host.out" && break
@@ -115,7 +124,9 @@ case $provider in
 esac
 leak_cmd="for v in PATH $leak_vars; do env | grep -c \"^\$v=\"; done | tr '\\n' ' ' > leak.txt"
 leak=$(turn leak Completed --prompt "Run this exact shell command in the current directory, unchanged, then say done: $leak_cmd")
-leak_counts=$(sed 's/ *$//' "$scratch/leak.txt" 2>/dev/null || echo missing)
+workspace() { sed -n 's/^.*] workspace //p' "$1" | tail -n 1; }
+leak_workspace=$(workspace "$logs/leak.out")
+leak_counts=$(sed 's/ *$//' "$leak_workspace/leak.txt" 2>/dev/null || echo missing)
 sandboxed=yes
 command -v bwrap >/dev/null && command -v socat >/dev/null || sandboxed=no
 case $provider$sandboxed:$leak:$leak_counts in
@@ -145,11 +156,28 @@ grep -q 'continue after .* -> Accepted' "$continue_out" &&
   grep -v '(history)' "$continue_out" | grep -qi 'AssistantMessage { text: "quince' &&
   grep -q 'turn completed$' "$continue_out" && continued=pass
 
+approve_workspace=$(workspace "$logs/approve.out")
 file=missing
-[ -f "$scratch/a.txt" ] && file="present:$(tr -d '\n' <"$scratch/a.txt")"
+[ -f "$approve_workspace/a.txt" ] && file="present:$(tr -d '\n' <"$approve_workspace/a.txt")"
 case "$file" in present:hello) ;; *) approve=fail ;; esac
+undo=skipped
+if [ "$undo_check" = yes ]; then
+  undo=$(turn undo Completed --timeout-secs 300 \
+    --prompt "My retained codeword is amber. Create undo.txt containing exactly retained, in the current directory. Then reply done." \
+    --then-undo "My discarded codeword is cobalt. Replace undo.txt with exactly discarded and create discarded-only.txt containing exactly discarded, in the current directory. Then reply done.")
+  grep -q 'undo verified retained history' "$logs/undo.out" || undo=fail
+  grep -v '(history)' "$logs/undo.out" | grep -q 'TurnsUndone' || undo=fail
+  undo_workspace=$(workspace "$logs/undo.out")
+  [ "$(cat "$undo_workspace/undo.txt" 2>/dev/null)" = retained ] || undo=fail
+  [ ! -e "$undo_workspace/discarded-only.txt" ] || undo=fail
+fi
+source=pass
+[ -z "$(git -C "$scratch" status --porcelain)" ] || source=fail
+[ "$(git -C "$scratch" hash-object .git/index)" = "$source_index" ] || source=fail
 interrupt=direct
 grep -q 'holding the interrupt until the turn starts' "$logs/host.log" && interrupt=held
 grep -q 'holding the interrupt' "$logs/host.log" && ! grep -q 'sending the held interrupt' "$logs/host.log" && at_send=fail
-echo "RESULT provider=$provider register=$register approve=$approve first-delta=$delta at-send=$at_send continue=$continued leak=$leak leak-counts=${leak_counts// /,} a.txt=$file interrupt-at-send=$interrupt logs=$logs"
+echo "RESULT provider=$provider register=$register approve=$approve first-delta=$delta at-send=$at_send continue=$continued leak=$leak leak-counts=${leak_counts// /,} undo=$undo source=$source source-repo=$scratch a.txt=$file interrupt-at-send=$interrupt logs=$logs"
 case $approve$delta$at_send$continued:$leak in passpasspasspass:pass | passpasspasspass:unprotected) ;; *) exit 1 ;; esac
+
+case $undo:$source in skipped:pass | pass:pass) ;; *) exit 1 ;; esac

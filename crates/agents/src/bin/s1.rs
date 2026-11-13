@@ -12,8 +12,9 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, PermissionDecision,
-    PermissionMode, PermissionRequestId, Role, SessionId, SettingSource, VersionPolicy,
+    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, MessageId,
+    PermissionDecision, PermissionMode, PermissionRequestId, Resume, Role, SessionId,
+    SettingSource, VersionPolicy,
 };
 use agents::install::{Cli, install};
 use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
@@ -117,6 +118,7 @@ struct Turn {
     exited: Option<String>,
     finished: Option<Finished>,
     session_id: Option<SessionId>,
+    last_message: Option<MessageId>,
     /// What `interrupt()` returned, once the plan called it.
     interrupted: Option<Result<(), Error>>,
     /// The permission request `InterruptOnPermission` left open.
@@ -141,6 +143,7 @@ impl Turn {
             exited: None,
             finished: None,
             session_id: None,
+            last_message: None,
             interrupted: None,
             open: None,
         };
@@ -175,6 +178,7 @@ impl Turn {
             ClaudeEvent::Message {
                 role: Role::Assistant,
                 content,
+                ..
             } => {
                 self.on_reply(content);
                 Ok(Progress::Playing)
@@ -191,6 +195,7 @@ impl Turn {
             ClaudeEvent::Message {
                 role: Role::User,
                 content,
+                ..
             } => {
                 self.tool_errors
                     .extend(content.into_iter().filter_map(|block| match block {
@@ -247,8 +252,10 @@ impl Turn {
                 outcome,
                 terminal_reason,
                 session_id,
+                last_message,
                 ..
             } => {
+                self.last_message = last_message;
                 self.finished = Some(Finished {
                     subtype,
                     outcome,
@@ -365,7 +372,7 @@ fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>
         model: Some(String::from("haiku")),
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume,
+        resume: resume.map_or(Resume::Fresh, Resume::Session),
         project_name: None,
         // Keep the user's own hooks and plugins out of the spike.
         setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
@@ -713,6 +720,84 @@ async fn questions(
     Ok((question, for_session, withdrawn, duplicate))
 }
 
+/// The prefix recipe survives a stop before the fork's first actual turn;
+/// after that turn, Continue uses its confirmed new native id.
+async fn undo_history(claude: &Path, fixtures: Option<&Path>) -> Result<Verdict> {
+    let first = Turn::start(
+        spawn(claude, None, log_path(fixtures, "session6-undo-original")).await?,
+        "Remember my retained codeword is amber. Reply only amber. Do not use tools.",
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    let through = first
+        .last_message
+        .context("completed first turn had no transcript UUID")?;
+    let source = first.live.session.id().clone();
+    let second = Turn::start(
+        first.live,
+        "Remember my discarded codeword is cobalt. Reply only cobalt. Do not use tools.",
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    let _ = second.live.session.shutdown().await?;
+    let target = SessionId(uuid::Uuid::new_v4().to_string());
+    let fork = ClaudeOptions {
+        resume: Resume::Fork {
+            session: source,
+            through,
+            target: target.clone(),
+        },
+        ..options(claude, None, log_path(fixtures, "session7-undo-fork"))
+    };
+    let (session, _events) = ClaudeSession::spawn(fork.clone()).await?;
+    let _ = session.shutdown().await?;
+    let (session, events) = ClaudeSession::spawn(fork).await?;
+    let prompt = "What are my retained and discarded codewords? Reply only <retained>/<discarded>, using unknown for a codeword not supplied in this conversation. Do not use tools.";
+    let after = Turn::start(
+        Live { session, events },
+        prompt,
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    let actual = after.session_id.clone();
+    let text = after.text.clone();
+    let _ = after.live.session.shutdown().await?;
+    let continued = Turn::start(
+        spawn(
+            claude,
+            Some(target.clone()),
+            log_path(fixtures, "session8-undo-continued"),
+        )
+        .await?,
+        prompt,
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    let verdict = report(
+        "14 undo native history and Continue",
+        match (
+            text.trim(),
+            continued.text.trim(),
+            actual.as_ref(),
+            continued.result(),
+        ) {
+            (
+                "amber/unknown",
+                "amber/unknown",
+                Some(got),
+                Some(("success", TurnOutcome::Completed)),
+            ) if got == &target => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "fork target={target:?} actual={actual:?} after={text:?} continued={:?}",
+            continued.text
+        ),
+    )?;
+    let _ = continued.live.session.shutdown().await?;
+    Ok(verdict)
+}
+
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     fresh_scratch(Path::new(SCRATCH))?;
     let scratch = Path::new(SCRATCH);
@@ -912,6 +997,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let (question, for_session, withdrawn, duplicate) =
         questions(&claude, scratch, fixtures).await?;
     let (chosen, reasoning, resumed) = chosen_and_killed(&claude, fixtures).await?;
+    let undo = undo_history(&claude, fixtures).await?;
     let failed = Vec::from([
         approve,
         deny,
@@ -929,6 +1015,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         chosen,
         reasoning,
         resumed,
+        undo,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

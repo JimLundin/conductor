@@ -101,7 +101,8 @@ impl Attempt {
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
-                | CommandResult::Providers(_),
+                | CommandResult::Providers(_)
+                | CommandResult::Diff(_),
             ) => Attempt::Editing,
             Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
                 Attempt::Refused(Refusal::Directory)

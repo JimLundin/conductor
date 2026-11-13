@@ -24,7 +24,7 @@ use super::config;
 use super::protocol::{
     AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, INITIALIZE, Inbound,
     Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId, answer,
-    encode, models, parse_line, thread_started, turn_id, user_agent,
+    encode, history_page, models, parse_line, thread_started, turn_id, user_agent,
 };
 
 const STDERR_TIMEOUT: Duration = Duration::from_secs(5);
@@ -61,6 +61,8 @@ pub enum Error {
     Rpc { method: String, message: String },
     #[error("codex did not answer {0} within {REQUEST_TIMEOUT:?}")]
     Timeout(String),
+    #[error("codex history exceeded 100 pages; refusing an incomplete undo check")]
+    HistoryLimit,
     #[error("no open approval with id {}", .0.0)]
     UnknownApproval(ApprovalId),
     #[error("approval {} cannot be answered with that decision", .0.0)]
@@ -224,6 +226,30 @@ impl CodexThread {
         Ok(turn_id(request(&self.server.commands, call).await?)?)
     }
 
+    /// Discards this turn and every later turn from persisted conversation
+    /// history. The thread id stays the same. The caller restores files separately.
+    pub async fn revert(&self, before: TurnId) -> Result<(), Error> {
+        let call = Call::ThreadRevert {
+            thread: self.id.clone(),
+            before,
+        };
+        let _ = request(&self.server.commands, call).await?;
+        Ok(())
+    }
+
+    /// All native turn ids in chronological order. Fails rather than return
+    /// a partial history if the bounded pagination cannot reach its end.
+    pub async fn history_turns(&self) -> Result<Vec<TurnId>, Error> {
+        History {
+            thread: self.clone(),
+            cursor: None,
+            pages: 0,
+            turns: Vec::new(),
+        }
+        .run()
+        .await
+    }
+
     /// Resolves once Codex accepts; `TurnCompleted` follows as an event.
     pub async fn interrupt(&self, turn: TurnId) -> Result<(), Error> {
         let call = Call::TurnInterrupt {
@@ -237,6 +263,57 @@ impl CodexThread {
     /// Answers one of this thread's open approvals exactly once.
     pub async fn respond(&self, id: ApprovalId, decision: Decision) -> Result<(), Error> {
         self.server.respond(id, decision).await
+    }
+}
+
+struct History {
+    thread: CodexThread,
+    cursor: Option<String>,
+    pages: usize,
+    turns: Vec<TurnId>,
+}
+
+enum HistoryProgress {
+    More,
+    Complete,
+}
+
+impl History {
+    async fn run(mut self) -> Result<Vec<TurnId>, Error> {
+        loop {
+            let page = self.next().await?;
+            match self.on_page(page) {
+                HistoryProgress::More => {}
+                HistoryProgress::Complete => break Ok(self.turns),
+            }
+        }
+    }
+
+    async fn next(&self) -> Result<(Vec<TurnId>, Option<String>), Error> {
+        match self.pages {
+            100 => Err(Error::HistoryLimit),
+            _ => Ok(history_page(
+                request(
+                    &self.thread.server.commands,
+                    Call::ThreadTurns {
+                        thread: self.thread.id.clone(),
+                        cursor: self.cursor.clone(),
+                    },
+                )
+                .await?,
+            )?),
+        }
+    }
+
+    fn on_page(&mut self, page: (Vec<TurnId>, Option<String>)) -> HistoryProgress {
+        let (turns, cursor) = page;
+        self.turns.extend(turns);
+        self.pages = self.pages.saturating_add(1);
+        self.cursor = cursor;
+        match &self.cursor {
+            Some(_) => HistoryProgress::More,
+            None => HistoryProgress::Complete,
+        }
     }
 }
 

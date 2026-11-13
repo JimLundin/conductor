@@ -144,13 +144,19 @@ impl Conductor {
             Some(Open::Command(command)) => {
                 tracing::info!(client = client.0, ?command, "command");
                 let key = command.id;
-                let result = match self.log.begin(key).await? {
-                    BeginCommand::Cached(result) => result,
-                    BeginCommand::Execute(lease) => {
-                        let result = self.command(command.body, client).await?;
-                        lease.finish(result.clone()).await?;
-                        result
-                    }
+                let result = match command.body {
+                    CommandBody::GetDiff {
+                        session,
+                        checkpoint,
+                    } => self.order(session, Order::Diff(checkpoint)).await?,
+                    body => match self.log.begin(key).await? {
+                        BeginCommand::Cached(result) => result,
+                        BeginCommand::Execute(lease) => {
+                            let result = self.command(body, client).await?;
+                            lease.finish(result.clone()).await?;
+                            result
+                        }
+                    },
                 };
                 wire::write(&mut send, &result).await?;
                 send.finish()?;
@@ -167,6 +173,17 @@ impl Conductor {
         client: ClientName,
     ) -> Result<CommandResult, Stopped> {
         match body {
+            CommandBody::GetDiff {
+                session,
+                checkpoint,
+            } => self.order(session, Order::Diff(checkpoint)).await,
+            CommandBody::UndoTurn {
+                session,
+                checkpoint,
+            } => match self.registry.relaunch(session).await? {
+                Ok((handle, launch, _)) => handle.order(Order::Undo(checkpoint, launch)).await,
+                Err(reason) => Ok(CommandResult::Rejected(reason)),
+            },
             CommandBody::StartSession {
                 provider,
                 directory,

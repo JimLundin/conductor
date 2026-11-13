@@ -905,8 +905,22 @@ pub(crate) enum Call {
     ModelList,
     ThreadStart(ThreadOptions),
     ThreadResume(ThreadId, ThreadOptions),
-    TurnStart { thread: ThreadId, text: String },
-    TurnInterrupt { thread: ThreadId, turn: TurnId },
+    ThreadRevert {
+        thread: ThreadId,
+        before: TurnId,
+    },
+    ThreadTurns {
+        thread: ThreadId,
+        cursor: Option<String>,
+    },
+    TurnStart {
+        thread: ThreadId,
+        text: String,
+    },
+    TurnInterrupt {
+        thread: ThreadId,
+        turn: TurnId,
+    },
 }
 
 #[derive(Serialize)]
@@ -935,12 +949,56 @@ struct Capabilities {
 struct ThreadParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    history_mode: Option<HistoryMode>,
     approval_policy: ApprovalPolicy,
     sandbox: Sandbox,
     cwd: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     config: ThreadConfig,
+}
+
+/// Revert requires persisted paginated history; request it at thread creation.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum HistoryMode {
+    Paginated,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadRevertParams {
+    thread_id: String,
+    before_turn_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadTurnsParams {
+    thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+    limit: u32,
+    sort_direction: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadTurnsPage {
+    data: Vec<Id>,
+    next_cursor: Value,
+}
+
+pub(crate) fn history_page(value: Value) -> serde_json::Result<(Vec<TurnId>, Option<String>)> {
+    let page = serde_json::from_value::<ThreadTurnsPage>(value)?;
+    // The field is required and nullable. Missing nextCursor must not look
+    // like a complete history, as serde's missing Option field would.
+    let cursor = serde_json::from_value::<Option<String>>(page.next_cursor)?;
+    Ok((
+        page.data.into_iter().map(|turn| TurnId(turn.id)).collect(),
+        cursor,
+    ))
 }
 
 /// The `config` overrides of every thread: the reasoning effort, if set;
@@ -987,6 +1045,8 @@ impl Call {
             Self::ModelList => "model/list",
             Self::ThreadStart(_) => "thread/start",
             Self::ThreadResume(_, _) => "thread/resume",
+            Self::ThreadRevert { .. } => "thread/revert",
+            Self::ThreadTurns { .. } => "thread/turns/list",
             Self::TurnStart { .. } => "turn/start",
             Self::TurnInterrupt { .. } => "turn/interrupt",
         }
@@ -1004,8 +1064,18 @@ impl Call {
                 },
             }),
             Self::ModelList => Ok(Value::Object(serde_json::Map::new())),
-            Self::ThreadStart(opts) => thread_params(None, opts),
-            Self::ThreadResume(thread, opts) => thread_params(Some(thread.0.clone()), opts),
+            Self::ThreadStart(opts) => thread_params(None, Some(HistoryMode::Paginated), opts),
+            Self::ThreadResume(thread, opts) => thread_params(Some(thread.0.clone()), None, opts),
+            Self::ThreadRevert { thread, before } => serde_json::to_value(ThreadRevertParams {
+                thread_id: thread.0.clone(),
+                before_turn_id: before.0.clone(),
+            }),
+            Self::ThreadTurns { thread, cursor } => serde_json::to_value(ThreadTurnsParams {
+                thread_id: thread.0.clone(),
+                cursor: cursor.clone(),
+                limit: 100,
+                sort_direction: String::from("asc"),
+            }),
             Self::TurnStart { thread, text } => serde_json::to_value(TurnStartParams {
                 thread_id: thread.0.clone(),
                 input: Vec::from([UserInput::Text { text: text.clone() }]),
@@ -1018,9 +1088,14 @@ impl Call {
     }
 }
 
-fn thread_params(thread_id: Option<String>, opts: &ThreadOptions) -> serde_json::Result<Value> {
+fn thread_params(
+    thread_id: Option<String>,
+    history_mode: Option<HistoryMode>,
+    opts: &ThreadOptions,
+) -> serde_json::Result<Value> {
     serde_json::to_value(ThreadParams {
         thread_id,
+        history_mode,
         approval_policy: opts.approval_policy,
         sandbox: opts.sandbox,
         cwd: opts.cwd.display().to_string(),
@@ -1347,6 +1422,51 @@ mod tests {
     }
 
     #[test]
+    fn history_reads_native_turns_and_cursor_only() {
+        assert_eq!(super::history_page(json(r#"{"data":[{"id":"tu_1","status":"completed","items":[]},{"id":"tu_2","status":"interrupted"}],"nextCursor":"page-2","backwardsCursor":"unused"}"#)).unwrap(),
+            (Vec::from([TurnId(String::from("tu_1")),TurnId(String::from("tu_2"))]),Some(String::from("page-2"))));
+        assert_eq!(
+            request(Call::ThreadTurns {
+                thread: ThreadId(String::from("th_1")),
+                cursor: Some(String::from("page-2"))
+            }),
+            json(
+                r#"{"id":7,"method":"thread/turns/list","params":{"threadId":"th_1","cursor":"page-2","limit":100,"sortDirection":"asc"}}"#
+            )
+        );
+    }
+
+    #[test]
+    fn incomplete_or_malformed_history_is_not_an_empty_prefix() {
+        let pages = Vec::from([
+            r#"{"data":[]}"#,
+            r#"{"data":[],"nextCursor":42}"#,
+            r#"{"data":[{"status":"completed"}],"nextCursor":null}"#,
+            r#"{"data":null,"nextCursor":null}"#,
+        ]);
+        assert_eq!(
+            pages
+                .into_iter()
+                .all(|page| super::history_page(json(page)).is_err())
+                .then_some(()),
+            Some(())
+        );
+    }
+
+    #[test]
+    fn revert_excludes_the_selected_native_turn() {
+        assert_eq!(
+            request(Call::ThreadRevert {
+                thread: ThreadId(String::from("th_1")),
+                before: TurnId(String::from("tu_2")),
+            }),
+            json(
+                r#"{"id":7,"method":"thread/revert","params":{"threadId":"th_1","beforeTurnId":"tu_2"}}"#
+            )
+        );
+    }
+
+    #[test]
     fn request_ids_accept_only_integer_and_string_shapes() {
         let cases = Vec::from([
             ("0", Some(RequestId::Integer(0))),
@@ -1392,7 +1512,7 @@ mod tests {
         assert_eq!(
             request(Call::ThreadStart(options)),
             json(
-                r#"{"id":7,"method":"thread/start","params":{
+                r#"{"id":7,"method":"thread/start","params":{"historyMode":"paginated",
                 "approvalPolicy":"on-request","sandbox":"read-only","cwd":"/tmp/s2-scratch",
                 "config":{"features":{"default_mode_request_user_input":true},
                 "model_reasoning_summary":"auto"}}}"#
@@ -1422,7 +1542,7 @@ mod tests {
         assert_eq!(
             request(Call::ThreadStart(opts())),
             json(
-                r#"{"id": 7, "method": "thread/start", "params": {
+                r#"{"id": 7, "method": "thread/start", "params": {"historyMode":"paginated",
                 "approvalPolicy": "on-request", "sandbox": "read-only", "cwd": "/tmp/s2-scratch",
                 "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low",
                 "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true}}}}"#

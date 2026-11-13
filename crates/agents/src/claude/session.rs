@@ -19,9 +19,9 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::protocol::{
-    Applied, ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision, PermissionMode,
-    PermissionRequestId, SessionId, UnsupportedVersion, applied, check_version, encode, models,
-    parse_line,
+    Applied, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound, PermissionDecision,
+    PermissionMode, PermissionRequestId, SessionId, UnsupportedVersion, applied, check_version,
+    encode, models, parse_line,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -52,6 +52,20 @@ pub enum VersionPolicy {
     AllowUntested,
 }
 
+/// Native conversation history to load. A fork is inclusive of `through`.
+/// Its target transcript is created lazily on the first real user turn, so
+/// persist this recipe until then; `id()` alone does not prove persistence.
+#[derive(Debug, Clone)]
+pub enum Resume {
+    Fresh,
+    Session(SessionId),
+    Fork {
+        session: SessionId,
+        through: MessageId,
+        target: SessionId,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct ClaudeOptions {
     pub claude_path: PathBuf,
@@ -63,7 +77,7 @@ pub struct ClaudeOptions {
     /// `None` leaves the model's default effort.
     pub effort: Option<Effort>,
     pub permission_mode: PermissionMode,
-    pub resume: Option<SessionId>,
+    pub resume: Resume,
     /// Conductor's stable session ULID isolates its transcript directory.
     pub project_name: Option<String>,
     /// `None` leaves the CLI default, which loads user, project and local settings.
@@ -86,6 +100,9 @@ pub enum Error {
     /// The CLI exited before it answered `initialize`, saying why.
     #[error("claude exited: {0}")]
     Refused(String),
+    /// Only the CLI's exact missing-transcript reason for the requested resume id.
+    #[error("claude exited: No conversation found with session ID: {}", .0.0)]
+    MissingSession(SessionId),
     #[error("claude rejected {subtype}: {message}")]
     Control { subtype: String, message: String },
     #[error("claude did not answer {0} within {CONTROL_TIMEOUT:?}")]
@@ -145,11 +162,10 @@ impl ClaudeSession {
                     .open(path)
             })
             .transpose()?;
-        // A fresh session gets its id up front; `--resume` keeps the one it has.
-        let id = opts
-            .resume
-            .clone()
-            .unwrap_or_else(|| SessionId(uuid::Uuid::new_v4().to_string()));
+        let id = match &opts.resume {
+            Resume::Fresh => SessionId(uuid::Uuid::new_v4().to_string()),
+            Resume::Session(id) | Resume::Fork { target: id, .. } => id.clone(),
+        };
         let mut child = command(&opts, &id).kill_on_drop(true).spawn()?;
         let pid = child.id();
         let ((stdin, stdout), stderr) = child
@@ -173,6 +189,7 @@ impl ClaudeSession {
             pending: HashMap::new(),
             open_permissions: HashMap::new(),
             next_request: 0,
+            last_message: None,
         };
         tokio::spawn(actor.run(commands_rx));
 
@@ -183,7 +200,10 @@ impl ClaudeSession {
             pid,
         };
         let initialize = match session.control(ControlCall::Initialize).await {
-            Err(Error::Exited) => Err(Error::Refused(refusal(&mut events_rx, last_stderr).await)),
+            Err(Error::Exited) => Err(refused(
+                &opts.resume,
+                refusal(&mut events_rx, last_stderr).await,
+            )),
             answer => answer,
         }?;
         let session = ClaudeSession {
@@ -413,8 +433,23 @@ pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
         (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) | (None, _) => {}
     }
     // One argument, so an id that starts with `-` is not read as a flag.
-    if let Some(id) = &opts.resume {
-        cmd.arg(format!("--resume={}", id.0));
+    match &opts.resume {
+        Resume::Fresh => {
+            cmd.args(["--session-id", &id.0]);
+        }
+        Resume::Session(session) => {
+            cmd.arg(format!("--resume={}", session.0));
+        }
+        Resume::Fork {
+            session,
+            through,
+            target,
+        } => {
+            cmd.arg(format!("--resume={}", session.0))
+                .arg(format!("--resume-session-at={}", through.0))
+                .arg("--fork-session")
+                .args(["--session-id", &target.0]);
+        }
     }
     if let Some(model) = &opts.model {
         cmd.args(["--model", model]);
@@ -436,16 +471,13 @@ pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
     // experimental betas, which `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`
     // turns off (PROTOCOL.md).
     cmd.args([
+        "--replay-user-messages",
         "--include-partial-messages",
         "--thinking-display",
         "summarized",
         "--permission-prompt-tool",
         "stdio",
     ]);
-    cmd.args(match &opts.resume {
-        Some(_) => Vec::new(),
-        None => Vec::from([String::from("--session-id"), id.0.clone()]),
-    });
     cmd.current_dir(&opts.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -467,6 +499,19 @@ async fn log_stderr(stderr: ChildStderr) -> Option<String> {
     .inspect(|line| tracing::warn!(target: "claude::stderr", "{line}"))
     .last()
     .await
+}
+
+/// Distinguishes an absent target from other resume failures. Recovery may
+/// replay a persisted fork recipe only for that exact missing-target reason.
+fn refused(resume: &Resume, reason: String) -> Error {
+    match (resume, reason) {
+        (Resume::Session(id), message)
+            if message == format!("No conversation found with session ID: {}", id.0) =>
+        {
+            Error::MissingSession(id.clone())
+        }
+        (_, message) => Error::Refused(message),
+    }
 }
 
 /// Why a CLI exited before it answered `initialize`: the `errors` of the
@@ -547,6 +592,7 @@ struct Actor {
     /// `can_use_tool` requests not yet answered, with what an answer needs.
     open_permissions: HashMap<PermissionRequestId, Open>,
     next_request: u64,
+    last_message: Option<MessageId>,
 }
 
 impl Actor {
@@ -609,6 +655,27 @@ impl Actor {
         };
         match inbound {
             Inbound::Event(event) => {
+                if let ClaudeEvent::Message { uuid, .. } = &event {
+                    self.last_message = uuid.clone();
+                }
+                let event = match event {
+                    ClaudeEvent::TurnFinished {
+                        subtype,
+                        outcome,
+                        terminal_reason,
+                        session_id,
+                        errors,
+                        last_message: _,
+                    } => ClaudeEvent::TurnFinished {
+                        subtype,
+                        outcome,
+                        terminal_reason,
+                        session_id,
+                        errors,
+                        last_message: self.last_message.clone(),
+                    },
+                    event => event,
+                };
                 if let ClaudeEvent::PermissionCancelled { id } = &event {
                     self.open_permissions.remove(id);
                 }
@@ -652,7 +719,11 @@ impl Actor {
     async fn on_command(&mut self, cmd: CommandMsg) {
         match cmd {
             CommandMsg::SendUser { text, reply } => {
-                let _ = reply.send(self.write(Outbound::User(text)).await);
+                let result = self.write(Outbound::User(text)).await;
+                if let Ok(()) = &result {
+                    self.last_message = None;
+                }
+                let _ = reply.send(result);
             }
             CommandMsg::Control { call, reply } => {
                 self.next_request = self.next_request.saturating_add(1);
@@ -741,8 +812,79 @@ mod tests {
 
     use proto::Effort;
 
-    use super::{ClaudeOptions, PermissionMode, SessionId, SettingSource, VersionPolicy, command};
+    use super::{
+        ClaudeOptions, PermissionMode, Resume, SessionId, SettingSource, VersionPolicy, command,
+    };
     use crate::Home;
+
+    #[test]
+    fn missing_a_different_session_is_not_a_safe_fork_fallback() {
+        let error = super::refused(
+            &Resume::Session(SessionId(String::from("target"))),
+            String::from("No conversation found with session ID: another-session"),
+        );
+        assert_eq!(
+            match error {
+                super::Error::MissingSession(id) => Some(id),
+                _ => None,
+            },
+            None
+        );
+    }
+
+    #[test]
+    fn prefix_fork_uses_inclusive_uuid_and_chosen_new_session() {
+        let cmd = command(
+            &ClaudeOptions {
+                claude_path: "/opt/claude".into(),
+                home: Home::User,
+                credential: None,
+                cwd: "/tmp".into(),
+                model: None,
+                effort: None,
+                permission_mode: PermissionMode::Default,
+                resume: Resume::Fork {
+                    session: SessionId(String::from("source")),
+                    through: super::MessageId(String::from("assistant-uuid")),
+                    target: SessionId(String::from("new-session")),
+                },
+                project_name: None,
+                setting_sources: None,
+                stdout_log: None,
+                versions: VersionPolicy::SupportedOnly,
+            },
+            &SessionId(String::from("new-session")),
+        );
+        let args = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect::<Vec<&str>>();
+        assert_eq!(
+            args,
+            Vec::from([
+                "--print",
+                "--verbose",
+                "--output-format",
+                "stream-json",
+                "--input-format",
+                "stream-json",
+                "--permission-mode",
+                "default",
+                "--resume=source",
+                "--resume-session-at=assistant-uuid",
+                "--fork-session",
+                "--session-id",
+                "new-session",
+                "--replay-user-messages",
+                "--include-partial-messages",
+                "--thinking-display",
+                "summarized",
+                "--permission-prompt-tool",
+                "stdio"
+            ])
+        );
+    }
 
     #[test]
     fn resumed_session_argv() {
@@ -755,7 +897,7 @@ mod tests {
                 model: Some(String::from("haiku")),
                 effort: Some(Effort::XHigh),
                 permission_mode: PermissionMode::Default,
-                resume: Some(SessionId(String::from("0b1c"))),
+                resume: Resume::Session(SessionId(String::from("0b1c"))),
                 project_name: Some(String::from("01JCDZ6Q0Y3K7V8M2N4P5R6S7T")),
                 setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
                 stdout_log: None,
@@ -788,6 +930,7 @@ mod tests {
                 "xhigh",
                 "--setting-sources",
                 "project,local",
+                "--replay-user-messages",
                 "--include-partial-messages",
                 "--thinking-display",
                 "summarized",

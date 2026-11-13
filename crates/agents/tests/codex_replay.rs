@@ -756,3 +756,157 @@ async fn start_and_resume_rejection_report_json_rpc_messages() {
     )
     .await;
 }
+
+struct RevertFixture {
+    server: CodexServer,
+    thread: CodexThread,
+    cwd: PathBuf,
+}
+
+async fn revert_fixture(name: &str, outcome: &str) -> RevertFixture {
+    let recording = format!(
+        "{{\"id\":1,\"result\":{{\"userAgent\":\"conductor/0.166.0\"}}}}\n\
+         {{\"id\":2,\"result\":{{\"thread\":{{\"id\":\"th_undo\"}},\"model\":\"gpt-6-luna\",\"reasoningEffort\":\"low\"}}}}\n\
+         {{\"id\":3,\"result\":{{\"turn\":{{\"id\":\"tu_first\"}}}}}}\n\
+         {{\"id\":4,\"result\":{{\"turn\":{{\"id\":\"tu_discard\"}}}}}}\n\
+         {outcome}\n\
+         {{\"id\":6,\"result\":{{\"turn\":{{\"id\":\"tu_after\"}}}}}}\n"
+    );
+    let options = refusal_options(name, &recording);
+    let cwd = options.cwd.clone();
+    let (server, _events) = CodexServer::spawn(options).await.unwrap();
+    let thread = server.start_thread(opts()).await.unwrap();
+    let _ = thread.send_turn(String::from("retain")).await.unwrap();
+    let _ = thread.send_turn(String::from("discard")).await.unwrap();
+    RevertFixture {
+        server,
+        thread,
+        cwd,
+    }
+}
+
+#[tokio::test]
+async fn revert_targets_native_turn_and_keeps_thread_usable() {
+    let live = revert_fixture(
+        "revert-ok",
+        r#"{"id":5,"result":{"thread":{"id":"th_undo","turns":[]}}}"#,
+    )
+    .await;
+    live.thread
+        .revert(TurnId(String::from("tu_discard")))
+        .await
+        .unwrap();
+    assert_eq!(
+        live.thread
+            .send_turn(String::from("after undo"))
+            .await
+            .unwrap(),
+        TurnId(String::from("tu_after"))
+    );
+    let _ = live.server.shutdown().await.unwrap();
+    let sent = std::fs::read_to_string(live.cwd.join("stdin.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|line| line.get("method").and_then(Value::as_str) == Some("thread/revert"))
+        .unwrap();
+    assert_eq!(
+        sent.get("params"),
+        Some(
+            &serde_json::from_str::<Value>(r#"{"threadId":"th_undo","beforeTurnId":"tu_discard"}"#)
+                .unwrap()
+        )
+    );
+    std::fs::remove_dir_all(live.cwd).unwrap();
+}
+
+#[tokio::test]
+async fn revert_refusal_preserves_reason_and_does_not_close_thread() {
+    let live = revert_fixture(
+        "revert-refused",
+        r#"{"id":5,"error":{"code":-32600,"message":"cannot revert an active turn"}}"#,
+    )
+    .await;
+    let error = live
+        .thread
+        .revert(TurnId(String::from("tu_discard")))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "codex rejected thread/revert: cannot revert an active turn"
+    );
+    assert_eq!(
+        live.thread
+            .send_turn(String::from("after refusal"))
+            .await
+            .unwrap(),
+        TurnId(String::from("tu_after"))
+    );
+    let _ = live.server.shutdown().await.unwrap();
+    std::fs::remove_dir_all(live.cwd).unwrap();
+}
+
+async fn history_fixture(name: &str, pages: &str) -> RevertFixture {
+    let recording = format!(
+        "{{\"id\":1,\"result\":{{\"userAgent\":\"conductor/0.166.0\"}}}}\n\
+         {{\"id\":2,\"result\":{{\"thread\":{{\"id\":\"th_history\"}},\"model\":\"gpt-6-luna\",\"reasoningEffort\":\"low\"}}}}\n{pages}\n"
+    );
+    let options = refusal_options(name, &recording);
+    let cwd = options.cwd.clone();
+    let (server, _events) = CodexServer::spawn(options).await.unwrap();
+    let thread = server.start_thread(opts()).await.unwrap();
+    RevertFixture {
+        server,
+        thread,
+        cwd,
+    }
+}
+
+#[tokio::test]
+async fn history_reads_every_page_in_chronological_order() {
+    let live = history_fixture(
+        "history-pages",
+        r#"{"id":3,"result":{"data":[{"id":"first"},{"id":"second"}],"nextCursor":"after-second"}}
+{"id":4,"result":{"data":[{"id":"third"}],"nextCursor":null}}"#,
+    )
+    .await;
+    assert_eq!(
+        live.thread.history_turns().await.unwrap(),
+        Vec::from([
+            TurnId(String::from("first")),
+            TurnId(String::from("second")),
+            TurnId(String::from("third"))
+        ])
+    );
+    let _ = live.server.shutdown().await.unwrap();
+    let requests = std::fs::read_to_string(live.cwd.join("stdin.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line.get("method").and_then(Value::as_str) == Some("thread/turns/list"))
+        .map(|line| line.get("params").cloned().unwrap())
+        .collect::<Vec<Value>>();
+    assert_eq!(requests, Vec::from([
+        serde_json::from_str::<Value>(r#"{"threadId":"th_history","limit":100,"sortDirection":"asc"}"#).unwrap(),
+        serde_json::from_str::<Value>(r#"{"threadId":"th_history","cursor":"after-second","limit":100,"sortDirection":"asc"}"#).unwrap(),
+    ]));
+    std::fs::remove_dir_all(live.cwd).unwrap();
+}
+
+#[tokio::test]
+async fn endless_history_cursor_fails_instead_of_returning_partial_prefix() {
+    let pages = std::ops::RangeInclusive::new(3,102).map(|id|format!("{{\"id\":{id},\"result\":{{\"data\":[{{\"id\":\"partial\"}}],\"nextCursor\":\"endless\"}}}}"))
+        .collect::<Vec<String>>().join("\n");
+    let live = history_fixture("history-bound", &pages).await;
+    let error = tokio::time::timeout(Duration::from_secs(20), live.thread.history_turns())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "codex history exceeded 100 pages; refusing an incomplete undo check"
+    );
+    let _ = live.server.shutdown().await.unwrap();
+    std::fs::remove_dir_all(live.cwd).unwrap();
+}

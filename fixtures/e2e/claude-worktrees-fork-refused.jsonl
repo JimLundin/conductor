@@ -1,0 +1,8 @@
+{"fake": "await", "match": {"type": "control_request"}}
+{"fake": "fail_once", "file": "fork-refused-once", "stderr": "temporary fake native fork refusal", "status": 1}
+{"type": "control_response", "response": {"subtype": "success", "request_id": "req_1", "response": {"claude_code_version": "2.1.316", "models": []}}}
+{"fake": "await", "match": {"type": "user"}}
+{"type": "system", "subtype": "init", "session_id": "$session"}
+{"fake": "files", "write": {"after-undo.txt": "continued from retained prefix\n"}}
+{"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000204", "message": {"content": [{"type": "text", "text": "Retained turn one."}]}}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}

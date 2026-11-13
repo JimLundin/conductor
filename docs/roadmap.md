@@ -4,9 +4,21 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
-- **Subset v10.** The checker pins `6fb2750`, accepting one shared
-  `ask<M, T>` free function in a crate whose actor handles share a stopped
-  error type (subset issue #3).
+- **Worktrees and turn undo** (#13). Each new session gets a managed Git
+  worktree from committed HEAD, an initial checkpoint and a snapshot per
+  actual turn. The phone shows bounded immutable diffs and can undo files
+  and conversation history to before a selected turn. Durable native-first
+  phases support retry after failure or restart; legacy sessions continue
+  in their original directory. Claude uses UUID prefix forks, Codex uses
+  verified `thread/revert` prefixes.
+
+- **Subset v14.** The checker pins `64352fd`, adopting accepted local
+  closures, structural and range patterns, immutable domain arrays, shared
+  slice outputs and unbounded domain generics. Wire conversions also gain
+  scoped boolean patterns, Serde defaults and fallback variants; const
+  embedded strings and typed error sources are allowed.
+- **Subset v10** introduced one shared `ask<M, T>` free function in a crate
+  whose actor handles share a stopped error type (subset issue #3).
 
 - **Single CLI pin source** (#28). `tools/pin` writes only
   `crates/agents/src/pins.rs`, including upstream verification notes.
@@ -81,9 +93,6 @@ Each item ends in something to try. The fleet design is
    Receipts and durable command effects commit together; external CLI actions
    sent before a crash can still lack a receipt (architecture §5.3).
    *Try:* restart the host mid-session and continue from the phone.
-5. **Worktrees.** (#13) One git worktree per session on `conductor/<ulid>`, a
-   checkpoint per turn, diffs and revert from the phone. *Try:* revert a
-   turn from the phone.
 6. **Fleet and pairing** (#14) (§6.1, §6.4 to §6.6). A fleet root key signs
    device and host certificates and replaces the shared ticket token;
    `conductord join` and *Add host*; a signed fleet config with the roster,

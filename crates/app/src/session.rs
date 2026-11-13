@@ -3,7 +3,7 @@
 use client::answers::Draft;
 use client::host_view::{
     self, Approval, Interrupt, Item, ReplyState, RequestState, Resume, SessionStatus, SessionView,
-    ToolState, Working,
+    ToolState, UndoState, Working,
 };
 use client::new_session::label;
 use dioxus::prelude::*;
@@ -12,6 +12,7 @@ use proto::{
     SessionId, ToolKind, ToolOutcome, TurnOutcome,
 };
 
+use crate::checkpoints::TurnChanges;
 use crate::sessions::short;
 use crate::{Link, PaneHeader, run_command};
 
@@ -29,8 +30,14 @@ pub(crate) fn SessionPane(
     // the focus once the agent is ready again.
     let mut continued = use_signal(bool::default);
     let provider = label(session.provider);
-    let status = session.status.word();
+    let status = match session.undo {
+        UndoState::Undoing(_) => String::from("undoing"),
+        UndoState::Failed { .. } => String::from("recovery needed"),
+        UndoState::Ready | UndoState::Undone => session.status.word(),
+    };
     let runs = runs_with(&session);
+    let checkpoints = session.checkpoints.clone();
+    let undo = session.undo.clone();
     let empty = match (&session.status, session.items.first()) {
         (_, Some(_)) => None,
         (SessionStatus::Starting, None) => Some(format!("Starting {provider}…")),
@@ -57,6 +64,29 @@ pub(crate) fn SessionPane(
                     Interrupt::Hidden => rsx! {},
                 }
             }
+            match session.workspace.as_ref() {
+                Some(workspace) => rsx! {
+                    div { class: "workspace-context",
+                        span { class: "workspace-branch", "Branch: {workspace.branch}" }
+                        details { class: "workspace-directory",
+                            summary { "Working directory" }
+                            code { "{workspace.directory.0}" }
+                        }
+                    }
+                },
+                None => rsx! { p { class: "workspace-context", "This session has no worktree checkpoints." } },
+            }
+            match undo.clone() {
+                UndoState::Undoing(_) => rsx! { p { class: "undo-status", role: "status", "Undoing this turn and all later file and conversation changes…" } },
+                UndoState::Failed { checkpoint, reason } => rsx! {
+                    div { class: "undo-status error", role: "alert",
+                        p { "Undo needs recovery: {reason}. Other actions are blocked until recovery finishes." }
+                        button { class: "undo-turn", onclick: move |_| run_command(link, notice, CommandBody::UndoTurn { session: id, checkpoint }), "Retry undo" }
+                    }
+                },
+                UndoState::Undone => rsx! { p { key: "undo-done-{id.0}", class: "undo-status", role: "status", tabindex: "-1", onmounted: move |_| { document::eval("requestAnimationFrame(() => (document.querySelector('.composer textarea:not(:disabled)') || document.querySelector('.undo-status'))?.focus())"); }, "Turn and all later file and conversation changes undone." } },
+                UndoState::Ready => rsx! {},
+            }
             div { class: "transcript",
                 div { class: "items", role: "log",
                     match empty {
@@ -71,6 +101,9 @@ pub(crate) fn SessionPane(
                             on_answer: move |(request, answers)| {
                                 run_command(link, notice, CommandBody::Answer { session: id, request, answers })
                             },
+                        }
+                        if let Some(checkpoint) = checkpoints.iter().find(|turn| turn.end == i).cloned() {
+                            TurnChanges { key: "checkpoint-{checkpoint.checkpoint.0}", session: id, checkpoint: checkpoint.checkpoint, availability: checkpoint.undo, composer: controls.composer, undo: undo.clone(), link, notice }
                         }
                     }
                     match working {
@@ -479,6 +512,7 @@ fn Composer(
             },
             textarea {
                 name: "prompt",
+                disabled: !matches!(composer, host_view::Composer::Open),
                 rows: "1",
                 placeholder: "{placeholder}",
                 autocomplete: "off",

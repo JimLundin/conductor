@@ -696,6 +696,68 @@ async fn questions(
     Ok((question, for_session, withdrawn))
 }
 
+/// A native revert removes the second turn, keeps the thread id, and stays
+/// reverted after an app-server restart and resume.
+async fn undo_history(
+    codex: &Path,
+    fixtures: Option<&Path>,
+    opts: ThreadOptions,
+) -> Result<Verdict> {
+    let live = spawn(codex, log_path(fixtures, "server6-undo-original")).await?;
+    let thread = live.server.start_thread(opts.clone()).await?;
+    let first = single(
+        live,
+        &thread,
+        "Remember my retained codeword is amber. Reply only amber. Do not use tools.",
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    let first_id = first.turn.id.clone();
+    let second = single(
+        first.live,
+        &thread,
+        "Remember my discarded codeword is cobalt. Reply only cobalt. Do not use tools.",
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    thread.revert(second.turn.id).await?;
+    let retained = thread.history_turns().await?;
+    let prompt = "What are my retained and discarded codewords? Reply only <retained>/<discarded>, using unknown for a codeword not supplied in this conversation. Do not use tools.";
+    let after = single(second.live, &thread, prompt, Plan::Answer(Policy::Approve)).await?;
+    let text = after.turn.text.clone();
+    let expected = Vec::from([
+        Vec::from([first_id.clone()]),
+        Vec::from([first_id, after.turn.id.clone()]),
+    ]);
+    let _ = after.live.server.shutdown().await?;
+    let live = spawn(codex, log_path(fixtures, "server7-undo-continued")).await?;
+    let resumed = live.server.resume_thread(thread.id.clone(), opts).await?;
+    let prefixes = Vec::from([retained, resumed.history_turns().await?]);
+    let continued = single(live, &resumed, prompt, Plan::Answer(Policy::Approve)).await?;
+    let verdict = report(
+        "13 undo native history and Continue",
+        match (
+            text.trim(),
+            continued.turn.text.trim(),
+            &continued.turn.outcome,
+            prefixes,
+        ) {
+            ("amber/unknown", "amber/unknown", Some(TurnOutcome::Completed), prefix)
+                if prefix == expected =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "thread={:?} resumed={:?} after={text:?} continued={:?}",
+            thread.id, resumed.id, continued.turn.text
+        ),
+    )?;
+    let _ = continued.live.server.shutdown().await?;
+    Ok(verdict)
+}
+
 async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     fresh_scratch(Path::new(SCRATCH))?;
     let scratch = Path::new(SCRATCH);
@@ -950,7 +1012,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let (question, for_session, withdrawn) =
         questions(&codex, scratch, fixtures, thread_opts.clone()).await?;
-    let (chosen, reasoning, resumed) = chosen_and_killed(&codex, fixtures, thread_opts).await?;
+    let (chosen, reasoning, resumed) =
+        chosen_and_killed(&codex, fixtures, thread_opts.clone()).await?;
+    let undo = undo_history(&codex, fixtures, thread_opts).await?;
     let failed = Vec::from([
         approve,
         decline,
@@ -967,6 +1031,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         chosen,
         reasoning,
         resumed,
+        undo,
     ])
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

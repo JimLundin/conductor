@@ -348,15 +348,6 @@ impl RegistryActor {
                 Some(_) => self.log.saved_conversation(id).await?,
                 None => None,
             };
-            let session = Session::restore(
-                id,
-                directory,
-                choice,
-                conversation,
-                &events,
-                self.log.clone(),
-            );
-            self.sessions.insert(id, (provider, session));
             let open = events
                 .iter()
                 .filter_map(|event| match &event.kind {
@@ -386,13 +377,16 @@ impl RegistryActor {
                     .await?;
             }
             let running = events.iter().rev().find_map(|event| match &event.kind {
-                EventKind::UserMessage { .. } => Some(RecoverTurn::Running),
+                EventKind::UserMessage { .. } | EventKind::NativeTurnStarted { .. } => {
+                    Some(RecoverTurn::Running)
+                }
                 EventKind::TurnCompleted { .. } | EventKind::SessionClosed { .. } => {
                     Some(RecoverTurn::Idle)
                 }
                 _ => None,
             });
             if let Some(RecoverTurn::Running) = running {
+                self.recover_checkpoint(id, &events).await?;
                 self.log
                     .append(
                         id,
@@ -421,8 +415,79 @@ impl RegistryActor {
                     )
                     .await?;
             }
+            let recovered = self
+                .log
+                .history()
+                .await?
+                .into_iter()
+                .filter(|event| event.session == id)
+                .collect::<Vec<Event>>();
+            let session = Session::restore(
+                id,
+                directory,
+                choice,
+                conversation,
+                &recovered,
+                self.log.clone(),
+            );
+            self.sessions.insert(id, (provider, session));
         }
         Ok(())
+    }
+
+    async fn recover_checkpoint(&self, id: SessionId, events: &[Event]) -> Result<(), Stopped> {
+        let book = crate::checkpoints::Book::replay(events);
+        let started = book
+            .snapshot
+            .as_ref()
+            .map(|snapshot| (snapshot.history.clone(), snapshot.turn_start));
+        match (started, book.workspace.as_ref(), book.recovery.as_ref()) {
+            (Some((history, turn_start)), Some(workspace), None) => {
+                let next = book.highwater.next();
+                self.log
+                    .append(id, EventKind::CheckpointReserved { checkpoint: next })
+                    .await?;
+                self.log.barrier().await?;
+                match crate::workspace::snapshot(
+                    workspace,
+                    id,
+                    next,
+                    book.last().map(|checkpoint| checkpoint.commit.as_str()),
+                )
+                .await
+                {
+                    Ok(commit) => {
+                        let undo = book.availability(&history);
+                        self.log
+                            .append(
+                                id,
+                                EventKind::CheckpointCreated {
+                                    checkpoint: proto::Checkpoint {
+                                        id: next,
+                                        parent: book.last().map(|checkpoint| checkpoint.id),
+                                        turn_start,
+                                        commit,
+                                        history,
+                                        undo,
+                                    },
+                                },
+                            )
+                            .await
+                    }
+                    Err(err) => {
+                        self.log
+                            .append(
+                                id,
+                                EventKind::Error {
+                                    message: format!("interrupted turn checkpoint failed: {err}"),
+                                },
+                            )
+                            .await
+                    }
+                }
+            }
+            _ => Ok(()),
+        }
     }
 
     /// The stored credentials. A store that doesn't open is moved aside
@@ -597,12 +662,64 @@ impl RegistryActor {
                     model: choice.model.clone(),
                     effort: choice.effort,
                 };
-                self.log.append(id, created).await?;
-                let offered = self.models(provider);
-                let session =
-                    Session::spawn(id, directory, choice, (launch, offered), self.log.clone());
-                self.sessions.insert(id, (provider, session));
-                Ok(CommandResult::Started { session: id })
+                match crate::workspace::create(self.store.dir(), &directory, id).await {
+                    Err(crate::workspace::GitError::NotRepository) => {
+                        Ok(CommandResult::Rejected(Rejection::NotGitRepository))
+                    }
+                    Err(err) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
+                        reason: err.to_string(),
+                    })),
+                    Ok(workspace) => match crate::workspace::snapshot(
+                        &workspace,
+                        id,
+                        proto::CheckpointId(0),
+                        None,
+                    )
+                    .await
+                    {
+                        Err(err) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
+                            reason: err.to_string(),
+                        })),
+                        Ok(commit) => {
+                            self.log.append(id, created).await?;
+                            let workspace_event = self
+                                .log
+                                .record(id, EventKind::WorkspaceCreated { workspace })
+                                .await?;
+                            let checkpoint_event = self
+                                .log
+                                .record(
+                                    id,
+                                    EventKind::CheckpointCreated {
+                                        checkpoint: proto::Checkpoint {
+                                            id: proto::CheckpointId(0),
+                                            parent: None,
+                                            turn_start: None,
+                                            commit,
+                                            history: proto::HistoryAnchor::Fresh,
+                                            undo: proto::UndoAvailability::Unavailable {
+                                                reason: String::from(
+                                                    "initial checkpoint has no turn",
+                                                ),
+                                            },
+                                        },
+                                    },
+                                )
+                                .await?;
+                            let offered = self.models(provider);
+                            let session = Session::spawn(
+                                id,
+                                directory,
+                                choice,
+                                (launch, offered),
+                                self.log.clone(),
+                                &[workspace_event, checkpoint_event],
+                            );
+                            self.sessions.insert(id, (provider, session));
+                            Ok(CommandResult::Started { session: id })
+                        }
+                    },
+                }
             }
         }
     }

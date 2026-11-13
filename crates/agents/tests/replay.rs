@@ -65,7 +65,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: None,
+        resume: agents::claude::Resume::Fresh,
         project_name: None,
         setting_sources: Some(Vec::from([SettingSource::Project])),
         stdout_log: None,
@@ -86,7 +86,7 @@ fn block_summary(block: &Block) -> String {
 fn summary(event: &ClaudeEvent) -> String {
     match event {
         ClaudeEvent::TurnStarted { session_id } => format!("turn_started {}", session_id.0),
-        ClaudeEvent::Message { role, content } => {
+        ClaudeEvent::Message { role, content, .. } => {
             let blocks = content.iter().map(block_summary).collect::<Vec<String>>();
             let role = match role {
                 Role::Assistant => "assistant",
@@ -655,6 +655,35 @@ async fn a_resume_with_no_transcript_fails_with_the_clis_reason() {
     );
 }
 
+#[tokio::test]
+async fn missing_requested_resume_target_has_a_typed_recovery_error() {
+    let id = agents::claude::SessionId(String::from("target"));
+    let stdout = recording(
+        "typed-resume-missing",
+        Vec::from([
+            r#"{"type":"result","subtype":"error_during_execution","session_id":"target","is_error":true,"errors":["No conversation found with session ID: target"]}"#,
+            r#"{"fake":"fail","stderr":"No conversation found with session ID: target","status":1}"#,
+        ]),
+    );
+    let claude = fake_claude("typed-resume-missing", &stdout);
+    let opts = ClaudeOptions {
+        resume: agents::claude::Resume::Session(id.clone()),
+        ..options(&claude)
+    };
+    let error = ClaudeSession::spawn(opts).await.err().unwrap();
+    assert_eq!(
+        error.to_string(),
+        "claude exited: No conversation found with session ID: target"
+    );
+    assert_eq!(
+        match error {
+            agents::claude::Error::MissingSession(missing) => Some(missing),
+            _ => None,
+        },
+        Some(id)
+    );
+}
+
 /// A CLI that prints no `result`, as one without a flag we pass, fails
 /// with its last stderr line.
 #[tokio::test]
@@ -842,4 +871,59 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
         r.session.shutdown().await.unwrap().describe(),
         "exit status: 0"
     );
+}
+
+async fn drive_boundary(
+    events: &mut mpsc::Receiver<ClaudeEvent>,
+) -> Option<agents::claude::MessageId> {
+    loop {
+        if let ClaudeEvent::TurnFinished { last_message, .. } =
+            tokio::time::timeout(Duration::from_secs(20), events.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        {
+            break last_message;
+        }
+    }
+}
+
+#[tokio::test]
+async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users() {
+    let dir = test_dir("native-boundaries");
+    let fake = FakeClaude {
+        stdin_log: dir.join("stdin.jsonl"),
+        dir: dir.clone(),
+    };
+    let recording = Vec::from([
+        INITIALIZED,
+        r#"{"fake":"await","match":{"type":"user"}}"#,
+        r#"{"type":"assistant","uuid":"retained","message":{"id":"msg_wrong","content":[{"type":"text","text":"retained"}]}}"#,
+        r#"{"type":"assistant","uuid":"nested","parent_tool_use_id":"toolu_agent","message":{"content":[{"type":"text","text":"nested"}]}}"#,
+        r#"{"type":"result","subtype":"success","session_id":"native"}"#,
+        r#"{"fake":"await","match":{"type":"user"}}"#,
+        r#"{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"native"}"#,
+        r#"{"fake":"await","match":{"type":"user"}}"#,
+        r#"{"type":"user","uuid":"prompt","message":{"content":[{"type":"text","text":"request"}]}}"#,
+        r#"{"type":"user","uuid":"interrupted","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#,
+        r#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":"native"}"#,
+    ]).join("\n");
+    std::fs::write(dir.join("stdout.jsonl"), recording).unwrap();
+    let (session, mut events) = ClaudeSession::spawn(options(&fake)).await.unwrap();
+    session.send_user(String::from("first")).await.unwrap();
+    let first = drive_boundary(&mut events).await;
+    session.send_user(String::from("second")).await.unwrap();
+    let second = drive_boundary(&mut events).await;
+    session.send_user(String::from("third")).await.unwrap();
+    let third = drive_boundary(&mut events).await;
+    assert_eq!(
+        Vec::from([first, second, third]),
+        Vec::from([
+            Some(agents::claude::MessageId(String::from("retained"))),
+            None,
+            Some(agents::claude::MessageId(String::from("interrupted")))
+        ])
+    );
+    let _ = session.shutdown().await.unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
 }
