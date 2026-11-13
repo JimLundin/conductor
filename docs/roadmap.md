@@ -11,6 +11,8 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Subset v9** (#24) introduced shape-based wire enums, optional fields
   omitted by serde, wire booleans and `@` patterns.
   The adapters use the accepted wire constructs to remove duplicate shapes.
+- **Codex start errors** (#19). Failed starts and Continue keep the
+  app-server’s JSON-RPC error or last nonempty stderr line.
 - **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,
   file changes and outcomes. The daemon keeps request ids, session state and
   approval wording.

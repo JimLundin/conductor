@@ -637,3 +637,122 @@ fn first_thread_id(fixture: &Path) -> Option<String> {
         })
         .and_then(|m| m.pointer("/params/thread/id")?.as_str().map(str::to_owned))
 }
+
+/// Each refusal recording has its own directory, even when tests run together.
+fn refusal_options(name: &str, recording: &str) -> ServerOptions {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/tmp")
+        .join(format!("codex-refusal-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cwd);
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(cwd.join("stdout.jsonl"), recording).unwrap();
+    ServerOptions {
+        codex_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        home: Home::User,
+        credential: None,
+        cwd,
+        stdout_log: None,
+    }
+}
+
+#[tokio::test]
+async fn initialize_exit_reports_last_nonempty_stderr_line() {
+    let options = refusal_options(
+        "initialize-stderr",
+        r#"{"fake":"fail","stderr":"loading config\ninvalid provider configuration\n\n","status":1}"#,
+    );
+    let cwd = options.cwd.clone();
+    let error = CodexServer::spawn(options).await.err().unwrap();
+    assert_eq!(
+        error.to_string(),
+        "the codex app-server has exited: invalid provider configuration"
+    );
+    std::fs::remove_dir_all(cwd).unwrap();
+}
+
+#[tokio::test]
+async fn initialize_exit_without_stderr_keeps_exit_error() {
+    let options = refusal_options(
+        "initialize-empty",
+        r#"{"fake":"fail","stderr":"","status":1}"#,
+    );
+    let cwd = options.cwd.clone();
+    let error = CodexServer::spawn(options).await.err().unwrap();
+    assert_eq!(error.to_string(), "the codex app-server has exited");
+    std::fs::remove_dir_all(cwd).unwrap();
+}
+
+#[tokio::test]
+async fn initialize_rejection_reports_json_rpc_message() {
+    let options = refusal_options(
+        "initialize-rpc",
+        r#"{"id":1,"error":{"code":-32600,"message":"unsupported initialize request"}}"#,
+    );
+    let cwd = options.cwd.clone();
+    let error = CodexServer::spawn(options).await.err().unwrap();
+    assert_eq!(
+        error.to_string(),
+        "codex rejected initialize: unsupported initialize request"
+    );
+    std::fs::remove_dir_all(cwd).unwrap();
+}
+
+async fn thread_refusal(method: &str, failure: &str, expected: &str) {
+    let recording = format!(
+        "{{\"id\":1,\"result\":{{\"userAgent\":\"conductor/0.166.0\"}}}}\n{{\"fake\":\"await\",\"match\":{{\"method\":\"{method}\"}}}}\n{failure}\n"
+    );
+    let options = refusal_options(&format!("{method}-{expected}"), &recording);
+    let cwd = options.cwd.clone();
+    let (server, _events) = CodexServer::spawn(options).await.unwrap();
+    let error = match method {
+        "thread/start" => server.start_thread(opts()).await.err().unwrap(),
+        "thread/resume" => server
+            .resume_thread(ThreadId(String::from("missing")), opts())
+            .await
+            .err()
+            .unwrap(),
+        _ => agents::codex::Error::Command(format!("unexpected test method {method}")),
+    };
+    assert_eq!(error.to_string(), expected);
+    // A later request must retain the same stderr reason after the actor exits.
+    if let agents::codex::Error::Refused(_) = error {
+        assert_eq!(
+            server.start_thread(opts()).await.err().unwrap().to_string(),
+            expected
+        );
+    }
+    let _ = server.shutdown().await.unwrap();
+    std::fs::remove_dir_all(cwd).unwrap();
+}
+
+#[tokio::test]
+async fn start_and_resume_exit_report_stderr() {
+    thread_refusal(
+        "thread/start",
+        r#"{"fake":"fail","stderr":"could not create thread storage","status":1}"#,
+        "the codex app-server has exited: could not create thread storage",
+    )
+    .await;
+    thread_refusal(
+        "thread/resume",
+        r#"{"fake":"fail","stderr":"could not load thread storage","status":1}"#,
+        "the codex app-server has exited: could not load thread storage",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn start_and_resume_rejection_report_json_rpc_messages() {
+    thread_refusal(
+        "thread/start",
+        r#"{"id":2,"error":{"code":-32600,"message":"invalid working directory"}}"#,
+        "codex rejected thread/start: invalid working directory",
+    )
+    .await;
+    thread_refusal(
+        "thread/resume",
+        r#"{"id":2,"error":{"code":-32600,"message":"thread not found"}}"#,
+        "codex rejected thread/resume: thread not found",
+    )
+    .await;
+}
