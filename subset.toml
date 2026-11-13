@@ -3,7 +3,7 @@
 # grows only through accepted proposals in JimLundin/subset (docs/proposals/). Each id is
 # documented in docs/subset.md there.
 
-version = 9
+version = 14
 
 # All of our code is written in the subset. tools/ (the checker itself) is
 # outside it.
@@ -50,9 +50,9 @@ allowed = [
   "expr.break",               # proposal 0007; `break value` in a drive loop
   "expr.assign",              # proposal 0008
   "expr.reference.mut",       # proposals 0008, 0023
-  "expr.array",               # proposal 0015
+  "expr.array",               # 0015, 0047, 0050; immutable values, arguments, receivers and constants
   "expr.repeat",              # proposal 0015
-  "expr.closure",             # proposals 0006, 0017, 0018, 0026; only as the listed calls' argument
+  "expr.closure",             # proposals 0006, 0017, 0018, 0026, 0046; listed calls or a confined immutable local
   "expr.lit.bool",            # proposals 0021, 0023
   "expr.if_let.single",       # proposal 0027; `if let` with no `else`, `else if` or let-chain
   "expr.match.guard",         # proposal 0040; one comparison or one `matches!`, with an unguarded arm after
@@ -72,15 +72,21 @@ allowed = [
 
   # Patterns
   "pat.ident",
-  "pat.ident.at",              # proposal 0044
   "pat.path",                 # unit variants and consts
   "pat.struct",
   "pat.tuple_struct",         # Some(x), Ok(x), Variant(x)
   "pat.lit",                  # literals except `true` / `false`
+  "pat.range",                # proposal 0049; integer/character bounds, exhaustive patterns
   "pat.or",                   # A | B in one arm
   "pat.wild",                 # `_`, only in positions clippy's wildcard rules allow
   "pat.tuple",                # proposal 0001
   "pat.ident.mut",            # proposal 0008
+  "pat.ident.at",             # proposals 0044, 0048; any permitted pattern, immutable outer binding
+  "pat.paren",                # proposal 0048; grouping preserves the inner pattern's rules
+  "pat.slice",                # proposal 0047; exhaustive array/slice matching
+  "pat.rest",                 # 0047, 0053; slices/tuples/tuple structs, bound @ only in slices
+  "pat.type",                 # proposal 0046; a confined local closure's plain parameter
+  "pat.reference",            # 0053; shared reference patterns only
 
   # Types
   "type.path",                # except `bool`
@@ -91,13 +97,13 @@ allowed = [
   "type.reference.mut",       # proposals 0008, 0023
   "type.lifetime",            # proposal 0009
   "type.lifetime.static_str", # proposal 0042; only in a `const` table's row struct
-  "type.slice",               # proposal 0014
-  "type.array",               # proposal 0015
+  "type.slice",               # 0014, 0051; parameters, constants and shared outputs
+  "type.array",               # 0015, 0050; meaningful fixed cardinality
   "type.impl_trait.arg",      # proposal 0026; only `ask`'s `build` parameter
 
   # Generics
   "generics.lifetime",        # proposal 0009
-  "generics.type_param",      # proposals 0013, 0026
+  "generics.type_param",      # 0013, 0026, 0052; unbounded domain types plus existing exceptions
 
   # Attributes
   "attr.doc",
@@ -105,6 +111,7 @@ allowed = [
   "attr.cfg_test",            # #[cfg(test)] and #[test]
   "attr.error",               # proposal 0010
   "attr.from",                # proposal 0011
+  "attr.source",              # 0057; a field of a derived error
   "attr.cfg",                 # proposal 0016
   "attr.tokio::test",         # proposal 0020
 
@@ -123,6 +130,7 @@ macros = [
   "tracing::trace", "tracing::debug", "tracing::info", "tracing::warn", "tracing::error",
   "tokio::select",            # proposal 0007
   "env",                      # proposal 0022
+  "include_str",              # 0056; one literal path in a const initializer
 ]
 
 # Extra macros allowed only inside #[cfg(test)] code and tests/.
@@ -148,7 +156,7 @@ closure_methods = [
   "try_for_each", "unwrap_or_else",
   "with_context",             # anyhow's `Result` extension
   "then",                     # a stream's `then`, whose body is an async block (0006)
-  "ask",                      # an actor handle's request helper (0026)
+  "ask",                      # an actor handle's or crate's request helper (0026, issue #3)
 ]
 
 # Proposal 0039: types and traits that read by changing their buffer, so a
@@ -199,6 +207,11 @@ allowed = ["attr.allow"]
 rule = "serde derives only on wire types in crates/proto and the agents' provider protocol modules (proposal 0012)"
 paths = ["crates/proto/**", "crates/agents/src/*/protocol.rs"]
 allowed = ["attr.derive.Serialize", "attr.derive.Deserialize", "attr.serde"]
+
+[[scope]]
+rule = "boolean patterns only for boundary-to-domain conversion in wire modules (0054)"
+paths = ["crates/proto/**", "crates/agents/src/*/protocol.rs"]
+allowed = ["pat.lit.bool"]
 
 [[scope]]
 rule = "clap only in a binary's main.rs and in examples/ (proposal 0019)"
@@ -266,11 +279,15 @@ boundary = 1.0
 "type.field" = "encouraged"
 "expr.match" = "encouraged"
 "pat.ident" = "encouraged"
-"pat.ident.at" = "encouraged"
+"pat.ident.at" = "encouraged"       # 0044, 0048
+"pat.slice" = "encouraged"          # 0047
+"pat.rest" = "encouraged"           # 0047, 0053
 "pat.path" = "encouraged"
 "pat.struct" = "encouraged"
 "pat.tuple_struct" = "encouraged"
 "pat.lit" = "encouraged"
+"pat.range" = "encouraged"        # 0049
+"pat.lit.bool" = "encouraged"      # 0054; scoped conversion
 "pat.or" = "encouraged"
 "pat.wild" = "encouraged"
 "expr.method_call.adapter" = "encouraged"
@@ -293,6 +310,8 @@ boundary = 1.0
 "expr.lit" = "neutral"
 "expr.block" = "neutral"
 "expr.paren" = "neutral"
+"pat.paren" = "neutral"             # 0048
+"pat.reference" = "neutral"         # 0053
 "expr.reference" = "neutral"
 "expr.closure.adapter" = "neutral"
 "expr.array" = "neutral"
@@ -307,6 +326,7 @@ boundary = 1.0
 "attr.cfg_test" = "neutral"
 "attr.error" = "neutral"
 "attr.from" = "neutral"
+"attr.source" = "neutral"           # 0057
 "attr.tokio::test" = "neutral"
 "attr.serde" = "neutral"
 "attr.derive.Serialize" = "neutral"
@@ -342,8 +362,9 @@ boundary = 1.0
 "expr.unary.not" = "tolerated"
 "macro.matches" = "tolerated"
 "type.impl_trait.arg" = "tolerated"   # 0026
-"expr.closure" = "tolerated"          # 0006, 0017, 0018, 0026
-"generics.type_param" = "tolerated"   # 0013, 0026
+"expr.closure" = "tolerated"          # 0006, 0017, 0018, 0026, 0046
+"pat.type" = "tolerated"              # 0046
+"generics.type_param" = "tolerated"   # 0013, 0026, 0052
 "generics.lifetime" = "tolerated"     # 0009
 "type.lifetime" = "tolerated"
 "type.lifetime.static_str" = "tolerated"  # 0042

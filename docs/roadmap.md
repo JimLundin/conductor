@@ -4,9 +4,14 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
-- **Subset v9** (#24). The checker pins `0a5aaca`, with shape-based wire
-  enums, optional fields omitted by serde, wire booleans and `@` patterns.
+- **Subset v14** (#24). The checker pins `64352fd`, with shared actor ask
+  helpers, confined immutable local closures, exhaustive range/reference/slice
+  patterns, fixed-size domain arrays, shared slice outputs and unbounded generic
+  domain models. Boundary rules also allow scoped boolean patterns, Serde
+  defaults and fallback variants, embedded strings and typed error sources.
   The adapters use the accepted wire constructs to remove duplicate shapes.
+  Callback APIs, runtime comparisons, actor setup and platform attributes remain
+  under review in JimLundin/subset#5.
 - **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,
   file changes and outcomes. The daemon keeps request ids, session state and
   approval wording.
