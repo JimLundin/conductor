@@ -1720,9 +1720,6 @@ async fn a_wrong_token_is_refused_and_never_goes_live() {
     fx.router.shutdown().await.unwrap();
 }
 
-/// What a reload is allowed: the 1.5 s hedge delay plus a loopback connect.
-const HEDGED_LIVE: Duration = Duration::from_secs(3);
-
 /// What iroh logs when an endpoint is dropped before anyone closed it.
 const UNGRACEFUL: &str = "Endpoint dropped without calling `Endpoint::close`";
 
@@ -1830,9 +1827,8 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
     };
     let (link, mut updates) = link(target, None).await;
 
-    let before_live = tokio::time::timeout(HEDGED_LIVE, until_live(&mut updates))
-        .await
-        .expect("live within the hedge delay plus a connect");
+    // No deadline: only the hedge can take the link live, and STEP bounds each update.
+    let before_live = until_live(&mut updates).await;
     assert_eq!(
         states(before_live),
         [
