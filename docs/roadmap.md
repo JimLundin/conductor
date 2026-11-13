@@ -4,8 +4,12 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
-- **Subset v9** (#24). The checker pins `0a5aaca`, with shape-based wire
-  enums, optional fields omitted by serde, wire booleans and `@` patterns.
+- **Subset v10.** The checker pins `6fb2750`, accepting one shared
+  `ask<M, T>` free function in a crate whose actor handles share a stopped
+  error type (subset issue #3).
+
+- **Subset v9** (#24) introduced shape-based wire enums, optional fields
+  omitted by serde, wire booleans and `@` patterns.
   The adapters use the accepted wire constructs to remove duplicate shapes.
 - **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,
   file changes and outcomes. The daemon keeps request ids, session state and

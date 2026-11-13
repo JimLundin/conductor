@@ -3,7 +3,7 @@
 # grows only through accepted proposals in JimLundin/subset (docs/proposals/). Each id is
 # documented in docs/subset.md there.
 
-version = 9
+version = 10
 
 # All of our code is written in the subset. tools/ (the checker itself) is
 # outside it.
@@ -93,11 +93,11 @@ allowed = [
   "type.lifetime.static_str", # proposal 0042; only in a `const` table's row struct
   "type.slice",               # proposal 0014
   "type.array",               # proposal 0015
-  "type.impl_trait.arg",      # proposal 0026; only `ask`'s `build` parameter
+  "type.impl_trait.arg",      # proposal 0026; only `ask`'s `build` parameter (handle or crate)
 
   # Generics
   "generics.lifetime",        # proposal 0009
-  "generics.type_param",      # proposals 0013, 0026
+  "generics.type_param",      # proposals 0013, 0026; crate-level `ask<M, T>` in v10
 
   # Attributes
   "attr.doc",
@@ -148,7 +148,7 @@ closure_methods = [
   "try_for_each", "unwrap_or_else",
   "with_context",             # anyhow's `Result` extension
   "then",                     # a stream's `then`, whose body is an async block (0006)
-  "ask",                      # an actor handle's request helper (0026)
+  "ask",                      # an actor handle's or crate's request helper (0026, issue #3)
 ]
 
 # Proposal 0039: types and traits that read by changing their buffer, so a
