@@ -55,8 +55,11 @@ revision and `subset.toml` gains the id.
 
 ## 4. Clean up
 
-When the branch is merged (or abandoned), remove the worktrees and their
-branches (`git worktree remove ../conductor-<task>`, `git branch -d
+When the branch is merged (or abandoned), first copy the round's friction
+log into the main checkout's `.audit/` (`cp ../conductor-<task>/.audit/*.friction.md
+.audit/`): `.audit/` is gitignored, so the log goes with the worktree
+otherwise, and step 3 needs it at the end of the milestone. Then remove the
+worktrees and their branches (`git worktree remove ../conductor-<task>`, `git branch -d
 <branch>`) and any scratch run logs. Each worktree builds in its own
 `./target`, so removing it frees most of the disk a round used.
 
