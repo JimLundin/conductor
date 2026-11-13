@@ -4,6 +4,10 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Single CLI pin source** (#28). `tools/pin` writes only
+  `crates/agents/src/pins.rs`, including upstream verification notes.
+  Fixture and supported-version checks use the compiled pins.
+
 - **Subset v9** (#24). The checker pins `0a5aaca`, with shape-based wire
   enums, optional fields omitted by serde, wire booleans and `@` patterns.
   The adapters use the accepted wire constructs to remove duplicate shapes.
