@@ -1,4 +1,4 @@
-//! Installs the pinned CLIs (`pins.toml`, docs/architecture.md §6.2). Each
+//! Installs the pinned CLIs (`pins.rs`, docs/architecture.md §6.2). Each
 //! one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
 //! file, a SHA-256 check of that file against the pin and a rename, so a
 //! crash leaves either nothing or a verified install. `<data>/cli/<cli>/lock`
@@ -359,11 +359,11 @@ fn make_executable(_path: &Path) -> std::io::Result<()> {
 }
 
 /// The pin and the protocol code move together (docs/architecture.md §6.2):
-/// `pins.rs` is `pins.toml`, each pinned version has a fixture recorded at
-/// it, and Claude's is in the supported range.
+/// each pinned version has a fixture recorded at it, and Claude's is in
+/// the supported range.
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use serde_json::Value;
@@ -376,41 +376,6 @@ mod tests {
 
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
-
-    /// One provider's section of `pins.toml`.
-    struct Recorded {
-        version: String,
-        sha256: BTreeMap<String, String>,
-    }
-
-    fn pinned(cli: &str) -> Recorded {
-        let text = std::fs::read_to_string(root().join("pins.toml")).unwrap();
-        let doc = text.parse::<toml_edit::DocumentMut>().unwrap();
-        let table = doc.get(cli).unwrap();
-        Recorded {
-            version: table
-                .get("version")
-                .and_then(|version| version.as_str())
-                .map(String::from)
-                .unwrap(),
-            sha256: table
-                .get("sha256")
-                .and_then(|hashes| hashes.as_table_like())
-                .unwrap()
-                .iter()
-                .map(|(key, value)| (String::from(key), String::from(value.as_str().unwrap())))
-                .collect(),
-        }
-    }
-
-    /// Each hash in `pins.toml` by its key, beside the one `pins.rs` has.
-    fn hashes(recorded: &Recorded) -> BTreeMap<String, Option<String>> {
-        recorded
-            .sha256
-            .iter()
-            .map(|(key, value)| (key.clone(), Some(value.clone())))
-            .collect()
     }
 
     /// Every string at `pointer` in the lines recorded in `fixtures/<dir>`.
@@ -432,25 +397,14 @@ mod tests {
     }
 
     #[test]
-    fn claude_pin_is_compiled_recorded_and_supported() {
-        let pin = pinned("claude");
-        let in_rs = pin
-            .sha256
-            .keys()
-            .map(|key| (key.clone(), pins::claude_sha256(key)))
-            .collect::<BTreeMap<String, Option<String>>>();
+    fn claude_pin_is_recorded_and_supported() {
+        let version = String::from(pins::CLAUDE_VERSION);
         let versions = recorded("claude", "/response/response/claude_code_version");
         let initialize =
-            serde_json::from_str(&format!("{{\"claude_code_version\": \"{}\"}}", pin.version))
-                .unwrap();
+            serde_json::from_str(&format!("{{\"claude_code_version\": \"{}\"}}", version)).unwrap();
         assert_eq!(
-            (pin.version.as_str(), in_rs),
-            (pins::CLAUDE_VERSION, hashes(&pin)),
-            "pins.rs is not pins.toml; run tools/pin"
-        );
-        assert_eq!(
-            versions.get(&pin.version),
-            Some(&pin.version),
+            versions.get(&version),
+            Some(&version),
             "no fixture in fixtures/claude was recorded at the pinned claude; run s1"
         );
         assert_eq!(
@@ -461,13 +415,8 @@ mod tests {
     }
 
     #[test]
-    fn codex_pin_is_compiled_and_recorded() {
-        let pin = pinned("codex");
-        let in_rs = pin
-            .sha256
-            .keys()
-            .map(|key| (key.clone(), pins::codex_sha256(key)))
-            .collect::<BTreeMap<String, Option<String>>>();
+    fn codex_pin_is_recorded() {
+        let version = String::from(pins::CODEX_VERSION);
         let versions = recorded("codex", "/result/userAgent")
             .iter()
             .filter_map(|agent| agent.split_whitespace().next())
@@ -475,13 +424,8 @@ mod tests {
             .map(|(_, version)| String::from(version))
             .collect::<BTreeSet<String>>();
         assert_eq!(
-            (pin.version.as_str(), in_rs),
-            (pins::CODEX_VERSION, hashes(&pin)),
-            "pins.rs is not pins.toml; run tools/pin"
-        );
-        assert_eq!(
-            versions.get(&pin.version),
-            Some(&pin.version),
+            versions.get(&version),
+            Some(&version),
             "no fixture in fixtures/codex was recorded at the pinned codex; run s2"
         );
     }

@@ -8,6 +8,10 @@ What is built and what comes next. Update it in the commit that changes it.
   `ask<M, T>` free function in a crate whose actor handles share a stopped
   error type (subset issue #3).
 
+- **Single CLI pin source** (#28). `tools/pin` writes only
+  `crates/agents/src/pins.rs`, including upstream verification notes.
+  Fixture and supported-version checks use the compiled pins.
+
 - **Subset v9** (#24) introduced shape-based wire enums, optional fields
   omitted by serde, wire booleans and `@` patterns.
   The adapters use the accepted wire constructs to remove duplicate shapes.

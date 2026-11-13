@@ -5,9 +5,9 @@
     tools/pin codex <version>
 
 Verifies every platform's build with upstream's own checks, then writes the
-provider's section of pins.toml and the compiled form of the whole file,
-crates/agents/src/pins.rs. Claude: manifest.json.sig against Anthropic's
-release key, then each binary against the manifest. Codex: each
+provider's pin in crates/agents/src/pins.rs, preserving the other provider.
+Claude: manifest.json.sig against Anthropic's release key, then each binary
+against the manifest. Codex: each
 codex-package-<triple>.tar.gz against GitHub's published digest and
 codex-package_SHA256SUMS, and the Linux cosign bundles when cosign is
 installed.
@@ -15,18 +15,16 @@ installed.
 
 import hashlib
 import json
-import os
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PINS = ROOT / "pins.toml"
 PINS_RS = ROOT / "crates/agents/src/pins.rs"
 
 CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
@@ -149,15 +147,31 @@ def pin_codex(version, work):
     }
 
 
-def toml_section(name, pin):
-    lines = [f"[{name}]", f'version = "{pin["version"]}"', f'verified = "{pin["verified"]}"', "", f"[{name}.sha256]"]
-    lines += [f'"{key}" = "{value}"' for key, value in pin["sha256"].items()]
-    return "\n".join(lines) + "\n"
+def read():
+    """Reads only the Rust shape emitted below (including rustfmt's wrapping)."""
+    text = PINS_RS.read_text()
+    pins = {}
+    for name in ("claude", "codex"):
+        block = re.search(
+            rf'/// Verified: ([^\n]+)\n'
+            rf'pub\(crate\) const {name.upper()}_VERSION: &str = "([^"\n]+)";'
+            rf'.*?pub\(crate\) fn {name}_sha256\(platform: &str\) -> Option<String> {{'
+            rf'\s*match platform {{(.*?)\n    }}\n}}', text, re.S)
+        if block is None:
+            fail(f"cannot read {name}'s generated pin in {PINS_RS}")
+        note, version, arms = block.groups()
+        entries = re.findall(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', arms)
+        remaining = re.sub(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', '', arms)
+        if not entries or len(dict(entries)) != len(entries) or remaining.strip() != "_ => None,":
+            fail(f"cannot read {name}'s generated hashes in {PINS_RS}")
+        pins[name] = {"version": version, "verified": note, "sha256": dict(entries)}
+    return pins
 
 
 def rust_fn(name, what, pin):
     arms = "".join(f'        "{key}" => Some(String::from("{value}")),\n' for key, value in pin["sha256"].items())
     return (
+        f'/// Verified: {pin["verified"]}\n'
         f'pub(crate) const {name.upper()}_VERSION: &str = "{pin["version"]}";\n\n'
         f"/// The SHA-256 of the {what}.\n"
         f"pub(crate) fn {name}_sha256(platform: &str) -> Option<String> {{\n"
@@ -166,28 +180,19 @@ def rust_fn(name, what, pin):
 
 
 def write(pins):
-    PINS.write_text(
-        "# The CLIs conductord installs, written by tools/pin (docs/architecture.md §6.2).\n"
-        "# Claude's hashes are of each binary, keyed by its manifest platform; Codex's\n"
-        "# are of each codex-package-<triple>.tar.gz, the package Codex's installer uses.\n\n"
-        + "\n".join(toml_section(name, pins[name]) for name in ("claude", "codex") if name in pins))
-    if "claude" not in pins or "codex" not in pins:
-        print(f"wrote {PINS.relative_to(ROOT)}; {PINS_RS.relative_to(ROOT)} waits for both providers' pins")
-        return
     PINS_RS.write_text(
-        "//! The pinned CLIs, written by `tools/pin` with `pins.toml`. Edit neither by\n"
-        "//! hand: run `tools/pin` again.\n\n"
+        "//! The pinned CLIs, written by `tools/pin`. Run it again to change a pin.\n\n"
         + rust_fn("claude", "`claude` binary for a platform named as in Claude's manifest", pins["claude"]) + "\n"
         + rust_fn("codex", "`codex-package-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
     subprocess.run(["rustfmt", "--edition", "2024", str(PINS_RS)], check=True)
-    print(f"wrote {PINS.relative_to(ROOT)} and {PINS_RS.relative_to(ROOT)}")
+    print(f"wrote {PINS_RS.relative_to(ROOT)}")
 
 
 def main():
     if len(sys.argv) != 3 or sys.argv[1] not in ("claude", "codex"):
         fail("usage: tools/pin claude|codex <version>")
     provider, version = sys.argv[1], sys.argv[2]
-    pins = tomllib.loads(PINS.read_text()) if PINS.exists() else {}
+    pins = read()
     scratch = ROOT / "target"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=scratch, prefix="pin-") as work:
@@ -196,4 +201,5 @@ def main():
     write(pins)
 
 
-main()
+if __name__ == "__main__":
+    main()

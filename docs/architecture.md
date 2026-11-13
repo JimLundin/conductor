@@ -367,9 +367,9 @@ against the recorded hash.
    manifest. `tools/pin codex <version>` downloads every platform's package,
    checks each against GitHub's published digest and
    `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
-   `cosign` is installed; `pins.toml` records whether it was. Both write the
-   result to `pins.toml` at the repository root, and its compiled form to
-   `crates/agents/src/pins.rs`, because the subset has no `include_str!`.
+   `cosign` is installed. Both write only `crates/agents/src/pins.rs`,
+   including the verification result in doc comments; the subset has no
+   `include_str!`. Updating one provider preserves the other provider's pin.
 2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
    is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
    package unpacked whole, with `bin/codex`. It downloads to a temporary
@@ -410,9 +410,9 @@ that:
 3. widens `SUPPORTED_VERSIONS` and `check_version`
    (`crates/agents/src/claude/protocol.rs`) to include it.
 
-A test reads `pins.toml` and the version recorded in each fixture and fails
-when a pinned version has no fixture recorded at that version, or falls
-outside the supported range. The rule lives in that test rather than in
+A test compares the compiled pin with the version recorded in each fixture
+and fails when a pinned version has no fixture recorded at that version, or
+falls outside the supported range. The rule lives in that test rather than in
 this paragraph.
 
 #### Bundling is out
