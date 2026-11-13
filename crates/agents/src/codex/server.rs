@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use n0_future::StreamExt;
 use proto::CodexCredential;
 use serde_json::Value;
 
@@ -25,6 +26,8 @@ use super::protocol::{
     Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId, answer,
     encode, models, parse_line, thread_started, turn_id, user_agent,
 };
+
+const STDERR_TIMEOUT: Duration = Duration::from_secs(5);
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -52,6 +55,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("the codex app-server has exited")]
     Exited,
+    #[error("the codex app-server has exited: {0}")]
+    Refused(String),
     #[error("codex rejected {method}: {message}")]
     Rpc { method: String, message: String },
     #[error("codex did not answer {0} within {REQUEST_TIMEOUT:?}")]
@@ -120,7 +125,7 @@ impl CodexServer {
             .zip(child.stdout.take())
             .zip(child.stderr.take())
             .ok_or(Error::Command(String::from("codex stdio was not piped")))?;
-        tokio::spawn(log_stderr(stderr));
+        let last_stderr = tokio::spawn(log_stderr(stderr));
 
         let (events_tx, events_rx) = mpsc::channel(4096);
         let (commands_tx, commands_rx) = mpsc::channel(64);
@@ -129,12 +134,14 @@ impl CodexServer {
                 child,
                 stdin,
                 stdout: BufReader::new(stdout).lines(),
+                last_stderr,
             })),
             events: events_tx,
             stdout_log,
             pending: HashMap::new(),
             open: HashMap::new(),
             next_id: 0,
+            refusal: None,
         };
         tokio::spawn(actor.run(commands_rx));
 
@@ -299,31 +306,48 @@ pub(crate) fn command(opts: &ServerOptions) -> Command {
     crate::process::no_window(cmd)
 }
 
-async fn log_stderr(stderr: ChildStderr) -> std::io::Result<()> {
-    let mut lines = BufReader::new(stderr).lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => tracing::debug!(target: "codex::stderr", "{line}"),
-            Ok(None) => break Ok(()),
-            Err(e) => break Err(e),
-        }
-    }
+/// Logs stderr while the server runs, retaining its last nonempty line.
+async fn log_stderr(stderr: ChildStderr) -> Option<String> {
+    n0_future::stream::unfold(BufReader::new(stderr).lines(), |mut lines| async move {
+        lines
+            .next_line()
+            .await
+            .ok()
+            .flatten()
+            .map(|line| (line, lines))
+    })
+    .inspect(|line| tracing::debug!(target: "codex::stderr", "{line}"))
+    .filter(|line| !line.trim().is_empty())
+    .last()
+    .await
+}
+
+fn exited(refusal: Option<&str>) -> Error {
+    refusal.map_or(Error::Exited, |reason| Error::Refused(reason.to_owned()))
 }
 
 struct Running {
     child: Child,
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
+    last_stderr: tokio::task::JoinHandle<Option<String>>,
 }
 
 impl Running {
-    async fn stop(self) -> Exit {
+    async fn stop(self) -> (Exit, Option<String>) {
         let Running {
             child,
             stdin,
             stdout: _,
+            last_stderr,
         } = self;
-        crate::process::stop(child, stdin).await
+        let status = crate::process::stop(child, stdin).await;
+        let refusal = tokio::time::timeout(STDERR_TIMEOUT, last_stderr)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten();
+        (status, refusal)
     }
 }
 
@@ -364,6 +388,7 @@ struct Actor {
     pending: HashMap<i64, Pending>,
     open: HashMap<ApprovalId, Open>,
     next_id: i64,
+    refusal: Option<String>,
 }
 
 impl Actor {
@@ -510,6 +535,14 @@ impl Actor {
                     Ok(()) => {
                         self.pending.insert(id, Pending { method, reply });
                     }
+                    Err(e @ Error::Io(_)) => {
+                        self.stop().await;
+                        let error = self
+                            .refusal
+                            .as_deref()
+                            .map_or(e, |reason| exited(Some(reason)));
+                        let _ = reply.send(Err(error));
+                    }
                     Err(e) => {
                         let _ = reply.send(Err(e));
                     }
@@ -569,7 +602,7 @@ impl Actor {
                 running.stdin.flush().await?;
                 Ok(())
             }
-            Process::Exited(_) => Err(Error::Exited),
+            Process::Exited(_) => Err(exited(self.refusal.as_deref())),
         }
     }
 
@@ -579,10 +612,11 @@ impl Actor {
         let placeholder = Process::Exited(Exit::Unknown(String::from("stopping")));
         match std::mem::replace(&mut self.process, placeholder) {
             Process::Running(running) => {
-                let status = running.stop().await;
+                let (status, refusal) = running.stop().await;
+                self.refusal = refusal;
                 self.process = Process::Exited(status.clone());
                 for (_, Pending { reply, .. }) in self.pending.drain() {
-                    let _ = reply.send(Err(Error::Exited));
+                    let _ = reply.send(Err(exited(self.refusal.as_deref())));
                 }
                 self.open.clear();
                 self.emit(CodexEvent::Exited {
@@ -626,6 +660,7 @@ mod tests {
             pending: HashMap::new(),
             open: HashMap::new(),
             next_id: 0,
+            refusal: None,
         };
         let id = ApprovalId(String::from("ap_1"));
         let open = Open {

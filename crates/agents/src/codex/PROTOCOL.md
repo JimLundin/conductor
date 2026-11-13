@@ -206,4 +206,7 @@ provider.
   about the turn before the kill. It also sent a `deprecationNotice` about
   full-history hydration. (Step 12.)
 - Closing stdin ends the process with exit status 0. (Steps 4 and 6.)
-- stderr was empty in the probe. The actor logs it at `debug`.
+- stderr was empty in the probe. The actor logs it at `debug` and keeps
+  its last nonempty line for requests whose app-server exits before replying.
+  JSON-RPC rejections report the request method and `error.message`.
+  Start and resume failures with both paths are covered by fake-CLI tests.
