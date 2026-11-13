@@ -66,6 +66,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
         effort: None,
         permission_mode: PermissionMode::Default,
         resume: None,
+        project_name: None,
         setting_sources: Some(Vec::from([SettingSource::Project])),
         stdout_log: None,
         versions: VersionPolicy::SupportedOnly,

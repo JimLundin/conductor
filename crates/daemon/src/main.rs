@@ -163,9 +163,15 @@ async fn main() -> anyhow::Result<()> {
                 Err(reason) => unavailable(reason),
             };
             let launchers = Launchers { claude, codex };
-            let router = host(data_dir, web_url, name, launchers, store, stored).await?;
-            tokio::signal::ctrl_c().await?;
+            let Hosted { router, log } =
+                host(data_dir, web_url, name, launchers, store, stored).await?;
+            let ended = tokio::select! {
+                result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
+                _ = log.stopped() => Err(anyhow::Error::from(daemon::Stopped {})),
+            };
             router.shutdown().await?;
+            drop(router);
+            ended?;
             Ok(())
         }
         Cmd::Login(LoginArgs { provider, data_dir }) => {
@@ -243,6 +249,11 @@ async fn own_sign_in(origin: Origin, mut status: tokio::process::Command) -> Own
     }
 }
 
+struct Hosted {
+    router: Router,
+    log: Log,
+}
+
 async fn host(
     data_dir: PathBuf,
     web_url: String,
@@ -250,7 +261,7 @@ async fn host(
     launchers: Launchers,
     store: Store,
     stored: Stored,
-) -> anyhow::Result<Router> {
+) -> anyhow::Result<Hosted> {
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
         .secret_key(daemon::load_or_create_key(&data_dir)?)
@@ -263,11 +274,11 @@ async fn host(
         .next()
         .cloned()
         .context("online, but no home relay")?;
-    let token = daemon::random_token();
-    let log = Log::spawn(name, daemon::random_epoch());
+    let token = daemon::load_or_create_token(&data_dir)?;
+    let log = Log::open(name, &data_dir.join("conductor.redb"))?;
     let conductor = Conductor {
         log: log.clone(),
-        registry: Registry::spawn(log, launchers, store, stored),
+        registry: Registry::spawn(log.clone(), launchers, store, stored),
         token,
     };
     let ticket = Ticket {
@@ -279,7 +290,7 @@ async fn host(
         .accept(proto::ALPN, conductor)
         .spawn();
     announce(&data_dir, &web_url, &ticket)?;
-    Ok(router)
+    Ok(Hosted { router, log })
 }
 
 /// The CLI's path and version, when `<cli> --version` runs and succeeds.

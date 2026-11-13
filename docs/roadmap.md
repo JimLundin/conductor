@@ -23,7 +23,7 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Agents.** `crates/agents` drives the `claude` CLI (stream-json control
   protocol) and `codex app-server` (JSON-RPC): messages, streaming deltas,
   tool calls, approvals, interrupts. `s1` and `s2` are the live checks.
-- **Host.** `conductord` serves one host over iroh: an in-memory event log
+- **Host.** `conductord` serves one host over iroh: a durable redb event log
   (streaming deltas are live-only), a session actor per agent, one shared
   Codex app-server. Clients reach it over iroh through n0's public relays.
 - **Client.** `HostLink` per host: reconnect with backoff, a hedged dial,
@@ -58,8 +58,8 @@ Each item ends in something to try. The fleet design is
    `Continue`, which starts a closed session's CLI again with the
    provider's resume in the private home. Claude's reasoning text needs
    experimental betas on, which the owner's gateway refuses, so through it
-   Claude shows none (Claude `PROTOCOL.md`). Continue covers CLI restarts
-   within a running host; a host restart waits for item 4. Next: plans,
+   Claude shows none (Claude `PROTOCOL.md`). Continue covers CLI and host restarts, with the durable log and native
+   conversation ids from item 4. Next: plans,
    and the effort changed between turns. *Try:* restart a session's CLI and
    continue it (`tools/live-host.sh` checks it as `continue=pass`).
 3. **Sign in from the app** (#12) (§6.3), on one host. Built first, on
@@ -71,11 +71,15 @@ Each item ends in something to try. The fleet design is
    entered on the phone, and the platform keystores for the host key.
    `Welcome` reports each provider's sign-in kind. *Try:* on a fresh host, sign in to Claude and
    Codex from the iPhone without touching the host's keyboard.
-4. **Durability.** (#11) The log, receipts and open requests survive a host
-   restart (redb + postcard); clients resume from their cursors. Session
-   ids become ULIDs (§6.7) before the tables key on them, with
-   `CLAUDE_CODE_PROJECT_DIR_NAME` (§6.2), and the store keeps each
-   session's conversation id, so `Continue` works after a host restart too.
+4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard
+   store the event log, command receipts, open requests and conversation ids.
+   The host key, ticket token and epoch persist; clients resume their cursors
+   after a host restart. Open requests are withdrawn and in-flight turns
+   interrupted on restart, and `Continue` resumes the native conversation.
+   Session ids are fleet-unique ULIDs, with
+   `CLAUDE_CODE_PROJECT_DIR_NAME=<ulid>` isolating Claude transcripts.
+   Receipts and durable command effects commit together; external CLI actions
+   sent before a crash can still lack a receipt (architecture §5.3).
    *Try:* restart the host mid-session and continue from the phone.
 5. **Worktrees.** (#13) One git worktree per session on `conductor/<ulid>`, a
    checkpoint per turn, diffs and revert from the phone. *Try:* revert a

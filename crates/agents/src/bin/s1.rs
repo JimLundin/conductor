@@ -366,6 +366,7 @@ fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>
         effort: None,
         permission_mode: PermissionMode::Default,
         resume,
+        project_name: None,
         // Keep the user's own hooks and plugins out of the spike.
         setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
         stdout_log,

@@ -831,7 +831,7 @@ mod tests {
                 };
                 let event = Event {
                     seq,
-                    session: SessionId(session),
+                    session: SessionId(u128::from(session)),
                     kind,
                 };
                 (view.apply(event), seq)
@@ -1275,7 +1275,7 @@ mod tests {
 
     fn questions(view: &HostView, session: u64) -> Vec<(RequestId, RequestState)> {
         view.sessions
-            .get(&SessionId(session))
+            .get(&SessionId(u128::from(session)))
             .map(|session| {
                 session
                     .items

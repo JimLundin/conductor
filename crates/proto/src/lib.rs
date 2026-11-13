@@ -30,7 +30,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/8";
+pub const ALPN: &[u8] = b"conductor/9";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -47,9 +47,9 @@ impl HostSeq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Epoch(pub u64);
 
-/// Chosen by the client. P1 makes it a ULID for idempotent retries (§5.2).
+/// A client-generated, fleet-unique 128-bit random id for idempotent retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct CommandId(pub u64);
+pub struct CommandId(pub u128);
 
 /// An approval request or a question, assigned by the host per session, in
 /// order.
@@ -355,16 +355,9 @@ pub struct Subscribe {
     pub after_seq: HostSeq,
 }
 
-/// Assigned by the host, from 1, in order of creation. Unique within an
-/// epoch, which is all an in-memory log needs.
+/// A fleet-unique ULID assigned by the host, represented as its 128 bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct SessionId(pub u64);
-
-impl SessionId {
-    pub fn next(self) -> SessionId {
-        SessionId(self.0.saturating_add(1))
-    }
-}
+pub struct SessionId(pub u128);
 
 /// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

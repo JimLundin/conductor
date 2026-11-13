@@ -236,18 +236,7 @@ impl Session {
         log: Log,
     ) -> Session {
         let (inbox, messages) = mpsc::channel(16);
-        let actor = SessionActor {
-            id,
-            directory,
-            choice,
-            agent: Agent::Down,
-            conversation: None,
-            log,
-            turn: Turn::Idle,
-            requests: HashMap::new(),
-            last_request: RequestId(0),
-            declined: HashSet::new(),
-        };
+        let actor = Self::state(id, directory, choice, log, None, &[]);
         // The first order starts the agent, so the actor's loop does it all.
         let (reply, _) = oneshot::channel();
         let (launch, offered) = launch;
@@ -257,6 +246,66 @@ impl Session {
         });
         tokio::spawn(actor.run(messages));
         Session { inbox }
+    }
+
+    pub(crate) fn restore(
+        id: SessionId,
+        directory: HostPath,
+        choice: Choice,
+        conversation: Option<String>,
+        history: &[proto::Event],
+        log: Log,
+    ) -> Session {
+        let (inbox, messages) = mpsc::channel(16);
+        let actor = Self::state(id, directory, choice, log, conversation, history);
+        tokio::spawn(actor.run(messages));
+        Session { inbox }
+    }
+
+    fn state(
+        id: SessionId,
+        directory: HostPath,
+        choice: Choice,
+        log: Log,
+        conversation: Option<String>,
+        history: &[proto::Event],
+    ) -> SessionActor {
+        SessionActor {
+            id,
+            directory,
+            choice,
+            agent: Agent::Down,
+            conversation: conversation.map(Conversation),
+            log,
+            turn: Turn::Idle,
+            requests: history.iter().fold(HashMap::new(), |mut requests, event| {
+                match &event.kind {
+                    EventKind::RequestOpened { request, .. }
+                    | EventKind::QuestionAsked { request, .. } => {
+                        requests
+                            .insert(request.to_owned(), Pending::Resolved(Resolution::Withdrawn));
+                    }
+                    EventKind::RequestResolved {
+                        request,
+                        resolution,
+                    } => {
+                        requests.insert(request.to_owned(), Pending::Resolved(resolution.clone()));
+                    }
+                    _ => {}
+                }
+                requests
+            }),
+            last_request: history
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::RequestOpened { request, .. }
+                    | EventKind::QuestionAsked { request, .. } => Some(request.to_owned()),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(RequestId(0)),
+            declined: HashSet::new(),
+        }
     }
 
     pub async fn order(&self, order: Order) -> Result<CommandResult, Stopped> {
@@ -302,6 +351,7 @@ fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
 }
 
 async fn start(
+    id: SessionId,
     directory: &HostPath,
     choice: &Choice,
     conversation: Option<Conversation>,
@@ -322,6 +372,7 @@ async fn start(
                 effort: choice.effort,
                 permission_mode: PermissionMode::Default,
                 resume: conversation.map(|conversation| agents::claude::SessionId(conversation.0)),
+                project_name: Some(ulid::Ulid::from(id.0).to_string()),
                 // The user level is the host's private home (§6.2).
                 setting_sources: Some(Vec::from([
                     SettingSource::User,
@@ -379,6 +430,7 @@ async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Model
         effort: None,
         permission_mode: PermissionMode::Default,
         resume: None,
+        project_name: None,
         setting_sources: None,
         stdout_log: None,
         versions: VersionPolicy::AllowUntested,
@@ -466,9 +518,12 @@ impl SessionActor {
     /// whether it runs.
     async fn start(&mut self, launch: Launch) -> Result<(), Stopped> {
         let resume = self.conversation.clone();
-        match start(&self.directory, &self.choice, resume, launch).await {
+        match start(self.id, &self.directory, &self.choice, resume, launch).await {
             Ok(agent) => {
                 self.agent = agent;
+                if let Some(conversation) = self.agent.conversation() {
+                    self.log.conversation(self.id, conversation.0).await?;
+                }
                 self.emit(EventKind::SessionReady).await
             }
             Err(err) => {
@@ -530,7 +585,15 @@ impl SessionActor {
                 let sent = self.send(text).await;
                 // A message the agent never got starts no turn.
                 match sent {
-                    Ok(()) => self.turn = Turn::Starting(Held::Nothing),
+                    Ok(()) => {
+                        self.conversation = self.agent.conversation();
+                        if let Some(conversation) = &self.conversation {
+                            self.log
+                                .conversation(self.id, conversation.0.clone())
+                                .await?;
+                        }
+                        self.turn = Turn::Starting(Held::Nothing);
+                    }
                     Err(err) => {
                         let outcome = TurnOutcome::Failed {
                             message: err.to_string(),
@@ -739,6 +802,11 @@ impl SessionActor {
             }
             Step::TurnStarted(native) => {
                 self.conversation = self.agent.conversation();
+                if let Some(conversation) = &self.conversation {
+                    self.log
+                        .conversation(self.id, conversation.0.clone())
+                        .await?;
+                }
                 let before = std::mem::replace(&mut self.turn, Turn::Running(native.clone()));
                 match before {
                     Turn::Starting(Held::Interrupt) => {

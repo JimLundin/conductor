@@ -169,7 +169,6 @@ impl HostLink {
             client: options.client,
             cursor: options.resume,
             failures: 0,
-            next_id: CommandId(random_u64()),
             requests: requests_rx,
             outbox: Outbox {
                 status: status_tx,
@@ -260,7 +259,6 @@ struct Link {
     client: ClientName,
     cursor: Option<Cursor>,
     failures: u32,
-    next_id: CommandId,
     requests: mpsc::Receiver<Request>,
     outbox: Outbox,
     phase: Phase,
@@ -458,10 +456,9 @@ impl Link {
             Input::Request(Some(Request::Stop { reply })) => Err(self.stop(reply).await.into()),
             Input::Request(Some(Request::Send { body, reply })) => {
                 let command = Command {
-                    id: self.next_id,
+                    id: random_command_id(),
                     body,
                 };
-                self.next_id = CommandId(self.next_id.0.wrapping_add(1));
                 task::spawn(answer(connected.conn.clone(), command, reply));
                 Ok(connected)
             }
@@ -779,6 +776,12 @@ fn backoff(failures: u32, random: u64, floor: Duration, ceiling: Duration) -> Du
         .saturating_add(1);
     let jitter = Duration::from_millis(random.checked_rem(span).unwrap_or(0));
     half.saturating_add(jitter)
+}
+
+fn random_command_id() -> CommandId {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("the platform has a random source");
+    CommandId(u128::from_le_bytes(bytes))
 }
 
 fn random_u64() -> u64 {

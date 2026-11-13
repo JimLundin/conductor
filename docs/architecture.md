@@ -104,9 +104,9 @@ so one UI and one set of commands work for both agents.
   idempotent: on a session whose agent runs it answers `Accepted` and does
   nothing, so a double tap or a second phone ends in the same state. A session closed
   before its first turn starts its CLI afresh, since there is nothing to
-  resume yet. Continue covers CLI restarts within a running host only: a
-  host restart loses the in-memory log and the session's conversation id
-  until durability (`docs/roadmap.md` item 4).
+  resume yet. Continue also covers host restarts: the host restores sessions
+  and their native conversation ids from its durable store before serving
+  commands.
 - **Requests:** an approval and a question are both requests: one
   `RequestId` space per session, first reply wins, and the agent's
   withdrawal, the end of the turn or the end of the session withdraws one
@@ -261,19 +261,37 @@ the parsers and assert the exact events. `cargo run --bin s1` and `s2` drive
 the real CLIs and re-record the fixtures; run them after changing an adapter
 or upgrading a CLI.
 
-### 5.3 Planned: durability, worktrees, checkpoints
+### 5.3 Durability; planned worktrees and checkpoints
 
-- **Store:** redb tables, postcard values: `sessions`, `events` (the log),
-  `raw_events` (provider wire, to replay through a fixed mapping),
-  `pending_requests`, `command_receipts`, `roster`, `push_tokens`. A cursor
-  is `(epoch, seq)`; the epoch is created with the database, so a wiped one
-  is detected and the client starts over.
-- **Idempotent commands:** a `CommandId`'s receipt is stored with its
-  effects, so a retry returns the stored result (T3 Code's
-  `CommandReceiptStore`).
-- **Restart:** child processes die with the daemon. On start, in-flight
-  turns are marked interrupted and resumed natively (`--resume`,
-  `thread/resume`) on the next message.
+- **Store (built):** `<data>/conductor.redb`, with typed redb table constants
+  and postcard values (storage option C). The tables are `events`,
+  `command_receipts`, `pending_requests`, `conversations` and `metadata`.
+  Sessions, their model choices and resolved requests are reconstructed from
+  the event log; the native conversation id has its own table. A cursor is
+  `(epoch, seq)`; the epoch is created with the database, so wiping the
+  database makes clients start over. The ticket token and host key also
+  persist, so an existing ticket remains valid after restart. Streaming
+  deltas stay live-only.
+- **Idempotent commands (built):** receipts are keyed by fleet-unique
+  `CommandId`s (128 random bits), so a hedge onto a new transport identity
+  still finds the same receipt. One command at a time stages its durable
+  events and conversation/request writes, then commits them with its receipt
+  in one transaction before replying or broadcasting. A retry returns the
+  stored result. If execution is cancelled or a write fails, the log rolls
+  back and the host stops its transport and provider processes. Provider
+  stdin writes and the separate credential file are external effects: a
+  crash before the database commit can leave a CLI action sent without a
+  receipt. Restart withdraws its requests and interrupts its turn; it does
+  not promise exactly-once execution inside a CLI.
+- **Restart (built):** the host reconstructs each session closed, withdraws
+  requests that were still open and marks in-flight turns interrupted.
+  `Continue` resumes the stored native conversation with the current
+  credential and the session's model and effort. Before a first message,
+  `Continue` starts afresh because Claude has no transcript yet. The daemon
+  supervises its log; a failed log stops the host, and provider children are
+  killed when their owning tasks are dropped.
+- **Planned tables:** `raw_events` (provider wire for remapping), `roster`
+  and `push_tokens`, when their features land.
 - **Worktrees and checkpoints:** one worktree per session under
   `<data>/worktrees/<project>/<session>`. At the end of each turn, snapshot it
   without touching the user's index (`GIT_INDEX_FILE=<tmp> git add -A`,
@@ -455,19 +473,9 @@ Two consequences for how sessions start (§5.2):
 - Each Claude process gets `CLAUDE_CODE_PROJECT_DIR_NAME=<session ulid>`, so
   its transcript lives at `<data>/home/claude/projects/<ulid>/` whatever the
   working directory is ([sessions], verified; it needs 2.1.234 or later).
-  §6.8 relies on this. It lands with the ULID session ids (§6.7), in the
-  durability phase: today's `SessionId` is a host counter that restarts at
-  1, so two sessions would share a transcript directory.
-  Until then a transcript is in `projects/<the working directory, / as
-  ->/<uuid>.jsonl`, under a UUID the host picks with `--session-id` when
-  the CLI first starts. `Continue` resumes by that UUID, which `--resume`
-  finds in any project directory, so two sessions in one directory never
-  share a conversation (observed). What waits for the ULIDs: the host
-  keeps the UUID only in memory, so after a host restart nothing links a
-  session to its transcript; Conductor can't delete a session's
-  transcript with it, since the directory is shared by every session in
-  that working directory; and a move (§6.8) can't copy one directory per
-  session.
+  §6.8 relies on this. Built with the fleet-unique ULID ids and durable
+  conversation ids: the host stores the CLI's UUID for `--resume`, while the
+  ULID gives each Conductor session its own transcript directory.
 
 `conductord` writes `<data>/home/claude/settings.json` (`cleanupPeriodDays`
 36500) and `<data>/home/codex/config.toml` (`check_for_update_on_startup =
@@ -869,14 +877,13 @@ first.
 
 ### 6.7 Fleet-unique session ids and branch names
 
-`SessionId` is a host counter today (`crates/proto/src/lib.rs`), unique only
-within an epoch. A session that moves keeps its id, and the app merges
-sessions from every host, so ids must be unique across the fleet and across
-restarts.
+`SessionId` is a fleet-unique ULID (`crates/proto/src/lib.rs`). A session
+that moves keeps its id, and the app merges sessions from every host.
 
 - **Format.** A `SessionId` is a 128-bit ULID: 48 bits of Unix milliseconds
-  and 80 random bits, generated by the host that creates the session. On the
-  wire it is 16 bytes; as text it is the 26-character Crockford base32 form,
+  and 80 random bits, generated by the host that creates the session. The
+  wire carries its `u128` value with postcard's variable-length integer
+  encoding; as text it is the 26-character Crockford base32 form,
   such as `01JCDZ6Q0Y3K7V8M2N4P5R6S7T`. No coordination between hosts is
   needed, because two ids collide only if they share the millisecond and all 80
   random bits. Ids sort by creation time, which the sidebar uses.
@@ -890,7 +897,9 @@ restarts.
 `HostSeq` and `Epoch` stay per host (D4). An event names its session by id,
 so the same id can appear in two hosts' logs after a move (§6.8).
 
-The id change lands with durability, before redb tables key on it.
+The id change landed with durability, before redb tables keyed on it. It
+changes the wire format, so the protocol ALPN is `conductor/9`. Worktree
+branches and checkpoint names above remain planned with roadmap item 5.
 
 ### 6.8 Move a session to another host
 

@@ -112,7 +112,7 @@ async fn codex_host(recording: &str) -> (Fixture, PathBuf) {
 async fn host_of(launchers: Launchers) -> Fixture {
     let endpoint = endpoint().await;
     let data = data_dir(&endpoint.id().to_string());
-    serve(endpoint, launchers, &data)
+    serve(endpoint, launchers, &data).await
 }
 
 /// `tmp` in the build directory, found from this test binary at
@@ -139,10 +139,11 @@ fn data_dir(name: &str) -> PathBuf {
 }
 
 /// A host on `endpoint`, keeping its credentials in `data`.
-fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
+async fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
     let (store, stored) = Store::open(data).unwrap();
     let log = Log::spawn(String::from("test-host"), Epoch(11));
     let registry = Registry::spawn(log.clone(), launchers, store, stored);
+    let _ = registry.providers().await.unwrap();
     let target = Target {
         addr: endpoint.addr(),
         token: AuthToken::from_bytes(TOKEN),
@@ -154,6 +155,59 @@ fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
     };
     let router = Router::builder(endpoint)
         .accept(proto::ALPN, conductor)
+        .spawn();
+    Fixture {
+        router,
+        target,
+        log,
+    }
+}
+
+/// A real host that reopens its database, endpoint identity and ticket secret.
+async fn durable_host(data: &Path, address: SocketAddr) -> Fixture {
+    let endpoint = Endpoint::builder(presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .secret_key(daemon::load_or_create_key(data).unwrap())
+        .bind_addr(address)
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let token = daemon::load_or_create_token(data).unwrap();
+    let log = Log::open(String::from("test-host"), &data.join("conductor.redb")).unwrap();
+    let (store, stored) = Store::open(data).unwrap();
+    let registry = Registry::spawn(
+        log.clone(),
+        Launchers {
+            claude: Launcher::Ready {
+                launch: Launch::Claude(ClaudeLaunch {
+                    claude_path: fake_claude(),
+                    home: Home::User,
+                    credential: None,
+                }),
+                own: OwnSignIn::Unmanaged,
+                models: models(),
+                chosen: None,
+            },
+            codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+        },
+        store,
+        stored,
+    );
+    let _ = registry.providers().await.unwrap();
+    let target = Target {
+        addr: endpoint.addr(),
+        token,
+    };
+    let router = Router::builder(endpoint)
+        .accept(
+            proto::ALPN,
+            Conductor {
+                log: log.clone(),
+                registry,
+                token,
+            },
+        )
         .spawn();
     Fixture {
         router,
@@ -439,7 +493,10 @@ async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message() {
     .unwrap();
     let live = events_through(&mut updates, HostSeq(2)).await;
     assert_eq!(seqs(&live), [1, 1, 2].map(HostSeq));
-    assert_eq!(of(1, &live), [delta("Hel"), delta("lo"), reply("Hello")]);
+    assert_eq!(
+        of(SessionId(1), &live),
+        [delta("Hel"), delta("lo"), reply("Hello")]
+    );
     first.stop().await.unwrap();
     drop(updates);
 
@@ -449,7 +506,7 @@ async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message() {
     };
     let (second, mut updates) = link(fx.target.clone(), Some(cursor)).await;
     let rest = events_through(&mut updates, HostSeq(2)).await;
-    assert_eq!(of(1, &rest), [reply("Hello")]);
+    assert_eq!(of(SessionId(1), &rest), [reply("Hello")]);
     assert_eq!(
         fold(seen.iter().chain(&live).cloned().collect()),
         fold(seen.into_iter().chain(rest).collect())
@@ -561,10 +618,10 @@ async fn events_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec
 }
 
 /// The kinds of `session`'s events.
-fn of(session: u64, events: &[Event]) -> Vec<EventKind> {
+fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
     events
         .iter()
-        .filter(|event| event.session == SessionId(session))
+        .filter(|event| event.session == session)
         .map(|event| event.kind.clone())
         .collect()
 }
@@ -573,30 +630,28 @@ async fn send(link: &HostLink, body: CommandBody) -> CommandResult {
     link.send(body).await.unwrap()
 }
 
-fn message(text: &str) -> CommandBody {
-    message_to(1, text)
+fn started_session(result: CommandResult) -> SessionId {
+    match result {
+        CommandResult::Started { session } => Some(session),
+        _ => None,
+    }
+    .expect("a started session")
 }
 
-fn message_to(session: u64, text: &str) -> CommandBody {
+fn message(session: SessionId, text: &str) -> CommandBody {
     CommandBody::SendMessage {
-        session: SessionId(session),
+        session,
         text: String::from(text),
     }
 }
 
-fn interrupt() -> CommandBody {
-    CommandBody::Interrupt {
-        session: SessionId(1),
-    }
+fn interrupt(session: SessionId) -> CommandBody {
+    CommandBody::Interrupt { session }
 }
 
-fn resolve(request: u64, decision: Decision) -> CommandBody {
-    resolve_in(1, request, decision)
-}
-
-fn resolve_in(session: u64, request: u64, decision: Decision) -> CommandBody {
+fn resolve(session: SessionId, request: u64, decision: Decision) -> CommandBody {
     CommandBody::Resolve {
-        session: SessionId(session),
+        session,
         request: RequestId(request),
         decision,
     }
@@ -681,9 +736,9 @@ fn decided(decision: Decision, call: &str, outcome: ToolOutcome) -> Vec<EventKin
     ])
 }
 
-fn items(view: &HostView, session: u64) -> Vec<Item> {
+fn items(view: &HostView, session: SessionId) -> Vec<Item> {
     view.sessions
-        .get(&SessionId(session))
+        .get(&session)
         .map(|session| session.items.clone())
         .unwrap_or_default()
 }
@@ -724,18 +779,13 @@ async fn a_claude_turn_streams_asks_and_finishes() {
     let dir = scratch("approve", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
-        send(&link, start(Provider::Claude, &dir)).await,
-        CommandResult::Started {
-            session: SessionId(1)
-        }
-    );
-    assert_eq!(
-        send(&link, message("create a.txt")).await,
+        send(&link, message(session, "create a.txt")).await,
         CommandResult::Accepted
     );
     assert_eq!(
-        send(&link, message("and b.txt")).await,
+        send(&link, message(session, "and b.txt")).await,
         CommandResult::Rejected(Rejection::TurnInProgress)
     );
     assert_eq!(
@@ -755,9 +805,9 @@ async fn a_claude_turn_streams_asks_and_finishes() {
     until_live(&mut at_desk).await;
     assert_eq!(
         [
-            send(&link, resolve(1, Decision::Approve)).await,
-            send(&desk, resolve(1, Decision::Deny)).await,
-            send(&link, resolve(2, Decision::Approve)).await,
+            send(&link, resolve(session, 1, Decision::Approve)).await,
+            send(&desk, resolve(session, 1, Decision::Deny)).await,
+            send(&link, resolve(session, 2, Decision::Approve)).await,
         ],
         [
             CommandResult::Accepted,
@@ -793,12 +843,12 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
     let dir = scratch("deny", "claude-deny-interrupt.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
-        send(&link, interrupt()).await,
+        send(&link, interrupt(session)).await,
         CommandResult::Rejected(Rejection::NoTurnRunning)
     );
-    let _ = send(&link, message("create b.txt")).await;
+    let _ = send(&link, message(session, "create b.txt")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Request).await,
         [
@@ -809,7 +859,7 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
         .concat()
     );
     assert_eq!(
-        send(&link, resolve(1, Decision::Deny)).await,
+        send(&link, resolve(session, 1, Decision::Deny)).await,
         CommandResult::Accepted
     );
     let text = "The write to `b.txt` was denied (\"The user does not want b.txt.\"), so I did not retry and no file was created.";
@@ -834,18 +884,21 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
         .concat()
     );
 
-    let _ = send(&link, message("count to 100")).await;
+    let _ = send(&link, message(session, "count to 100")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Delta).await,
         [user("count to 100"), delta("1")]
     );
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [reply("1"), turn_end(TurnOutcome::Interrupted)]
     );
 
-    let _ = send(&link, message("ping")).await;
+    let _ = send(&link, message(session, "ping")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
@@ -865,9 +918,12 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
 async fn held_interrupt(fx: Fixture, dir: PathBuf, provider: Provider) {
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(provider, &dir)).await;
-    let _ = send(&link, message("count to 300")).await;
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    let session = started_session(send(&link, start(provider, &dir)).await);
+    let _ = send(&link, message(session, "count to 300")).await;
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     std::fs::write(dir.join("release"), "").unwrap();
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
@@ -895,8 +951,8 @@ async fn an_interrupt_withdraws_the_open_request() {
     let dir = scratch("withdraw", "claude-withdraw.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    let _ = send(&link, message("create d.txt")).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let _ = send(&link, message(session, "create d.txt")).await;
     let call = "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq";
     assert_eq!(
         kinds_until(&mut updates, Until::Request).await,
@@ -907,7 +963,10 @@ async fn an_interrupt_withdraws_the_open_request() {
         ]
         .concat()
     );
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
@@ -925,16 +984,16 @@ async fn an_interrupt_withdraws_the_open_request() {
         ]
     );
     assert_eq!(
-        send(&link, resolve(1, Decision::Approve)).await,
+        send(&link, resolve(session, 1, Decision::Approve)).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
 }
 
-fn answer(request: u64, words: &[&str]) -> CommandBody {
+fn answer(session: SessionId, request: u64, words: &[&str]) -> CommandBody {
     CommandBody::Answer {
-        session: SessionId(1),
+        session,
         request: RequestId(request),
         answers: Vec::from([Answer(words.iter().copied().map(String::from).collect())]),
     }
@@ -1011,8 +1070,8 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
     let dir = scratch("question", "claude-question.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    let _ = send(&link, message("ask me")).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let _ = send(&link, message(session, "ask me")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Question).await,
         [
@@ -1039,18 +1098,18 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
     until_live(&mut at_desk).await;
     assert_eq!(
         [
-            send(&link, resolve(1, Decision::Approve)).await,
+            send(&link, resolve(session, 1, Decision::Approve)).await,
             send(
                 &link,
                 CommandBody::Answer {
-                    session: SessionId(1),
+                    session,
                     request: RequestId(1),
                     answers: Vec::new(),
                 }
             )
             .await,
-            send(&link, answer(1, &["Blue"])).await,
-            send(&desk, answer(1, &["Red"])).await,
+            send(&link, answer(session, 1, &["Blue"])).await,
+            send(&desk, answer(session, 1, &["Red"])).await,
         ],
         [
             CommandResult::Rejected(Rejection::WrongReply {
@@ -1094,8 +1153,8 @@ async fn a_codex_question_is_answered_by_its_question_id() {
     let (fx, dir) = codex_host("codex-question.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let _ = send(&link, message("ask me")).await;
+    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let _ = send(&link, message(session, "ask me")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Question).await,
         [
@@ -1112,7 +1171,7 @@ async fn a_codex_question_is_answered_by_its_question_id() {
         .concat()
     );
     assert_eq!(
-        send(&link, answer(1, &["Blue"])).await,
+        send(&link, answer(session, 1, &["Blue"])).await,
         CommandResult::Accepted
     );
     assert_eq!(
@@ -1136,8 +1195,8 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking() {
     let dir = scratch("for-session", "claude-for-session.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    let _ = send(&link, message("touch t1.txt")).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let _ = send(&link, message(session, "touch t1.txt")).await;
     let (first, again) = (
         "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
         "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
@@ -1164,11 +1223,11 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking() {
         .concat()
     );
     assert_eq!(
-        send(&link, resolve(1, Decision::ApproveForSession)).await,
+        send(&link, resolve(session, 1, Decision::ApproveForSession)).await,
         CommandResult::Accepted
     );
     let first_turn = kinds_until(&mut updates, Until::TurnEnd).await;
-    let _ = send(&link, message("again")).await;
+    let _ = send(&link, message(session, "again")).await;
     let second_turn = kinds_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         (
@@ -1212,8 +1271,8 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
     let (fx, dir) = codex_host("codex-for-session.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let _ = send(&link, message("touch t1.txt")).await;
+    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let _ = send(&link, message(session, "touch t1.txt")).await;
     let command = "/usr/bin/zsh -c 'touch t1.txt'";
     let (first, again) = (
         "exec-6a70037b-22b5-482b-955f-e442841e7e21",
@@ -1224,11 +1283,11 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
     };
     let asked = calls_and_requests(kinds_until(&mut updates, Until::Request).await);
     assert_eq!(
-        send(&link, resolve(1, Decision::ApproveForSession)).await,
+        send(&link, resolve(session, 1, Decision::ApproveForSession)).await,
         CommandResult::Accepted
     );
     let first_turn = kinds_until(&mut updates, Until::TurnEnd).await;
-    let _ = send(&link, message("again")).await;
+    let _ = send(&link, message(session, "again")).await;
     let second_turn = kinds_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         (
@@ -1284,10 +1343,13 @@ async fn an_interrupt_withdraws_an_open_question() {
     let dir = scratch("question-withdraw", "claude-question-withdraw.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    let _ = send(&link, message("ask me")).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let _ = send(&link, message(session, "ask me")).await;
     let mut events = events_until(&mut updates, Until::Question).await;
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     events.extend(events_until(&mut updates, Until::TurnEnd).await);
     assert_eq!(
         events
@@ -1313,10 +1375,10 @@ async fn an_interrupt_withdraws_an_open_question() {
         ]
     );
     assert_eq!(
-        send(&link, answer(1, &["Pear"])).await,
+        send(&link, answer(session, 1, &["Pear"])).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    let questions = items(&fold(events), 1)
+    let questions = items(&fold(events), session)
         .into_iter()
         .filter_map(|item| match item {
             Item::Question { state, .. } => Some(state),
@@ -1340,10 +1402,13 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end() {
     let (fx, dir) = codex_host("codex-question-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let _ = send(&link, message("ask me")).await;
+    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let _ = send(&link, message(session, "ask me")).await;
     let question = kinds_until(&mut updates, Until::Question).await;
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         (
             question.last().cloned(),
@@ -1365,7 +1430,7 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end() {
         )
     );
     assert_eq!(
-        send(&link, answer(1, &["Pear"])).await,
+        send(&link, answer(session, 1, &["Pear"])).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
     std::fs::write(dir.join("release"), "").unwrap();
@@ -1382,8 +1447,11 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
     let dir = scratch("hang-up", "claude-hang-up.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    assert_eq!(send(&link, message("hi")).await, CommandResult::Accepted);
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    assert_eq!(
+        send(&link, message(session, "hi")).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
@@ -1398,7 +1466,7 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
         .concat()
     );
     assert_eq!(
-        send(&link, interrupt()).await,
+        send(&link, interrupt(session)).await,
         CommandResult::Rejected(Rejection::NoTurnRunning)
     );
     assert_eq!(
@@ -1410,7 +1478,7 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
         }]
     );
     assert_eq!(
-        send(&link, message("hi")).await,
+        send(&link, message(session, "hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
     link.stop().await.unwrap();
@@ -1423,7 +1491,7 @@ async fn a_missing_claude_binary_closes_the_session() {
     let dir = std::env::temp_dir();
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,
         [
@@ -1442,7 +1510,7 @@ async fn a_missing_claude_binary_closes_the_session() {
         ]
     );
     assert_eq!(
-        send(&link, message("hi")).await,
+        send(&link, message(session, "hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
     link.stop().await.unwrap();
@@ -1456,16 +1524,17 @@ async fn two_codex_sessions_share_one_server() {
     let (fx, dir) = codex_host("codex-two-threads.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let first_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
     // The second session starts once the first has its thread, so the first
     // gets the recording's first thread.
     let first = events_until(&mut updates, Until::Ready).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    assert_ne!(first_session, second_session);
     let second = events_until(&mut updates, Until::Ready).await;
     assert_eq!(
         [
-            send(&link, message_to(1, "create a.txt")).await,
-            send(&link, message_to(2, "create b.txt")).await,
+            send(&link, message(first_session, "create a.txt")).await,
+            send(&link, message(second_session, "create b.txt")).await,
         ],
         [CommandResult::Accepted, CommandResult::Accepted]
     );
@@ -1476,8 +1545,8 @@ async fn two_codex_sessions_share_one_server() {
     .concat();
     assert_eq!(
         [
-            send(&link, resolve_in(1, 1, Decision::Approve)).await,
-            send(&link, resolve_in(2, 1, Decision::Deny)).await,
+            send(&link, resolve(first_session, 1, Decision::Approve)).await,
+            send(&link, resolve(second_session, 1, Decision::Deny)).await,
         ],
         [CommandResult::Accepted, CommandResult::Accepted]
     );
@@ -1489,7 +1558,7 @@ async fn two_codex_sessions_share_one_server() {
     let view = fold(Vec::from([first, second, asked, ended]).concat());
     let a_call = "exec-f4c7c6d4-8255-4bcc-972d-9f106cda7991";
     assert_eq!(
-        items(&view, 1),
+        items(&view, first_session),
         [
             Item::User {
                 text: String::from("create a.txt"),
@@ -1507,7 +1576,7 @@ async fn two_codex_sessions_share_one_server() {
         ]
     );
     assert_eq!(
-        items(&view, 2),
+        items(&view, second_session),
         [
             Item::User {
                 text: String::from("create b.txt"),
@@ -1538,8 +1607,8 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
     let (fx, dir) = codex_host("codex-interrupt.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let _ = send(&link, message("count to 300")).await;
+    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let _ = send(&link, message(session, "count to 300")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Delta).await,
         [
@@ -1548,12 +1617,15 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
         ]
         .concat()
     );
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [delta("\n"), turn_end(TurnOutcome::Interrupted)]
     );
-    let _ = send(&link, message("ping")).await;
+    let _ = send(&link, message(session, "ping")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
@@ -1576,8 +1648,8 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
     let (fx, dir) = codex_host("codex-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
-    let _ = send(&link, message("create d.txt")).await;
+    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let _ = send(&link, message(session, "create d.txt")).await;
     let call = ToolCallId(String::from("exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b"));
     let tool = ToolKind::Command {
         command: String::from("/usr/bin/zsh -lc 'printf %s d > d.txt'"),
@@ -1603,7 +1675,10 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
         ]
         .concat()
     );
-    assert_eq!(send(&link, interrupt()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, interrupt(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::Resolved).await,
         [
@@ -1615,12 +1690,12 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
         ]
     );
     assert_eq!(
-        send(&link, resolve(1, Decision::Approve)).await,
+        send(&link, resolve(session, 1, Decision::Approve)).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
     std::fs::write(dir.join("release"), "").unwrap();
     // Codex's withdrawal plays before the next turn and is ignored.
-    let _ = send(&link, message("ping")).await;
+    let _ = send(&link, message(session, "ping")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
@@ -1648,9 +1723,10 @@ async fn the_app_server_exiting_closes_every_codex_session() {
     let (fx, dir) = codex_host("codex-exit.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let first_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
     let first = events_until(&mut updates, Until::Ready).await;
-    let _ = send(&link, start(Provider::Codex, &dir)).await;
+    let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    assert_ne!(first_session, second_session);
     let seen = Vec::from([
         first,
         events_until(&mut updates, Until::Closed).await,
@@ -1663,22 +1739,19 @@ async fn the_app_server_exiting_closes_every_codex_session() {
         },
     };
     assert_eq!(
-        (of(1, &seen), of(2, &seen)),
+        (of(first_session, &seen), of(second_session, &seen)),
         (
             [opening(Provider::Codex, &dir), Vec::from([closed.clone()])].concat(),
             [opening(Provider::Codex, &dir), Vec::from([closed])].concat(),
         )
     );
     assert_eq!(
-        send(&link, message("hi")).await,
+        send(&link, message(first_session, "hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    assert_eq!(
-        send(&link, start(Provider::Codex, &dir)).await,
-        CommandResult::Started {
-            session: SessionId(3)
-        }
-    );
+    let next_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    assert_ne!(next_session, first_session);
+    assert_ne!(next_session, second_session);
     assert_eq!(
         kinds_until(&mut updates, Until::Ready).await,
         opening(Provider::Codex, &dir)
@@ -1912,7 +1985,7 @@ async fn claude_host_in(data: &Path) -> Fixture {
         },
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     };
-    serve(endpoint().await, launchers, data)
+    serve(endpoint().await, launchers, data).await
 }
 
 fn with_claude(claude: Availability) -> Providers {
@@ -2002,7 +2075,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
         (Some(with_claude(gateway(probed()))), true),
         "the models are listed again, with the new credential"
     );
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
+    let _ = started_session(send(&link, start(Provider::Claude, &dir)).await);
     let events = events_until(&mut updates, Until::Ready).await;
     assert_eq!(
         read(&dir.join("env.txt")),
@@ -2154,14 +2227,14 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
             chosen: None,
         },
     };
-    let fx = serve(endpoint().await, launchers, &data);
+    let fx = serve(endpoint().await, launchers, &data).await;
     let (link, mut updates, welcomed) = live(&fx).await;
     assert_eq!(welcomed, Some(with_codex(no_credential())));
     assert_eq!(
         codex_offer(send(&link, codex_provider(FIRST_KEY)).await),
         codex_gateway()
     );
-    let _ = send(&link, start(Provider::Codex, &server)).await;
+    let _ = started_session(send(&link, start(Provider::Codex, &server)).await);
     let first = events_until(&mut updates, Until::Ready).await;
     let home = data.join("home/codex");
     assert_eq!(
@@ -2189,7 +2262,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
             },
         }]
     );
-    let _ = send(&link, start(Provider::Codex, &server)).await;
+    let _ = started_session(send(&link, start(Provider::Codex, &server)).await);
     let second = events_until(&mut updates, Until::Ready).await;
     assert_eq!(
         read(&server.join("env.txt")),
@@ -2341,10 +2414,8 @@ fn start_with(provider: Provider, directory: &Path, model: &str, effort: Effort)
     }
 }
 
-fn continued() -> CommandBody {
-    CommandBody::Continue {
-        session: SessionId(1),
-    }
+fn continued(session: SessionId) -> CommandBody {
+    CommandBody::Continue { session }
 }
 
 /// The arguments of each run of the Claude stand-in in `dir`.
@@ -2405,11 +2476,6 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers() {
                 start_with(Provider::Claude, &dir, "small", Effort::High)
             )
             .await,
-            send(
-                &link,
-                start_with(Provider::Claude, &dir, "small", Effort::Low)
-            )
-            .await,
         ],
         [
             CommandResult::Rejected(Rejection::NotOffered {
@@ -2418,10 +2484,14 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers() {
             CommandResult::Rejected(Rejection::NotOffered {
                 reason: String::from("Small doesn't take the effort high"),
             }),
-            CommandResult::Started {
-                session: SessionId(1)
-            },
         ]
+    );
+    let _ = started_session(
+        send(
+            &link,
+            start_with(Provider::Claude, &dir, "small", Effort::Low),
+        )
+        .await,
     );
     assert_eq!(
         kinds_until(&mut updates, Until::Ready).await,
@@ -2453,8 +2523,8 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
     let dir = scratch("reasoning", "claude-reasoning.jsonl");
     let (phone, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&phone, start(Provider::Claude, &dir)).await;
-    let _ = send(&phone, message("sheep?")).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let _ = send(&phone, message(session, "sheep?")).await;
     let live = kinds_until(&mut updates, Until::TurnEnd).await;
     let streamed = live
         .iter()
@@ -2505,7 +2575,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
         stored
     );
     assert_eq!(
-        items(&fold(caught_up), 1)
+        items(&fold(caught_up), session)
             .into_iter()
             .filter(|item| matches!(item, Item::Reasoning { .. }))
             .collect::<Vec<Item>>(),
@@ -2527,8 +2597,8 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
     let dir = scratch("betas-off", "claude-killed.jsonl");
     let (phone, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&phone, start(Provider::Claude, &dir)).await;
-    let _ = send(&phone, message("sheep?")).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let _ = send(&phone, message(session, "sheep?")).await;
     let turn = events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         (
@@ -2538,7 +2608,7 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
                     EventKind::Reasoning { .. } | EventKind::ReasoningDelta { .. }
                 ))
                 .count(),
-            items(&fold(turn), 1)
+            items(&fold(turn), session)
                 .into_iter()
                 .filter(|item| matches!(item, Item::Reasoning { .. } | Item::Reply { .. }))
                 .collect::<Vec<Item>>(),
@@ -2570,18 +2640,23 @@ async fn a_killed_claude_session_continues_its_conversation() {
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     assert_eq!(
-        send(&link, continued()).await,
+        send(&link, continued(SessionId(1))).await,
         CommandResult::Rejected(Rejection::UnknownSession)
     );
-    let _ = send(
-        &link,
-        start_with(Provider::Claude, &dir, "small", Effort::Low),
-    )
-    .await;
-    let _ = send(&link, message("sheep?")).await;
+    let session = started_session(
+        send(
+            &link,
+            start_with(Provider::Claude, &dir, "small", Effort::Low),
+        )
+        .await,
+    );
+    let _ = send(&link, message(session, "sheep?")).await;
     let first = events_until(&mut updates, Until::TurnEnd).await;
-    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
-    let _ = send(&link, message("count")).await;
+    assert_eq!(
+        send(&link, continued(session)).await,
+        CommandResult::Accepted
+    );
+    let _ = send(&link, message(session, "count")).await;
     let killed = events_until(&mut updates, Until::Closed).await;
     assert_eq!(
         killed
@@ -2598,12 +2673,15 @@ async fn a_killed_claude_session_continues_its_conversation() {
         ]
     );
     assert_eq!(
-        send(&link, message("hello?")).await,
+        send(&link, message(session, "hello?")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, continued(session)).await,
+        CommandResult::Accepted
+    );
     let ready = events_until(&mut updates, Until::Ready).await;
-    let _ = send(&link, message("how many sheep?")).await;
+    let _ = send(&link, message(session, "how many sheep?")).await;
     let after = events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         after
@@ -2639,7 +2717,7 @@ async fn a_killed_claude_session_continues_its_conversation() {
     );
     let view = fold(Vec::from([first, killed, ready, after]).concat());
     assert_eq!(
-        items(&view, 1)
+        items(&view, session)
             .into_iter()
             .filter(|item| matches!(item, Item::Continued(_)))
             .collect::<Vec<Item>>(),
@@ -2665,12 +2743,15 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
     .unwrap();
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(&link, start(Provider::Claude, &dir)).await;
-    let _ = send(&link, message("sheep?")).await;
+    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let _ = send(&link, message(session, "sheep?")).await;
     let _ = events_until(&mut updates, Until::TurnEnd).await;
-    let _ = send(&link, message("count")).await;
+    let _ = send(&link, message(session, "count")).await;
     let _ = events_until(&mut updates, Until::Closed).await;
-    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, continued(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,
         [EventKind::SessionClosed {
@@ -2700,14 +2781,16 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
     .unwrap();
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(
-        &link,
-        start_with(Provider::Codex, &server, "small", Effort::Low),
-    )
-    .await;
-    let _ = send(&link, message("prime?")).await;
+    let session = started_session(
+        send(
+            &link,
+            start_with(Provider::Codex, &server, "small", Effort::Low),
+        )
+        .await,
+    );
+    let _ = send(&link, message(session, "prime?")).await;
     let _ = kinds_until(&mut updates, Until::TurnEnd).await;
-    let _ = send(&link, message(COUNT)).await;
+    let _ = send(&link, message(session, COUNT)).await;
     let killed = kinds_until(&mut updates, Until::Closed).await;
     assert_eq!(
         (
@@ -2738,12 +2821,15 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
             ])
         )
     );
-    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, continued(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::Ready).await,
         [EventKind::SessionReady]
     );
-    let _ = send(&link, message("codeword?")).await;
+    let _ = send(&link, message(session, "codeword?")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd)
             .await
@@ -2776,18 +2862,23 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
     .unwrap();
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(
-        &link,
-        start_with(Provider::Codex, &server, "small", Effort::Low),
-    )
-    .await;
+    let session = started_session(
+        send(
+            &link,
+            start_with(Provider::Codex, &server, "small", Effort::Low),
+        )
+        .await,
+    );
     let _ = kinds_until(&mut updates, Until::Ready).await;
     assert_eq!(
         codex_offer(send(&link, codex_provider("conductor-test-key")).await),
         codex_gateway()
     );
     let _ = kinds_until(&mut updates, Until::Closed).await;
-    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, continued(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::Ready).await,
         [
@@ -2847,12 +2938,14 @@ async fn a_killed_codex_server_continues_the_thread() {
     .unwrap();
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let _ = send(
-        &link,
-        start_with(Provider::Codex, &server, "small", Effort::Low),
-    )
-    .await;
-    let _ = send(&link, message("prime?")).await;
+    let session = started_session(
+        send(
+            &link,
+            start_with(Provider::Codex, &server, "small", Effort::Low),
+        )
+        .await,
+    );
+    let _ = send(&link, message(session, "prime?")).await;
     let first = kinds_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
         first
@@ -2873,7 +2966,7 @@ async fn a_killed_codex_server_continues_the_thread() {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    let _ = send(&link, message(COUNT)).await;
+    let _ = send(&link, message(session, COUNT)).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,
         [
@@ -2889,12 +2982,15 @@ async fn a_killed_codex_server_continues_the_thread() {
             },
         ]
     );
-    assert_eq!(send(&link, continued()).await, CommandResult::Accepted);
+    assert_eq!(
+        send(&link, continued(session)).await,
+        CommandResult::Accepted
+    );
     assert_eq!(
         kinds_until(&mut updates, Until::Ready).await,
         [EventKind::SessionReady]
     );
-    let _ = send(&link, message("codeword?")).await;
+    let _ = send(&link, message(session, "codeword?")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd)
             .await
@@ -2932,4 +3028,222 @@ async fn a_killed_codex_server_continues_the_thread() {
     );
     link.stop().await.unwrap();
     fx.router.shutdown().await.unwrap();
+}
+
+/// The original ticket and live link survive a real transport restart. The
+/// saved cursor replays only restart cleanup, and Continue resumes the same
+/// conversation after withdrawing an unanswered approval.
+#[tokio::test]
+async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation() {
+    let dir = scratch("transport-restart", "claude-approve.jsonl");
+    let data = data_dir("transport-restart");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/claude-resumed.jsonl"),
+        dir.join("stdout.2.jsonl"),
+    )
+    .unwrap();
+    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first
+        .target
+        .addr
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let ticket = first.target.clone();
+    let (phone, mut updates) = link(ticket.clone(), None).await;
+    until_live(&mut updates).await;
+    let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let _ = send(&phone, message(session, "create a.txt")).await;
+    let before = events_until(&mut updates, Until::Request).await;
+    let cursor = before.last().unwrap().seq;
+    let conversation = argv(&dir)
+        .first()
+        .and_then(|run| flag(run, "--session-id"))
+        .unwrap();
+    let Fixture { router, log, .. } = first;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+
+    let second = durable_host(&data, address).await;
+    assert_eq!(second.target.addr.id, ticket.addr.id);
+    assert_eq!(second.target.token, ticket.token);
+    phone.reconnect().await;
+    let caught_up = until_live(&mut updates).await;
+    assert_eq!(
+        caught_up
+            .iter()
+            .filter(|update| matches!(update, Update::Reset(_)))
+            .count(),
+        0
+    );
+    let cleanup = caught_up
+        .into_iter()
+        .filter_map(|update| match update {
+            Update::Event(event) => Some(event),
+            Update::Status(_) | Update::Reset(_) => None,
+        })
+        .collect::<Vec<Event>>();
+    assert_eq!(
+        seqs(&cleanup),
+        Vec::from([
+            HostSeq(cursor.0.checked_add(1).unwrap()),
+            HostSeq(cursor.0.checked_add(2).unwrap()),
+            HostSeq(cursor.0.checked_add(3).unwrap()),
+        ])
+    );
+    assert_eq!(
+        of(session, &cleanup),
+        [
+            EventKind::RequestResolved {
+                request: RequestId(1),
+                resolution: Resolution::Withdrawn
+            },
+            turn_end(TurnOutcome::Interrupted),
+            EventKind::SessionClosed {
+                reason: CloseReason::Stopped {
+                    reason: String::from("the host restarted")
+                }
+            },
+        ]
+    );
+    assert_eq!(
+        send(&phone, resolve(session, 1, Decision::Approve)).await,
+        CommandResult::Rejected(Rejection::SessionClosed)
+    );
+    assert_eq!(
+        send(&phone, continued(session)).await,
+        CommandResult::Accepted
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Ready).await,
+        [EventKind::SessionReady]
+    );
+    assert_eq!(
+        send(&phone, resolve(session, 1, Decision::Approve)).await,
+        CommandResult::Rejected(Rejection::UnknownRequest)
+    );
+    let _ = send(&phone, message(session, "how many sheep?")).await;
+    assert_eq!(
+        kinds_until(&mut updates, Until::TurnEnd)
+            .await
+            .into_iter()
+            .filter(|kind| !matches!(kind, EventKind::AssistantDelta { .. }))
+            .collect::<Vec<EventKind>>(),
+        [
+            user("how many sheep?"),
+            reply("18"),
+            turn_end(TurnOutcome::Completed)
+        ]
+    );
+    assert_eq!(
+        argv(&dir).last().and_then(|run| run
+            .iter()
+            .find(|argument| argument.starts_with("--resume="))),
+        Some(&format!("--resume={conversation}"))
+    );
+    phone.stop().await.unwrap();
+    let Fixture { router, log, .. } = second;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+/// A raw connection permits an explicit retry ID, including from a fresh
+/// endpoint identity after the host restarts.
+async fn authenticated(endpoint: &Endpoint, target: &Target) -> iroh::endpoint::Connection {
+    let conn = endpoint
+        .connect(target.addr.clone(), proto::ALPN)
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    proto::wire::write(
+        &mut send,
+        &proto::Open::Hello(proto::Hello {
+            client: test_client(),
+            token: target.token,
+        }),
+    )
+    .await
+    .unwrap();
+    send.finish().unwrap();
+    let welcome = proto::wire::read::<proto::HelloReply>(&mut recv)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        Some(&welcome).filter(|reply| matches!(reply, proto::HelloReply::Welcome(_))),
+        Some(&welcome)
+    );
+    conn
+}
+
+async fn retry_command(
+    conn: &iroh::endpoint::Connection,
+    command: &proto::Command,
+) -> CommandResult {
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    proto::wire::write(&mut send, &proto::Open::Command(command.clone()))
+        .await
+        .unwrap();
+    send.finish().unwrap();
+    proto::wire::read::<CommandResult>(&mut recv)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn one_command_receipt_survives_new_transport_identities_and_a_host_restart() {
+    let dir = scratch("receipt-transport", "claude-approve.jsonl");
+    let data = data_dir("receipt-transport");
+    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first
+        .target
+        .addr
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let ticket = first.target.clone();
+    let command = proto::Command {
+        id: proto::CommandId(71),
+        body: start(Provider::Claude, &dir),
+    };
+    let desktop = endpoint().await;
+    let phone = endpoint().await;
+    assert_ne!(desktop.id(), phone.id());
+    let desktop_conn = authenticated(&desktop, &ticket).await;
+    let phone_conn = authenticated(&phone, &ticket).await;
+    let receipt = retry_command(&desktop_conn, &command).await;
+    let session = started_session(receipt.clone());
+    assert_eq!(retry_command(&phone_conn, &command).await, receipt);
+    desktop.close().await;
+    phone.close().await;
+    let Fixture { router, log, .. } = first;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+
+    let second = durable_host(&data, address).await;
+    let restarted_phone = endpoint().await;
+    assert_ne!(restarted_phone.id(), desktop.id());
+    assert_ne!(restarted_phone.id(), phone.id());
+    let conn = authenticated(&restarted_phone, &ticket).await;
+    assert_eq!(retry_command(&conn, &command).await, receipt);
+    let history = second.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::SessionCreated { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(history.iter().find(|event| event.session != session), None);
+    restarted_phone.close().await;
+    let Fixture { router, log, .. } = second;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
 }
