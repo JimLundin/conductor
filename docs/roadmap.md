@@ -115,8 +115,15 @@ Each item ends in something to try. The fleet design is
 
 ## Known bugs
 
-- A fresh connection sometimes gets no `Welcome` and dies at the 30 s idle
-  timeout. Not reproduced yet (#6).
+- A fresh connection sometimes gets no `Welcome` (#6). The client now
+  closes a stalled Hello exchange after 10 s and retries with backoff;
+  handshake timing logs distinguish transport from host processing waits.
+  Loopback regressions cover a missing reply and a delayed successful reply.
+  Three fresh Chromium connections through the public relay on 2026-11-14
+  reached Live in 1.30–1.59 s without running either provider. The original
+  intermittent failure was not reproduced and its cause remains unresolved;
+  this is a timeout mitigation, not a root-cause fix. The registry's slow
+  provider discovery remains tracked separately in #23.
 
 Open issues are tracked at https://github.com/JimLundin/conductor/issues.
 

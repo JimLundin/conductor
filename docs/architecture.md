@@ -175,6 +175,12 @@ Each frame is a `u32` length and a postcard body.
   `#join=` link. The fragment never reaches the static server.
 - A dial that stalls for 1.5 s is hedged with a second dial on a fresh
   endpoint.
+- The subsequent Hello exchange has a 10 s deadline covering stream open,
+  write and reply. A timeout closes that connection and retries with the
+  link's existing jittered backoff, preserving its cursor. Debug logs for
+  `client::link` and `daemon::serve` identify each local connection and peer,
+  with elapsed times at Hello/Welcome boundaries and the host's registry/log
+  waits. They do not record Hello contents or credentials.
 - In the browser, iroh needs the `tls-ring` feature, so building the web app
   needs clang for wasm32.
 - Tests use `presets::Minimal` with relays disabled, on loopback.

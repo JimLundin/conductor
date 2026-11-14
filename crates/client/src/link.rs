@@ -14,7 +14,7 @@ use std::time::Duration;
 use iroh::endpoint::{BindError, ConnectError, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
-use n0_future::time::sleep;
+use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{StreamExt, join_all, task};
 use proto::wire::{self, WireError};
 use proto::{
@@ -33,6 +33,7 @@ const BACKOFF_CEILING: Duration = Duration::from_secs(10);
 /// fresh one is up in well under a second (docs/forensics/reconnect on the
 /// `reconnect-forensics` branch).
 const HEDGE_AFTER: Duration = Duration::from_millis(1500);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where a host is and the secret it expects in `Hello`.
 #[derive(Debug, Clone)]
@@ -246,6 +247,8 @@ enum Lost {
     Refused(String),
     #[error("the host closed the {0} stream")]
     HostClosed(String),
+    #[error("the host did not complete the hello handshake within 10 seconds")]
+    HelloTimeout,
     #[error("event {got} arrived after {after}: the feed has a gap")]
     Gap { after: u64, got: u64 },
 }
@@ -414,14 +417,21 @@ impl Link {
 
     async fn start(&mut self, conn: &Connection) -> Result<Connected, Lost> {
         self.outbox.set_state(LinkState::Authenticating).await?;
-        let welcome = hello(
-            conn,
-            Hello {
-                client: self.client.clone(),
-                token: self.target.token,
-            },
+        let welcome = timeout(
+            HELLO_TIMEOUT,
+            hello(
+                conn,
+                Hello {
+                    client: self.client.clone(),
+                    token: self.target.token,
+                },
+            ),
         )
-        .await?;
+        .await
+        .map_err(|_| {
+            tracing::warn!(peer = %conn.remote_id(), connection = conn.stable_id(), timeout_ms = HELLO_TIMEOUT.as_millis(), "hello timed out");
+            Lost::HelloTimeout
+        })??;
         self.adopt(&welcome).await?;
         let live_at = welcome.head_seq;
         let current = self.outbox.current();
@@ -730,9 +740,16 @@ async fn subscribe(
 }
 
 async fn hello(conn: &Connection, hello: Hello) -> Result<Welcome, Lost> {
+    let started = Instant::now();
+    let peer = conn.remote_id();
+    let connection = conn.stable_id();
+    tracing::debug!(%peer, connection, "hello opening");
     let (mut send, mut recv) = conn.open_bi().await.map_err(WireError::from)?;
     wire::write(&mut send, &Open::Hello(hello)).await?;
-    match wire::read::<HelloReply>(&mut recv).await? {
+    tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello sent");
+    let reply = wire::read::<HelloReply>(&mut recv).await?;
+    tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello reply received");
+    match reply {
         Some(HelloReply::Welcome(welcome)) => Ok(welcome),
         Some(HelloReply::Refused { reason }) => Err(Lost::Refused(reason)),
         None => Err(Lost::HostClosed(String::from("hello"))),

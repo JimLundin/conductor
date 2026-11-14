@@ -2,6 +2,7 @@
 
 use iroh::endpoint::{ClosedStream, Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
+use n0_future::time::Instant;
 use proto::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open, Rejection,
@@ -80,6 +81,10 @@ impl Conductor {
     /// The first stream must be a `Hello` with the right token. Returns the
     /// client's name, or `None` if it was refused.
     async fn authenticate(&self, conn: &Connection) -> Result<Option<ClientName>, StreamError> {
+        let started = Instant::now();
+        let peer = conn.remote_id();
+        let connection = conn.stable_id();
+        tracing::debug!(%peer, connection, "waiting for hello");
         let (mut send, mut recv) = conn.accept_bi().await?;
         let admitted = match wire::read::<Open>(&mut recv).await? {
             Some(Open::Hello(hello)) => hello
@@ -93,8 +98,10 @@ impl Conductor {
         };
         match admitted {
             Ok(hello) => {
-                wire::write(&mut send, &HelloReply::Welcome(self.welcome().await?)).await?;
+                tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello received");
+                wire::write(&mut send, &HelloReply::Welcome(self.welcome(conn).await?)).await?;
                 send.finish()?;
+                tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome sent");
                 Ok(Some(hello.client))
             }
             Err(reason) => {
@@ -110,9 +117,15 @@ impl Conductor {
         }
     }
 
-    async fn welcome(&self) -> Result<Welcome, Stopped> {
+    async fn welcome(&self, conn: &Connection) -> Result<Welcome, Stopped> {
+        let started = Instant::now();
+        let peer = conn.remote_id();
+        let connection = conn.stable_id();
         let providers = self.registry.providers().await?;
-        self.log.welcome(providers).await
+        tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome providers ready");
+        let welcome = self.log.welcome(providers).await?;
+        tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome log ready");
+        Ok(welcome)
     }
 
     async fn streams(&self, conn: &Connection, client: &ClientName) -> ConnectionError {
@@ -254,7 +267,7 @@ impl Conductor {
         mut send: SendStream,
         subscribe: Subscribe,
     ) -> Result<(), StreamError> {
-        match self.welcome().await? {
+        match self.welcome(conn).await? {
             Welcome { epoch, .. } if epoch == subscribe.epoch => {
                 let subscription = self.log.subscribe(subscribe.after_seq).await?;
                 tracing::info!(
