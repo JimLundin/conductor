@@ -199,6 +199,13 @@ Every piece of state has one owner task; handles talk to it over channels.
   falls between them. A subscriber that falls behind the broadcast is dropped
   and resubscribes from its cursor.
 - **Registry** maps session ids to session handles and starts sessions.
+  Credential saves update its current configuration immediately. Model
+  discovery and Codex reconfiguration run in at most one pending future per
+  provider, polled alongside registry requests. New saves supersede queued
+  work; old results cannot replace current models or failures. Each provider
+  stays unavailable while refreshing, and reports a failure if discovery
+  fails. Per-provider ordering also isolates Claude's shared probe directory
+  and prevents older Codex reconfiguration from running after a newer one.
 - **Session** owns one agent, its turn and its open requests. An interrupt
   that arrives before the agent began the turn is held until it does. An
   open request is withdrawn when the turn ends. It outlives the agent's
@@ -294,6 +301,15 @@ or upgrading a CLI.
   crash before the database commit can leave a CLI action sent without a
   receipt. Restart withdraws its requests and interrupts its turn; it does
   not promise exactly-once execution inside a CLI.
+- **Credential receipts:** Set/ClearCredential reserve their command id
+  without holding the global event transaction during provider refresh.
+  Other commands and live events can proceed. Duplicate ids wait for the
+  original result; superseded saves wait for the newest refresh and return
+  its provider snapshot. The final `Providers` result is committed as the
+  receipt before any reply, after an active ordinary transaction finishes.
+  The credential file remains outside redb: a crash after saving it but
+  before the final receipt can cause a retry to reapply that change. No
+  atomic credential-file/receipt guarantee is implied.
 - **Restart (built):** the host reconstructs each session closed, withdraws
   requests that were still open and marks in-flight turns interrupted.
   `Continue` resumes the stored native conversation with the current

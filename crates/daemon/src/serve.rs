@@ -162,14 +162,23 @@ impl Conductor {
                         session,
                         checkpoint,
                     } => self.order(session, Order::Diff(checkpoint)).await?,
-                    body => match self.log.begin(key).await? {
-                        BeginCommand::Cached(result) => result,
-                        BeginCommand::Execute(lease) => {
-                            let result = self.command(body, client).await?;
-                            lease.finish(result.clone()).await?;
-                            result
+                    body => {
+                        let begun = match &body {
+                            CommandBody::SetCredential { .. }
+                            | CommandBody::ClearCredential { .. } => {
+                                self.log.begin_credential(key).await?
+                            }
+                            _ => self.log.begin(key).await?,
+                        };
+                        match begun {
+                            BeginCommand::Cached(result) => result,
+                            BeginCommand::Execute(lease) => {
+                                let result = self.command(body, client).await?;
+                                lease.finish(result.clone()).await?;
+                                result
+                            }
                         }
-                    },
+                    }
                 };
                 wire::write(&mut send, &result).await?;
                 send.finish()?;

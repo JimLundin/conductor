@@ -139,8 +139,12 @@ fn data_dir(name: &str) -> PathBuf {
 
 /// A host on `endpoint`, keeping its credentials in `data`.
 async fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
-    let (store, stored) = Store::open(data).unwrap();
     let log = Log::spawn(String::from("test-host"), Epoch(11));
+    serve_log(endpoint, launchers, data, log).await
+}
+
+async fn serve_log(endpoint: Endpoint, launchers: Launchers, data: &Path, log: Log) -> Fixture {
+    let (store, stored) = Store::open(data).unwrap();
     let registry = Registry::spawn(log.clone(), launchers, store, stored);
     let _ = tokio::time::timeout(STEP, registry.providers())
         .await
@@ -3285,6 +3289,372 @@ async fn retry_command(
         .await
         .unwrap()
         .unwrap()
+}
+
+const RESPONSIVE: Duration = Duration::from_secs(2);
+const REFRESH_SESSION: SessionId = SessionId(2300);
+const REFRESHING: &str = "refreshing provider models";
+
+fn queued_command(
+    conn: &iroh::endpoint::Connection,
+    id: u128,
+    body: CommandBody,
+) -> tokio::task::JoinHandle<CommandResult> {
+    let conn = conn.clone();
+    let command = proto::Command {
+        id: proto::CommandId(id),
+        body,
+    };
+    tokio::spawn(async move { retry_command(&conn, &command).await })
+}
+
+async fn finished_command(task: tokio::task::JoinHandle<CommandResult>) -> CommandResult {
+    tokio::time::timeout(STEP, task).await.unwrap().unwrap()
+}
+
+fn claude_credential(token: &str) -> Credential {
+    Credential::Claude(ClaudeCredential::Gateway {
+        base_url: String::from(GATEWAY),
+        token: String::from(token),
+    })
+}
+
+async fn drive_saved(
+    data: &Path,
+    expected: daemon::credentials::Stored,
+) -> daemon::credentials::Stored {
+    loop {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        match Store::open(data).unwrap().1 {
+            stored if stored == expected => break stored,
+            _ => {}
+        }
+    }
+}
+
+async fn saved(data: &Path, body: CommandBody) {
+    let credential = match body {
+        CommandBody::SetCredential { credential } => Some(credential),
+        _ => None,
+    }
+    .unwrap();
+    let expected = daemon::credentials::Stored::Opened(proto::Credentials::none().set(credential));
+    let _ = tokio::time::timeout(RESPONSIVE, drive_saved(data, expected))
+        .await
+        .unwrap();
+}
+
+async fn marker(path: &Path) {
+    tokio::time::timeout(RESPONSIVE, drive_materialization(path))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+async fn refresh_host(data: &Path, source: &Path, launchers: Launchers) -> Fixture {
+    let log = Log::open(String::from("refresh-host"), &data.join("conductor.redb")).unwrap();
+    log.append(
+        REFRESH_SESSION,
+        EventKind::SessionCreated {
+            provider: Provider::Claude,
+            directory: HostPath(source.display().to_string()),
+            by: test_client(),
+            model: None,
+            effort: None,
+        },
+    )
+    .await
+    .unwrap();
+    serve_log(endpoint().await, launchers, data, log).await
+}
+
+fn refresh_claude(home: Home) -> Launcher {
+    Launcher::Ready {
+        launch: Launch::Claude(ClaudeLaunch {
+            claude_path: fake_claude(),
+            home,
+            credential: None,
+        }),
+        own: OwnSignIn::Unmanaged,
+        models: models(),
+        chosen: None,
+    }
+}
+
+#[tokio::test]
+async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_results() {
+    let data = data_dir("refresh-claude");
+    let source = scratch("refresh-claude", "claude-approve.jsonl");
+    let probe = data.join("probe");
+    std::fs::create_dir_all(&probe).unwrap();
+    std::fs::write(probe.join("stdout.jsonl"), "{\"fake\":\"files\",\"write\":{\"held\":\"ready\"}}\n{\"fake\":\"release\",\"file\":\"go\"}\n{\"fake\":\"fail\",\"stderr\":\"superseded probe failed\",\"status\":1}\n").unwrap();
+    std::fs::write(probe.join("stdout.2.jsonl"), format!("{PROBED}\n")).unwrap();
+    let launchers = Launchers {
+        claude: refresh_claude(daemon::homes(&data).unwrap().claude),
+        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
+    };
+    let fx = refresh_host(&data, &source, launchers.clone()).await;
+    let desktop = endpoint().await;
+    let conn = authenticated(&desktop, &fx.target).await;
+    let first_body = CommandBody::SetCredential {
+        credential: claude_credential("conductor-test-old"),
+    };
+    let first = queued_command(&conn, 2301, first_body.clone());
+    marker(&probe.join("held")).await;
+    let (phone, _updates, offered) = tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
+    assert_eq!(
+        offered,
+        Some(with_claude(Availability::Unavailable {
+            reason: String::from(REFRESHING)
+        }))
+    );
+    let duplicate = queued_command(&conn, 2301, first_body.clone());
+    let refused = CommandResult::Rejected(Rejection::ProviderUnavailable {
+        reason: String::from(REFRESHING),
+    });
+    assert_eq!(
+        tokio::time::timeout(RESPONSIVE, send(&phone, start(Provider::Claude, &source)))
+            .await
+            .unwrap(),
+        refused
+    );
+    assert_eq!(
+        tokio::time::timeout(
+            RESPONSIVE,
+            send(
+                &phone,
+                CommandBody::Continue {
+                    session: REFRESH_SESSION
+                }
+            )
+        )
+        .await
+        .unwrap(),
+        refused
+    );
+    assert_eq!(
+        tokio::time::timeout(RESPONSIVE, send(&phone, message(SessionId(999), "lookup")))
+            .await
+            .unwrap(),
+        CommandResult::Rejected(Rejection::UnknownSession)
+    );
+    let mut live = fx.log.subscribe(HostSeq(0)).await.unwrap().live;
+    fx.log
+        .append(
+            REFRESH_SESSION,
+            EventKind::Error {
+                message: String::from("still live"),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::time::timeout(RESPONSIVE, live.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .kind,
+        EventKind::Error {
+            message: String::from("still live")
+        }
+    );
+    let middle_body = CommandBody::SetCredential {
+        credential: claude_credential("conductor-test-middle"),
+    };
+    let middle = queued_command(&conn, 2302, middle_body.clone());
+    saved(&data, middle_body).await;
+    let newest_body = CommandBody::SetCredential {
+        credential: claude_credential("conductor-test-newest"),
+    };
+    let newest = queued_command(&conn, 2303, newest_body.clone());
+    saved(&data, newest_body).await;
+    assert_eq!(read(&probe.join("runs.txt")), "1");
+    std::fs::write(probe.join("go"), "").unwrap();
+    let result = CommandResult::Providers(with_claude(gateway(probed())));
+    assert_eq!(finished_command(first).await, result);
+    assert_eq!(finished_command(duplicate).await, result);
+    assert_eq!(finished_command(middle).await, result);
+    assert_eq!(finished_command(newest).await, result);
+    assert_eq!(read(&probe.join("runs.txt")), "2");
+    assert_ne!(
+        read(&probe.join("env.txt")).find("conductor-test-newest"),
+        None
+    );
+    std::fs::write(
+        probe.join("stdout.3.jsonl"),
+        "{\"fake\":\"fail\",\"stderr\":\"current probe failed\",\"status\":1}\n",
+    )
+    .unwrap();
+    let failed = send(
+        &phone,
+        CommandBody::SetCredential {
+            credential: claude_credential("conductor-test-failing"),
+        },
+    )
+    .await;
+    let reason = match failed {
+        CommandResult::Providers(Providers {
+            claude: Availability::Unavailable { reason },
+            ..
+        }) => Some(reason),
+        _ => None,
+    }
+    .unwrap();
+    assert_ne!(reason, REFRESHING);
+    assert_ne!(reason, "");
+    std::fs::write(probe.join("stdout.4.jsonl"), format!("{PROBED}\n")).unwrap();
+    assert_eq!(
+        send(
+            &phone,
+            CommandBody::ClearCredential {
+                provider: Provider::Claude
+            }
+        )
+        .await,
+        CommandResult::Providers(with_claude(Availability::Available {
+            auth: Auth::Unmanaged,
+            models: probed()
+        }))
+    );
+    phone.stop().await.unwrap();
+    desktop.close().await;
+    let Fixture { router, log, .. } = fx;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+    let log = Log::open(String::from("refresh-host"), &data.join("conductor.redb")).unwrap();
+    let reopened = serve_log(endpoint().await, launchers, &data, log).await;
+    let client = endpoint().await;
+    let conn = authenticated(&client, &reopened.target).await;
+    assert_eq!(
+        retry_command(
+            &conn,
+            &proto::Command {
+                id: proto::CommandId(2301),
+                body: first_body
+            }
+        )
+        .await,
+        result
+    );
+    assert_eq!(read(&probe.join("runs.txt")), "4");
+    client.close().await;
+    let Fixture { router, log, .. } = reopened;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
+    let data = data_dir("refresh-codex");
+    let source = scratch("refresh-codex-claude", "claude-approve.jsonl");
+    let server = scratch("refresh-codex", "codex-two-threads-listed.jsonl");
+    let recording = read(&server.join("stdout.jsonl"));
+    std::fs::write(server.join("stdout.2.jsonl"), &recording).unwrap();
+    std::fs::write(server.join("stdout.jsonl"), format!(
+        "{}\n{{\"fake\":\"files\",\"write\":{{\"held\":\"ready\"}}}}\n{{\"fake\":\"release\",\"file\":\"go\"}}\n{}\n",
+        recording.lines().take(2).collect::<Vec<_>>().join("\n"),
+        recording.lines().skip(2).collect::<Vec<_>>().join("\n"),
+    )).unwrap();
+    let homes = daemon::homes(&data).unwrap();
+    let hub = CodexHub::spawn(ServerOptions {
+        codex_path: fake_codex(),
+        home: homes.codex,
+        credential: None,
+        cwd: server.clone(),
+        stdout_log: None,
+    });
+    let fx = refresh_host(
+        &data,
+        &source,
+        Launchers {
+            claude: refresh_claude(homes.claude),
+            codex: Launcher::Ready {
+                launch: Launch::Codex(CodexLaunch { hub }),
+                own: OwnSignIn::Missing,
+                models: models(),
+                chosen: None,
+            },
+        },
+    )
+    .await;
+    let desktop = endpoint().await;
+    let conn = authenticated(&desktop, &fx.target).await;
+    let first = queued_command(&conn, 2311, codex_provider("conductor-test-old"));
+    marker(&server.join("held")).await;
+    let (phone, mut updates, offered) = tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
+    assert_eq!(
+        offered.unwrap().codex,
+        Availability::Unavailable {
+            reason: String::from(REFRESHING)
+        }
+    );
+    assert_eq!(
+        tokio::time::timeout(
+            RESPONSIVE,
+            send(
+                &phone,
+                CommandBody::Continue {
+                    session: REFRESH_SESSION
+                }
+            )
+        )
+        .await
+        .unwrap(),
+        CommandResult::Accepted
+    );
+    events_until(&mut updates, Until::Ready).await;
+    let started = tokio::time::timeout(RESPONSIVE, send(&phone, start(Provider::Claude, &source)))
+        .await
+        .unwrap();
+    let _ = started_session(started);
+    events_until(&mut updates, Until::Ready).await;
+    let middle_body = codex_provider("conductor-test-middle");
+    let middle = queued_command(&conn, 2312, middle_body.clone());
+    saved(&data, middle_body).await;
+    let newest_body = codex_provider("conductor-test-newest");
+    let newest = queued_command(&conn, 2313, newest_body.clone());
+    saved(&data, newest_body).await;
+    assert_eq!(read(&server.join("runs.txt")), "1");
+    std::fs::write(server.join("go"), "").unwrap();
+    assert_eq!(codex_offer(finished_command(first).await), codex_gateway());
+    assert_eq!(codex_offer(finished_command(middle).await), codex_gateway());
+    assert_eq!(codex_offer(finished_command(newest).await), codex_gateway());
+    assert_eq!(read(&server.join("runs.txt")), "2");
+    assert_ne!(
+        read(&server.join("env.txt")).find("conductor-test-newest"),
+        None
+    );
+    let _ = started_session(send(&phone, start(Provider::Codex, &server)).await);
+    events_until(&mut updates, Until::Ready).await;
+    let cleared = send(
+        &phone,
+        CommandBody::ClearCredential {
+            provider: Provider::Codex,
+        },
+    )
+    .await;
+    let unavailable = match cleared {
+        CommandResult::Providers(providers) => Some(providers.codex),
+        _ => None,
+    };
+    assert_eq!(unavailable, Some(no_credential()));
+    assert_eq!(
+        kinds_until(&mut updates, Until::Closed).await,
+        Vec::from([EventKind::SessionClosed {
+            reason: CloseReason::Stopped {
+                reason: String::from("new Codex credential")
+            }
+        }])
+    );
+    assert_eq!(read(&server.join("runs.txt")), "2");
+    phone.stop().await.unwrap();
+    desktop.close().await;
+    let Fixture { router, log, .. } = fx;
+    router.shutdown().await.unwrap();
+    drop(router);
+    log.shutdown().await.unwrap();
 }
 
 #[tokio::test]

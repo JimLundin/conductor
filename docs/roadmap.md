@@ -4,6 +4,14 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Responsive provider refresh** (#23). Credential saves, model discovery
+  and Codex reconfiguration no longer hold the registry or the global
+  command transaction while a CLI responds. Refreshes are serialized per
+  provider, coalesce superseded configurations and discard stale results.
+  Pending and failed providers report unavailability; unrelated sessions
+  and connections remain usable. Credential retries retain their final
+  durable `Providers` receipt.
+
 - **Subset v15** (JimLundin/subset#5). The checker pins `b02997b`. Local
   closures, array receivers and structural patterns remove repeated code.
   The receiver drain uses owner-accepted proposal 0058's eager pull iterator.
@@ -122,8 +130,8 @@ Each item ends in something to try. The fleet design is
   Three fresh Chromium connections through the public relay on 2026-11-14
   reached Live in 1.30–1.59 s without running either provider. The original
   intermittent failure was not reproduced and its cause remains unresolved;
-  this is a timeout mitigation, not a root-cause fix. The registry's slow
-  provider discovery remains tracked separately in #23.
+  this is a timeout mitigation, not a root-cause fix. The separate registry
+  blocking path in #23 is fixed; it was not proven to cause this failure.
 
 Open issues are tracked at https://github.com/JimLundin/conductor/issues.
 

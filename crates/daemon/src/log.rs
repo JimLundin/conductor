@@ -4,7 +4,7 @@
 
 use crate::storage::{self, Storage};
 use redb::WriteTransaction;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::Path;
 
@@ -34,7 +34,19 @@ pub struct Log {
 
 struct CommandStart {
     key: CommandId,
+    kind: CommandKind,
     reply: oneshot::Sender<BeginCommand>,
+}
+
+enum CommandKind {
+    Session,
+    Credential,
+}
+
+struct CredentialFinish {
+    key: CommandId,
+    result: CommandResult,
+    reply: oneshot::Sender<()>,
 }
 
 pub(crate) enum BeginCommand {
@@ -118,6 +130,8 @@ struct LogActor {
     storage: Option<Storage>,
     staged: Vec<Event>,
     waiting: VecDeque<CommandStart>,
+    credentials: HashMap<CommandId, Vec<oneshot::Sender<BeginCommand>>>,
+    credential_finishes: VecDeque<CredentialFinish>,
     name: String,
     epoch: Epoch,
     events: Vec<Event>,
@@ -146,6 +160,8 @@ impl Log {
             transaction: None,
             staged: Vec::new(),
             waiting: VecDeque::new(),
+            credentials: HashMap::new(),
+            credential_finishes: VecDeque::new(),
             name,
             epoch,
             events,
@@ -182,8 +198,25 @@ impl Log {
     }
 
     pub(crate) async fn begin(&self, key: CommandId) -> Result<BeginCommand, Stopped> {
-        self.ask(|reply| LogMsg::Begin(CommandStart { key, reply }))
-            .await
+        self.ask(|reply| {
+            LogMsg::Begin(CommandStart {
+                key,
+                kind: CommandKind::Session,
+                reply,
+            })
+        })
+        .await
+    }
+
+    pub(crate) async fn begin_credential(&self, key: CommandId) -> Result<BeginCommand, Stopped> {
+        self.ask(|reply| {
+            LogMsg::Begin(CommandStart {
+                key,
+                kind: CommandKind::Credential,
+                reply,
+            })
+        })
+        .await
     }
 
     pub(crate) async fn finish(
@@ -274,8 +307,11 @@ impl LogActor {
             LogMsg::Shutdown { reply } => {
                 let _ = reply.send(());
             }
-            LogMsg::Abort(key) => match &self.active {
-                Some(active) if active == &key => {
+            LogMsg::Abort(key) => match (self.credentials.get(&key), &self.active) {
+                (Some(_), _) => {
+                    Err(Stopped {})?;
+                }
+                (None, Some(active)) if active == &key => {
                     Err(Stopped {})?;
                 }
                 _ => {}
@@ -285,15 +321,29 @@ impl LogActor {
                 None => self.begin(start)?,
             },
             LogMsg::Finish { key, result, reply } => {
-                if let Some(write) = self.transaction.take() {
-                    storage::receipt(&write, key, &result)?;
-                    self.transaction = Some(write);
-                }
-                self.commit()?;
-                self.active = None;
-                let _ = reply.send(());
-                if let Some(start) = self.waiting.pop_front() {
-                    self.begin(start)?;
+                match (self.credentials.get(&key), &self.active) {
+                    (Some(_), Some(_)) => {
+                        self.credential_finishes
+                            .push_back(CredentialFinish { key, result, reply });
+                    }
+                    (Some(_), None) => {
+                        self.finish_credential(CredentialFinish { key, result, reply })?
+                    }
+                    (None, _) => {
+                        if let Some(write) = self.transaction.take() {
+                            storage::receipt(&write, key, &result)?;
+                            self.transaction = Some(write);
+                        }
+                        self.commit()?;
+                        self.active = None;
+                        let _ = reply.send(());
+                        for finish in std::mem::take(&mut self.credential_finishes) {
+                            self.finish_credential(finish)?;
+                        }
+                        if let Some(start) = self.waiting.pop_front() {
+                            self.begin(start)?;
+                        }
+                    }
                 }
             }
             LogMsg::History { reply } => {
@@ -403,16 +453,21 @@ impl LogActor {
             .map(|storage| storage.receipt(start.key))
             .transpose()?
             .flatten();
-        match receipt {
-            Some(result) => {
+        match (receipt, self.credentials.get_mut(&start.key)) {
+            (Some(result), _) => {
                 let _ = start.reply.send(BeginCommand::Cached(result));
-                if let Some(next) = self.waiting.pop_front() {
-                    self.begin(next)?;
-                }
             }
-            None => {
-                self.transaction = self.storage.as_ref().map(Storage::begin).transpose()?;
-                self.active = Some(start.key);
+            (None, Some(waiters)) => waiters.push(start.reply),
+            (None, None) => {
+                match start.kind {
+                    CommandKind::Session => {
+                        self.transaction = self.storage.as_ref().map(Storage::begin).transpose()?;
+                        self.active = Some(start.key);
+                    }
+                    CommandKind::Credential => {
+                        self.credentials.insert(start.key, Vec::new());
+                    }
+                }
                 let inbox = self.inbox.upgrade().ok_or(Stopped {})?;
                 let lease = CommandLease {
                     log: Log { inbox },
@@ -421,6 +476,25 @@ impl LogActor {
                 let _ = start.reply.send(BeginCommand::Execute(lease));
             }
         }
+        if let (None, Some(CommandStart { .. })) = (&self.active, self.waiting.front()) {
+            let next = self.waiting.pop_front().expect("a waiting command");
+            self.begin(next)?;
+        }
+        Ok(())
+    }
+
+    fn finish_credential(&mut self, finish: CredentialFinish) -> anyhow::Result<()> {
+        if let Some(storage) = &self.storage {
+            let write = storage.begin()?;
+            storage::receipt(&write, finish.key, &finish.result)?;
+            write.commit()?;
+        }
+        if let Some(waiters) = self.credentials.remove(&finish.key) {
+            for waiter in waiters {
+                let _ = waiter.send(BeginCommand::Cached(finish.result.clone()));
+            }
+        }
+        let _ = finish.reply.send(());
         Ok(())
     }
 
@@ -556,6 +630,80 @@ mod durability_tests {
     }
 
     #[tokio::test]
+    async fn credential_receipts_wait_for_commit_without_holding_the_event_transaction() {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("credential-receipts-{}.redb", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let log = Log::open(String::from("test"), &path).unwrap();
+        let credential = match log.begin_credential(CommandId(23)).await.unwrap() {
+            BeginCommand::Execute(lease) => Some(lease),
+            BeginCommand::Cached(_) => None,
+        }
+        .unwrap();
+        let ordinary = tokio::time::timeout(Duration::from_secs(2), lease(&log, 24))
+            .await
+            .unwrap()
+            .unwrap();
+        let (finished_reply, mut finished) = oneshot::channel();
+        log.inbox
+            .send(LogMsg::Finish {
+                key: CommandId(23),
+                result: CommandResult::Accepted,
+                reply: finished_reply,
+            })
+            .await
+            .unwrap();
+        let (retry_reply, retry) = oneshot::channel();
+        log.inbox
+            .send(LogMsg::Begin(CommandStart {
+                key: CommandId(23),
+                kind: super::CommandKind::Session,
+                reply: retry_reply,
+            }))
+            .await
+            .unwrap();
+        let _ = log.history().await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(20), &mut finished)
+                .await
+                .err()
+                .map(|_| "pending"),
+            Some("pending")
+        );
+        ordinary.finish(CommandResult::Accepted).await.unwrap();
+        finished.await.unwrap();
+        drop(credential);
+        let retried = match retry.await.unwrap() {
+            BeginCommand::Cached(result) => Some(result),
+            BeginCommand::Execute(_) => None,
+        };
+        assert_eq!(retried, Some(CommandResult::Accepted));
+        log.shutdown().await.unwrap();
+        let reopened = Log::open(String::from("test"), &path).unwrap();
+        let cached = match reopened.begin_credential(CommandId(23)).await.unwrap() {
+            BeginCommand::Cached(result) => Some(result),
+            BeginCommand::Execute(_) => None,
+        };
+        assert_eq!(cached, Some(CommandResult::Accepted));
+        reopened.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn credential_lease_drop_fails_closed() {
+        let log = Log::spawn(String::from("test"), proto::Epoch(1));
+        let credential = match log.begin_credential(CommandId(23)).await.unwrap() {
+            BeginCommand::Execute(lease) => Some(lease),
+            BeginCommand::Cached(_) => None,
+        }
+        .unwrap();
+        drop(credential);
+        tokio::time::timeout(Duration::from_secs(2), log.stopped())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn receipt_and_events_commit_before_live_and_queued_retries_drain() {
         let path =
             std::env::temp_dir().join(format!("conductor-staging-{}.redb", std::process::id()));
@@ -586,6 +734,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(1),
+                kind: super::CommandKind::Session,
                 reply: duplicate_reply,
             }))
             .await
@@ -594,6 +743,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(2),
+                kind: super::CommandKind::Session,
                 reply: next_reply,
             }))
             .await

@@ -3,8 +3,11 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::path::PathBuf;
 
 use agents::claude::Sandbox;
+use n0_future::MaybeFuture;
+use n0_future::boxed::BoxFuture;
 use proto::{
     Auth, Availability, ClaudeCredential, ClientName, CloseReason, CodexCredential, CommandResult,
     Credential, Credentials, Effort, Event, EventKind, HostPath, ModelId, Models, Provider,
@@ -91,6 +94,7 @@ pub struct Registry {
 
 enum RegistryMsg {
     Restore,
+    Refreshed(Refreshed),
     Start {
         provider: Provider,
         directory: HostPath,
@@ -135,6 +139,126 @@ struct RegistryActor {
     store: Store,
     stored: Stored,
     sessions: BTreeMap<SessionId, (Provider, Session)>,
+    claude_refresh: ProviderRefresh,
+    codex_refresh: ProviderRefresh,
+}
+
+#[derive(Clone)]
+struct RefreshJob {
+    id: ulid::Ulid,
+    provider: Provider,
+    launcher: Launcher,
+    credentials: Credentials,
+    directory: PathBuf,
+}
+
+struct Refreshed {
+    id: ulid::Ulid,
+    provider: Provider,
+    models: Result<Models, String>,
+}
+
+enum RefreshState {
+    Idle,
+    Pending {
+        latest: Box<RefreshJob>,
+        replies: Vec<oneshot::Sender<CommandResult>>,
+    },
+    Failed(String),
+}
+
+struct ProviderRefresh {
+    state: RefreshState,
+    future: MaybeFuture<BoxFuture<Refreshed>>,
+}
+
+struct RefreshCompletion {
+    models: Result<Models, String>,
+    replies: Vec<oneshot::Sender<CommandResult>>,
+}
+
+impl ProviderRefresh {
+    fn new() -> ProviderRefresh {
+        ProviderRefresh {
+            state: RefreshState::Idle,
+            future: MaybeFuture::None,
+        }
+    }
+
+    fn schedule(&mut self, latest: RefreshJob, reply: oneshot::Sender<CommandResult>) {
+        let replies = match std::mem::replace(&mut self.state, RefreshState::Idle) {
+            RefreshState::Pending { mut replies, .. } => {
+                replies.push(reply);
+                replies
+            }
+            RefreshState::Idle | RefreshState::Failed(_) => {
+                self.future = MaybeFuture::Some(Box::pin(refresh(latest.clone())));
+                Vec::from([reply])
+            }
+        };
+        self.state = RefreshState::Pending {
+            latest: Box::new(latest),
+            replies,
+        };
+    }
+
+    fn finish(&mut self, result: Refreshed) -> Option<RefreshCompletion> {
+        match std::mem::replace(&mut self.state, RefreshState::Idle) {
+            RefreshState::Pending { latest, replies } if latest.id == result.id => {
+                self.state = match &result.models {
+                    Ok(_) => RefreshState::Idle,
+                    Err(reason) => RefreshState::Failed(reason.clone()),
+                };
+                Some(RefreshCompletion {
+                    models: result.models,
+                    replies,
+                })
+            }
+            RefreshState::Pending { latest, replies } => {
+                self.future = MaybeFuture::Some(Box::pin(refresh(latest.as_ref().clone())));
+                self.state = RefreshState::Pending { latest, replies };
+                None
+            }
+            state @ (RefreshState::Idle | RefreshState::Failed(_)) => {
+                self.state = state;
+                None
+            }
+        }
+    }
+
+    fn ready(&self) -> Result<(), String> {
+        match &self.state {
+            RefreshState::Idle => Ok(()),
+            RefreshState::Pending { .. } => Err(String::from("refreshing provider models")),
+            RefreshState::Failed(reason) => Err(reason.clone()),
+        }
+    }
+}
+
+async fn refresh(job: RefreshJob) -> Refreshed {
+    Refreshed {
+        id: job.id,
+        provider: job.provider,
+        models: refresh_models(job).await,
+    }
+}
+
+async fn refresh_models(job: RefreshJob) -> Result<Models, String> {
+    if let Launcher::Ready {
+        launch: Launch::Codex(CodexLaunch { hub }),
+        ..
+    } = &job.launcher
+    {
+        hub.configure(job.credentials.codex.clone())
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    let (launch, _) = configured(
+        &job.launcher,
+        job.provider,
+        &Stored::Opened(job.credentials),
+    )?;
+    list_models(launch, &job.directory).await
 }
 
 impl Registry {
@@ -150,6 +274,8 @@ impl Registry {
             store,
             stored,
             sessions: BTreeMap::new(),
+            claude_refresh: ProviderRefresh::new(),
+            codex_refresh: ProviderRefresh::new(),
         };
         let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
@@ -229,7 +355,11 @@ impl RegistryActor {
         mut messages: mpsc::Receiver<RegistryMsg>,
     ) -> Result<Infallible, Stopped> {
         loop {
-            let msg = messages.recv().await.ok_or(Stopped {})?;
+            let msg = tokio::select! {
+                msg = messages.recv() => msg.ok_or(Stopped {})?,
+                result = &mut self.claude_refresh.future => RegistryMsg::Refreshed(result),
+                result = &mut self.codex_refresh.future => RegistryMsg::Refreshed(result),
+            };
             self.on(msg).await?;
         }
     }
@@ -237,6 +367,7 @@ impl RegistryActor {
     async fn on(&mut self, msg: RegistryMsg) -> Result<(), Stopped> {
         match msg {
             RegistryMsg::Restore => self.restore().await?,
+            RegistryMsg::Refreshed(result) => self.refreshed(result),
             RegistryMsg::Start {
                 provider,
                 directory,
@@ -272,32 +403,33 @@ impl RegistryActor {
             }
             RegistryMsg::SetCredential { credential, reply } => {
                 let provider = credential.provider();
-                let result = match (credential.check(), &self.stored) {
+                match (credential.check(), &self.stored) {
                     (Err(reason), _) => {
-                        CommandResult::Rejected(Rejection::InvalidCredential { reason })
+                        let _ = reply.send(CommandResult::Rejected(Rejection::InvalidCredential {
+                            reason,
+                        }));
                     }
                     // Saving now would overwrite the other provider's.
                     (Ok(()), Stored::Unreadable(reason)) => {
-                        CommandResult::Rejected(Rejection::CredentialNotSaved {
-                            reason: reason.clone(),
-                        })
+                        let _ =
+                            reply.send(CommandResult::Rejected(Rejection::CredentialNotSaved {
+                                reason: reason.clone(),
+                            }));
                     }
                     (Ok(()), Stored::Opened(credentials)) => {
                         let next = credentials.clone().set(credential);
-                        self.store(provider, next).await?
+                        self.store(provider, next, reply);
                     }
-                };
-                let _ = reply.send(result);
+                }
             }
-            RegistryMsg::ClearCredential { provider, reply } => {
-                let result = match self.readable() {
-                    Ok(credentials) => self.store(provider, credentials.clear(provider)).await?,
-                    Err(reason) => {
-                        CommandResult::Rejected(Rejection::CredentialNotSaved { reason })
-                    }
-                };
-                let _ = reply.send(result);
-            }
+            RegistryMsg::ClearCredential { provider, reply } => match self.readable() {
+                Ok(credentials) => self.store(provider, credentials.clear(provider), reply),
+                Err(reason) => {
+                    let _ = reply.send(CommandResult::Rejected(Rejection::CredentialNotSaved {
+                        reason,
+                    }));
+                }
+            },
         }
         Ok(())
     }
@@ -435,7 +567,7 @@ impl RegistryActor {
         Ok(())
     }
 
-    async fn recover_checkpoint(&self, id: SessionId, events: &[Event]) -> Result<(), Stopped> {
+    async fn recover_checkpoint(&mut self, id: SessionId, events: &[Event]) -> Result<(), Stopped> {
         let book = crate::checkpoints::Book::replay(events);
         let started = book
             .snapshot
@@ -504,63 +636,69 @@ impl RegistryActor {
         }
     }
 
-    /// Saves `next`, which changes `provider`'s credential only, then uses
-    /// it. A Codex change restarts the app-server, the only way the key in
-    /// its environment changes.
-    async fn store(
+    fn store(
         &mut self,
         provider: Provider,
         next: Credentials,
-    ) -> Result<CommandResult, Stopped> {
+        reply: oneshot::Sender<CommandResult>,
+    ) {
         match self.store.save(&next) {
-            Err(err) => Ok(CommandResult::Rejected(Rejection::CredentialNotSaved {
-                reason: format!("{err:#}"),
-            })),
+            Err(err) => {
+                let _ = reply.send(CommandResult::Rejected(Rejection::CredentialNotSaved {
+                    reason: format!("{err:#}"),
+                }));
+            }
             Ok(()) => {
                 tracing::info!(?provider, "stored a credential change");
                 warn_unprotected(&next);
-                if let (
-                    Provider::Codex,
-                    Launcher::Ready {
-                        launch: Launch::Codex(CodexLaunch { hub }),
-                        ..
-                    },
-                ) = (provider, self.launchers.of(provider))
-                {
-                    hub.configure(next.codex.clone()).await?;
-                }
+                let job = RefreshJob {
+                    id: ulid::Ulid::new(),
+                    provider,
+                    launcher: self.launchers.of(provider).clone(),
+                    credentials: next.clone(),
+                    directory: self.store.dir().to_path_buf(),
+                };
                 self.stored = Stored::Opened(next);
-                self.relist(provider).await;
-                Ok(CommandResult::Providers(self.providers()))
+                match provider {
+                    Provider::Claude => self.claude_refresh.schedule(job, reply),
+                    Provider::Codex => self.codex_refresh.schedule(job, reply),
+                }
             }
         }
     }
 
-    /// Lists `provider`'s models again with its new credential, which may
-    /// serve others. A CLI that lists none offers only the default.
-    async fn relist(&mut self, provider: Provider) {
-        if let (
-            Ok((with_credential, _)),
-            Launcher::Ready {
-                launch,
-                own,
-                chosen,
-                ..
-            },
-        ) = (self.ready(provider), self.launchers.of(provider))
-        {
-            let ready = Launcher::Ready {
-                models: list_models(with_credential, self.store.dir())
-                    .await
-                    .unwrap_or_else(|reason| {
-                        tracing::warn!(%reason, ?provider, "the CLI listed no models");
-                        Models::none()
-                    }),
-                launch: launch.clone(),
-                own: own.to_owned(),
-                chosen: chosen.clone(),
-            };
-            self.launchers = self.launchers.clone().with(provider, ready);
+    fn refreshed(&mut self, result: Refreshed) {
+        let provider = result.provider;
+        let completed = match provider {
+            Provider::Claude => self.claude_refresh.finish(result),
+            Provider::Codex => self.codex_refresh.finish(result),
+        };
+        if let Some(RefreshCompletion { models, replies }) = completed {
+            match (models, self.launchers.of(provider)) {
+                (
+                    Ok(models),
+                    Launcher::Ready {
+                        launch,
+                        own,
+                        chosen,
+                        ..
+                    },
+                ) => {
+                    let ready = Launcher::Ready {
+                        models,
+                        launch: launch.clone(),
+                        own: own.to_owned(),
+                        chosen: chosen.clone(),
+                    };
+                    self.launchers = self.launchers.clone().with(provider, ready);
+                }
+                (Err(reason), _) => tracing::warn!(%reason, ?provider, "provider refresh failed"),
+                (Ok(_), Launcher::Unavailable(_)) => {}
+            }
+            let result = CommandResult::Providers(self.providers());
+            for reply in replies {
+                let _ = reply.send(result.clone());
+            }
         }
     }
 
@@ -610,23 +748,11 @@ impl RegistryActor {
     /// comes first, then the CLI's own sign-in. A store that doesn't open
     /// may hold a credential, so it never falls back to the sign-in.
     fn ready(&self, provider: Provider) -> Result<(Launch, Auth), String> {
-        match (self.launchers.of(provider), &self.stored) {
-            (Launcher::Unavailable(reason), _)
-            | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => Err(reason.clone()),
-            (Launcher::Ready { launch, own, .. }, Stored::Opened(credentials)) => {
-                let launch = match launch.clone() {
-                    Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
-                        credential: credentials.claude.clone(),
-                        ..claude
-                    }),
-                    Launch::Codex(codex) => Launch::Codex(codex),
-                };
-                match credentials.auth(provider) {
-                    Some(auth) => Ok((launch, auth)),
-                    None => own.auth().map(|auth| (launch, auth)),
-                }
-            }
+        match provider {
+            Provider::Claude => self.claude_refresh.ready()?,
+            Provider::Codex => self.codex_refresh.ready()?,
         }
+        configured(self.launchers.of(provider), provider, &self.stored)
     }
 
     async fn start(
@@ -720,6 +846,30 @@ impl RegistryActor {
                         }
                     },
                 }
+            }
+        }
+    }
+}
+
+fn configured(
+    launcher: &Launcher,
+    provider: Provider,
+    stored: &Stored,
+) -> Result<(Launch, Auth), String> {
+    match (launcher, stored) {
+        (Launcher::Unavailable(reason), _)
+        | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => Err(reason.clone()),
+        (Launcher::Ready { launch, own, .. }, Stored::Opened(credentials)) => {
+            let launch = match launch.clone() {
+                Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
+                    credential: credentials.claude.clone(),
+                    ..claude
+                }),
+                Launch::Codex(codex) => Launch::Codex(codex),
+            };
+            match credentials.auth(provider) {
+                Some(auth) => Ok((launch, auth)),
+                None => own.auth().map(|auth| (launch, auth)),
             }
         }
     }
