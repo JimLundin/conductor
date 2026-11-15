@@ -2,14 +2,14 @@
 
 use client::answers::Draft;
 use client::host_view::{
-    self, Approval, Interrupt, Item, ReplyState, RequestState, Resume, SessionStatus, SessionView,
-    ToolState, UndoState, Working,
+    self, Approval, Interrupt, Item, ReplyState, RequestState, Resume,
+    SessionStatus, SessionView, ToolState, UndoState, Working,
 };
 use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
-    Answer, Change, CloseReason, CommandBody, Decision, Question, RequestId, Resolution, Selection,
-    SessionId, ToolKind, ToolOutcome, TurnOutcome,
+    Answer, Change, CloseReason, CommandBody, Decision, Question, RequestId,
+    Resolution, Selection, SessionId, ToolKind, ToolOutcome, TurnOutcome,
 };
 
 use crate::checkpoints::TurnChanges;
@@ -40,7 +40,9 @@ pub(crate) fn SessionPane(
     let undo = session.undo.clone();
     let empty = match (&session.status, session.items.first()) {
         (_, Some(_)) => None,
-        (SessionStatus::Starting, None) => Some(format!("Starting {provider}…")),
+        (SessionStatus::Starting, None) => {
+            Some(format!("Starting {provider}…"))
+        }
         (SessionStatus::Idle | SessionStatus::Running, None) => {
             Some(format!("{provider} is ready. Send a message to begin."))
         }
@@ -96,10 +98,10 @@ pub(crate) fn SessionPane(
                     for (i, item) in session.items.into_iter().enumerate() {
                         TranscriptItem { key: "{i}", item,
                             on_decide: move |(request, decision)| {
-                                run_command(link, notice, CommandBody::Resolve { session: id, request, decision })
+                                run_command(link, notice, CommandBody::Resolve { session: id, request, decision });
                             },
                             on_answer: move |(request, answers)| {
-                                run_command(link, notice, CommandBody::Answer { session: id, request, answers })
+                                run_command(link, notice, CommandBody::Answer { session: id, request, answers });
                             },
                         }
                         if let Some(checkpoint) = checkpoints.iter().find(|turn| turn.end == i).cloned() {
@@ -142,7 +144,7 @@ pub(crate) fn SessionPane(
                 SessionStatus::Starting | SessionStatus::Idle | SessionStatus::Running => rsx! {
                     Composer {
                         composer: controls.composer,
-                        provider: provider.clone(),
+                        provider: provider,
                         focus: continued,
                         on_send: move |text| run_command(link, notice, CommandBody::SendMessage { session: id, text }),
                     }
@@ -166,8 +168,12 @@ fn runs_with(session: &SessionView) -> String {
 
 fn closed(reason: &CloseReason) -> String {
     match reason {
-        CloseReason::FailedToStart { message } => format!("The agent did not start: {message}"),
-        CloseReason::Exited { status } => format!("The session has ended ({status})."),
+        CloseReason::FailedToStart { message } => {
+            format!("The agent did not start: {message}")
+        }
+        CloseReason::Exited { status } => {
+            format!("The session has ended ({status}).")
+        }
         CloseReason::Stopped { reason } => format!("Stopped: {reason}"),
     }
 }
@@ -290,13 +296,21 @@ fn TranscriptItem(
         }
         Item::TurnCompleted(outcome) => {
             let (attr, text) = match outcome {
-                TurnOutcome::Completed => ("completed", String::from("Turn finished")),
-                TurnOutcome::Interrupted => ("interrupted", String::from("Interrupted")),
-                TurnOutcome::Failed { message } => ("failed", format!("Failed: {message}")),
+                TurnOutcome::Completed => {
+                    ("completed", String::from("Turn finished"))
+                }
+                TurnOutcome::Interrupted => {
+                    ("interrupted", String::from("Interrupted"))
+                }
+                TurnOutcome::Failed { message } => {
+                    ("failed", format!("Failed: {message}"))
+                }
             };
             rsx! { p { class: "turn-end", "data-outcome": attr, "{text}" } }
         }
-        Item::ModelChanged(reason) => rsx! { p { class: "model-changed", "{reason}" } },
+        Item::ModelChanged(reason) => {
+            rsx! { p { class: "model-changed", "{reason}" } }
+        }
         Item::Error(message) => rsx! { p { class: "error", "{message}" } },
     }
 }
@@ -350,7 +364,9 @@ fn Answered(questions: Vec<Question>, resolution: Resolution) -> Element {
     let answered = questions
         .into_iter()
         .zip(answers.into_iter().map(Some).chain(std::iter::repeat(None)))
-        .map(|(question, answer)| (question.text, answer.map(|answer| answer.0.join(", "))))
+        .map(|(question, answer)| {
+            (question.text, answer.map(|answer| answer.0.join(", ")))
+        })
         .collect::<Vec<(String, Option<String>)>>();
     rsx! {
         for (text, answer) in answered {
@@ -394,7 +410,11 @@ fn QuestionForm(
 }
 
 #[component]
-fn QuestionField(index: usize, question: Question, draft: Signal<Draft>) -> Element {
+fn QuestionField(
+    index: usize,
+    question: Question,
+    draft: Signal<Draft>,
+) -> Element {
     let selection = question.selection;
     let hint = match selection {
         Selection::One => "Choose one, or write your own",
@@ -560,14 +580,20 @@ fn send_on_enter(
     on_send: EventHandler<String>,
 ) {
     if let Some(event) = Some(event).filter(|event| {
-        event.key() == Key::Enter && !event.modifiers().shift() && !event.is_composing()
+        event.key() == Key::Enter
+            && !event.modifiers().shift()
+            && !event.is_composing()
     }) {
         event.prevent_default();
         submit(draft, composer, on_send);
     }
 }
 
-fn submit(mut draft: Signal<String>, composer: host_view::Composer, on_send: EventHandler<String>) {
+fn submit(
+    mut draft: Signal<String>,
+    composer: host_view::Composer,
+    on_send: EventHandler<String>,
+) {
     match (composer, draft().trim()) {
         (host_view::Composer::Open, "")
         | (host_view::Composer::Busy | host_view::Composer::Closed, _) => {}

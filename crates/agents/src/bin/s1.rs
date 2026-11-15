@@ -1,10 +1,10 @@
 //! S1 live checklist: drives the real `claude` CLI through approve, deny,
-//! interrupt, resume, set_permission_mode, questions, approval for the
+//! interrupt, resume, `set_permission_mode`, questions, approval for the
 //! session, a chosen model and effort, reasoning, and a killed CLI resumed,
 //! printing PASS/FAIL per step.
 //!
-//! Usage: s1 [FIXTURE_DIR]
-//! Writes raw CLI stdout per step to FIXTURE_DIR/<step>.jsonl when given.
+//! Usage: s1 [`FIXTURE_DIR`]
+//! Writes raw CLI stdout per step to `FIXTURE_DIR`/<step>.jsonl when given.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,12 +12,14 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error, MessageId,
-    PermissionDecision, PermissionMode, PermissionRequestId, Resume, Role, SessionId,
-    SettingSource, VersionPolicy,
+    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error,
+    MessageId, PermissionDecision, PermissionMode, PermissionRequestId, Resume,
+    Role, SessionId, SettingSource, VersionPolicy,
 };
 use agents::install::{Cli, install};
-use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
+use agents::live::{
+    Cue, Presence, Verdict, fresh_scratch, log_path, presence, report,
+};
 use anyhow::{Context, Result};
 use proto::{Answer, Effort, Question, ToolOutcome, TurnOutcome};
 use tokio::sync::mpsc;
@@ -32,7 +34,8 @@ const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -55,9 +58,9 @@ enum Policy {
 impl Policy {
     fn decision(&self) -> PermissionDecision {
         match self {
-            Policy::Approve => PermissionDecision::Allow,
-            Policy::ApproveForSession => PermissionDecision::AllowForSession,
-            Policy::Deny(message) => PermissionDecision::Deny {
+            Self::Approve => PermissionDecision::Allow,
+            Self::ApproveForSession => PermissionDecision::AllowForSession,
+            Self::Deny(message) => PermissionDecision::Deny {
                 message: message.clone(),
                 then: AfterDeny::Continue,
             },
@@ -126,9 +129,9 @@ struct Turn {
 }
 
 impl Turn {
-    async fn start(live: Live, prompt: &str, plan: Plan) -> Result<Turn> {
+    async fn start(live: Live, prompt: &str, plan: Plan) -> Result<Self> {
         live.session.send_user(String::from(prompt)).await?;
-        let mut turn = Turn {
+        let mut turn = Self {
             live,
             plan,
             permissions: Vec::new(),
@@ -151,7 +154,7 @@ impl Turn {
         turn.run().await
     }
 
-    async fn run(mut self) -> Result<Turn> {
+    async fn run(mut self) -> Result<Self> {
         loop {
             let event = self.next().await?;
             match self.on(event).await? {
@@ -197,8 +200,8 @@ impl Turn {
                 content,
                 ..
             } => {
-                self.tool_errors
-                    .extend(content.into_iter().filter_map(|block| match block {
+                self.tool_errors.extend(content.into_iter().filter_map(
+                    |block| match block {
                         Block::ToolResult {
                             content,
                             outcome: ToolOutcome::Failed,
@@ -209,7 +212,8 @@ impl Turn {
                         | Block::Thinking(_)
                         | Block::ToolUse { .. }
                         | Block::Other(_) => None,
-                    }));
+                    },
+                ));
                 Ok(Progress::Playing)
             }
             ClaudeEvent::Unknown(_) => Ok(Progress::Playing),
@@ -244,7 +248,8 @@ impl Turn {
                 Ok(Progress::Playing)
             }
             ClaudeEvent::PermissionCancelled { .. } => {
-                self.cancelled_permissions = self.cancelled_permissions.saturating_add(1);
+                self.cancelled_permissions =
+                    self.cancelled_permissions.saturating_add(1);
                 Ok(Progress::Playing)
             }
             ClaudeEvent::TurnFinished {
@@ -269,9 +274,11 @@ impl Turn {
                     self.exited = Some(status.describe());
                     Ok(Progress::Done)
                 }
-                Plan::Answer(_) | Plan::Interrupt(_) | Plan::InterruptOnPermission => Err(
-                    anyhow::Error::msg(format!("claude exited mid-turn: {}", status.describe())),
-                ),
+                Plan::Answer(_)
+                | Plan::Interrupt(_)
+                | Plan::InterruptOnPermission => Err(anyhow::Error::msg(
+                    format!("claude exited mid-turn: {}", status.describe()),
+                )),
             },
         }
     }
@@ -327,7 +334,8 @@ impl Turn {
                 self.interrupted = Some(self.live.session.interrupt().await);
                 Ok(())
             }
-            (Plan::InterruptOnPermission, Some(_)) | (Plan::Interrupt(_) | Plan::Kill(_), _) => {
+            (Plan::InterruptOnPermission, Some(_))
+            | (Plan::Interrupt(_) | Plan::Kill(_), _) => {
                 let decision = PermissionDecision::Deny {
                     message: String::from("not expected after an interrupt"),
                     then: AfterDeny::Continue,
@@ -344,7 +352,11 @@ impl Turn {
         }
     }
 
-    async fn answer(&self, id: PermissionRequestId, decision: PermissionDecision) -> Result<()> {
+    async fn answer(
+        &self,
+        id: PermissionRequestId,
+        decision: PermissionDecision,
+    ) -> Result<()> {
         match self.live.session.respond(id.clone(), decision).await {
             Ok(()) => Ok(()),
             Err(e) => Ok(writeln!(
@@ -363,7 +375,11 @@ impl Turn {
     }
 }
 
-fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>) -> ClaudeOptions {
+fn options(
+    claude: &Path,
+    resume: Option<SessionId>,
+    stdout_log: Option<PathBuf>,
+) -> ClaudeOptions {
     ClaudeOptions {
         claude_path: PathBuf::from(claude),
         home: Home::User,
@@ -375,7 +391,10 @@ fn options(claude: &Path, resume: Option<SessionId>, stdout_log: Option<PathBuf>
         resume: resume.map_or(Resume::Fresh, Resume::Session),
         project_name: None,
         // Keep the user's own hooks and plugins out of the spike.
-        setting_sources: Some(Vec::from([SettingSource::Project, SettingSource::Local])),
+        setting_sources: Some(Vec::from([
+            SettingSource::Project,
+            SettingSource::Local,
+        ])),
         stdout_log,
         versions: VersionPolicy::SupportedOnly,
     }
@@ -386,7 +405,8 @@ async fn spawn(
     resume: Option<SessionId>,
     stdout_log: Option<PathBuf>,
 ) -> Result<Live> {
-    let (session, events) = ClaudeSession::spawn(options(claude, resume, stdout_log)).await?;
+    let (session, events) =
+        ClaudeSession::spawn(options(claude, resume, stdout_log)).await?;
     Ok(Live { session, events })
 }
 
@@ -442,7 +462,9 @@ async fn chosen_and_killed(
     let reasoning = report(
         "12 reasoning",
         match (t.thinking.concat(), t.thinking.first(), t.result()) {
-            (joined, Some(_), Some(("success", TurnOutcome::Completed))) if joined == t.thought => {
+            (joined, Some(_), Some(("success", TurnOutcome::Completed)))
+                if joined == t.thought =>
+            {
                 Verdict::Pass
             }
             _ => Verdict::Fail,
@@ -455,7 +477,8 @@ async fn chosen_and_killed(
             t.text
         ),
     )?;
-    let session_id = t.session_id.clone().context("no session id in step 12")?;
+    let session_id =
+        t.session_id.clone().context("no session id in step 12")?;
     let killed = Turn::start(
         t.live,
         "Count from 1 to 200, one number per line.",
@@ -476,11 +499,12 @@ async fn chosen_and_killed(
     let resumed = report(
         "13 killed and resumed",
         match (&killed.exited, t.text.find("18"), t.result(), &t.session_id) {
-            (Some(_), Some(_), Some(("success", TurnOutcome::Completed)), Some(id))
-                if id == &session_id =>
-            {
-                Verdict::Pass
-            }
+            (
+                Some(_),
+                Some(_),
+                Some(("success", TurnOutcome::Completed)),
+                Some(id),
+            ) if id == &session_id => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(
@@ -507,7 +531,12 @@ enum Expect {
 
 /// Interrupts a counting turn at `cue`, then checks what the interrupt did
 /// and that the next turn works.
-async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result<(Live, Verdict)> {
+async fn interrupted(
+    live: Live,
+    step: &str,
+    cue: Cue,
+    expect: Expect,
+) -> Result<(Live, Verdict)> {
     let t = Turn::start(
         live,
         "Count from 1 to 200, one number per line.",
@@ -529,9 +558,9 @@ async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result
         match (
             expect,
             interrupted,
-            t.finished
-                .as_ref()
-                .map(|finished| (&finished.outcome, finished.terminal_reason())),
+            t.finished.as_ref().map(|finished| {
+                (&finished.outcome, finished.terminal_reason())
+            }),
             after.result(),
             after.text.to_lowercase().find("pong"),
         ) {
@@ -553,7 +582,12 @@ async fn interrupted(live: Live, step: &str, cue: Cue, expect: Expect) -> Result
         },
         format!(
             "interrupt()={interrupted:?} streamed={:?} text={:?} permissions={:?} finished={:?}; next turn finished={:?} reply={:?}",
-            t.streamed, t.text, t.permissions, t.finished, after.finished, after.text
+            t.streamed,
+            t.text,
+            t.permissions,
+            t.finished,
+            after.finished,
+            after.text
         ),
     )?;
     Ok((after.live, verdict))
@@ -568,7 +602,8 @@ async fn questions(
     scratch: &Path,
     fixtures: Option<&Path>,
 ) -> Result<(Verdict, Verdict, Verdict, Verdict)> {
-    let live = spawn(claude, None, log_path(fixtures, "session3-questions")).await?;
+    let live =
+        spawn(claude, None, log_path(fixtures, "session3-questions")).await?;
     let t = Turn::start(
         live,
         "Use the AskUserQuestion tool to ask me one question: which color do I prefer, with the options Red and Blue. Then reply with only the color I chose.",
@@ -624,12 +659,16 @@ async fn questions(
             again.permissions.first(),
             again.result(),
         ) {
-            (first, Presence::Present, None, Some(("success", TurnOutcome::Completed)))
-                if first
-                    == &(
-                        Vec::from([String::from("Bash")]),
-                        Vec::from([Some(String::from("Bash(touch t1.txt)"))]),
-                    ) =>
+            (
+                first,
+                Presence::Present,
+                None,
+                Some(("success", TurnOutcome::Completed)),
+            ) if first
+                == &(
+                    Vec::from([String::from("Bash")]),
+                    Vec::from([Some(String::from("Bash(touch t1.txt)"))]),
+                ) =>
             {
                 Verdict::Pass
             }
@@ -655,9 +694,9 @@ async fn questions(
                 .session
                 .respond(
                     id.clone(),
-                    PermissionDecision::Answer(Vec::from([Answer(Vec::from([String::from(
-                        "Pear",
-                    )]))])),
+                    PermissionDecision::Answer(Vec::from([Answer(Vec::from(
+                        [String::from("Pear")],
+                    ))])),
                 )
                 .await,
         ),
@@ -670,16 +709,19 @@ async fn questions(
             &t.interrupted,
             t.cancelled_permissions,
             &late,
-            t.finished
-                .as_ref()
-                .map(|finished| (&finished.outcome, finished.terminal_reason())),
+            t.finished.as_ref().map(|finished| {
+                (&finished.outcome, finished.terminal_reason())
+            }),
         ) {
             (
                 1,
                 Some(Ok(())),
                 1,
                 Some(Err(_)),
-                Some((TurnOutcome::Interrupted, Some("aborted_tools" | "aborted_streaming"))),
+                Some((
+                    TurnOutcome::Interrupted,
+                    Some("aborted_tools" | "aborted_streaming"),
+                )),
             ) => Verdict::Pass,
             _ => Verdict::Fail,
         },
@@ -718,7 +760,10 @@ async fn questions(
 
 /// The prefix recipe survives a stop before the fork's first actual turn;
 /// after that turn, Continue uses its confirmed new native id.
-async fn undo_history(claude: &Path, fixtures: Option<&Path>) -> Result<Verdict> {
+async fn undo_history(
+    claude: &Path,
+    fixtures: Option<&Path>,
+) -> Result<Verdict> {
     let first = Turn::start(
         spawn(claude, None, log_path(fixtures, "session6-undo-original")).await?,
         "Remember my retained codeword is amber. Reply only amber. Do not use tools.",
@@ -818,9 +863,11 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let approve = report(
         "1 approve",
         match (presence(&a), t.result(), (&t.permissions, &t.streamed)) {
-            (Presence::Present, Some(("success", TurnOutcome::Completed)), seen)
-                if seen == (&Vec::from([String::from("Write")]), &t.text) =>
-            {
+            (
+                Presence::Present,
+                Some(("success", TurnOutcome::Completed)),
+                seen,
+            ) if seen == (&Vec::from([String::from("Write")]), &t.text) => {
                 Verdict::Pass
             }
             _ => Verdict::Fail,
@@ -877,7 +924,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )
     .await?;
     let (live, at_send) =
-        interrupted(live, "3d interrupt at send", Cue::Send, Expect::Either).await?;
+        interrupted(live, "3d interrupt at send", Cue::Send, Expect::Either)
+            .await?;
 
     let t = Turn::start(
         live,
@@ -931,7 +979,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let resume = report(
         "4 resume",
         match (t.text.find("a.txt"), t.result()) {
-            (Some(_), Some(("success", TurnOutcome::Completed))) => Verdict::Pass,
+            (Some(_), Some(("success", TurnOutcome::Completed))) => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
@@ -992,7 +1042,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let (question, for_session, withdrawn, duplicate) =
         questions(&claude, scratch, fixtures).await?;
-    let (chosen, reasoning, resumed) = chosen_and_killed(&claude, fixtures).await?;
+    let (chosen, reasoning, resumed) =
+        chosen_and_killed(&claude, fixtures).await?;
     let undo = undo_history(&claude, fixtures).await?;
     let failed = [
         approve,

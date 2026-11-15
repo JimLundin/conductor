@@ -1,7 +1,7 @@
 use iroh_base::RelayUrl;
 use url::Url;
 
-/// iroh names its relays as fully qualified hosts ending in `.`. WebKit
+/// iroh names its relays as fully qualified hosts ending in `.`. `WebKit`
 /// (Safari) checks the TLS certificate against that literal name and refuses
 /// it, so every relay URL we configure or dial goes through here. DNS treats
 /// both forms alike.

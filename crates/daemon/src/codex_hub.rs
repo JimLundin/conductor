@@ -17,7 +17,8 @@ use std::convert::Infallible;
 
 use agents::Exit;
 use agents::codex::{
-    CodexEvent, CodexServer, CodexThread, ServerOptions, ThreadEvent, ThreadId, ThreadOptions,
+    CodexEvent, CodexServer, CodexThread, ServerOptions, ThreadEvent, ThreadId,
+    ThreadOptions,
 };
 use n0_future::StreamExt;
 use proto::{CodexCredential, Models};
@@ -55,7 +56,9 @@ enum HubMsg {
     Start {
         options: ThreadOptions,
         resume: Option<ThreadId>,
-        reply: oneshot::Sender<Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>>,
+        reply: oneshot::Sender<
+            Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>,
+        >,
     },
     /// The models the server lists.
     Models {
@@ -92,7 +95,7 @@ enum HubInput {
 
 impl CodexHub {
     /// Starts the hub's task. The app-server starts with the first thread.
-    pub fn spawn(options: ServerOptions) -> CodexHub {
+    pub fn spawn(options: ServerOptions) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let actor = HubActor {
             options,
@@ -100,7 +103,7 @@ impl CodexHub {
             routes: HashMap::new(),
         };
         tokio::spawn(actor.run(messages));
-        CodexHub { inbox }
+        Self { inbox }
     }
 
     /// Starts a thread, or resumes `resume` from Codex's own history, and
@@ -136,7 +139,10 @@ impl CodexHub {
             .await
     }
 
-    async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> HubMsg) -> Result<T, Stopped> {
+    async fn ask<T>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<T>) -> HubMsg,
+    ) -> Result<T, Stopped> {
         let (reply, answer) = oneshot::channel();
         self.inbox
             .send(build(reply))
@@ -151,16 +157,23 @@ impl Server {
     /// forever, so the hub only takes commands.
     async fn next(&mut self) -> CodexEvent {
         match self {
-            Server::Up { events, .. } => events.recv().await.unwrap_or(CodexEvent::Exited {
-                status: Exit::Unknown(String::from("the app-server's events ended")),
-            }),
-            Server::Down => std::future::pending().await,
+            Self::Up { events, .. } => {
+                events.recv().await.unwrap_or_else(|| CodexEvent::Exited {
+                    status: Exit::Unknown(String::from(
+                        "the app-server's events ended",
+                    )),
+                })
+            }
+            Self::Down => std::future::pending().await,
         }
     }
 }
 
 impl HubActor {
-    async fn run(mut self, mut inbox: mpsc::Receiver<HubMsg>) -> Result<Infallible, Stopped> {
+    async fn run(
+        mut self,
+        mut inbox: mpsc::Receiver<HubMsg>,
+    ) -> Result<Infallible, Stopped> {
         loop {
             let input = tokio::select! {
                 msg = inbox.recv() => msg.map_or(HubInput::Closed, HubInput::Msg),
@@ -244,7 +257,8 @@ impl HubActor {
         &mut self,
         options: ThreadOptions,
         resume: Option<ThreadId>,
-    ) -> Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error> {
+    ) -> Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>
+    {
         let server = self.up().await?;
         let thread = match resume {
             Some(id) => server.resume_thread(id, options).await?,
@@ -260,7 +274,8 @@ impl HubActor {
         match &self.server {
             Server::Up { server, .. } => Ok(server.clone()),
             Server::Down => {
-                let (server, events) = CodexServer::spawn(self.options.clone()).await?;
+                let (server, events) =
+                    CodexServer::spawn(self.options.clone()).await?;
                 tracing::info!(
                     version = server.codex_version().unwrap_or("?"),
                     "codex app-server started"
@@ -283,11 +298,14 @@ impl HubActor {
         });
         match self.routes.get(&thread) {
             Some(route) => {
-                if let Err(mpsc::error::SendError(_)) = route.send(event).await {
+                if let Err(mpsc::error::SendError(_)) = route.send(event).await
+                {
                     self.routes.remove(&thread);
                 }
             }
-            None => tracing::debug!(thread = %thread.0, "an event for a thread with no session"),
+            None => {
+                tracing::debug!(thread = %thread.0, "an event for a thread with no session");
+            }
         }
     }
 }

@@ -9,7 +9,8 @@ use std::convert::Infallible;
 use std::path::Path;
 
 use proto::{
-    CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, Providers, SessionId, Welcome,
+    CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, Providers,
+    SessionId, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -60,7 +61,10 @@ pub(crate) struct CommandLease {
 }
 
 impl CommandLease {
-    pub(crate) async fn finish(self, result: CommandResult) -> Result<(), Stopped> {
+    pub(crate) async fn finish(
+        self,
+        result: CommandResult,
+    ) -> Result<(), Stopped> {
         self.log.finish(self.key, result).await
     }
 }
@@ -139,18 +143,23 @@ struct LogActor {
 }
 
 impl Log {
-    pub fn spawn(name: String, epoch: Epoch) -> Log {
+    pub fn spawn(name: String, epoch: Epoch) -> Self {
         Self::start(name, epoch, Vec::new(), None)
     }
 
-    pub fn open(name: String, path: &Path) -> anyhow::Result<Log> {
+    pub fn open(name: String, path: &Path) -> anyhow::Result<Self> {
         let storage = Storage::open(path)?;
         let epoch = storage.epoch()?;
         let events = storage.events()?;
         Ok(Self::start(name, epoch, events, Some(storage)))
     }
 
-    fn start(name: String, epoch: Epoch, events: Vec<Event>, storage: Option<Storage>) -> Log {
+    fn start(
+        name: String,
+        epoch: Epoch,
+        events: Vec<Event>,
+        storage: Option<Storage>,
+    ) -> Self {
         let (inbox, messages) = mpsc::channel(64);
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let actor = LogActor {
@@ -168,12 +177,16 @@ impl Log {
             live,
         };
         tokio::spawn(actor.run(messages));
-        Log { inbox }
+        Self { inbox }
     }
 
     /// Acknowledges after the durable write, or after staging in the active
     /// command's transaction. The command receipt commits its staged events.
-    pub async fn append(&self, session: SessionId, kind: EventKind) -> Result<(), Stopped> {
+    pub async fn append(
+        &self,
+        session: SessionId,
+        kind: EventKind,
+    ) -> Result<(), Stopped> {
         let _ = self.record(session, kind).await?;
         Ok(())
     }
@@ -197,7 +210,10 @@ impl Log {
         self.ask(|reply| LogMsg::Barrier { reply }).await
     }
 
-    pub(crate) async fn begin(&self, key: CommandId) -> Result<BeginCommand, Stopped> {
+    pub(crate) async fn begin(
+        &self,
+        key: CommandId,
+    ) -> Result<BeginCommand, Stopped> {
         self.ask(|reply| {
             LogMsg::Begin(CommandStart {
                 key,
@@ -208,7 +224,10 @@ impl Log {
         .await
     }
 
-    pub(crate) async fn begin_credential(&self, key: CommandId) -> Result<BeginCommand, Stopped> {
+    pub(crate) async fn begin_credential(
+        &self,
+        key: CommandId,
+    ) -> Result<BeginCommand, Stopped> {
         self.ask(|reply| {
             LogMsg::Begin(CommandStart {
                 key,
@@ -228,7 +247,11 @@ impl Log {
             .await
     }
 
-    pub(crate) async fn conversation(&self, session: SessionId, id: String) -> Result<(), Stopped> {
+    pub(crate) async fn conversation(
+        &self,
+        session: SessionId,
+        id: String,
+    ) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Conversation { session, id, reply })
             .await
     }
@@ -259,15 +282,24 @@ impl Log {
 
     /// The log's head as of now, for a client the registry says can run
     /// `providers`.
-    pub async fn welcome(&self, providers: Providers) -> Result<Welcome, Stopped> {
+    pub async fn welcome(
+        &self,
+        providers: Providers,
+    ) -> Result<Welcome, Stopped> {
         self.ask(|reply| LogMsg::Welcome { providers, reply }).await
     }
 
-    pub async fn subscribe(&self, after: HostSeq) -> Result<Subscription, Stopped> {
+    pub async fn subscribe(
+        &self,
+        after: HostSeq,
+    ) -> Result<Subscription, Stopped> {
         self.ask(|reply| LogMsg::Subscribe { after, reply }).await
     }
 
-    async fn ask<T>(&self, build: impl FnOnce(oneshot::Sender<T>) -> LogMsg) -> Result<T, Stopped> {
+    async fn ask<T>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<T>) -> LogMsg,
+    ) -> Result<T, Stopped> {
         let (reply, answer) = oneshot::channel();
         self.inbox
             .send(build(reply))
@@ -278,7 +310,10 @@ impl Log {
 }
 
 impl LogActor {
-    async fn run(mut self, mut messages: mpsc::Receiver<LogMsg>) -> Result<Infallible, Stopped> {
+    async fn run(
+        mut self,
+        mut messages: mpsc::Receiver<LogMsg>,
+    ) -> Result<Infallible, Stopped> {
         loop {
             let msg = messages.recv().await.ok_or(Stopped {})?;
             match msg {
@@ -300,22 +335,28 @@ impl LogActor {
                 self.commit()?;
                 if let Some(active) = &self.active {
                     let _ = active;
-                    self.transaction = self.storage.as_ref().map(Storage::begin).transpose()?;
+                    self.transaction = self
+                        .storage
+                        .as_ref()
+                        .map(Storage::begin)
+                        .transpose()?;
                 }
                 let _ = reply.send(());
             }
             LogMsg::Shutdown { reply } => {
                 let _ = reply.send(());
             }
-            LogMsg::Abort(key) => match (self.credentials.get(&key), &self.active) {
-                (Some(_), _) => {
-                    Err(Stopped {})?;
+            LogMsg::Abort(key) => {
+                match (self.credentials.get(&key), &self.active) {
+                    (Some(_), _) => {
+                        Err(Stopped {})?;
+                    }
+                    (None, Some(active)) if active == &key => {
+                        Err(Stopped {})?;
+                    }
+                    _ => {}
                 }
-                (None, Some(active)) if active == &key => {
-                    Err(Stopped {})?;
-                }
-                _ => {}
-            },
+            }
             LogMsg::Begin(start) => match &self.active {
                 Some(_) => self.waiting.push_back(start),
                 None => self.begin(start)?,
@@ -323,11 +364,18 @@ impl LogActor {
             LogMsg::Finish { key, result, reply } => {
                 match (self.credentials.get(&key), &self.active) {
                     (Some(_), Some(_)) => {
-                        self.credential_finishes
-                            .push_back(CredentialFinish { key, result, reply });
+                        self.credential_finishes.push_back(CredentialFinish {
+                            key,
+                            result,
+                            reply,
+                        });
                     }
                     (Some(_), None) => {
-                        self.finish_credential(CredentialFinish { key, result, reply })?
+                        self.finish_credential(CredentialFinish {
+                            key,
+                            result,
+                            reply,
+                        })?;
                     }
                     (None, _) => {
                         if let Some(write) = self.transaction.take() {
@@ -337,7 +385,9 @@ impl LogActor {
                         self.commit()?;
                         self.active = None;
                         let _ = reply.send(());
-                        for finish in std::mem::take(&mut self.credential_finishes) {
+                        for finish in
+                            std::mem::take(&mut self.credential_finishes)
+                        {
                             self.finish_credential(finish)?;
                         }
                         if let Some(start) = self.waiting.pop_front() {
@@ -360,7 +410,9 @@ impl LogActor {
             }
             LogMsg::Conversation { session, id, reply } => {
                 match (&self.storage, &self.transaction) {
-                    (_, Some(write)) => storage::conversation(write, session, &id)?,
+                    (_, Some(write)) => {
+                        storage::conversation(write, session, &id)?;
+                    }
                     (Some(storage), None) => {
                         let write = storage.begin()?;
                         storage::conversation(&write, session, &id)?;
@@ -373,11 +425,16 @@ impl LogActor {
             // Live only, so it takes no seq (see `EventKind::AssistantDelta`).
             LogMsg::Append {
                 session,
-                kind: kind @ (EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. }),
+                kind:
+                    kind @ (EventKind::AssistantDelta { .. }
+                    | EventKind::ReasoningDelta { .. }),
                 reply,
             } => {
                 let event = Event {
-                    seq: self.staged.last().map_or(self.head(), |event| event.seq),
+                    seq: self
+                        .staged
+                        .last()
+                        .map_or_else(|| self.head(), |event| event.seq),
                     session,
                     kind,
                 };
@@ -399,7 +456,7 @@ impl LogActor {
                     seq: self
                         .staged
                         .last()
-                        .map_or(self.head(), |event| event.seq)
+                        .map_or_else(|| self.head(), |event| event.seq)
                         .next(),
                     session,
                     kind,
@@ -461,7 +518,11 @@ impl LogActor {
             (None, None) => {
                 match start.kind {
                     CommandKind::Session => {
-                        self.transaction = self.storage.as_ref().map(Storage::begin).transpose()?;
+                        self.transaction = self
+                            .storage
+                            .as_ref()
+                            .map(Storage::begin)
+                            .transpose()?;
                         self.active = Some(start.key);
                     }
                     CommandKind::Credential => {
@@ -476,14 +537,20 @@ impl LogActor {
                 let _ = start.reply.send(BeginCommand::Execute(lease));
             }
         }
-        if let (None, Some(CommandStart { .. })) = (&self.active, self.waiting.front()) {
-            let next = self.waiting.pop_front().expect("a waiting command");
+        let next = match self.active {
+            None => self.waiting.pop_front(),
+            Some(_) => None,
+        };
+        if let Some(next) = next {
             self.begin(next)?;
         }
         Ok(())
     }
 
-    fn finish_credential(&mut self, finish: CredentialFinish) -> anyhow::Result<()> {
+    fn finish_credential(
+        &mut self,
+        finish: CredentialFinish,
+    ) -> anyhow::Result<()> {
         if let Some(storage) = &self.storage {
             let write = storage.begin()?;
             storage::receipt(&write, finish.key, &finish.result)?;
@@ -491,7 +558,8 @@ impl LogActor {
         }
         if let Some(waiters) = self.credentials.remove(&finish.key) {
             for waiter in waiters {
-                let _ = waiter.send(BeginCommand::Cached(finish.result.clone()));
+                let _ =
+                    waiter.send(BeginCommand::Cached(finish.result.clone()));
             }
         }
         let _ = finish.reply.send(());
@@ -511,7 +579,8 @@ impl LogActor {
 
     fn publish(&mut self, event: Event) {
         match &event.kind {
-            EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. } => {}
+            EventKind::AssistantDelta { .. }
+            | EventKind::ReasoningDelta { .. } => {}
             _ => self.events.push(event.clone()),
         }
         let _ = self.live.send(event);
@@ -525,7 +594,8 @@ impl LogActor {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Auth, Availability, Epoch, EventKind, HostSeq, Models, Providers, SessionId, Welcome,
+        Auth, Availability, Epoch, EventKind, HostSeq, Models, Providers,
+        SessionId, Welcome,
     };
 
     use super::Log;
@@ -622,7 +692,10 @@ mod durability_tests {
     use super::{BeginCommand, CommandLease, CommandStart, Log, LogMsg};
     use tokio::sync::oneshot;
 
-    async fn lease(log: &Log, key: u128) -> Result<CommandLease, crate::Stopped> {
+    async fn lease(
+        log: &Log,
+        key: u128,
+    ) -> Result<CommandLease, crate::Stopped> {
         match log.begin(CommandId(key)).await? {
             BeginCommand::Execute(lease) => Ok(lease),
             BeginCommand::Cached(_) => Err(crate::Stopped {}),
@@ -630,21 +703,26 @@ mod durability_tests {
     }
 
     #[tokio::test]
-    async fn credential_receipts_wait_for_commit_without_holding_the_event_transaction() {
-        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+    async fn credential_receipts_wait_for_commit_without_holding_the_event_transaction()
+     {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/tmp");
         std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join(format!("credential-receipts-{}.redb", std::process::id()));
+        let path = directory
+            .join(format!("credential-receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path).unwrap();
-        let credential = match log.begin_credential(CommandId(23)).await.unwrap() {
-            BeginCommand::Execute(lease) => Some(lease),
-            BeginCommand::Cached(_) => None,
-        }
-        .unwrap();
-        let ordinary = tokio::time::timeout(Duration::from_secs(2), lease(&log, 24))
-            .await
-            .unwrap()
+        let credential =
+            match log.begin_credential(CommandId(23)).await.unwrap() {
+                BeginCommand::Execute(lease) => Some(lease),
+                BeginCommand::Cached(_) => None,
+            }
             .unwrap();
+        let ordinary =
+            tokio::time::timeout(Duration::from_secs(2), lease(&log, 24))
+                .await
+                .unwrap()
+                .unwrap();
         let (finished_reply, mut finished) = oneshot::channel();
         log.inbox
             .send(LogMsg::Finish {
@@ -681,10 +759,11 @@ mod durability_tests {
         assert_eq!(retried, Some(CommandResult::Accepted));
         log.shutdown().await.unwrap();
         let reopened = Log::open(String::from("test"), &path).unwrap();
-        let cached = match reopened.begin_credential(CommandId(23)).await.unwrap() {
-            BeginCommand::Cached(result) => Some(result),
-            BeginCommand::Execute(_) => None,
-        };
+        let cached =
+            match reopened.begin_credential(CommandId(23)).await.unwrap() {
+                BeginCommand::Cached(result) => Some(result),
+                BeginCommand::Execute(_) => None,
+            };
         assert_eq!(cached, Some(CommandResult::Accepted));
         reopened.shutdown().await.unwrap();
     }
@@ -692,11 +771,12 @@ mod durability_tests {
     #[tokio::test]
     async fn credential_lease_drop_fails_closed() {
         let log = Log::spawn(String::from("test"), proto::Epoch(1));
-        let credential = match log.begin_credential(CommandId(23)).await.unwrap() {
-            BeginCommand::Execute(lease) => Some(lease),
-            BeginCommand::Cached(_) => None,
-        }
-        .unwrap();
+        let credential =
+            match log.begin_credential(CommandId(23)).await.unwrap() {
+                BeginCommand::Execute(lease) => Some(lease),
+                BeginCommand::Cached(_) => None,
+            }
+            .unwrap();
         drop(credential);
         tokio::time::timeout(Duration::from_secs(2), log.stopped())
             .await
@@ -705,12 +785,13 @@ mod durability_tests {
 
     #[tokio::test]
     async fn receipt_and_events_commit_before_live_and_queued_retries_drain() {
-        let path =
-            std::env::temp_dir().join(format!("conductor-staging-{}.redb", std::process::id()));
+        let path = std::env::temp_dir()
+            .join(format!("conductor-staging-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path).unwrap();
         let first = lease(&log, 1).await.unwrap();
-        let super::Subscription { mut live, .. } = log.subscribe(HostSeq(0)).await.unwrap();
+        let super::Subscription { mut live, .. } =
+            log.subscribe(HostSeq(0)).await.unwrap();
         log.append(SessionId(1), EventKind::SessionReady)
             .await
             .unwrap();
@@ -778,7 +859,8 @@ mod durability_tests {
     }
 
     #[tokio::test]
-    async fn cancelled_undo_preserves_committed_intent_but_rolls_back_its_suffix() {
+    async fn cancelled_undo_preserves_committed_intent_but_rolls_back_its_suffix()
+     {
         let path = std::env::temp_dir().join(format!(
             "conductor-undo-barrier-{}.redb",
             std::process::id()
@@ -836,8 +918,8 @@ mod durability_tests {
 
     #[tokio::test]
     async fn dropping_an_unfinished_command_rolls_back_and_fails_closed() {
-        let path =
-            std::env::temp_dir().join(format!("conductor-abort-{}.redb", std::process::id()));
+        let path = std::env::temp_dir()
+            .join(format!("conductor-abort-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path).unwrap();
         let command = lease(&log, 1).await.unwrap();

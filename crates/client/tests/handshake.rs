@@ -1,11 +1,14 @@
 use std::time::Duration;
 
-use client::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
+use client::{
+    HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
+};
 use iroh::endpoint::{Connection, ConnectionError, SendStream, presets};
 use iroh::{Endpoint, RelayMode};
 use proto::wire;
 use proto::{
-    AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq, Open, Providers, Welcome,
+    AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq, Open,
+    Providers, Welcome,
 };
 use tokio::sync::mpsc;
 
@@ -50,7 +53,10 @@ async fn stalled_hello(endpoint: &Endpoint) {
     let (conn, _send) = accept_hello(endpoint).await;
     let closed = tokio::time::timeout(STEP, conn.closed()).await.unwrap();
     assert_eq!(
-        Some(&closed).filter(|closed| matches!(closed, ConnectionError::ApplicationClosed(_))),
+        Some(&closed).filter(|closed| matches!(
+            closed,
+            ConnectionError::ApplicationClosed(_)
+        )),
         Some(&closed)
     );
 }

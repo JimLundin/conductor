@@ -8,5 +8,7 @@ mod link;
 pub mod new_session;
 pub mod platform;
 
-pub use link::{Cursor, HostLink, LinkOptions, LinkState, SendError, Status, Target, Update};
+pub use link::{
+    Cursor, HostLink, LinkOptions, LinkState, SendError, Status, Target, Update,
+};
 pub use platform::Network;

@@ -17,7 +17,10 @@ pub(crate) const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
 
 /// Writes `credential`'s provider into `<home>/config.toml`, or takes ours
 /// out for `None`. The key stays out of the file.
-pub(crate) fn write(home: &Path, credential: Option<&CodexCredential>) -> Result<(), Error> {
+pub(crate) fn write(
+    home: &Path,
+    credential: Option<&CodexCredential>,
+) -> Result<(), Error> {
     let path = home.join("config.toml");
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => Ok(text),
@@ -52,7 +55,9 @@ fn with_provider(
             provider.insert("base_url", value(base_url.as_str()));
             provider.insert("env_key", value(KEY_VAR));
             provider.insert("wire_api", value("responses"));
-            if let Some(providers) = section(root, String::from("model_providers")) {
+            if let Some(providers) =
+                section(root, String::from("model_providers"))
+            {
                 providers.insert(PROVIDER_ID, Item::Table(provider));
             }
             if let Some(filters) = shell_filters(root) {
@@ -62,16 +67,22 @@ fn with_provider(
             root.insert("model", value(model.as_str()));
         }
         None => {
-            if let Some(providers) = section(root, String::from("model_providers")) {
+            if let Some(providers) =
+                section(root, String::from("model_providers"))
+            {
                 providers.remove(PROVIDER_ID);
             }
-            if let Some(policy) = section(root, String::from("shell_environment_policy")) {
-                if let Some(filters) = section(policy, String::from("filters")) {
+            if let Some(policy) =
+                section(root, String::from("shell_environment_policy"))
+            {
+                if let Some(filters) = section(policy, String::from("filters"))
+                {
                     filters.remove(KEY_VAR);
                 }
                 // Ours was its only filter: a bare header would be left.
                 policy.retain(|key, item| {
-                    key != "filters" || !item.as_table().is_some_and(Table::is_empty)
+                    key != "filters"
+                        || !item.as_table().is_some_and(Table::is_empty)
                 });
             }
         }
@@ -106,8 +117,7 @@ mod tests {
 
     use super::with_provider;
 
-    const CODEX_WROTE: &str =
-        "check_for_update_on_startup = false\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n";
+    const CODEX_WROTE: &str = "check_for_update_on_startup = false\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n";
 
     #[test]
     fn the_provider_goes_in_and_out_and_codex_keeps_its_own() {

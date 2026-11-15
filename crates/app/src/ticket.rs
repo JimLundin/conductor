@@ -24,7 +24,8 @@ mod storage {
     const KEY: &str = "conductor.ticket";
 
     fn local() -> Option<web_sys::Storage> {
-        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+        web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
     }
 
     pub(crate) fn get() -> Option<String> {
@@ -93,7 +94,8 @@ mod tests {
 
     #[test]
     fn accepts_a_whole_join_link_or_a_bare_ticket() {
-        let link = format!("  https://jimlundin.github.io/conductor/#join={TICKET}\n");
+        let link =
+            format!("  https://jimlundin.github.io/conductor/#join={TICKET}\n");
         assert_eq!(parse_join(&link).unwrap().to_text(), TICKET);
         assert_eq!(parse_join(TICKET).unwrap().to_text(), TICKET);
         assert_eq!(

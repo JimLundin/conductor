@@ -2,13 +2,13 @@
 
 use client::host_view::{Attention, HostView, SessionView, UndoState};
 use client::new_session::{
-    Attempt, PROVIDERS, ProviderNote, Refusal, default_label, efforts, kept_effort, label, models,
-    note,
+    Attempt, PROVIDERS, ProviderNote, Refusal, default_label, efforts,
+    kept_effort, label, models, note,
 };
 use dioxus::prelude::*;
 use proto::{
-    Availability, CommandBody, CommandResult, Effort, HostPath, ModelId, Provider, Providers,
-    SessionId,
+    Availability, CommandBody, CommandResult, Effort, HostPath, ModelId,
+    Provider, Providers, SessionId,
 };
 
 use crate::{Link, PaneHeader, Screen, send};
@@ -32,7 +32,9 @@ pub(crate) fn SessionList(
     let rows = host
         .recent()
         .into_iter()
-        .filter_map(|id| host.sessions.get(&id).cloned().map(|session| (id, session)))
+        .filter_map(|id| {
+            host.sessions.get(&id).cloned().map(|session| (id, session))
+        })
         .collect::<Vec<(SessionId, SessionView)>>();
     rsx! {
         nav { class: "sidebar",
@@ -77,7 +79,9 @@ fn SessionRow(
             String::from("recovery needed"),
             String::new(),
         ),
-        (_, Attention::Quiet) => (session.status.word(), session.status.word(), String::new()),
+        (_, Attention::Quiet) => {
+            (session.status.word(), session.status.word(), String::new())
+        }
         (_, Attention::Requests(1)) => (
             String::from("approval"),
             String::from("needs you"),
@@ -133,15 +137,20 @@ pub(crate) fn NewSession(
             None,
             None,
         ),
-        Attempt::Refused(Refusal::Provider(reason)) => (None, Some(reason.clone()), None),
-        Attempt::Refused(Refusal::Other(message)) => (None, None, Some(message.clone())),
+        Attempt::Refused(Refusal::Provider(reason)) => {
+            (None, Some(reason.clone()), None)
+        }
+        Attempt::Refused(Refusal::Other(message)) => {
+            (None, None, Some(message.clone()))
+        }
         Attempt::Editing | Attempt::Starting => (None, None, None),
     };
     let provider_note = note(
         provider(),
         providers.as_ref().map(|providers| providers.of(provider())),
     );
-    let offered = models(providers.as_ref().map(|providers| providers.of(provider())));
+    let offered =
+        models(providers.as_ref().map(|providers| providers.of(provider())));
     let effort_options = efforts(&offered, model().as_ref());
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
@@ -291,7 +300,9 @@ enum Start {
 #[component]
 fn Hint(error: Option<String>) -> Element {
     match error {
-        Some(error) => rsx! { p { class: "hint error", role: "alert", "{error}" } },
+        Some(error) => {
+            rsx! { p { class: "hint error", role: "alert", "{error}" } }
+        }
         None => rsx! {},
     }
 }

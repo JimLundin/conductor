@@ -3,8 +3,8 @@
 use client::host_view::{Composer, UndoState};
 use dioxus::prelude::*;
 use proto::{
-    Change, CheckpointDiff, CheckpointId, CommandBody, CommandResult, DiffExtent, FilePatch,
-    SessionId, UndoAvailability,
+    Change, CheckpointDiff, CheckpointId, CommandBody, CommandResult,
+    DiffExtent, FilePatch, SessionId, UndoAvailability,
 };
 
 use crate::{Link, run_command, send};
@@ -29,10 +29,13 @@ pub(crate) fn TurnChanges(
 ) -> Element {
     let diff = use_signal(|| DiffState::Hidden);
     let generation = use_signal(|| 0u64);
-    let loading = std::iter::once(diff()).any(|state| matches!(state, DiffState::Loading(_)));
-    let busy = std::iter::once(&undo).any(|undo| matches!(undo, UndoState::Undoing(_)));
-    let allowed = std::iter::once((&composer, &availability))
-        .any(|pair| matches!(pair, (Composer::Open, UndoAvailability::Available)));
+    let loading = std::iter::once(diff())
+        .any(|state| matches!(state, DiffState::Loading(_)));
+    let busy = std::iter::once(&undo)
+        .any(|undo| matches!(undo, UndoState::Undoing(_)));
+    let allowed = std::iter::once((&composer, &availability)).any(|pair| {
+        matches!(pair, (Composer::Open, UndoAvailability::Available))
+    });
     rsx! {
         section { class: "turn-changes",
             button {
@@ -84,7 +87,7 @@ fn load_diff(
     match diff() {
         DiffState::Loading(_) => {}
         DiffState::Hidden | DiffState::Loaded(_) | DiffState::Failed(_) => {
-            begin_diff(session, checkpoint, link, diff, generation)
+            begin_diff(session, checkpoint, link, diff, generation);
         }
     }
 }
@@ -110,16 +113,22 @@ fn begin_diff(
         .await
         {
             Ok(CommandResult::Diff(changes)) => DiffState::Loaded(changes),
-            Ok(CommandResult::Rejected(reason)) => DiffState::Failed(reason.label()),
+            Ok(CommandResult::Rejected(reason)) => {
+                DiffState::Failed(reason.label())
+            }
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Providers(_),
-            ) => DiffState::Failed(String::from("The host did not return changes.")),
+            ) => DiffState::Failed(String::from(
+                "The host did not return changes.",
+            )),
             Err(reason) => DiffState::Failed(reason),
         };
         match (diff(), request) {
-            (DiffState::Loading(active), request) if active == request => diff.set(answer),
+            (DiffState::Loading(active), request) if active == request => {
+                diff.set(answer);
+            }
             (_, _) => {}
         }
     });

@@ -11,16 +11,18 @@ use std::path::{Path, PathBuf};
 
 use agents::Home;
 use agents::claude::{
-    ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode, PermissionRequestId, SettingSource,
-    VersionPolicy,
+    ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode,
+    PermissionRequestId, SettingSource, VersionPolicy,
 };
 use agents::codex::{
-    ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadId, ThreadOptions, TurnId,
+    ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadId,
+    ThreadOptions, TurnId,
 };
 use proto::{
-    Answer, Checkpoint, CheckpointId, ClaudeCredential, ClientName, CloseReason, CommandResult,
-    Decision, Effort, EventKind, HistoryAnchor, HostPath, HostSeq, ModelId, Models, Rejection,
-    RequestId, Resolution, SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    Answer, Checkpoint, CheckpointId, ClaudeCredential, ClientName,
+    CloseReason, CommandResult, Decision, Effort, EventKind, HistoryAnchor,
+    HostPath, HostSeq, ModelId, Models, Rejection, RequestId, Resolution,
+    SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -69,7 +71,9 @@ pub fn choose(
         Some(model) => models
             .find(&model)
             .map(|choice| Some(choice.id.clone()))
-            .ok_or_else(|| format!("this host doesn't offer the model {}", model.0)),
+            .ok_or_else(|| {
+                format!("this host doesn't offer the model {}", model.0)
+            }),
         None => Ok(models.default.clone()),
     }?;
     let listed = model.as_ref().and_then(|model| models.find(model));
@@ -82,7 +86,13 @@ pub fn choose(
                 model: model.clone(),
                 effort: Some(effort),
             })
-            .ok_or_else(|| format!("{} doesn't take the effort {}", choice.name, effort.wire())),
+            .ok_or_else(|| {
+                format!(
+                    "{} doesn't take the effort {}",
+                    choice.name,
+                    effort.wire()
+                )
+            }),
         (effort, _) => Ok(Choice { model, effort }),
     }
 }
@@ -243,7 +253,7 @@ impl Session {
         launch: (Launch, Models),
         log: Log,
         history: &[proto::Event],
-    ) -> Session {
+    ) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let actor = Self::state(id, directory, choice, log, None, history);
         // The first order starts the agent, so the actor's loop does it all.
@@ -254,7 +264,7 @@ impl Session {
             reply,
         });
         tokio::spawn(actor.run(messages));
-        Session { inbox }
+        Self { inbox }
     }
 
     pub(crate) fn restore(
@@ -264,11 +274,12 @@ impl Session {
         conversation: Option<String>,
         history: &[proto::Event],
         log: Log,
-    ) -> Session {
+    ) -> Self {
         let (inbox, messages) = mpsc::channel(16);
-        let actor = Self::state(id, directory, choice, log, conversation, history);
+        let actor =
+            Self::state(id, directory, choice, log, conversation, history);
         tokio::spawn(actor.run(messages));
-        Session { inbox }
+        Self { inbox }
     }
 
     fn state(
@@ -286,7 +297,8 @@ impl Session {
             history.iter().rev().find(|event| {
                 matches!(
                     event.kind,
-                    EventKind::UserMessage { .. } | EventKind::UndoHistoryRestored { .. }
+                    EventKind::UserMessage { .. }
+                        | EventKind::UndoHistoryRestored { .. }
                 )
             }),
         ) {
@@ -332,28 +344,38 @@ impl Session {
             conversation: conversation.map(Conversation),
             log,
             turn: Turn::Idle,
-            requests: history.iter().fold(HashMap::new(), |mut requests, event| {
-                match &event.kind {
-                    EventKind::RequestOpened { request, .. }
-                    | EventKind::QuestionAsked { request, .. } => {
-                        requests
-                            .insert(request.to_owned(), Pending::Resolved(Resolution::Withdrawn));
+            requests: history.iter().fold(
+                HashMap::new(),
+                |mut requests, event| {
+                    match &event.kind {
+                        EventKind::RequestOpened { request, .. }
+                        | EventKind::QuestionAsked { request, .. } => {
+                            requests.insert(
+                                request.to_owned(),
+                                Pending::Resolved(Resolution::Withdrawn),
+                            );
+                        }
+                        EventKind::RequestResolved {
+                            request,
+                            resolution,
+                        } => {
+                            requests.insert(
+                                request.to_owned(),
+                                Pending::Resolved(resolution.clone()),
+                            );
+                        }
+                        _ => {}
                     }
-                    EventKind::RequestResolved {
-                        request,
-                        resolution,
-                    } => {
-                        requests.insert(request.to_owned(), Pending::Resolved(resolution.clone()));
-                    }
-                    _ => {}
-                }
-                requests
-            }),
+                    requests
+                },
+            ),
             last_request: history
                 .iter()
                 .filter_map(|event| match &event.kind {
                     EventKind::RequestOpened { request, .. }
-                    | EventKind::QuestionAsked { request, .. } => Some(request.to_owned()),
+                    | EventKind::QuestionAsked { request, .. } => {
+                        Some(request.to_owned())
+                    }
                     _ => None,
                 })
                 .max()
@@ -397,7 +419,11 @@ fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
         (Asked::Question { .. }, Reply::Decide(_)) => {
             Err(String::from("a question takes answers, not a decision"))
         }
-        (Asked::Question { count }, Reply::Answer(answers)) if &answers.len() == count => Ok(()),
+        (Asked::Question { count }, Reply::Answer(answers))
+            if &answers.len() == count =>
+        {
+            Ok(())
+        }
         (Asked::Question { count }, Reply::Answer(answers)) => {
             Err(format!("{} answers for {count} questions", answers.len()))
         }
@@ -439,11 +465,18 @@ async fn start(
                         target: agents::claude::SessionId(target),
                     },
                     Some(HistoryAnchor::Claude { conversation, .. }) => {
-                        agents::claude::Resume::Session(agents::claude::SessionId(conversation))
+                        agents::claude::Resume::Session(
+                            agents::claude::SessionId(conversation),
+                        )
                     }
-                    _ => conversation.map_or(agents::claude::Resume::Fresh, |conversation| {
-                        agents::claude::Resume::Session(agents::claude::SessionId(conversation.0))
-                    }),
+                    _ => conversation.map_or(
+                        agents::claude::Resume::Fresh,
+                        |conversation| {
+                            agents::claude::Resume::Session(
+                                agents::claude::SessionId(conversation.0),
+                            )
+                        },
+                    ),
                 },
                 project_name: Some(ulid::Ulid::from(id.0).to_string()),
                 // The user level is the host's private home (§6.2).
@@ -476,20 +509,29 @@ async fn start(
                             if &missing == target =>
                         {
                             match &history_boundary {
-                                Some(HistoryAnchor::Claude { message: None, .. }) => {
+                                Some(HistoryAnchor::Claude {
+                                    message: None,
+                                    ..
+                                }) => {
                                     ClaudeSession::spawn(ClaudeOptions {
                                         resume: agents::claude::Resume::Fresh,
                                         ..options
                                     })
                                     .await
                                 }
-                                _ => Err(agents::claude::Error::MissingSession(missing)),
+                                _ => {
+                                    Err(agents::claude::Error::MissingSession(
+                                        missing,
+                                    ))
+                                }
                             }
                         }
                         started => started,
                     }
                 }
-                _ => ClaudeSession::spawn(options).await,
+                agents::claude::Resume::Fresh => {
+                    ClaudeSession::spawn(options).await
+                }
             };
             let (session, events) = started?;
             Ok(Agent::Claude { session, events })
@@ -510,7 +552,8 @@ async fn start(
                         Some(HistoryAnchor::Codex { conversation, .. }) => {
                             Some(ThreadId(conversation))
                         }
-                        _ => conversation.map(|conversation| ThreadId(conversation.0)),
+                        _ => conversation
+                            .map(|conversation| ThreadId(conversation.0)),
                     },
                 )
                 .await?;
@@ -522,20 +565,28 @@ async fn start(
 /// What `launch` offers with the credential in it. Claude lists its models
 /// as a session would see them, started in a directory of its own under
 /// `data_dir`; Codex asks the hub's app-server.
-pub async fn list_models(launch: Launch, data_dir: &Path) -> Result<Models, String> {
+pub async fn list_models(
+    launch: Launch,
+    data_dir: &Path,
+) -> Result<Models, String> {
     match launch {
         Launch::Claude(claude) => {
             let probe = data_dir.join("probe");
             std::fs::create_dir_all(&probe).map_err(|err| err.to_string())?;
             claude_models(claude, probe).await
         }
-        Launch::Codex(CodexLaunch { hub }) => hub.models().await.map_err(|err| err.to_string()),
+        Launch::Codex(CodexLaunch { hub }) => {
+            hub.models().await.map_err(|err| err.to_string())
+        }
     }
 }
 
 /// What a Claude session offers, from its `initialize` response: the CLI
 /// is started in `directory` and stopped again.
-async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Models, String> {
+async fn claude_models(
+    launch: ClaudeLaunch,
+    directory: PathBuf,
+) -> Result<Models, String> {
     let (session, _events) = ClaudeSession::spawn(ClaudeOptions {
         claude_path: launch.claude_path,
         home: launch.home,
@@ -560,8 +611,8 @@ async fn claude_models(launch: ClaudeLaunch, directory: PathBuf) -> Result<Model
 impl Pending {
     fn native(&self) -> Option<&NativeRequest> {
         match self {
-            Pending::Open { native, .. } => Some(native),
-            Pending::Resolved(_) => None,
+            Self::Open { native, .. } => Some(native),
+            Self::Resolved(_) => None,
         }
     }
 }
@@ -569,34 +620,40 @@ impl Pending {
 impl Agent {
     async fn next(&mut self) -> Input {
         match self {
-            Agent::Claude { events, .. } => {
+            Self::Claude { events, .. } => {
                 events.recv().await.map_or(Input::AgentGone, Input::Claude)
             }
-            Agent::Codex { events, .. } => {
-                events
-                    .recv()
-                    .await
-                    .map_or(Input::AgentGone, |routed| match routed {
+            Self::Codex { events, .. } => {
+                events.recv().await.map_or(Input::AgentGone, |routed| {
+                    match routed {
                         Routed::Codex(event) => Input::Codex(event),
                         Routed::Stopped { reason } => Input::Stopped(reason),
-                    })
+                    }
+                })
             }
             // With no agent, the session only takes orders.
-            Agent::Down => std::future::pending().await,
+            Self::Down => std::future::pending().await,
         }
     }
 
     fn conversation(&self) -> Option<Conversation> {
         match self {
-            Agent::Claude { session, .. } => Some(Conversation(session.id().0.clone())),
-            Agent::Codex { thread, .. } => Some(Conversation(thread.id.0.clone())),
-            Agent::Down => None,
+            Self::Claude { session, .. } => {
+                Some(Conversation(session.id().0.clone()))
+            }
+            Self::Codex { thread, .. } => {
+                Some(Conversation(thread.id.0.clone()))
+            }
+            Self::Down => None,
         }
     }
 }
 
 impl SessionActor {
-    async fn run(mut self, mut inbox: mpsc::Receiver<SessionMsg>) -> Result<Infallible, Stopped> {
+    async fn run(
+        mut self,
+        mut inbox: mpsc::Receiver<SessionMsg>,
+    ) -> Result<Infallible, Stopped> {
         loop {
             let input = tokio::select! {
                 msg = inbox.recv() => msg.map_or(Input::Closed, Input::Order),
@@ -613,8 +670,12 @@ impl SessionActor {
                 let _ = reply.send(result);
                 Ok(())
             }
-            Input::Claude(event) => self.apply(mapping::claude_steps(event)).await,
-            Input::Codex(event) => self.apply(mapping::codex_steps(event)).await,
+            Input::Claude(event) => {
+                self.apply(mapping::claude_steps(event)).await
+            }
+            Input::Codex(event) => {
+                self.apply(mapping::codex_steps(event)).await
+            }
             Input::Stopped(reason) => {
                 let reason = CloseReason::Stopped { reason };
                 self.apply(Vec::from([Step::Closed(reason)])).await
@@ -663,13 +724,15 @@ impl SessionActor {
     /// gives way to its default, and the log says so.
     async fn offered(&mut self, offered: Models) -> Result<(), Stopped> {
         match self.choice.model.clone().filter(|model| {
-            offered.default.as_ref() != Some(model) && offered.find(model).is_none()
+            offered.default.as_ref() != Some(model)
+                && offered.find(model).is_none()
         }) {
             Some(gone) => {
-                let choice = choose(&offered, None, self.choice.effort).unwrap_or(Choice {
-                    model: offered.default.clone(),
-                    effort: None,
-                });
+                let choice = choose(&offered, None, self.choice.effort)
+                    .unwrap_or_else(|_| Choice {
+                        model: offered.default.clone(),
+                        effort: None,
+                    });
                 let reason = format!(
                     "Model changed to {}: {} is not offered by the current credential",
                     choice.model.as_ref().map_or_else(
@@ -693,35 +756,48 @@ impl SessionActor {
     async fn order(&mut self, order: Order) -> Result<CommandResult, Stopped> {
         match order {
             Order::Diff(checkpoint) => self.diff(checkpoint).await,
-            Order::Undo(checkpoint, launch) => self.undo(checkpoint, launch).await,
+            Order::Undo(checkpoint, launch) => {
+                self.undo(checkpoint, launch).await
+            }
             order => match &self.book.recovery {
-                Some(_) => Ok(CommandResult::Rejected(Rejection::UndoInProgress)),
+                Some(_) => {
+                    Ok(CommandResult::Rejected(Rejection::UndoInProgress))
+                }
                 None => self.normal_order(order).await,
             },
         }
     }
 
-    async fn normal_order(&mut self, order: Order) -> Result<CommandResult, Stopped> {
+    async fn normal_order(
+        &mut self,
+        order: Order,
+    ) -> Result<CommandResult, Stopped> {
         match (order, &self.turn, &self.agent) {
-            (Order::Start(launch, offered), _, Agent::Down) => match self.save_snapshot().await? {
-                Ok(()) => {
-                    self.offered(offered).await?;
-                    self.start(launch).await?;
-                    Ok(CommandResult::Accepted)
+            (Order::Start(launch, offered), _, Agent::Down) => {
+                match self.save_snapshot().await? {
+                    Ok(()) => {
+                        self.offered(offered).await?;
+                        self.start(launch).await?;
+                        Ok(CommandResult::Accepted)
+                    }
+                    Err(reason) => Ok(CommandResult::Rejected(
+                        Rejection::WorkspaceFailure { reason },
+                    )),
                 }
-                Err(reason) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
-                    reason,
-                })),
-            },
+            }
             // Continue is idempotent: the agent already runs.
             (Order::Start(_, _), _, _) => Ok(CommandResult::Accepted),
-            (_, _, Agent::Down) => Ok(CommandResult::Rejected(Rejection::SessionClosed)),
-            (Order::Send { text, by }, Turn::Idle, _) => match self.save_snapshot().await? {
-                Ok(()) => self.send_order(text, by).await,
-                Err(reason) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
-                    reason,
-                })),
-            },
+            (_, _, Agent::Down) => {
+                Ok(CommandResult::Rejected(Rejection::SessionClosed))
+            }
+            (Order::Send { text, by }, Turn::Idle, _) => {
+                match self.save_snapshot().await? {
+                    Ok(()) => self.send_order(text, by).await,
+                    Err(reason) => Ok(CommandResult::Rejected(
+                        Rejection::WorkspaceFailure { reason },
+                    )),
+                }
+            }
             (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
                 Ok(CommandResult::Rejected(Rejection::TurnInProgress))
             }
@@ -741,14 +817,20 @@ impl SessionActor {
                 self.note(sent).await?;
                 Ok(CommandResult::Accepted)
             }
-            (Order::Reply { request, reply, by }, _, _) => self.reply(request, reply, by).await,
+            (Order::Reply { request, reply, by }, _, _) => {
+                self.reply(request, reply, by).await
+            }
             (Order::Diff(_) | Order::Undo(_, _), _, _) => {
                 Ok(CommandResult::Rejected(Rejection::CheckpointUnavailable))
             }
         }
     }
 
-    async fn send_order(&mut self, text: String, by: ClientName) -> Result<CommandResult, Stopped> {
+    async fn send_order(
+        &mut self,
+        text: String,
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
         let event = self
             .log
             .record(
@@ -798,15 +880,23 @@ impl SessionActor {
                 Ok(CommandResult::Rejected(Rejection::UnknownRequest))
             }
             Some(Pending::Resolved(
-                Resolution::Decided { by: first, .. } | Resolution::Answered { by: first, .. },
+                Resolution::Decided { by: first, .. }
+                | Resolution::Answered { by: first, .. },
             )) => Ok(CommandResult::Rejected(Rejection::AlreadyResolved {
                 by: first,
             })),
-            Some(Pending::Open { native, asked }) => match fits(&asked, &reply) {
-                Err(reason) => Ok(CommandResult::Rejected(Rejection::WrongReply { reason })),
+            Some(Pending::Open { native, asked }) => match fits(&asked, &reply)
+            {
+                Err(reason) => {
+                    Ok(CommandResult::Rejected(Rejection::WrongReply {
+                        reason,
+                    }))
+                }
                 Ok(()) => {
-                    if let (Asked::Approval { call, .. }, Reply::Decide(Decision::Deny)) =
-                        (asked, &reply)
+                    if let (
+                        Asked::Approval { call, .. },
+                        Reply::Decide(Decision::Deny),
+                    ) = (asked, &reply)
                     {
                         self.declined.insert(call);
                     }
@@ -839,7 +929,9 @@ impl SessionActor {
     /// `TurnStarted`, which an interrupt must wait for anyway.
     async fn send(&self, text: String) -> Result<(), AgentError> {
         match &self.agent {
-            Agent::Claude { session, .. } => Ok(session.send_user(text).await?),
+            Agent::Claude { session, .. } => {
+                Ok(session.send_user(text).await?)
+            }
             Agent::Codex { thread, .. } => {
                 let _ = thread.send_turn(text).await?;
                 Ok(())
@@ -851,7 +943,9 @@ impl SessionActor {
     async fn interrupt(&self, turn: &NativeTurn) -> Result<(), AgentError> {
         match &self.agent {
             Agent::Claude { session, .. } => Ok(session.interrupt().await?),
-            Agent::Codex { thread, .. } => Ok(thread.interrupt(TurnId(turn.0.clone())).await?),
+            Agent::Codex { thread, .. } => {
+                Ok(thread.interrupt(TurnId(turn.0.clone())).await?)
+            }
             Agent::Down => Err(AgentError::Down),
         }
     }
@@ -952,7 +1046,8 @@ impl SessionActor {
                     Some(_) => {
                         let history = self.anchor(None);
                         self.book.resume = Some(history.clone());
-                        self.emit(EventKind::HistoryMaterialized { history }).await
+                        self.emit(EventKind::HistoryMaterialized { history })
+                            .await
                     }
                     None => Ok(()),
                 }
@@ -965,7 +1060,9 @@ impl SessionActor {
                 let open = self
                     .requests
                     .iter()
-                    .filter(|(_, pending)| matches!(pending, Pending::Open { .. }))
+                    .filter(|(_, pending)| {
+                        matches!(pending, Pending::Open { .. })
+                    })
                     .map(|(request, _)| request)
                     .copied()
                     .collect::<BTreeSet<RequestId>>();
@@ -986,7 +1083,9 @@ impl SessionActor {
                         .conversation(self.id, conversation.0.clone())
                         .await?;
                 }
-                if let (Some(_), Agent::Codex { .. }) = (&self.book.workspace, &self.agent) {
+                if let (Some(_), Agent::Codex { .. }) =
+                    (&self.book.workspace, &self.agent)
+                {
                     let history = self.anchor(Some(&native));
                     self.book.resume = Some(history.clone());
                     self.emit(EventKind::HistoryMaterialized { history })
@@ -1004,7 +1103,10 @@ impl SessionActor {
                     })
                     .await?;
                 }
-                let before = std::mem::replace(&mut self.turn, Turn::Running(native.clone()));
+                let before = std::mem::replace(
+                    &mut self.turn,
+                    Turn::Running(native.clone()),
+                );
                 match before {
                     Turn::Starting(Held::Interrupt) => {
                         tracing::info!(
@@ -1014,7 +1116,9 @@ impl SessionActor {
                         let sent = self.interrupt(&native).await;
                         self.note(sent).await
                     }
-                    Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => Ok(()),
+                    Turn::Starting(Held::Nothing)
+                    | Turn::Idle
+                    | Turn::Running(_) => Ok(()),
                 }
             }
             // Nothing the gone agent asked can be answered, and a turn it
@@ -1030,8 +1134,10 @@ impl SessionActor {
                 self.requests = std::mem::take(&mut self.requests)
                     .into_iter()
                     .map(|(request, pending)| match pending {
-                        Pending::Open { .. } => (request, Pending::Resolved(Resolution::Withdrawn)),
-                        resolved => (request, resolved),
+                        Pending::Open { .. } => {
+                            (request, Pending::Resolved(Resolution::Withdrawn))
+                        }
+                        resolved @ Pending::Resolved(_) => (request, resolved),
                     })
                     .collect();
                 self.emit(EventKind::SessionClosed { reason }).await
@@ -1049,7 +1155,9 @@ impl SessionActor {
                 conversation: thread.id.0.clone(),
                 turn: native.map(|turn| turn.0.clone()),
             },
-            Agent::Down => self.book.resume.clone().unwrap_or(HistoryAnchor::Fresh),
+            Agent::Down => {
+                self.book.resume.clone().unwrap_or(HistoryAnchor::Fresh)
+            }
         }
     }
 
@@ -1136,18 +1244,24 @@ impl SessionActor {
             Some((workspace, checkpoint, parent)) => {
                 Ok(match workspace::diff(workspace, checkpoint, parent).await {
                     Ok(diff) => CommandResult::Diff(diff),
-                    Err(err) => CommandResult::Rejected(Rejection::WorkspaceFailure {
-                        reason: err.to_string(),
-                    }),
+                    Err(err) => {
+                        CommandResult::Rejected(Rejection::WorkspaceFailure {
+                            reason: err.to_string(),
+                        })
+                    }
                 })
             }
-            None => Ok(CommandResult::Rejected(Rejection::CheckpointUnavailable)),
+            None => {
+                Ok(CommandResult::Rejected(Rejection::CheckpointUnavailable))
+            }
         }
     }
 
     fn plan(&self, selected: CheckpointId) -> Result<Undo, Rejection> {
         match &self.book.recovery {
-            Some(Recovery::Native(undo) | Recovery::Files(undo)) if undo.selected == selected => {
+            Some(Recovery::Native(undo) | Recovery::Files(undo))
+                if undo.selected == selected =>
+            {
                 Ok(undo.clone())
             }
             Some(_) => Err(Rejection::UndoInProgress),
@@ -1173,31 +1287,35 @@ impl SessionActor {
                                 .parent
                                 .and_then(|id| self.book.checkpoints.get(&id))
                                 .ok_or(Rejection::CheckpointUnavailable)?;
-                            let history = match (&parent.history, &checkpoint.history) {
-                                (HistoryAnchor::Fresh, _) => Ok(HistoryAnchor::Fresh),
-                                (
-                                    HistoryAnchor::Claude {
-                                        conversation,
-                                        message: Some(message),
-                                    },
-                                    _,
-                                ) => Ok(HistoryAnchor::ClaudeFork {
-                                    source: conversation.clone(),
-                                    through: message.clone(),
-                                    target: uuid::Uuid::new_v4().to_string(),
-                                }),
-                                (
-                                    _,
-                                    HistoryAnchor::Codex {
-                                        conversation,
-                                        turn: Some(turn),
-                                    },
-                                ) => Ok(HistoryAnchor::Codex {
-                                    conversation: conversation.clone(),
-                                    turn: Some(turn.clone()),
-                                }),
-                                _ => Err(Rejection::CheckpointUnavailable),
-                            }?;
+                            let history =
+                                match (&parent.history, &checkpoint.history) {
+                                    (HistoryAnchor::Fresh, _) => {
+                                        Ok(HistoryAnchor::Fresh)
+                                    }
+                                    (
+                                        HistoryAnchor::Claude {
+                                            conversation,
+                                            message: Some(message),
+                                        },
+                                        _,
+                                    ) => Ok(HistoryAnchor::ClaudeFork {
+                                        source: conversation.clone(),
+                                        through: message.clone(),
+                                        target: uuid::Uuid::new_v4()
+                                            .to_string(),
+                                    }),
+                                    (
+                                        _,
+                                        HistoryAnchor::Codex {
+                                            conversation,
+                                            turn: Some(turn),
+                                        },
+                                    ) => Ok(HistoryAnchor::Codex {
+                                        conversation: conversation.clone(),
+                                        turn: Some(turn.clone()),
+                                    }),
+                                    _ => Err(Rejection::CheckpointUnavailable),
+                                }?;
                             Ok(Undo {
                                 selected,
                                 restored: parent.id,
@@ -1298,15 +1416,30 @@ impl SessionActor {
                             .zip(self.book.checkpoints.get(&undo.restored))
                         {
                             Some((workspace, checkpoint)) => {
-                                match workspace::restore(workspace, &checkpoint.commit).await {
-                                    Ok(()) => self.complete_undo(&undo, launch).await,
-                                    Err(err) => self.undo_failed(selected, err.to_string()).await,
+                                match workspace::restore(
+                                    workspace,
+                                    &checkpoint.commit,
+                                )
+                                .await
+                                {
+                                    Ok(()) => {
+                                        self.complete_undo(&undo, launch).await
+                                    }
+                                    Err(err) => {
+                                        self.undo_failed(
+                                            selected,
+                                            err.to_string(),
+                                        )
+                                        .await
+                                    }
                                 }
                             }
                             None => {
                                 self.undo_failed(
                                     selected,
-                                    String::from("restore checkpoint is unavailable"),
+                                    String::from(
+                                        "restore checkpoint is unavailable",
+                                    ),
                                 )
                                 .await
                             }
@@ -1419,8 +1552,9 @@ impl SessionActor {
                             .history_turns()
                             .await
                             .map_err(|err| err.to_string())?;
-                        if let Some(TurnId(_)) =
-                            turns.iter().find(|native| native == &&TurnId(turn.clone()))
+                        if let Some(TurnId(_)) = turns
+                            .iter()
+                            .find(|native| native == &&TurnId(turn.clone()))
                         {
                             thread
                                 .revert(TurnId(turn.clone()))
@@ -1432,16 +1566,22 @@ impl SessionActor {
                             .await
                             .map_err(|err| err.to_string())?;
                         match turns {
-                            turns if turns == desired => Ok(HistoryAnchor::Codex {
-                                conversation: conversation.clone(),
-                                turn: desired.last().map(|turn| turn.0.clone()),
-                            }),
+                            turns if turns == desired => {
+                                Ok(HistoryAnchor::Codex {
+                                    conversation: conversation.clone(),
+                                    turn: desired
+                                        .last()
+                                        .map(|turn| turn.0.clone()),
+                                })
+                            }
                             _ => Err(String::from(
                                 "native history does not match the retained turn prefix",
                             )),
                         }
                     }
-                    _ => Err(String::from("Codex undo started another provider")),
+                    _ => {
+                        Err(String::from("Codex undo started another provider"))
+                    }
                 }
             }
             HistoryAnchor::Fresh | HistoryAnchor::ClaudeFork { .. } => {
@@ -1559,7 +1699,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_checkpoint_preserves_fork_recipe_and_fresh_accepted_send_resume_id() {
+    async fn unknown_checkpoint_preserves_fork_recipe_and_fresh_accepted_send_resume_id()
+     {
         let created = recovery_event(proto::EventKind::SessionCreated {
             provider: proto::Provider::Claude,
             directory: proto::HostPath(String::from("/work")),
@@ -1629,7 +1770,10 @@ mod tests {
         let one = Vec::from([Answer(Vec::from([String::from("Blue")]))]);
         assert_eq!(
             [
-                fits(&approval(None), &Reply::Decide(Decision::ApproveForSession)),
+                fits(
+                    &approval(None),
+                    &Reply::Decide(Decision::ApproveForSession)
+                ),
                 fits(
                     &approval(Some("Bash(ls)")),
                     &Reply::Decide(Decision::ApproveForSession)

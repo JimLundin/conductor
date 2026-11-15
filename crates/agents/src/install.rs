@@ -20,7 +20,7 @@ const CONNECT: Duration = Duration::from_secs(15);
 const STALL: Duration = Duration::from_secs(30);
 /// How often a process waiting for another's install checks the lock.
 const LOCK_POLL: Duration = Duration::from_millis(200);
-const READ_BUFFER: usize = 1048576;
+const READ_BUFFER: usize = 1_048_576;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cli {
@@ -31,8 +31,8 @@ pub enum Cli {
 impl Cli {
     pub fn name(&self) -> &str {
         match self {
-            Cli::Claude => "claude",
-            Cli::Codex => "codex",
+            Self::Claude => "claude",
+            Self::Codex => "codex",
         }
     }
 }
@@ -66,12 +66,22 @@ struct Names {
 /// The platforms both CLIs publish builds for.
 fn platform() -> Result<Names, InstallError> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => Ok(names("linux-x64", "x86_64-unknown-linux-musl")),
-        ("linux", "aarch64") => Ok(names("linux-arm64", "aarch64-unknown-linux-musl")),
+        ("linux", "x86_64") => {
+            Ok(names("linux-x64", "x86_64-unknown-linux-musl"))
+        }
+        ("linux", "aarch64") => {
+            Ok(names("linux-arm64", "aarch64-unknown-linux-musl"))
+        }
         ("macos", "x86_64") => Ok(names("darwin-x64", "x86_64-apple-darwin")),
-        ("macos", "aarch64") => Ok(names("darwin-arm64", "aarch64-apple-darwin")),
-        ("windows", "x86_64") => Ok(names("win32-x64", "x86_64-pc-windows-msvc")),
-        ("windows", "aarch64") => Ok(names("win32-arm64", "aarch64-pc-windows-msvc")),
+        ("macos", "aarch64") => {
+            Ok(names("darwin-arm64", "aarch64-apple-darwin"))
+        }
+        ("windows", "x86_64") => {
+            Ok(names("win32-x64", "x86_64-pc-windows-msvc"))
+        }
+        ("windows", "aarch64") => {
+            Ok(names("win32-arm64", "aarch64-pc-windows-msvc"))
+        }
         _ => Err(unpinned()),
     }
 }
@@ -138,7 +148,10 @@ fn pin(cli: Cli) -> Result<Pin, InstallError> {
 /// Makes sure the pinned `cli` is installed under `data_dir` and returns its
 /// path, after removing every other version. It runs before any session, so
 /// no session can be using one.
-pub async fn install(cli: Cli, data_dir: &Path) -> Result<PathBuf, InstallError> {
+pub async fn install(
+    cli: Cli,
+    data_dir: &Path,
+) -> Result<PathBuf, InstallError> {
     put(
         cli.name(),
         pin(cli)?,
@@ -149,10 +162,15 @@ pub async fn install(cli: Cli, data_dir: &Path) -> Result<PathBuf, InstallError>
 
 /// Installs `pin` in `parent`, holding `parent`'s lock throughout. An
 /// installed binary was verified when it was put there.
-async fn put(name: &str, pin: Pin, parent: &Path) -> Result<PathBuf, InstallError> {
+async fn put(
+    name: &str,
+    pin: Pin,
+    parent: &Path,
+) -> Result<PathBuf, InstallError> {
     std::fs::create_dir_all(parent).map_err(|error| io(parent, error))?;
     let lock_path = parent.join("lock");
-    let lock = File::create(&lock_path).map_err(|error| io(&lock_path, error))?;
+    let lock =
+        File::create(&lock_path).map_err(|error| io(&lock_path, error))?;
     hold(&lock, &lock_path).await?;
     remove_others(parent, &pin.version)?;
     let dir = parent.join(&pin.version);
@@ -190,7 +208,7 @@ async fn put(name: &str, pin: Pin, parent: &Path) -> Result<PathBuf, InstallErro
 async fn hold(lock: &File, path: &Path) -> Result<(), InstallError> {
     loop {
         match attempt(lock).await {
-            Ok(_) => break Ok(()),
+            Ok(()) => break Ok(()),
             Err(TryLockError::WouldBlock) => {}
             Err(TryLockError::Error(error)) => break Err(io(path, error)),
         }
@@ -214,7 +232,9 @@ fn remove_others(parent: &Path, keep: &str) -> Result<(), InstallError> {
     let others = std::fs::read_dir(parent)
         .map_err(|error| io(parent, error))?
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_name() != keep && entry.file_name() != "lock")
+        .filter(|entry| {
+            entry.file_name() != keep && entry.file_name() != "lock"
+        })
         .map(|entry| entry.path())
         .collect::<Vec<PathBuf>>();
     for other in others {
@@ -249,7 +269,8 @@ async fn unpack(
         Package::Archive => {
             let staging = download.with_extension("unpack");
             let _ = std::fs::remove_dir_all(&staging);
-            std::fs::create_dir_all(&staging).map_err(|error| io(&staging, error))?;
+            std::fs::create_dir_all(&staging)
+                .map_err(|error| io(&staging, error))?;
             let status = tokio::process::Command::new("tar")
                 .arg("-xzf")
                 .arg(download)
@@ -329,7 +350,11 @@ async fn digest(
             .await
             .map(|chunk| absorb(&mut hash, chunk))?
         {
-            0 => break Ok(data_encoding::HEXLOWER.encode(hash.finalize().as_slice())),
+            0 => {
+                break Ok(
+                    data_encoding::HEXLOWER.encode(hash.finalize().as_slice())
+                );
+            }
             length => reader.consume(length),
         }
     }
@@ -383,7 +408,9 @@ mod tests {
     fn recorded(dir: &str, pointer: &str) -> BTreeSet<String> {
         std::fs::read_dir(root().join("fixtures").join(dir))
             .unwrap()
-            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .map(|entry| {
+                std::fs::read_to_string(entry.unwrap().path()).unwrap()
+            })
             .flat_map(|text| {
                 text.lines()
                     .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -400,9 +427,12 @@ mod tests {
     #[test]
     fn claude_pin_is_recorded_and_supported() {
         let version = String::from(pins::CLAUDE_VERSION);
-        let versions = recorded("claude", "/response/response/claude_code_version");
-        let initialize =
-            serde_json::from_str(&format!("{{\"claude_code_version\": \"{}\"}}", version)).unwrap();
+        let versions =
+            recorded("claude", "/response/response/claude_code_version");
+        let initialize = serde_json::from_str(&format!(
+            "{{\"claude_code_version\": \"{version}\"}}"
+        ))
+        .unwrap();
         assert_eq!(
             versions.get(&version),
             Some(&version),
@@ -435,7 +465,8 @@ mod tests {
     /// between them, so two downloads would overlap.
     const PIECES: usize = 128;
     const PIECE: usize = 65536;
-    const SEVENS: &str = "15d3670274ee9cc36af50fee9e6d49164c9eec2228d48fe29e4f313aa3784a91";
+    const SEVENS: &str =
+        "15d3670274ee9cc36af50fee9e6d49164c9eec2228d48fe29e4f313aa3784a91";
 
     /// Answers every connection with the test binary.
     async fn serve(listener: TcpListener) -> std::io::Result<()> {
@@ -457,8 +488,9 @@ mod tests {
             PIECES.saturating_mul(PIECE)
         );
         stream.write_all(head.as_bytes()).await?;
-        for piece in std::iter::repeat_n([7u8; PIECE], PIECES) {
-            send(&mut stream, &piece).await?;
+        let piece = std::iter::repeat_n(7u8, PIECE).collect::<Vec<u8>>();
+        for piece in std::iter::repeat_n(&piece, PIECES) {
+            send(&mut stream, piece).await?;
         }
         stream.shutdown().await
     }
@@ -483,7 +515,8 @@ mod tests {
     /// first's install and finds it, and an older version is removed.
     #[tokio::test]
     async fn two_installs_at_once_both_end_with_the_verified_binary() {
-        let parent = std::env::temp_dir().join(format!("conductor-install-{}", std::process::id()));
+        let parent = std::env::temp_dir()
+            .join(format!("conductor-install-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&parent);
         std::fs::create_dir_all(parent.join("0.9.0")).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

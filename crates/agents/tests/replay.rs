@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionDecision,
-    PermissionMode, PermissionRequestId, Role, SettingSource, VersionPolicy,
+    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession,
+    PermissionDecision, PermissionMode, PermissionRequestId, Role,
+    SettingSource, VersionPolicy,
 };
 use n0_future::StreamExt;
 use proto::{Effort, ModelId};
@@ -58,7 +59,8 @@ fn fake_claude(name: &str, stdout: &Path) -> FakeClaude {
 
 fn options(claude: &FakeClaude) -> ClaudeOptions {
     ClaudeOptions {
-        claude_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-claude.sh"),
+        claude_path: Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fake-claude.sh"),
         home: Home::User,
         credential: None,
         cwd: claude.dir.clone(),
@@ -77,7 +79,9 @@ fn block_summary(block: &Block) -> String {
     match block {
         Block::Text(t) => format!("text {t:?}"),
         Block::Thinking(t) => format!("thinking {t:?}"),
-        Block::ToolUse { name, tool, .. } => format!("tool_use {name} {tool:?}"),
+        Block::ToolUse { name, tool, .. } => {
+            format!("tool_use {name} {tool:?}")
+        }
         Block::ToolResult { outcome, .. } => format!("tool_result {outcome:?}"),
         Block::Other(_) => String::from("other"),
     }
@@ -85,9 +89,12 @@ fn block_summary(block: &Block) -> String {
 
 fn summary(event: &ClaudeEvent) -> String {
     match event {
-        ClaudeEvent::TurnStarted { session_id } => format!("turn_started {}", session_id.0),
+        ClaudeEvent::TurnStarted { session_id } => {
+            format!("turn_started {}", session_id.0)
+        }
         ClaudeEvent::Message { role, content, .. } => {
-            let blocks = content.iter().map(block_summary).collect::<Vec<String>>();
+            let blocks =
+                content.iter().map(block_summary).collect::<Vec<String>>();
             let role = match role {
                 Role::Assistant => "assistant",
                 Role::User => "user",
@@ -113,14 +120,18 @@ fn summary(event: &ClaudeEvent) -> String {
         ),
         ClaudeEvent::StreamDelta { text } => format!("delta {text:?}"),
         ClaudeEvent::ThinkingDelta { text } => format!("thinks {text:?}"),
-        ClaudeEvent::PermissionCancelled { .. } => String::from("permission_cancelled"),
+        ClaudeEvent::PermissionCancelled { .. } => {
+            String::from("permission_cancelled")
+        }
         ClaudeEvent::TurnFinished {
             subtype,
             outcome,
             terminal_reason,
             ..
         } => format!("finished {subtype} {outcome:?} {terminal_reason:?}"),
-        ClaudeEvent::Exited { status } => format!("exited {}", status.describe()),
+        ClaudeEvent::Exited { status } => {
+            format!("exited {}", status.describe())
+        }
         ClaudeEvent::Unknown(v) => format!("unknown {}", frame(v)),
     }
 }
@@ -181,8 +192,8 @@ impl Replay {
         session: ClaudeSession,
         events: mpsc::Receiver<ClaudeEvent>,
         decisions: Vec<PermissionDecision>,
-    ) -> Replay {
-        Replay {
+    ) -> Self {
+        Self {
             session,
             events,
             decisions,
@@ -195,16 +206,19 @@ impl Replay {
         }
     }
 
-    async fn until(self, until: Until) -> Replay {
-        Replay { until, ..self }.run().await
+    async fn until(self, until: Until) -> Self {
+        Self { until, ..self }.run().await
     }
 
-    async fn run(mut self) -> Replay {
+    async fn run(mut self) -> Self {
         loop {
-            let event = tokio::time::timeout(Duration::from_secs(20), self.events.recv())
-                .await
-                .expect("no event within 20s; the replay is stuck")
-                .expect("event stream ended early");
+            let event = tokio::time::timeout(
+                Duration::from_secs(20),
+                self.events.recv(),
+            )
+            .await
+            .expect("no event within 20s; the replay is stuck")
+            .expect("event stream ended early");
             match self.on(event).await {
                 Progress::Playing => {}
                 Progress::Done => break self,
@@ -214,14 +228,18 @@ impl Replay {
 
     async fn on(&mut self, event: ClaudeEvent) -> Progress {
         match &event {
-            ClaudeEvent::PermissionRequested { id, .. } => self.answer(id).await,
-            ClaudeEvent::TurnFinished { .. } => self.finished = self.finished.saturating_add(1),
+            ClaudeEvent::PermissionRequested { id, .. } => {
+                self.answer(id).await;
+            }
+            ClaudeEvent::TurnFinished { .. } => {
+                self.finished = self.finished.saturating_add(1);
+            }
             _ => {}
         }
         match &event {
             ClaudeEvent::Unknown(raw) => self.tally(frame(raw)),
             ClaudeEvent::StreamDelta { text } => {
-                self.deltas.get_or_insert_with(Vec::new).push(text.clone())
+                self.deltas.get_or_insert_with(Vec::new).push(text.clone());
             }
             _ => self.record(summary(&event)),
         }
@@ -272,7 +290,10 @@ struct Replayed {
     second: Vec<String>,
 }
 
-async fn answer_again(session: &ClaudeSession, id: PermissionRequestId) -> String {
+async fn answer_again(
+    session: &ClaudeSession,
+    id: PermissionRequestId,
+) -> String {
     match session.respond(id, PermissionDecision::Allow).await {
         Ok(()) => String::from("ok"),
         Err(e) => e.to_string(),
@@ -281,9 +302,10 @@ async fn answer_again(session: &ClaudeSession, id: PermissionRequestId) -> Strin
 
 async fn replay(name: &str, decisions: Vec<PermissionDecision>) -> Replayed {
     let path = fixture(name);
-    let (session, events) = ClaudeSession::spawn(options(&fake_claude(name, &path)))
-        .await
-        .expect("initialize is answered by the recording's first line");
+    let (session, events) =
+        ClaudeSession::spawn(options(&fake_claude(name, &path)))
+            .await
+            .expect("initialize is answered by the recording's first line");
 
     let recording = std::fs::read_to_string(&path).unwrap();
     let results = recording
@@ -405,7 +427,8 @@ async fn approve_deny_interrupt_recording() {
 #[tokio::test]
 async fn resume_and_accept_edits_recording() {
     // acceptEdits must not ask, so no permission request may reach `second`.
-    let replayed = replay("session2-resume-accept-edits.jsonl", Vec::new()).await;
+    let replayed =
+        replay("session2-resume-accept-edits.jsonl", Vec::new()).await;
     assert_eq!(
         replayed.events,
         [
@@ -478,9 +501,10 @@ async fn summarized_thinking_recording() {
 #[tokio::test]
 async fn initialize_lists_the_models_and_their_efforts() {
     let path = fixture("session4-chosen-killed.jsonl");
-    let (session, _events) = ClaudeSession::spawn(options(&fake_claude("models", &path)))
-        .await
-        .unwrap();
+    let (session, _events) =
+        ClaudeSession::spawn(options(&fake_claude("models", &path)))
+            .await
+            .unwrap();
     let models = session.models();
     assert_eq!(
         (
@@ -557,7 +581,9 @@ async fn questions_and_session_approval_recording() {
     );
     assert_eq!(
         replayed.second,
-        ["no open permission request with id fcc171e0-5399-4cb7-a65a-14d1ecabf519",]
+        [
+            "no open permission request with id fcc171e0-5399-4cb7-a65a-14d1ecabf519",
+        ]
     );
 }
 
@@ -595,7 +621,8 @@ async fn unknown_control_request_gets_an_error_reply() {
         ]),
     );
     let claude = fake_claude("unknown-control", &stdout);
-    let (session, events) = ClaudeSession::spawn(options(&claude)).await.unwrap();
+    let (session, events) =
+        ClaudeSession::spawn(options(&claude)).await.unwrap();
     let played = Replay::new(session, events, Vec::new())
         .until(Until::Turns(1))
         .await;
@@ -634,7 +661,9 @@ async fn unknown_control_request_gets_an_error_reply() {
 /// answer to `initialize`.
 #[tokio::test]
 async fn a_resume_with_no_transcript_fails_with_the_clis_reason() {
-    let recorded = std::fs::read_to_string(fixture("session6-resume-missing.jsonl")).unwrap();
+    let recorded =
+        std::fs::read_to_string(fixture("session6-resume-missing.jsonl"))
+            .unwrap();
     let stdout = recording(
         "resume-missing",
         Vec::from([
@@ -774,7 +803,8 @@ async fn gated(name: &str) -> Replay {
         .join("../../fixtures/e2e")
         .join(name);
     let claude = fake_claude(name, &path);
-    let (session, events) = ClaudeSession::spawn(options(&claude)).await.unwrap();
+    let (session, events) =
+        ClaudeSession::spawn(options(&claude)).await.unwrap();
     Replay::new(session, events, Vec::new())
 }
 
@@ -789,7 +819,9 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
 
     r.session
         .respond(
-            PermissionRequestId(String::from("ef41e4d8-de15-458b-88d0-f46aa4286c9a")),
+            PermissionRequestId(String::from(
+                "ef41e4d8-de15-458b-88d0-f46aa4286c9a",
+            )),
             PermissionDecision::Allow,
         )
         .await
@@ -828,7 +860,9 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
     };
     r.session
         .respond(
-            PermissionRequestId(String::from("0a710d2a-6061-4dba-96f1-3dc74607c276")),
+            PermissionRequestId(String::from(
+                "0a710d2a-6061-4dba-96f1-3dc74607c276",
+            )),
             deny,
         )
         .await
@@ -889,7 +923,8 @@ async fn drive_boundary(
 }
 
 #[tokio::test]
-async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users() {
+async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
+{
     let dir = test_dir("native-boundaries");
     let fake = FakeClaude {
         stdin_log: dir.join("stdin.jsonl"),
@@ -909,7 +944,8 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users() 
         r#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":"native"}"#,
     ]).join("\n");
     std::fs::write(dir.join("stdout.jsonl"), recording).unwrap();
-    let (session, mut events) = ClaudeSession::spawn(options(&fake)).await.unwrap();
+    let (session, mut events) =
+        ClaudeSession::spawn(options(&fake)).await.unwrap();
     session.send_user(String::from("first")).await.unwrap();
     let first = drive_boundary(&mut events).await;
     session.send_user(String::from("second")).await.unwrap();

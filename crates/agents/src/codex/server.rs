@@ -22,9 +22,10 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::config;
 use super::protocol::{
-    AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision, INITIALIZE, Inbound,
-    Outbound, RequestId, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId, answer,
-    encode, history_page, models, parse_line, thread_started, turn_id, user_agent,
+    AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision,
+    INITIALIZE, Inbound, Outbound, RequestId, ThreadEvent, ThreadId,
+    ThreadOptions, ThreadSettings, TurnId, answer, encode, history_page,
+    models, parse_line, thread_started, turn_id, user_agent,
 };
 
 const STDERR_TIMEOUT: Duration = Duration::from_secs(5);
@@ -61,7 +62,9 @@ pub enum Error {
     Rpc { method: String, message: String },
     #[error("codex did not answer {0} within {REQUEST_TIMEOUT:?}")]
     Timeout(String),
-    #[error("codex history exceeded 100 pages; refusing an incomplete undo check")]
+    #[error(
+        "codex history exceeded 100 pages; refusing an incomplete undo check"
+    )]
     HistoryLimit,
     #[error("no open approval with id {}", .0.0)]
     UnknownApproval(ApprovalId),
@@ -105,7 +108,7 @@ impl CodexServer {
     /// Starts `codex app-server` and completes the `initialize` handshake.
     pub async fn spawn(
         opts: ServerOptions,
-    ) -> Result<(CodexServer, mpsc::Receiver<CodexEvent>), Error> {
+    ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
         let stdout_log = opts
             .stdout_log
             .as_ref()
@@ -126,7 +129,9 @@ impl CodexServer {
             .take()
             .zip(child.stdout.take())
             .zip(child.stderr.take())
-            .ok_or(Error::Command(String::from("codex stdio was not piped")))?;
+            .ok_or_else(|| {
+                Error::Command(String::from("codex stdio was not piped"))
+            })?;
         let last_stderr = tokio::spawn(log_stderr(stderr));
 
         let (events_tx, events_rx) = mpsc::channel(4096);
@@ -148,7 +153,7 @@ impl CodexServer {
         tokio::spawn(actor.run(commands_rx));
 
         let initialize = request(&commands_tx, Call::Initialize).await?;
-        let server = CodexServer {
+        let server = Self {
             commands: commands_tx,
             user_agent: user_agent(initialize)?,
             pid,
@@ -175,9 +180,13 @@ impl CodexServer {
         Ok(models(request(&self.commands, Call::ModelList).await?)?)
     }
 
-    pub async fn start_thread(&self, opts: ThreadOptions) -> Result<CodexThread, Error> {
-        let (id, settings) =
-            thread_started(request(&self.commands, Call::ThreadStart(opts)).await?)?;
+    pub async fn start_thread(
+        &self,
+        opts: ThreadOptions,
+    ) -> Result<CodexThread, Error> {
+        let (id, settings) = thread_started(
+            request(&self.commands, Call::ThreadStart(opts)).await?,
+        )?;
         Ok(self.thread(id, settings))
     }
 
@@ -187,13 +196,18 @@ impl CodexServer {
         id: ThreadId,
         opts: ThreadOptions,
     ) -> Result<CodexThread, Error> {
-        let (id, settings) =
-            thread_started(request(&self.commands, Call::ThreadResume(id, opts)).await?)?;
+        let (id, settings) = thread_started(
+            request(&self.commands, Call::ThreadResume(id, opts)).await?,
+        )?;
         Ok(self.thread(id, settings))
     }
 
     /// Answers an open approval or user-input request exactly once.
-    pub async fn respond(&self, id: ApprovalId, decision: Decision) -> Result<(), Error> {
+    pub async fn respond(
+        &self,
+        id: ApprovalId,
+        decision: Decision,
+    ) -> Result<(), Error> {
         ask(&self.commands, |reply| CommandMsg::Respond {
             id,
             decision,
@@ -261,7 +275,11 @@ impl CodexThread {
     }
 
     /// Answers one of this thread's open approvals exactly once.
-    pub async fn respond(&self, id: ApprovalId, decision: Decision) -> Result<(), Error> {
+    pub async fn respond(
+        &self,
+        id: ApprovalId,
+        decision: Decision,
+    ) -> Result<(), Error> {
         self.server.respond(id, decision).await
     }
 }
@@ -305,7 +323,10 @@ impl History {
         }
     }
 
-    fn on_page(&mut self, page: (Vec<TurnId>, Option<String>)) -> HistoryProgress {
+    fn on_page(
+        &mut self,
+        page: (Vec<TurnId>, Option<String>),
+    ) -> HistoryProgress {
         let (turns, cursor) = page;
         self.turns.extend(turns);
         self.pages = self.pages.saturating_add(1);
@@ -318,7 +339,10 @@ impl History {
 }
 
 /// Sends `call` to the actor and waits for Codex's answer.
-async fn request(commands: &mpsc::Sender<CommandMsg>, call: Call) -> Result<Value, Error> {
+async fn request(
+    commands: &mpsc::Sender<CommandMsg>,
+    call: Call,
+) -> Result<Value, Error> {
     let method = String::from(call.method());
     tokio::time::timeout(
         REQUEST_TIMEOUT,
@@ -358,7 +382,7 @@ pub fn login_status(codex_path: &Path, home: &Home) -> Command {
     cmd
 }
 
-/// The ChatGPT sign-in by device code, `codex login --device-auth`, into
+/// The `ChatGPT` sign-in by device code, `codex login --device-auth`, into
 /// `home`. It stores the credential there itself.
 pub fn login(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = cli(codex_path, home);
@@ -385,14 +409,17 @@ pub(crate) fn command(opts: &ServerOptions) -> Command {
 
 /// Logs stderr while the server runs, retaining its last nonempty line.
 async fn log_stderr(stderr: ChildStderr) -> Option<String> {
-    n0_future::stream::unfold(BufReader::new(stderr).lines(), |mut lines| async move {
-        lines
-            .next_line()
-            .await
-            .ok()
-            .flatten()
-            .map(|line| (line, lines))
-    })
+    n0_future::stream::unfold(
+        BufReader::new(stderr).lines(),
+        |mut lines| async move {
+            lines
+                .next_line()
+                .await
+                .ok()
+                .flatten()
+                .map(|line| (line, lines))
+        },
+    )
     .inspect(|line| tracing::debug!(target: "codex::stderr", "{line}"))
     .filter(|line| !line.trim().is_empty())
     .last()
@@ -412,7 +439,7 @@ struct Running {
 
 impl Running {
     async fn stop(self) -> (Exit, Option<String>) {
-        let Running {
+        let Self {
             child,
             stdin,
             stdout: _,
@@ -479,13 +506,18 @@ impl Actor {
         }
     }
 
-    async fn next_input(&mut self, commands: &mut mpsc::Receiver<CommandMsg>) -> Input {
+    async fn next_input(
+        &mut self,
+        commands: &mut mpsc::Receiver<CommandMsg>,
+    ) -> Input {
         match &mut self.process {
             Process::Running(running) => tokio::select! {
                 line = running.stdout.next_line() => Input::Line(line),
                 cmd = commands.recv() => cmd.map_or(Input::Closed, Input::Command),
             },
-            Process::Exited(_) => commands.recv().await.map_or(Input::Closed, Input::Command),
+            Process::Exited(_) => {
+                commands.recv().await.map_or(Input::Closed, Input::Command)
+            }
         }
     }
 
@@ -516,19 +548,25 @@ impl Actor {
     }
 
     async fn on_line(&mut self, line: &str) {
-        if let Some(Err(e)) = self.stdout_log.as_mut().map(|log| writeln!(log, "{line}")) {
+        if let Some(Err(e)) =
+            self.stdout_log.as_mut().map(|log| writeln!(log, "{line}"))
+        {
             tracing::warn!("writing stdout log: {e}");
         }
         let inbound = match parse_line(line) {
             Ok(inbound) => inbound,
             Err(e) => {
                 tracing::warn!("codex printed a non-JSON line ({e}): {line}");
-                Inbound::Event(CodexEvent::Unknown(Value::String(line.to_owned())))
+                Inbound::Event(CodexEvent::Unknown(Value::String(
+                    line.to_owned(),
+                )))
             }
         };
         match inbound {
             Inbound::Event(event) => self.emit(event).await,
-            Inbound::Response { id, outcome } => self.on_response(id, outcome).await,
+            Inbound::Response { id, outcome } => {
+                self.on_response(id, outcome).await;
+            }
             Inbound::Approval {
                 rpc_id,
                 thread,
@@ -564,15 +602,22 @@ impl Actor {
             } => {
                 let message = format!("conductor does not handle {method}");
                 tracing::warn!("{message}");
-                if let Err(e) = self.write(Outbound::Reject { rpc_id, message }).await {
+                if let Err(e) =
+                    self.write(Outbound::Reject { rpc_id, message }).await
+                {
                     tracing::error!("rejecting {method}: {e}");
                 }
                 self.emit(event).await;
             }
             Inbound::Declined { rpc_id, event } => {
-                tracing::info!("declined a question that asks for a secret answer");
-                let message = String::from("conductor does not take secret answers");
-                if let Err(e) = self.write(Outbound::Reject { rpc_id, message }).await {
+                tracing::info!(
+                    "declined a question that asks for a secret answer"
+                );
+                let message =
+                    String::from("conductor does not take secret answers");
+                if let Err(e) =
+                    self.write(Outbound::Reject { rpc_id, message }).await
+                {
                     tracing::error!("declining a secret question: {e}");
                 }
                 self.emit(event).await;
@@ -580,7 +625,11 @@ impl Actor {
         }
     }
 
-    async fn on_response(&mut self, id: RequestId, outcome: Result<Value, String>) {
+    async fn on_response(
+        &mut self,
+        id: RequestId,
+        outcome: Result<Value, String>,
+    ) {
         let pending = match &id {
             RequestId::Integer(n) => self.pending.remove(n),
             RequestId::String(_) => None,
@@ -590,7 +639,9 @@ impl Actor {
                 if let (INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
                     self.initialized().await;
                 }
-                let _ = reply.send(outcome.map_err(|message| Error::Rpc { method, message }));
+                let _ = reply.send(
+                    outcome.map_err(|message| Error::Rpc { method, message }),
+                );
             }
             None => tracing::warn!("response for unknown request {id:?}"),
         }
@@ -638,11 +689,15 @@ impl Actor {
         }
     }
 
-    async fn respond(&mut self, id: ApprovalId, decision: Decision) -> Result<(), Error> {
+    async fn respond(
+        &mut self,
+        id: ApprovalId,
+        decision: Decision,
+    ) -> Result<(), Error> {
         let open = self
             .open
             .remove(&id)
-            .ok_or(Error::UnknownApproval(id.clone()))?;
+            .ok_or_else(|| Error::UnknownApproval(id.clone()))?;
         let answered = answer(&open.shape, decision);
         self.settle(id, open, answered).await
     }
@@ -656,7 +711,11 @@ impl Actor {
     ) -> Result<(), Error> {
         match answered {
             Ok(result) => {
-                tracing::debug!("answering {} on thread {}", id.0, open.thread.0);
+                tracing::debug!(
+                    "answering {} on thread {}",
+                    id.0,
+                    open.thread.0
+                );
                 self.write(Outbound::Answer {
                     rpc_id: open.rpc_id,
                     result,
@@ -686,7 +745,8 @@ impl Actor {
     /// Moves to `Exited`, failing everything still waiting on the process.
     async fn stop(&mut self) -> Exit {
         // Both arms put the real state back.
-        let placeholder = Process::Exited(Exit::Unknown(String::from("stopping")));
+        let placeholder =
+            Process::Exited(Exit::Unknown(String::from("stopping")));
         match std::mem::replace(&mut self.process, placeholder) {
             Process::Running(running) => {
                 let (status, refusal) = running.stop().await;
@@ -723,15 +783,17 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::{
-        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Home, Open, Process,
-        RequestId, ServerOptions, ThreadId, command,
+        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Home,
+        Open, Process, RequestId, ServerOptions, ThreadId, command,
     };
 
     #[tokio::test]
     async fn an_answer_that_does_not_encode_fails_and_closes_the_approval() {
         let (events, _listening) = mpsc::channel(1);
         let mut actor = Actor {
-            process: Process::Exited(Exit::Unknown(String::from("never started"))),
+            process: Process::Exited(Exit::Unknown(String::from(
+                "never started",
+            ))),
             events,
             stdout_log: None,
             pending: HashMap::new(),
@@ -745,7 +807,8 @@ mod tests {
             thread: ThreadId(String::from("th_1")),
             shape: AnswerShape::Command,
         };
-        let failure = serde_json::to_value(BTreeMap::from([((1, 2), 0)])).unwrap_err();
+        let failure =
+            serde_json::to_value(BTreeMap::from([((1, 2), 0)])).unwrap_err();
         let first = actor
             .settle(id.clone(), open, Err(AnswerError::Encode(failure)))
             .await;

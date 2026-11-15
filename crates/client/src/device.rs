@@ -20,7 +20,7 @@ struct Row {
 }
 
 /// Checked in this order: an iPhone's or iPad's user agent also says "Mac
-/// OS X", and Android's and ChromeOS's also say "Linux".
+/// OS X", and Android's and `ChromeOS`'s also say "Linux".
 const DEVICES: &[Row] = &[
     Row {
         marker: "iPhone",
@@ -151,7 +151,8 @@ mod tests {
                     ClientName(case.name),
                 )
             })
-            .unzip::<ClientName, ClientName, Vec<ClientName>, Vec<ClientName>>();
+            .unzip::<ClientName, ClientName, Vec<ClientName>, Vec<ClientName>>(
+            );
         assert_eq!(got, want);
     }
 }

@@ -4,8 +4,8 @@
 //! id, questions and approval for the session, a chosen model and effort,
 //! reasoning, and a killed app-server resumed, printing PASS/FAIL per step.
 //!
-//! Usage: s2 [FIXTURE_DIR]
-//! Writes raw app-server stdout per process to FIXTURE_DIR/<name>.jsonl when given.
+//! Usage: s2 [`FIXTURE_DIR`]
+//! Writes raw app-server stdout per process to `FIXTURE_DIR`/<name>.jsonl when given.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -14,11 +14,14 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::codex::{
-    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
-    Error, Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, TurnId,
+    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer,
+    CodexThread, Decision, Error, Sandbox, ServerOptions, ThreadEvent,
+    ThreadId, ThreadOptions, TurnId,
 };
 use agents::install::{Cli, install};
-use agents::live::{Cue, Presence, Verdict, fresh_scratch, log_path, presence, report};
+use agents::live::{
+    Cue, Presence, Verdict, fresh_scratch, log_path, presence, report,
+};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
 use proto::{Answer, Effort, TurnOutcome};
@@ -35,7 +38,8 @@ const TURN_TIMEOUT: Duration = Duration::from_secs(240);
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -75,9 +79,9 @@ impl Policy {
                     })
                     .collect(),
             ),
-            (Policy::Approve, _) => Decision::Accept,
-            (Policy::ApproveForSession, _) => Decision::AcceptForSession,
-            (Policy::Decline, _) => Decision::Decline,
+            (Self::Approve, _) => Decision::Accept,
+            (Self::ApproveForSession, _) => Decision::AcceptForSession,
+            (Self::Decline, _) => Decision::Decline,
         }
     }
 }
@@ -116,8 +120,8 @@ struct Turn {
 }
 
 impl Turn {
-    fn new(thread: CodexThread, id: TurnId) -> Turn {
-        Turn {
+    fn new(thread: CodexThread, id: TurnId) -> Self {
+        Self {
             thread,
             id,
             approvals: Vec::new(),
@@ -134,22 +138,32 @@ impl Turn {
 
     fn record(&mut self, event: ThreadEvent) {
         match event {
-            ThreadEvent::Started | ThreadEvent::Unknown(_) | ThreadEvent::TurnStarted { .. } => {}
+            ThreadEvent::Started
+            | ThreadEvent::Unknown(_)
+            | ThreadEvent::TurnStarted { .. } => {}
             ThreadEvent::SecretQuestionDeclined { .. } => {
                 self.approvals
                     .push(String::from("secret question declined"));
             }
-            ThreadEvent::AgentDelta { text, .. } => self.streamed.push_str(&text),
-            ThreadEvent::ReasoningDelta { text, .. } => self.thought.push_str(&text),
+            ThreadEvent::AgentDelta { text, .. } => {
+                self.streamed.push_str(&text);
+            }
+            ThreadEvent::ReasoningDelta { text, .. } => {
+                self.thought.push_str(&text);
+            }
             ThreadEvent::Reasoning { text, .. } => self.reasoning.push(text),
-            ThreadEvent::TurnCompleted { outcome, .. } => self.outcome = Some(outcome),
+            ThreadEvent::TurnCompleted { outcome, .. } => {
+                self.outcome = Some(outcome);
+            }
             ThreadEvent::AgentMessage { text, .. } => {
                 self.text = match self.text.as_str() {
                     "" => text,
                     earlier => format!("{earlier}\n{text}"),
                 };
             }
-            ThreadEvent::ToolCall { phase, .. } => self.items.push(format!("{phase:?}")),
+            ThreadEvent::ToolCall { phase, .. } => {
+                self.items.push(format!("{phase:?}"));
+            }
             ThreadEvent::ApprovalRequested {
                 id, kind, options, ..
             } => {
@@ -175,18 +189,28 @@ fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
         | ThreadEvent::ToolCall { turn, .. }
         | ThreadEvent::ApprovalRequested { turn, .. }
         | ThreadEvent::SecretQuestionDeclined { turn } => Some(turn),
-        ThreadEvent::Started | ThreadEvent::ApprovalCancelled { .. } | ThreadEvent::Unknown(_) => {
-            None
-        }
+        ThreadEvent::Started
+        | ThreadEvent::ApprovalCancelled { .. }
+        | ThreadEvent::Unknown(_) => None,
     }
 }
 
-fn approval_label(id: &ApprovalId, kind: ApprovalKind, options: &[Value]) -> String {
+fn approval_label(
+    id: &ApprovalId,
+    kind: ApprovalKind,
+    options: &[Value],
+) -> String {
     let what = match kind {
         ApprovalKind::Command { command, .. } => format!("command {command:?}"),
-        ApprovalKind::FileChange { reason, .. } => format!("fileChange {reason:?}"),
-        ApprovalKind::Permissions { asks, .. } => format!("permissions {asks:?}"),
-        ApprovalKind::UserInput { questions } => format!("userInput {questions:?}"),
+        ApprovalKind::FileChange { reason, .. } => {
+            format!("fileChange {reason:?}")
+        }
+        ApprovalKind::Permissions { asks, .. } => {
+            format!("permissions {asks:?}")
+        }
+        ApprovalKind::UserInput { questions } => {
+            format!("userInput {questions:?}")
+        }
     };
     // An option is a bare string or a one-key object such as
     // `{"acceptWithExecpolicyAmendment": ...}`.
@@ -194,7 +218,9 @@ fn approval_label(id: &ApprovalId, kind: ApprovalKind, options: &[Value]) -> Str
         .iter()
         .map(|o| match o {
             Value::String(s) => s.clone(),
-            Value::Object(m) => m.keys().cloned().collect::<Vec<String>>().join("+"),
+            Value::Object(m) => {
+                m.keys().cloned().collect::<Vec<String>>().join("+")
+            }
             other => other.to_string(),
         })
         .collect::<Vec<String>>();
@@ -214,9 +240,9 @@ struct Run {
 }
 
 impl Run {
-    async fn drive(live: Live, plan: Plan, turns: Vec<Turn>) -> Result<Run> {
+    async fn drive(live: Live, plan: Plan, turns: Vec<Turn>) -> Result<Self> {
         let first = turns.first().map(|turn| turn.thread.id.clone());
-        let mut run = Run {
+        let mut run = Self {
             live,
             plan,
             running: turns.len(),
@@ -233,7 +259,7 @@ impl Run {
         run.run().await
     }
 
-    async fn run(mut self) -> Result<Run> {
+    async fn run(mut self) -> Result<Self> {
         loop {
             let event = self.next().await?;
             match self.on(event).await? {
@@ -254,13 +280,18 @@ impl Run {
         match event {
             CodexEvent::Thread { thread, event } => {
                 let turn = self.turns.get(&thread).with_context(|| {
-                    format!("event for a thread with no turn running: {}", thread.0)
+                    format!(
+                        "event for a thread with no turn running: {}",
+                        thread.0
+                    )
                 })?;
                 match event_turn(&event) {
-                    Some(got) if got != &turn.id => Err(anyhow::Error::msg(format!(
-                        "event for turn {} during turn {}",
-                        got.0, turn.id.0
-                    ))),
+                    Some(got) if got != &turn.id => {
+                        Err(anyhow::Error::msg(format!(
+                            "event for turn {} during turn {}",
+                            got.0, turn.id.0
+                        )))
+                    }
                     Some(_) | None => Ok(()),
                 }?;
                 self.react(&thread, &event).await?;
@@ -278,17 +309,23 @@ impl Run {
                     self.exited = Some(status.describe());
                     Ok(Progress::Done)
                 }
-                Plan::Answer(_) | Plan::Interrupt(_) => Err(anyhow::Error::msg(format!(
-                    "codex exited mid-turn: {}",
-                    status.describe()
-                ))),
+                Plan::Answer(_) | Plan::Interrupt(_) => {
+                    Err(anyhow::Error::msg(format!(
+                        "codex exited mid-turn: {}",
+                        status.describe()
+                    )))
+                }
             },
             CodexEvent::Unknown(_) => Ok(Progress::Playing),
         }
     }
 
     /// Does what the plan asks of an event before its turn records it.
-    async fn react(&mut self, thread: &ThreadId, event: &ThreadEvent) -> Result<()> {
+    async fn react(
+        &mut self,
+        thread: &ThreadId,
+        event: &ThreadEvent,
+    ) -> Result<()> {
         match event {
             ThreadEvent::Started
             | ThreadEvent::Unknown(_)
@@ -298,11 +335,20 @@ impl Run {
             | ThreadEvent::ToolCall { .. }
             | ThreadEvent::ApprovalCancelled { .. }
             | ThreadEvent::SecretQuestionDeclined { .. } => {}
-            ThreadEvent::TurnStarted { .. } => self.cue(thread, Cue::Start).await?,
-            ThreadEvent::AgentDelta { .. } => self.cue(thread, Cue::Delta).await?,
-            ThreadEvent::TurnCompleted { .. } => self.running = self.running.saturating_sub(1),
-            ThreadEvent::ApprovalRequested { id, kind, .. } => match &self.plan {
-                Plan::Interrupt(Cue::Approval) => self.cue(thread, Cue::Approval).await?,
+            ThreadEvent::TurnStarted { .. } => {
+                self.cue(thread, Cue::Start).await?;
+            }
+            ThreadEvent::AgentDelta { .. } => {
+                self.cue(thread, Cue::Delta).await?;
+            }
+            ThreadEvent::TurnCompleted { .. } => {
+                self.running = self.running.saturating_sub(1);
+            }
+            ThreadEvent::ApprovalRequested { id, kind, .. } => match &self.plan
+            {
+                Plan::Interrupt(Cue::Approval) => {
+                    self.cue(thread, Cue::Approval).await?;
+                }
                 Plan::Answer(policy) => {
                     let decision = policy.decision(kind);
                     self.live.server.respond(id.clone(), decision).await?;
@@ -329,7 +375,8 @@ impl Run {
             | (Plan::Interrupt(Cue::Start), Cue::Start, None)
             | (Plan::Interrupt(Cue::Delta), Cue::Delta, None)
             | (Plan::Interrupt(Cue::Approval), Cue::Approval, None) => {
-                self.interrupted = Some(turn.thread.interrupt(turn.id.clone()).await);
+                self.interrupted =
+                    Some(turn.thread.interrupt(turn.id.clone()).await);
             }
             (Plan::Kill(Cue::Delta), Cue::Delta, None) => {
                 self.interrupted = Some(Ok(()));
@@ -349,7 +396,12 @@ struct Single {
     exited: Option<String>,
 }
 
-async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> Result<Single> {
+async fn single(
+    live: Live,
+    thread: &CodexThread,
+    prompt: &str,
+    plan: Plan,
+) -> Result<Single> {
     let id = thread.send_turn(String::from(prompt)).await?;
     let Run {
         live,
@@ -358,7 +410,8 @@ async fn single(live: Live, thread: &CodexThread, prompt: &str, plan: Plan) -> R
         plan: _,
         running: _,
         exited,
-    } = Run::drive(live, plan, Vec::from([Turn::new(thread.clone(), id)])).await?;
+    } = Run::drive(live, plan, Vec::from([Turn::new(thread.clone(), id)]))
+        .await?;
     let turn = turns
         .into_values()
         .next()
@@ -409,7 +462,9 @@ async fn chosen_and_killed(
     let model = report(
         "10 chosen model and effort",
         match (&a.settings.model, &chosen.model, a.settings.effort) {
-            (got, Some(asked), Some(Effort::High)) if got == asked => Verdict::Pass,
+            (got, Some(asked), Some(Effort::High)) if got == asked => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
@@ -428,7 +483,9 @@ async fn chosen_and_killed(
     let reasoning = report(
         "11 reasoning",
         match (squeezed(&t.reasoning.concat()), &t.outcome) {
-            (joined, Some(TurnOutcome::Completed)) if joined == squeezed(&t.thought) => {
+            (joined, Some(TurnOutcome::Completed))
+                if joined == squeezed(&t.thought) =>
+            {
                 Verdict::Pass
             }
             _ => Verdict::Fail,
@@ -542,14 +599,21 @@ async fn interrupted(
         },
         format!(
             "interrupt()={interrupted:?} streamed={:?} output before the interrupt landed {:?} items={:?} outcome={:?}; next turn outcome={:?} reply={:?}",
-            t.streamed, t.text, t.items, t.outcome, after.turn.outcome, after.turn.text
+            t.streamed,
+            t.text,
+            t.items,
+            t.outcome,
+            after.turn.outcome,
+            after.turn.text
         ),
     )?;
     Ok((after.live, verdict))
 }
 
 /// Reads the server's events until Codex withdraws a request.
-async fn until_withdrawn(events: &mut mpsc::Receiver<CodexEvent>) -> Option<ApprovalId> {
+async fn until_withdrawn(
+    events: &mut mpsc::Receiver<CodexEvent>,
+) -> Option<ApprovalId> {
     loop {
         match events.recv().await {
             Some(CodexEvent::Thread {
@@ -636,7 +700,9 @@ async fn questions(
             again.turn.approvals.first(),
             &again.turn.outcome,
         ) {
-            (1, Presence::Present, None, Some(TurnOutcome::Completed)) => Verdict::Pass,
+            (1, Presence::Present, None, Some(TurnOutcome::Completed)) => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
@@ -657,13 +723,16 @@ async fn questions(
     .await?;
     let t = &s.turn;
     let Live { server, mut events } = s.live;
-    let cancelled = tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
+    let cancelled =
+        tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
     let late = match t.answered.first() {
         Some(id) => Some(
             server
                 .respond(
                     id.clone(),
-                    Decision::Answer(Vec::from([Answer(Vec::from([String::from("Pear")]))])),
+                    Decision::Answer(Vec::from([Answer(Vec::from([
+                        String::from("Pear"),
+                    ]))])),
                 )
                 .await,
         ),
@@ -681,9 +750,13 @@ async fn questions(
             &late,
             &t.outcome,
         ) {
-            (1, Some(Ok(())), Ok(Some(_)), Some(Err(_)), Some(TurnOutcome::Interrupted)) => {
-                Verdict::Pass
-            }
+            (
+                1,
+                Some(Ok(())),
+                Ok(Some(_)),
+                Some(Err(_)),
+                Some(TurnOutcome::Interrupted),
+            ) => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(
@@ -703,7 +776,8 @@ async fn undo_history(
     fixtures: Option<&Path>,
     opts: ThreadOptions,
 ) -> Result<Verdict> {
-    let live = spawn(codex, log_path(fixtures, "server6-undo-original")).await?;
+    let live =
+        spawn(codex, log_path(fixtures, "server6-undo-original")).await?;
     let thread = live.server.start_thread(opts.clone()).await?;
     let first = single(
         live,
@@ -723,17 +797,21 @@ async fn undo_history(
     thread.revert(second.turn.id).await?;
     let retained = thread.history_turns().await?;
     let prompt = "What are my retained and discarded codewords? Reply only <retained>/<discarded>, using unknown for a codeword not supplied in this conversation. Do not use tools.";
-    let after = single(second.live, &thread, prompt, Plan::Answer(Policy::Approve)).await?;
+    let after =
+        single(second.live, &thread, prompt, Plan::Answer(Policy::Approve))
+            .await?;
     let text = after.turn.text.clone();
     let expected = Vec::from([
         Vec::from([first_id.clone()]),
         Vec::from([first_id, after.turn.id.clone()]),
     ]);
     let _ = after.live.server.shutdown().await?;
-    let live = spawn(codex, log_path(fixtures, "server7-undo-continued")).await?;
+    let live =
+        spawn(codex, log_path(fixtures, "server7-undo-continued")).await?;
     let resumed = live.server.resume_thread(thread.id.clone(), opts).await?;
     let prefixes = Vec::from([retained, resumed.history_turns().await?]);
-    let continued = single(live, &resumed, prompt, Plan::Answer(Policy::Approve)).await?;
+    let continued =
+        single(live, &resumed, prompt, Plan::Answer(Policy::Approve)).await?;
     let verdict = report(
         "13 undo native history and Continue",
         match (
@@ -742,11 +820,12 @@ async fn undo_history(
             &continued.turn.outcome,
             prefixes,
         ) {
-            ("amber/unknown", "amber/unknown", Some(TurnOutcome::Completed), prefix)
-                if prefix == expected =>
-            {
-                Verdict::Pass
-            }
+            (
+                "amber/unknown",
+                "amber/unknown",
+                Some(TurnOutcome::Completed),
+                prefix,
+            ) if prefix == expected => Verdict::Pass,
             _ => Verdict::Fail,
         },
         format!(
@@ -776,7 +855,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let model = models
         .choices
         .iter()
-        .find_map(|m| m.description.strip_prefix("Fast").map(|_| m.id.0.clone()))
+        .find_map(|m| {
+            m.description.strip_prefix("Fast").map(|_| m.id.0.clone())
+        })
         .context("model/list offers no model described as fast")?;
     writeln!(
         std::io::stdout(),
@@ -813,7 +894,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let approve = report(
         "1 approve",
         match (t.approvals.first(), presence(&a_txt), &t.outcome) {
-            (Some(_), Presence::Present, Some(TurnOutcome::Completed)) => Verdict::Pass,
+            (Some(_), Presence::Present, Some(TurnOutcome::Completed)) => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
@@ -838,7 +921,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let decline = report(
         "2 decline",
         match (t.approvals.first(), presence(&b_txt), &t.outcome) {
-            (Some(_), Presence::Missing, Some(TurnOutcome::Completed)) => Verdict::Pass,
+            (Some(_), Presence::Missing, Some(TurnOutcome::Completed)) => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
@@ -867,8 +952,14 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         Expect::Interrupted,
     )
     .await?;
-    let (live, at_send) =
-        interrupted(live, &a, "3d interrupt at send", Cue::Send, Expect::Either).await?;
+    let (live, at_send) = interrupted(
+        live,
+        &a,
+        "3d interrupt at send",
+        Cue::Send,
+        Expect::Either,
+    )
+    .await?;
 
     let s = single(
         live,
@@ -880,7 +971,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let t = &s.turn;
     // Codex withdraws the request only after the turn has completed.
     let Live { server, mut events } = s.live;
-    let withdrawn = tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
+    let withdrawn =
+        tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
     let late = match t.answered.first() {
         Some(id) => Some(server.respond(id.clone(), Decision::Accept).await),
         None => None,
@@ -955,7 +1047,14 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         },
         format!(
             "{} turn {} -> {:?} {:?}; {} turn {} -> {:?} {:?}",
-            b.id.0, tb.0, rb.outcome, rb.text, c.id.0, tc.0, rc.outcome, rc.text
+            b.id.0,
+            tb.0,
+            rb.outcome,
+            rb.text,
+            c.id.0,
+            tc.0,
+            rc.outcome,
+            rc.text
         ),
     )?;
 
@@ -975,7 +1074,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let resume = report(
         "5 resume in a new process",
         match (&resumed.id, s.turn.text.find("a.txt"), &s.turn.outcome) {
-            (id, Some(_), Some(TurnOutcome::Completed)) if id == &a.id => Verdict::Pass,
+            (id, Some(_), Some(TurnOutcome::Completed)) if id == &a.id => {
+                Verdict::Pass
+            }
             _ => Verdict::Fail,
         },
         format!(
@@ -1005,7 +1106,9 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
             (Err(_), Some(_), None) => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!("respond(never-sent)={bogus:?}; re-answering step 1's ids={again:?}"),
+        format!(
+            "respond(never-sent)={bogus:?}; re-answering step 1's ids={again:?}"
+        ),
     )?;
 
     let status = server.shutdown().await?;

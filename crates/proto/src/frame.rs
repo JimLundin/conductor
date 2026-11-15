@@ -35,7 +35,8 @@ pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, FrameError> {
 pub fn body_len(header: [u8; HEADER_LEN]) -> Result<usize, FrameError> {
     let len = u32::from_be_bytes(header);
     match len {
-        ..=MAX_FRAME_LEN => usize::try_from(len).map_err(|_| FrameError::TooLarge(u64::from(len))),
+        ..=MAX_FRAME_LEN => usize::try_from(len)
+            .map_err(|_| FrameError::TooLarge(u64::from(len))),
         _ => Err(FrameError::TooLarge(u64::from(len))),
     }
 }
@@ -48,10 +49,11 @@ pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
 mod tests {
     use super::{HEADER_LEN, body_len, decode, encode};
     use crate::{
-        Auth, AuthToken, Availability, ClientName, CodexCredential, Command, CommandBody,
-        CommandId, CommandResult, Credential, Decision, Effort, Epoch, Event, EventKind, Hello,
-        HelloReply, HostSeq, ModelChoice, ModelId, Models, Open, Providers, Rejection, RequestId,
-        Resolution, SessionId, Subscribe, TurnOutcome, Welcome,
+        Auth, AuthToken, Availability, ClientName, CodexCredential, Command,
+        CommandBody, CommandId, CommandResult, Credential, Decision, Effort,
+        Epoch, Event, EventKind, Hello, HelloReply, HostSeq, ModelChoice,
+        ModelId, Models, Open, Providers, Rejection, RequestId, Resolution,
+        SessionId, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -205,7 +207,8 @@ mod tests {
     #[test]
     fn oversized_header_is_refused_before_reading_the_body() {
         assert_eq!(
-            body_len([0x01, 0x00, 0x00, 0x01]).map_err(|error| error.to_string()),
+            body_len([0x01, 0x00, 0x00, 0x01])
+                .map_err(|error| error.to_string()),
             Err(String::from(
                 "frame of 16777217 bytes exceeds the 16777216-byte limit"
             ))

@@ -13,9 +13,12 @@ use agents::Home;
 use agents::claude::Sandbox;
 use agents::codex::ServerOptions;
 use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, SessionStatus, ToolState,
+    Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
+    ToolState,
 };
-use client::{Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
+use client::{
+    Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
+};
 use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
 use daemon::credentials::Store;
@@ -27,11 +30,12 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use proto::{
-    Answer, Auth, AuthToken, Availability, Change, ClaudeCredential, ClientName, CloseReason,
-    CodexCredential, CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
-    EventKind, FileChange, HostPath, HostSeq, ModelChoice, ModelId, Models, Provider, Providers,
-    Question, QuestionOption, Rejection, RequestId, Resolution, Selection, SessionId, ToolCallId,
-    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Answer, Auth, AuthToken, Availability, Change, ClaudeCredential,
+    ClientName, CloseReason, CodexCredential, CommandBody, CommandResult,
+    Credential, Decision, Effort, Epoch, Event, EventKind, FileChange,
+    HostPath, HostSeq, ModelChoice, ModelId, Models, Provider, Providers,
+    Question, QuestionOption, Rejection, RequestId, Resolution, Selection,
+    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -52,6 +56,24 @@ struct Fixture {
     router: Router,
     target: Target,
     log: Log,
+}
+
+impl Fixture {
+    fn address(&self) -> SocketAddr {
+        self.target
+            .addr
+            .ip_addrs()
+            .copied()
+            .find(SocketAddr::is_ipv4)
+            .unwrap()
+    }
+
+    async fn shutdown(self) {
+        let Self { router, log, .. } = self;
+        router.shutdown().await.unwrap();
+        drop(router);
+        log.shutdown().await.unwrap();
+    }
 }
 
 /// The gated stand-in that plays `stdout.jsonl` from the session's directory.
@@ -131,19 +153,29 @@ fn target_tmp() -> PathBuf {
 /// An empty data dir for a host. Its name has `conductor-test` in it, so
 /// the fake CLIs show the paths under it (fake-cli.py).
 fn data_dir(name: &str) -> PathBuf {
-    let dir = target_tmp().join(format!("conductor-test-{}-{name}", std::process::id()));
+    let dir = target_tmp()
+        .join(format!("conductor-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 /// A host on `endpoint`, keeping its credentials in `data`.
-async fn serve(endpoint: Endpoint, launchers: Launchers, data: &Path) -> Fixture {
+async fn serve(
+    endpoint: Endpoint,
+    launchers: Launchers,
+    data: &Path,
+) -> Fixture {
     let log = Log::spawn(String::from("test-host"), Epoch(11));
     serve_log(endpoint, launchers, data, log).await
 }
 
-async fn serve_log(endpoint: Endpoint, launchers: Launchers, data: &Path, log: Log) -> Fixture {
+async fn serve_log(
+    endpoint: Endpoint,
+    launchers: Launchers,
+    data: &Path,
+    log: Log,
+) -> Fixture {
     let (store, stored) = Store::open(data).unwrap();
     let registry = Registry::spawn(log.clone(), launchers, store, stored);
     let _ = tokio::time::timeout(STEP, registry.providers())
@@ -180,7 +212,9 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fixture {
         .await
         .unwrap();
     let token = daemon::load_or_create_token(data).unwrap();
-    let log = Log::open(String::from("test-host"), &data.join("conductor.redb")).unwrap();
+    let log =
+        Log::open(String::from("test-host"), &data.join("conductor.redb"))
+            .unwrap();
     let (store, stored) = Store::open(data).unwrap();
     let registry = Registry::spawn(
         log.clone(),
@@ -225,7 +259,10 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fixture {
     }
 }
 
-async fn link(target: Target, resume: Option<Cursor>) -> (HostLink, mpsc::Receiver<Update>) {
+async fn link(
+    target: Target,
+    resume: Option<Cursor>,
+) -> (HostLink, mpsc::Receiver<Update>) {
     let options = LinkOptions {
         resume,
         network: Network::Local,
@@ -266,7 +303,10 @@ fn states(updates: Vec<Update>) -> Vec<LinkState> {
 }
 
 /// The events up to and including `last`.
-async fn events_through(updates: &mut mpsc::Receiver<Update>, last: HostSeq) -> Vec<Event> {
+async fn events_through(
+    updates: &mut mpsc::Receiver<Update>,
+    last: HostSeq,
+) -> Vec<Event> {
     let mut events = Vec::new();
     loop {
         match next(updates).await {
@@ -407,7 +447,10 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
             result: CommandResult::Rejected(Rejection::UnknownSession),
         },
     ]);
-    let results = n0_future::join_all(cases.iter().map(|case| link.send(case.body.clone()))).await;
+    let results = n0_future::join_all(
+        cases.iter().map(|case| link.send(case.body.clone())),
+    )
+    .await;
     assert_eq!(
         results
             .into_iter()
@@ -423,7 +466,8 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
 }
 
 #[tokio::test]
-async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates() {
+async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates()
+ {
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -582,7 +626,8 @@ fn git(directory: &Path, arguments: &[&str]) -> String {
 
 fn committed_repository(directory: &Path) {
     git(directory, &["init", "--quiet"]);
-    std::fs::write(directory.join("baseline.txt"), "committed baseline\n").unwrap();
+    std::fs::write(directory.join("baseline.txt"), "committed baseline\n")
+        .unwrap();
     git(directory, &["add", "baseline.txt"]);
     git(
         directory,
@@ -598,10 +643,12 @@ fn committed_repository(directory: &Path) {
 /// A session directory holding `fixtures/e2e/<recording>` as the fake's
 /// `stdout.jsonl`.
 fn scratch(name: &str, recording: &str) -> PathBuf {
-    let dir = target_tmp().join(format!("conductor-e2e-{}-{name}", std::process::id()));
+    let dir = target_tmp()
+        .join(format!("conductor-e2e-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e");
     std::fs::copy(fixture.join(recording), dir.join("stdout.jsonl")).unwrap();
     committed_repository(&dir);
     dir
@@ -642,7 +689,10 @@ fn reached(until: &Until, kind: &EventKind) -> Reached {
 
 /// The kinds of the events the link receives, through the first that
 /// reaches `until`, for tests that start one session.
-async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<EventKind> {
+async fn kinds_until(
+    updates: &mut mpsc::Receiver<Update>,
+    until: Until,
+) -> Vec<EventKind> {
     legacy_events_until(updates, until)
         .await
         .into_iter()
@@ -652,7 +702,10 @@ async fn kinds_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<
 
 /// Preserve existing protocol assertions while workspace metadata has dedicated
 /// raw-event coverage below.
-async fn legacy_events_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<Event> {
+async fn legacy_events_until(
+    updates: &mut mpsc::Receiver<Update>,
+    until: Until,
+) -> Vec<Event> {
     events_until(updates, until)
         .await
         .into_iter()
@@ -670,7 +723,10 @@ async fn legacy_events_until(updates: &mut mpsc::Receiver<Update>, until: Until)
 }
 
 /// The events the link receives, through the first that reaches `until`.
-async fn events_until(updates: &mut mpsc::Receiver<Update>, until: Until) -> Vec<Event> {
+async fn events_until(
+    updates: &mut mpsc::Receiver<Update>,
+    until: Until,
+) -> Vec<Event> {
     let mut events = Vec::new();
     loop {
         match next(updates).await {
@@ -732,7 +788,11 @@ fn interrupt(session: SessionId) -> CommandBody {
     CommandBody::Interrupt { session }
 }
 
-fn resolve(session: SessionId, request: u64, decision: Decision) -> CommandBody {
+fn resolve(
+    session: SessionId,
+    request: u64,
+    decision: Decision,
+) -> CommandBody {
     CommandBody::Resolve {
         session,
         request: RequestId(request),
@@ -803,7 +863,11 @@ fn write_asked(call: &str, path: &str) -> Vec<EventKind> {
     ])
 }
 
-fn decided(decision: Decision, call: &str, outcome: ToolOutcome) -> Vec<EventKind> {
+fn decided(
+    decision: Decision,
+    call: &str,
+    outcome: ToolOutcome,
+) -> Vec<EventKind> {
     Vec::from([
         EventKind::RequestResolved {
             request: RequestId(1),
@@ -834,7 +898,12 @@ fn done(text: &str) -> Item {
 }
 
 /// A Codex command the user decided on, as the client shows it.
-fn codex_tool(call: &str, command: &str, decision: Decision, outcome: ToolOutcome) -> Item {
+fn codex_tool(
+    call: &str,
+    command: &str,
+    decision: Decision,
+    outcome: ToolOutcome,
+) -> Item {
     Item::Tool {
         call: ToolCallId(String::from(call)),
         tool: ToolKind::Command {
@@ -862,7 +931,8 @@ async fn a_claude_turn_streams_asks_and_finishes() {
     let dir = scratch("approve", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
         send(&link, message(session, "create a.txt")).await,
         CommandResult::Accepted
@@ -884,7 +954,8 @@ async fn a_claude_turn_streams_asks_and_finishes() {
         network: Network::Local,
         ..LinkOptions::new(ClientName(String::from("desk")))
     };
-    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await.unwrap();
+    let (desk, mut at_desk) =
+        HostLink::spawn(fx.target.clone(), desk).await.unwrap();
     until_live(&mut at_desk).await;
     assert_eq!(
         [
@@ -894,7 +965,9 @@ async fn a_claude_turn_streams_asks_and_finishes() {
         ],
         [
             CommandResult::Accepted,
-            CommandResult::Rejected(Rejection::AlreadyResolved { by: test_client() }),
+            CommandResult::Rejected(Rejection::AlreadyResolved {
+                by: test_client()
+            }),
             CommandResult::Rejected(Rejection::UnknownRequest),
         ]
     );
@@ -926,7 +999,8 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
     let dir = scratch("deny", "claude-deny-interrupt.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
         send(&link, interrupt(session)).await,
         CommandResult::Rejected(Rejection::NoTurnRunning)
@@ -1012,7 +1086,10 @@ async fn held_interrupt(fx: Fixture, dir: PathBuf, provider: Provider) {
         kinds_until(&mut updates, Until::TurnEnd).await,
         [
             opening(provider, &dir),
-            Vec::from([user("count to 300"), turn_end(TurnOutcome::Interrupted)]),
+            Vec::from([
+                user("count to 300"),
+                turn_end(TurnOutcome::Interrupted)
+            ]),
         ]
         .concat()
     );
@@ -1034,7 +1111,8 @@ async fn an_interrupt_withdraws_the_open_request() {
     let dir = scratch("withdraw", "claude-withdraw.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "create d.txt")).await;
     let call = "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq";
     assert_eq!(
@@ -1078,7 +1156,9 @@ fn answer(session: SessionId, request: u64, words: &[&str]) -> CommandBody {
     CommandBody::Answer {
         session,
         request: RequestId(request),
-        answers: Vec::from([Answer(words.iter().copied().map(String::from).collect())]),
+        answers: Vec::from([Answer(
+            words.iter().copied().map(String::from).collect(),
+        )]),
     }
 }
 
@@ -1133,7 +1213,8 @@ fn calls_and_requests(kinds: Vec<EventKind>) -> Vec<EventKind> {
         .filter(|kind| {
             !matches!(
                 kind,
-                EventKind::AssistantDelta { .. } | EventKind::AssistantMessage { .. }
+                EventKind::AssistantDelta { .. }
+                    | EventKind::AssistantMessage { .. }
             )
         })
         .collect()
@@ -1153,7 +1234,8 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
     let dir = scratch("question", "claude-question.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "ask me")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Question).await,
@@ -1177,7 +1259,8 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
         network: Network::Local,
         ..LinkOptions::new(ClientName(String::from("desk")))
     };
-    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await.unwrap();
+    let (desk, mut at_desk) =
+        HostLink::spawn(fx.target.clone(), desk).await.unwrap();
     until_live(&mut at_desk).await;
     assert_eq!(
         [
@@ -1196,13 +1279,17 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
         ],
         [
             CommandResult::Rejected(Rejection::WrongReply {
-                reason: String::from("a question takes answers, not a decision"),
+                reason: String::from(
+                    "a question takes answers, not a decision"
+                ),
             }),
             CommandResult::Rejected(Rejection::WrongReply {
                 reason: String::from("0 answers for 1 questions"),
             }),
             CommandResult::Accepted,
-            CommandResult::Rejected(Rejection::AlreadyResolved { by: test_client() }),
+            CommandResult::Rejected(Rejection::AlreadyResolved {
+                by: test_client()
+            }),
         ]
     );
     assert_eq!(
@@ -1236,7 +1323,8 @@ async fn a_codex_question_is_answered_by_its_question_id() {
     let (fx, dir) = codex_host("codex-question.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     let _ = send(&link, message(session, "ask me")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Question).await,
@@ -1278,7 +1366,8 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking() {
     let dir = scratch("for-session", "claude-for-session.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "touch t1.txt")).await;
     let (first, again) = (
         "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
@@ -1354,7 +1443,8 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
     let (fx, dir) = codex_host("codex-for-session.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     let _ = send(&link, message(session, "touch t1.txt")).await;
     let command = "/usr/bin/zsh -c 'touch t1.txt'";
     let (first, again) = (
@@ -1364,7 +1454,8 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
     let touch = ToolKind::Command {
         command: String::from(command),
     };
-    let asked = calls_and_requests(kinds_until(&mut updates, Until::Request).await);
+    let asked =
+        calls_and_requests(kinds_until(&mut updates, Until::Request).await);
     assert_eq!(
         send(&link, resolve(session, 1, Decision::ApproveForSession)).await,
         CommandResult::Accepted
@@ -1426,7 +1517,8 @@ async fn an_interrupt_withdraws_an_open_question() {
     let dir = scratch("question-withdraw", "claude-question-withdraw.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "ask me")).await;
     let mut events = legacy_events_until(&mut updates, Until::Question).await;
     assert_eq!(
@@ -1453,7 +1545,10 @@ async fn an_interrupt_withdraws_an_open_question() {
                 request: RequestId(1),
                 resolution: Resolution::Withdrawn,
             },
-            finished("toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa", ToolOutcome::Failed),
+            finished(
+                "toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa",
+                ToolOutcome::Failed
+            ),
             turn_end(TurnOutcome::Interrupted),
         ]
     );
@@ -1485,7 +1580,8 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end() {
     let (fx, dir) = codex_host("codex-question-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     let _ = send(&link, message(session, "ask me")).await;
     let question = kinds_until(&mut updates, Until::Question).await;
     assert_eq!(
@@ -1530,7 +1626,8 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
     let dir = scratch("hang-up", "claude-hang-up.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
         send(&link, message(session, "hi")).await,
         CommandResult::Accepted
@@ -1542,7 +1639,9 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
             Vec::from([
                 user("hi"),
                 turn_end(TurnOutcome::Failed {
-                    message: String::from("claude i/o: Broken pipe (os error 32)")
+                    message: String::from(
+                        "claude i/o: Broken pipe (os error 32)"
+                    )
                 }),
             ]),
         ]
@@ -1574,7 +1673,8 @@ async fn a_missing_claude_binary_closes_the_session() {
     let dir = scratch("missing-binary", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await,
         [
@@ -1587,7 +1687,9 @@ async fn a_missing_claude_binary_closes_the_session() {
             },
             EventKind::SessionClosed {
                 reason: CloseReason::FailedToStart {
-                    message: String::from("claude i/o: No such file or directory (os error 2)"),
+                    message: String::from(
+                        "claude i/o: No such file or directory (os error 2)"
+                    ),
                 },
             },
         ]
@@ -1607,11 +1709,13 @@ async fn two_codex_sessions_share_one_server() {
     let (fx, dir) = codex_host("codex-two-threads.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let first_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let first_session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     // The second session starts once the first has its thread, so the first
     // gets the recording's first thread.
     let first = legacy_events_until(&mut updates, Until::Ready).await;
-    let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let second_session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     assert_ne!(first_session, second_session);
     let second = legacy_events_until(&mut updates, Until::Ready).await;
     assert_eq!(
@@ -1690,7 +1794,8 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
     let (fx, dir) = codex_host("codex-interrupt.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     let _ = send(&link, message(session, "count to 300")).await;
     assert_eq!(
         kinds_until(&mut updates, Until::Delta).await,
@@ -1731,9 +1836,11 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
     let (fx, dir) = codex_host("codex-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     let _ = send(&link, message(session, "create d.txt")).await;
-    let call = ToolCallId(String::from("exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b"));
+    let call =
+        ToolCallId(String::from("exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b"));
     let tool = ToolKind::Command {
         command: String::from("/usr/bin/zsh -lc 'printf %s d > d.txt'"),
     };
@@ -1752,7 +1859,9 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
                     call,
                     tool,
                     reason: None,
-                    for_session: Some(String::from("/usr/bin/zsh -lc 'printf %s d > d.txt'")),
+                    for_session: Some(String::from(
+                        "/usr/bin/zsh -lc 'printf %s d > d.txt'"
+                    )),
                 },
             ]),
         ]
@@ -1806,9 +1915,11 @@ async fn the_app_server_exiting_closes_every_codex_session() {
     let (fx, dir) = codex_host("codex-exit.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let first_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let first_session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     let first = legacy_events_until(&mut updates, Until::Ready).await;
-    let second_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let second_session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     assert_ne!(first_session, second_session);
     let seen = [
         first,
@@ -1824,7 +1935,8 @@ async fn the_app_server_exiting_closes_every_codex_session() {
     assert_eq!(
         (of(first_session, &seen), of(second_session, &seen)),
         (
-            [opening(Provider::Codex, &dir), Vec::from([closed.clone()])].concat(),
+            [opening(Provider::Codex, &dir), Vec::from([closed.clone()])]
+                .concat(),
             [opening(Provider::Codex, &dir), Vec::from([closed])].concat(),
         )
     );
@@ -1832,7 +1944,8 @@ async fn the_app_server_exiting_closes_every_codex_session() {
         send(&link, message(first_session, "hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    let next_session = started_session(send(&link, start(Provider::Codex, &dir)).await);
+    let next_session =
+        started_session(send(&link, start(Provider::Codex, &dir)).await);
     assert_ne!(next_session, first_session);
     assert_ne!(next_session, second_session);
     assert_eq!(
@@ -1844,7 +1957,9 @@ async fn the_app_server_exiting_closes_every_codex_session() {
 }
 
 /// The states before the link reported an error, and the error.
-async fn until_error(updates: &mut mpsc::Receiver<Update>) -> (Vec<LinkState>, String) {
+async fn until_error(
+    updates: &mut mpsc::Receiver<Update>,
+) -> (Vec<LinkState>, String) {
     let mut seen = Vec::new();
     loop {
         match next(updates).await {
@@ -1935,7 +2050,9 @@ impl Hop {
                 self.dead = Some(from);
                 Ok(())
             }
-            (Datagram::FromClient { bytes, from }, Some(dead), _) if from != dead => {
+            (Datagram::FromClient { bytes, from }, Some(dead), _)
+                if from != dead =>
+            {
                 self.live = Some(from);
                 let _ = self.inner.send(&bytes).await?;
                 Ok(())
@@ -2011,7 +2128,8 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
 /// Sends this thread's logs, at debug and above, to a file named after
 /// `test`. A `tokio::test` runs on one thread, so they include the host's.
 fn capture_log(test: &str) -> (PathBuf, tracing::subscriber::DefaultGuard) {
-    let path = target_tmp().join(format!("conductor-e2e-{test}-{}.log", std::process::id()));
+    let path = target_tmp()
+        .join(format!("conductor-e2e-{test}-{}.log", std::process::id()));
     let log = std::fs::File::create(&path).unwrap();
     let guard = tracing::subscriber::set_default(
         tracing_subscriber::fmt()
@@ -2033,8 +2151,7 @@ fn captured(path: &Path) -> String {
 const GATEWAY: &str = "https://conductor-test.invalid/gateway";
 const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
 const NO_CREDENTIAL: &str = "no credential configured";
-const UNPROTECTED: &str =
-    "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them";
+const UNPROTECTED: &str = "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them";
 
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
@@ -2054,7 +2171,8 @@ fn count(path: &Path, text: &str) -> usize {
 async fn claude_host_in(data: &Path) -> Fixture {
     let homes = daemon::homes(data).unwrap();
     std::fs::create_dir_all(data.join("probe")).unwrap();
-    std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n")).unwrap();
+    std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n"))
+        .unwrap();
     let launchers = Launchers {
         claude: Launcher::Ready {
             launch: Launch::Claude(ClaudeLaunch {
@@ -2127,7 +2245,9 @@ fn claude_gateway() -> CommandBody {
 }
 
 /// A fresh link to `fx`, live, and the providers its `Welcome` reported.
-async fn live(fx: &Fixture) -> (HostLink, mpsc::Receiver<Update>, Option<Providers>) {
+async fn live(
+    fx: &Fixture,
+) -> (HostLink, mpsc::Receiver<Update>, Option<Providers>) {
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let providers = link.status().providers;
@@ -2233,7 +2353,9 @@ fn with_codex(codex: Availability) -> Providers {
 
 /// How Codex signs in and the models it offers, by id, with the default
 /// first, from a host's answer to a credential change.
-fn codex_offer(result: CommandResult) -> Option<(Auth, Option<String>, Vec<String>)> {
+fn codex_offer(
+    result: CommandResult,
+) -> Option<(Auth, Option<String>, Vec<String>)> {
     match result {
         CommandResult::Providers(Providers {
             codex: Availability::Available { auth, models },
@@ -2410,7 +2532,8 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
 }
 
 #[tokio::test]
-async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside() {
+async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside()
+{
     let data = data_dir("unreadable");
     // A store key of its own, then a store that doesn't open with it.
     let _ = Store::open(&data).unwrap();
@@ -2469,7 +2592,9 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() {
     let (link, _updates, _) = live(&fx).await;
     let body = CommandBody::SetCredential {
         credential: Credential::Claude(ClaudeCredential::Gateway {
-            base_url: String::from("https://gateway.example/?key=conductor-test"),
+            base_url: String::from(
+                "https://gateway.example/?key=conductor-test",
+            ),
             token: String::from(CLAUDE_TOKEN),
         }),
     };
@@ -2488,7 +2613,12 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() {
     fx.router.shutdown().await.unwrap();
 }
 
-fn start_with(provider: Provider, directory: &Path, model: &str, effort: Effort) -> CommandBody {
+fn start_with(
+    provider: Provider,
+    directory: &Path,
+    model: &str,
+    effort: Effort,
+) -> CommandBody {
     CommandBody::StartSession {
         provider,
         directory: HostPath(directory.display().to_string()),
@@ -2524,12 +2654,19 @@ fn requests(dir: &Path, log: &str, method: &str) -> Vec<serde_json::Value> {
     read(&dir.join(log))
         .lines()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .filter(|request| request.get("method").and_then(|m| m.as_str()) == Some(method))
+        .filter(|request| {
+            request.get("method").and_then(|m| m.as_str()) == Some(method)
+        })
         .filter_map(|request| request.get("params").cloned())
         .collect()
 }
 
-fn created_with(provider: Provider, directory: &Path, model: &str, effort: Effort) -> EventKind {
+fn created_with(
+    provider: Provider,
+    directory: &Path,
+    model: &str,
+    effort: Effort,
+) -> EventKind {
     EventKind::SessionCreated {
         provider,
         directory: HostPath(directory.display().to_string()),
@@ -2606,7 +2743,8 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
     let dir = scratch("reasoning", "claude-reasoning.jsonl");
     let (phone, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &dir)).await);
     let _ = send(&phone, message(session, "sheep?")).await;
     let live = kinds_until(&mut updates, Until::TurnEnd).await;
     let streamed = live
@@ -2635,7 +2773,8 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
             live.into_iter()
                 .filter(|kind| !matches!(
                     kind,
-                    EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                    EventKind::ReasoningDelta { .. }
+                        | EventKind::AssistantDelta { .. }
                 ))
                 .collect::<Vec<EventKind>>()
         ),
@@ -2688,7 +2827,8 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
     let dir = scratch("betas-off", "claude-killed.jsonl");
     let (phone, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &dir)).await);
     let _ = send(&phone, message(session, "sheep?")).await;
     let turn = legacy_events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
@@ -2696,12 +2836,16 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
             turn.iter()
                 .filter(|event| matches!(
                     event.kind,
-                    EventKind::Reasoning { .. } | EventKind::ReasoningDelta { .. }
+                    EventKind::Reasoning { .. }
+                        | EventKind::ReasoningDelta { .. }
                 ))
                 .count(),
             items(&fold(turn), session)
                 .into_iter()
-                .filter(|item| matches!(item, Item::Reasoning { .. } | Item::Reply { .. }))
+                .filter(|item| matches!(
+                    item,
+                    Item::Reasoning { .. } | Item::Reply { .. }
+                ))
                 .collect::<Vec<Item>>(),
         ),
         (
@@ -2724,7 +2868,8 @@ async fn a_killed_claude_session_continues_its_conversation() {
     let fx = host().await;
     let dir = scratch("killed", "claude-killed.jsonl");
     std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/claude-resumed.jsonl"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-resumed.jsonl"),
         dir.join("stdout.2.jsonl"),
     )
     .unwrap();
@@ -2834,7 +2979,8 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
     .unwrap();
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&link, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&link, start(Provider::Claude, &dir)).await);
     let _ = send(&link, message(session, "sheep?")).await;
     let _ = legacy_events_until(&mut updates, Until::TurnEnd).await;
     let _ = send(&link, message(session, "count")).await;
@@ -2866,7 +3012,8 @@ const COUNTING: &str = "**Compiling numbers**\n\nI'm tasked with creating a list
 async fn a_codex_server_killed_mid_turn_closes_and_continues() {
     let (fx, server) = codex_host("codex-killed-mid-turn.jsonl").await;
     std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/codex-resumed.jsonl"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/codex-resumed.jsonl"),
         server.join("stdout.2.jsonl"),
     )
     .unwrap();
@@ -2893,7 +3040,8 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
                 .into_iter()
                 .filter(|kind| !matches!(
                     kind,
-                    EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                    EventKind::ReasoningDelta { .. }
+                        | EventKind::AssistantDelta { .. }
                 ))
                 .collect::<Vec<EventKind>>(),
         ),
@@ -2927,7 +3075,8 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
             .into_iter()
             .filter(|kind| !matches!(
                 kind,
-                EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                EventKind::ReasoningDelta { .. }
+                    | EventKind::AssistantDelta { .. }
             ))
             .collect::<Vec<EventKind>>(),
         [
@@ -2944,10 +3093,12 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
 /// starts it on the new default and logs why. (It closed before its first
 /// turn, so it starts a thread afresh; a resume takes the same choice.)
 #[tokio::test]
-async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_its_model() {
+async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_its_model()
+ {
     let (fx, server) = codex_host("codex-resumed.jsonl").await;
     std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/codex-resumed-listed.jsonl"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/codex-resumed-listed.jsonl"),
         server.join("stdout.2.jsonl"),
     )
     .unwrap();
@@ -3023,7 +3174,8 @@ const PRIME: &str = "**Assessing primality**\n\nI need to determine if 1,000,003
 async fn a_killed_codex_server_continues_the_thread() {
     let (fx, server) = codex_host("codex-killed.jsonl").await;
     std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/codex-resumed.jsonl"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/codex-resumed.jsonl"),
         server.join("stdout.2.jsonl"),
     )
     .unwrap();
@@ -3043,7 +3195,8 @@ async fn a_killed_codex_server_continues_the_thread() {
             .into_iter()
             .filter(|kind| !matches!(
                 kind,
-                EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                EventKind::ReasoningDelta { .. }
+                    | EventKind::AssistantDelta { .. }
             ))
             .collect::<Vec<EventKind>>(),
         [
@@ -3088,7 +3241,8 @@ async fn a_killed_codex_server_continues_the_thread() {
             .into_iter()
             .filter(|kind| !matches!(
                 kind,
-                EventKind::ReasoningDelta { .. } | EventKind::AssistantDelta { .. }
+                EventKind::ReasoningDelta { .. }
+                    | EventKind::AssistantDelta { .. }
             ))
             .collect::<Vec<EventKind>>(),
         [
@@ -3125,26 +3279,24 @@ async fn a_killed_codex_server_continues_the_thread() {
 /// saved cursor replays only restart cleanup, and Continue resumes the same
 /// conversation after withdrawing an unanswered approval.
 #[tokio::test]
-async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation() {
+async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
+{
     let dir = scratch("transport-restart", "claude-approve.jsonl");
     let data = data_dir("transport-restart");
     std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/claude-resumed.jsonl"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-resumed.jsonl"),
         dir.join("stdout.2.jsonl"),
     )
     .unwrap();
-    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
-    let address = first
-        .target
-        .addr
-        .ip_addrs()
-        .copied()
-        .find(|address| address.is_ipv4())
-        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
     let ticket = first.target.clone();
     let (phone, mut updates) = link(ticket.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &dir)).await);
     let _ = send(&phone, message(session, "create a.txt")).await;
     let before = legacy_events_until(&mut updates, Until::Request).await;
     let cursor = before.last().unwrap().seq;
@@ -3152,10 +3304,7 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation() 
         .first()
         .and_then(|run| flag(run, "--session-id"))
         .unwrap();
-    let Fixture { router, log, .. } = first;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    first.shutdown().await;
 
     let second = durable_host(&data, address).await;
     assert_eq!(second.target.addr.id, ticket.addr.id);
@@ -3241,15 +3390,15 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation() 
         Some(&format!("--resume={conversation}"))
     );
     phone.stop().await.unwrap();
-    let Fixture { router, log, .. } = second;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    second.shutdown().await;
 }
 
 /// A raw connection permits an explicit retry ID, including from a fresh
 /// endpoint identity after the host restarts.
-async fn authenticated(endpoint: &Endpoint, target: &Target) -> iroh::endpoint::Connection {
+async fn authenticated(
+    endpoint: &Endpoint,
+    target: &Target,
+) -> iroh::endpoint::Connection {
     let conn = endpoint
         .connect(target.addr.clone(), proto::ALPN)
         .await
@@ -3270,7 +3419,8 @@ async fn authenticated(endpoint: &Endpoint, target: &Target) -> iroh::endpoint::
         .unwrap()
         .unwrap();
     assert_eq!(
-        Some(&welcome).filter(|reply| matches!(reply, proto::HelloReply::Welcome(_))),
+        Some(&welcome)
+            .filter(|reply| matches!(reply, proto::HelloReply::Welcome(_))),
         Some(&welcome)
     );
     conn
@@ -3308,7 +3458,9 @@ fn queued_command(
     tokio::spawn(async move { retry_command(&conn, &command).await })
 }
 
-async fn finished_command(task: tokio::task::JoinHandle<CommandResult>) -> CommandResult {
+async fn finished_command(
+    task: tokio::task::JoinHandle<CommandResult>,
+) -> CommandResult {
     tokio::time::timeout(STEP, task).await.unwrap().unwrap()
 }
 
@@ -3338,7 +3490,9 @@ async fn saved(data: &Path, body: CommandBody) {
         _ => None,
     }
     .unwrap();
-    let expected = daemon::credentials::Stored::Opened(proto::Credentials::none().set(credential));
+    let expected = daemon::credentials::Stored::Opened(
+        proto::Credentials::none().set(credential),
+    );
     let _ = tokio::time::timeout(RESPONSIVE, drive_saved(data, expected))
         .await
         .unwrap();
@@ -3351,8 +3505,14 @@ async fn marker(path: &Path) {
         .unwrap();
 }
 
-async fn refresh_host(data: &Path, source: &Path, launchers: Launchers) -> Fixture {
-    let log = Log::open(String::from("refresh-host"), &data.join("conductor.redb")).unwrap();
+async fn refresh_host(
+    data: &Path,
+    source: &Path,
+    launchers: Launchers,
+) -> Fixture {
+    let log =
+        Log::open(String::from("refresh-host"), &data.join("conductor.redb"))
+            .unwrap();
     log.append(
         REFRESH_SESSION,
         EventKind::SessionCreated {
@@ -3382,13 +3542,15 @@ fn refresh_claude(home: Home) -> Launcher {
 }
 
 #[tokio::test]
-async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_results() {
+async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_results()
+ {
     let data = data_dir("refresh-claude");
     let source = scratch("refresh-claude", "claude-approve.jsonl");
     let probe = data.join("probe");
     std::fs::create_dir_all(&probe).unwrap();
     std::fs::write(probe.join("stdout.jsonl"), "{\"fake\":\"files\",\"write\":{\"held\":\"ready\"}}\n{\"fake\":\"release\",\"file\":\"go\"}\n{\"fake\":\"fail\",\"stderr\":\"superseded probe failed\",\"status\":1}\n").unwrap();
-    std::fs::write(probe.join("stdout.2.jsonl"), format!("{PROBED}\n")).unwrap();
+    std::fs::write(probe.join("stdout.2.jsonl"), format!("{PROBED}\n"))
+        .unwrap();
     let launchers = Launchers {
         claude: refresh_claude(daemon::homes(&data).unwrap().claude),
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
@@ -3401,7 +3563,8 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     };
     let first = queued_command(&conn, 2301, first_body.clone());
     marker(&probe.join("held")).await;
-    let (phone, _updates, offered) = tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
+    let (phone, _updates, offered) =
+        tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
     assert_eq!(
         offered,
         Some(with_claude(Availability::Unavailable {
@@ -3413,9 +3576,12 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
         reason: String::from(REFRESHING),
     });
     assert_eq!(
-        tokio::time::timeout(RESPONSIVE, send(&phone, start(Provider::Claude, &source)))
-            .await
-            .unwrap(),
+        tokio::time::timeout(
+            RESPONSIVE,
+            send(&phone, start(Provider::Claude, &source))
+        )
+        .await
+        .unwrap(),
         refused
     );
     assert_eq!(
@@ -3433,9 +3599,12 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
         refused
     );
     assert_eq!(
-        tokio::time::timeout(RESPONSIVE, send(&phone, message(SessionId(999), "lookup")))
-            .await
-            .unwrap(),
+        tokio::time::timeout(
+            RESPONSIVE,
+            send(&phone, message(SessionId(999), "lookup"))
+        )
+        .await
+        .unwrap(),
         CommandResult::Rejected(Rejection::UnknownSession)
     );
     let mut live = fx.log.subscribe(HostSeq(0)).await.unwrap().live;
@@ -3502,7 +3671,8 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     .unwrap();
     assert_ne!(reason, REFRESHING);
     assert_ne!(reason, "");
-    std::fs::write(probe.join("stdout.4.jsonl"), format!("{PROBED}\n")).unwrap();
+    std::fs::write(probe.join("stdout.4.jsonl"), format!("{PROBED}\n"))
+        .unwrap();
     assert_eq!(
         send(
             &phone,
@@ -3518,11 +3688,10 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     );
     phone.stop().await.unwrap();
     desktop.close().await;
-    let Fixture { router, log, .. } = fx;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
-    let log = Log::open(String::from("refresh-host"), &data.join("conductor.redb")).unwrap();
+    fx.shutdown().await;
+    let log =
+        Log::open(String::from("refresh-host"), &data.join("conductor.redb"))
+            .unwrap();
     let reopened = serve_log(endpoint().await, launchers, &data, log).await;
     let client = endpoint().await;
     let conn = authenticated(&client, &reopened.target).await;
@@ -3539,10 +3708,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     );
     assert_eq!(read(&probe.join("runs.txt")), "4");
     client.close().await;
-    let Fixture { router, log, .. } = reopened;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    reopened.shutdown().await;
 }
 
 #[tokio::test]
@@ -3581,9 +3747,11 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
     .await;
     let desktop = endpoint().await;
     let conn = authenticated(&desktop, &fx.target).await;
-    let first = queued_command(&conn, 2311, codex_provider("conductor-test-old"));
+    let first =
+        queued_command(&conn, 2311, codex_provider("conductor-test-old"));
     marker(&server.join("held")).await;
-    let (phone, mut updates, offered) = tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
+    let (phone, mut updates, offered) =
+        tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
     assert_eq!(
         offered.unwrap().codex,
         Availability::Unavailable {
@@ -3605,9 +3773,12 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
         CommandResult::Accepted
     );
     events_until(&mut updates, Until::Ready).await;
-    let started = tokio::time::timeout(RESPONSIVE, send(&phone, start(Provider::Claude, &source)))
-        .await
-        .unwrap();
+    let started = tokio::time::timeout(
+        RESPONSIVE,
+        send(&phone, start(Provider::Claude, &source)),
+    )
+    .await
+    .unwrap();
     let _ = started_session(started);
     events_until(&mut updates, Until::Ready).await;
     let middle_body = codex_provider("conductor-test-middle");
@@ -3626,7 +3797,8 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
         read(&server.join("env.txt")).find("conductor-test-newest"),
         None
     );
-    let _ = started_session(send(&phone, start(Provider::Codex, &server)).await);
+    let _ =
+        started_session(send(&phone, start(Provider::Codex, &server)).await);
     events_until(&mut updates, Until::Ready).await;
     let cleared = send(
         &phone,
@@ -3651,24 +3823,17 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
     assert_eq!(read(&server.join("runs.txt")), "2");
     phone.stop().await.unwrap();
     desktop.close().await;
-    let Fixture { router, log, .. } = fx;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    fx.shutdown().await;
 }
 
 #[tokio::test]
-async fn one_command_receipt_survives_new_transport_identities_and_a_host_restart() {
+async fn one_command_receipt_survives_new_transport_identities_and_a_host_restart()
+ {
     let dir = scratch("receipt-transport", "claude-approve.jsonl");
     let data = data_dir("receipt-transport");
-    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
-    let address = first
-        .target
-        .addr
-        .ip_addrs()
-        .copied()
-        .find(|address| address.is_ipv4())
-        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
     let ticket = first.target.clone();
     let command = proto::Command {
         id: proto::CommandId(71),
@@ -3684,10 +3849,7 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     assert_eq!(retry_command(&phone_conn, &command).await, receipt);
     desktop.close().await;
     phone.close().await;
-    let Fixture { router, log, .. } = first;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    first.shutdown().await;
 
     let second = durable_host(&data, address).await;
     let restarted_phone = endpoint().await;
@@ -3699,23 +3861,25 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     assert_eq!(
         history
             .iter()
-            .filter(|event| matches!(event.kind, EventKind::SessionCreated { .. }))
+            .filter(|event| matches!(
+                event.kind,
+                EventKind::SessionCreated { .. }
+            ))
             .count(),
         1
     );
     assert_eq!(history.iter().find(|event| event.session != session), None);
     restarted_phone.close().await;
-    let Fixture { router, log, .. } = second;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    second.shutdown().await;
 }
 
 fn checkpoint(events: &[Event], id: proto::CheckpointId) -> proto::Checkpoint {
     events
         .iter()
         .find_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } if checkpoint.id == id => {
+            EventKind::CheckpointCreated { checkpoint }
+                if checkpoint.id == id =>
+            {
                 Some(checkpoint.clone())
             }
             _ => None,
@@ -3727,7 +3891,9 @@ fn workspace(events: &[Event]) -> proto::Workspace {
     events
         .iter()
         .find_map(|event| match &event.kind {
-            EventKind::WorkspaceCreated { workspace } => Some(workspace.clone()),
+            EventKind::WorkspaceCreated { workspace } => {
+                Some(workspace.clone())
+            }
             _ => None,
         })
         .expect("the managed worktree was published")
@@ -3744,7 +3910,8 @@ fn diff_result(result: CommandResult) -> proto::CheckpointDiff {
 /// File undo and the lazy native fork survive restart together. All Git
 /// staging/checkpoint operations stay out of the source repository's index.
 #[tokio::test]
-async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_restart() {
+async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_restart()
+ {
     let source = scratch("workspace-undo", "claude-worktrees.jsonl");
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3752,27 +3919,25 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
         source.join("stdout.2.jsonl"),
     )
     .unwrap();
-    std::fs::copy(source.join("stdout.2.jsonl"), source.join("stdout.3.jsonl")).unwrap();
+    std::fs::copy(source.join("stdout.2.jsonl"), source.join("stdout.3.jsonl"))
+        .unwrap();
     std::fs::write(source.join("baseline.txt"), "source staged\n").unwrap();
     git(&source, &["add", "baseline.txt"]);
     std::fs::write(source.join("baseline.txt"), "source unstaged\n").unwrap();
-    std::fs::write(source.join("source-only.txt"), "never enter a session\n").unwrap();
+    std::fs::write(source.join("source-only.txt"), "never enter a session\n")
+        .unwrap();
     let index = std::fs::read(source.join(".git/index")).unwrap();
     let staged = git(&source, &["diff", "--cached"]);
     let unstaged = git(&source, &["diff"]);
     let data = data_dir("workspace-undo");
-    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
-    let address = first
-        .target
-        .addr
-        .ip_addrs()
-        .copied()
-        .find(|address| address.is_ipv4())
-        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
     let ticket = first.target.clone();
     let (phone, mut updates) = link(ticket.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &source)).await);
     let opening = events_until(&mut updates, Until::Ready).await;
     let managed = workspace(&opening);
     assert_eq!(checkpoint(&opening, proto::CheckpointId(0)).parent, None);
@@ -3793,7 +3958,8 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
             .map(|error| error.kind()),
         Some(std::io::ErrorKind::NotFound)
     );
-    let other = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let other =
+        started_session(send(&phone, start(Provider::Claude, &source)).await);
     let other_opening = events_until(&mut updates, Until::Ready).await;
     let other_workspace = workspace(&other_opening);
     let other_path = PathBuf::from(&other_workspace.worktree.0);
@@ -3887,20 +4053,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
             restored: retained.id
         })
     );
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("changed.txt")).unwrap(),
-        "turn one\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("deleted.txt")).unwrap(),
-        "restore me\n"
-    );
-    assert_eq!(
-        std::fs::metadata(worktree.join("introduced.txt"))
-            .err()
-            .map(|error| error.kind()),
-        Some(std::io::ErrorKind::NotFound)
-    );
+    assert_restored_files(&worktree);
     assert_eq!(
         std::fs::metadata(worktree.join("later.txt"))
             .err()
@@ -3914,15 +4067,13 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
         Some("100644")
     );
     retry_endpoint.close().await;
-    let Fixture { router, log, .. } = first;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    first.shutdown().await;
     let second = durable_host(&data, address).await;
     phone.reconnect().await;
     until_live(&mut updates).await;
     let restarted_retry_endpoint = endpoint().await;
-    let restarted_retry = authenticated(&restarted_retry_endpoint, &ticket).await;
+    let restarted_retry =
+        authenticated(&restarted_retry_endpoint, &ticket).await;
     assert_eq!(retry_command(&restarted_retry, &undo).await, receipt);
     assert_eq!(
         send(&phone, continued(session)).await,
@@ -3960,10 +4111,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     assert_eq!(std::fs::read(source.join(".git/index")).unwrap(), index);
     restarted_retry_endpoint.close().await;
     phone.stop().await.unwrap();
-    let Fixture { router, log, .. } = second;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    second.shutdown().await;
 }
 
 #[tokio::test]
@@ -3973,7 +4121,8 @@ async fn new_sessions_require_an_existing_repository_with_a_commit() {
     until_live(&mut updates).await;
     let plain = data_dir("not-a-repository");
     // Stop Git discovery at this fixture instead of finding the enclosing checkout.
-    std::fs::write(plain.join(".git"), "gitdir: no-such-git-directory\n").unwrap();
+    std::fs::write(plain.join(".git"), "gitdir: no-such-git-directory\n")
+        .unwrap();
     assert_eq!(
         send(&phone, start(Provider::Claude, &plain)).await,
         CommandResult::Rejected(Rejection::NotGitRepository)
@@ -3993,7 +4142,8 @@ async fn new_sessions_require_an_existing_repository_with_a_commit() {
 #[tokio::test]
 async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
     let source = data_dir("legacy-session-source");
-    std::fs::write(source.join(".git"), "gitdir: no-such-git-directory\n").unwrap();
+    std::fs::write(source.join(".git"), "gitdir: no-such-git-directory\n")
+        .unwrap();
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-worktrees-fork.jsonl"),
@@ -4027,7 +4177,8 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
     .await
     .unwrap();
     log.shutdown().await.unwrap();
-    let host = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let host =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
     let (phone, mut updates) = link(host.target.clone(), None).await;
     until_live(&mut updates).await;
     assert_eq!(
@@ -4047,9 +4198,10 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
     );
     let ready = events_until(&mut updates, Until::Ready).await;
     assert_eq!(
-        ready
-            .iter()
-            .find(|event| matches!(event.kind, EventKind::WorkspaceCreated { .. })),
+        ready.iter().find(|event| matches!(
+            event.kind,
+            EventKind::WorkspaceCreated { .. }
+        )),
         None
     );
     let _ = send(&phone, message(session, "legacy directory")).await;
@@ -4059,30 +4211,24 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
         "continued from retained prefix\n"
     );
     phone.stop().await.unwrap();
-    let Fixture { router, log, .. } = host;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    host.shutdown().await;
 }
 
 /// A crash after durable undo intent/failure retains the original transcript
 /// and blocks normal commands until the same undo completes on retry.
 #[tokio::test]
-async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_retry() {
+async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_retry()
+ {
     let source = scratch("pending-undo", "claude-worktrees.jsonl");
     let data = data_dir("pending-undo");
-    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
-    let address = first
-        .target
-        .addr
-        .ip_addrs()
-        .copied()
-        .find(|address| address.is_ipv4())
-        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
     let ticket = first.target.clone();
     let (phone, mut updates) = link(ticket.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &source)).await);
     events_until(&mut updates, Until::Ready).await;
     let _ = send(&phone, message(session, "turn one")).await;
     let retained = checkpoint(
@@ -4124,15 +4270,14 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
             session,
             EventKind::UndoFailed {
                 checkpoint: discarded.id,
-                reason: String::from("injected failure before files were restored"),
+                reason: String::from(
+                    "injected failure before files were restored",
+                ),
             },
         )
         .await
         .unwrap();
-    let Fixture { router, log, .. } = first;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    first.shutdown().await;
     let second = durable_host(&data, address).await;
     phone.reconnect().await;
     until_live(&mut updates).await;
@@ -4190,36 +4335,32 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
         Some(client::host_view::UndoState::Undone)
     );
     phone.stop().await.unwrap();
-    let Fixture { router, log, .. } = second;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    second.shutdown().await;
 }
 
 fn undo_failure(result: CommandResult) -> String {
     match result {
-        CommandResult::Rejected(Rejection::UndoFailed { reason }) => Some(reason),
+        CommandResult::Rejected(Rejection::UndoFailed { reason }) => {
+            Some(reason)
+        }
         _ => None,
     }
     .expect("an honest undo phase failure")
 }
 
 #[tokio::test]
-async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart() {
+async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart()
+ {
     let source = scratch("actual-undo-failures", "claude-worktrees.jsonl");
     let data = data_dir("actual-undo-failures");
-    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
-    let address = first
-        .target
-        .addr
-        .ip_addrs()
-        .copied()
-        .find(|address| address.is_ipv4())
-        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
     let ticket = first.target.clone();
     let (phone, mut updates) = link(ticket.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &source)).await);
     let managed = workspace(&events_until(&mut updates, Until::Ready).await);
     let worktree = PathBuf::from(&managed.worktree.0);
     let _ = send(&phone, message(session, "turn one")).await;
@@ -4243,14 +4384,16 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         checkpoint: selected.id,
     };
     assert_ne!(
-        undo_failure(send(&phone, undo.clone()).await).find("temporary fake native fork refusal"),
+        undo_failure(send(&phone, undo.clone()).await)
+            .find("temporary fake native fork refusal"),
         None
     );
     let native_failure = events_until(&mut updates, Until::UndoFailure).await;
     assert_eq!(
-        native_failure
-            .iter()
-            .find(|event| matches!(event.kind, EventKind::UndoHistoryRestored { .. })),
+        native_failure.iter().find(|event| matches!(
+            event.kind,
+            EventKind::UndoHistoryRestored { .. }
+        )),
         None
     );
     assert_ne!(
@@ -4263,7 +4406,9 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         send(&phone, message(session, "blocked after native refusal")).await,
         CommandResult::Rejected(Rejection::UndoInProgress)
     );
-    let git_dir = PathBuf::from(git(&worktree, &["rev-parse", "--absolute-git-dir"]).trim());
+    let git_dir = PathBuf::from(
+        git(&worktree, &["rev-parse", "--absolute-git-dir"]).trim(),
+    );
     let lock = git_dir.join("index.lock");
     std::fs::write(&lock, "owned test lock\n").unwrap();
     assert_ne!(
@@ -4274,7 +4419,10 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
     assert_eq!(
         files_failure
             .iter()
-            .filter(|event| matches!(event.kind, EventKind::UndoHistoryRestored { .. }))
+            .filter(|event| matches!(
+                event.kind,
+                EventKind::UndoHistoryRestored { .. }
+            ))
             .count(),
         1
     );
@@ -4288,10 +4436,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         send(&phone, continued(session)).await,
         CommandResult::Rejected(Rejection::UndoInProgress)
     );
-    let Fixture { router, log, .. } = first;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    first.shutdown().await;
     let second = durable_host(&data, address).await;
     phone.reconnect().await;
     until_live(&mut updates).await;
@@ -4303,25 +4448,13 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
     assert_eq!(send(&phone, undo).await, CommandResult::Accepted);
     let recovered = events_until(&mut updates, Until::Undone).await;
     assert_eq!(
-        recovered
-            .iter()
-            .find(|event| matches!(event.kind, EventKind::UndoHistoryRestored { .. })),
+        recovered.iter().find(|event| matches!(
+            event.kind,
+            EventKind::UndoHistoryRestored { .. }
+        )),
         None
     );
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("changed.txt")).unwrap(),
-        "turn one\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("deleted.txt")).unwrap(),
-        "restore me\n"
-    );
-    assert_eq!(
-        std::fs::metadata(worktree.join("introduced.txt"))
-            .err()
-            .map(|error| error.kind()),
-        Some(std::io::ErrorKind::NotFound)
-    );
+    assert_restored_files(&worktree);
     let restored = fold(second.log.subscribe(HostSeq(0)).await.unwrap().replay);
     assert_eq!(
         items(&restored, session)
@@ -4345,10 +4478,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         [reply("Retained turn one.")]
     );
     phone.stop().await.unwrap();
-    let Fixture { router, log, .. } = second;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    second.shutdown().await;
 }
 
 async fn drive_materialization(path: &Path) -> std::io::Result<()> {
@@ -4356,7 +4486,9 @@ async fn drive_materialization(path: &Path) -> std::io::Result<()> {
         match tokio::fs::metadata(path).await {
             Ok(_) => break Ok(()),
             Err(error) => match error.kind() {
-                std::io::ErrorKind::NotFound => tokio::time::sleep(Duration::from_millis(10)).await,
+                std::io::ErrorKind::NotFound => {
+                    tokio::time::sleep(Duration::from_millis(10)).await
+                }
                 _ => break Err(error),
             },
         }
@@ -4367,21 +4499,18 @@ async fn drive_materialization(path: &Path) -> std::io::Result<()> {
 /// daemon. After restart, resume that existing target instead of forking the
 /// older prefix again and silently discarding the newly persisted input.
 #[tokio::test]
-async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost() {
+async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
+{
     let source = scratch("materialized-fork-crash", "claude-worktrees.jsonl");
     let data = data_dir("materialized-fork-crash");
-    let first = durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
-    let address = first
-        .target
-        .addr
-        .ip_addrs()
-        .copied()
-        .find(|address| address.is_ipv4())
-        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
     let ticket = first.target.clone();
     let (phone, mut updates) = link(ticket.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &source)).await);
     let managed = workspace(&events_until(&mut updates, Until::Ready).await);
     let worktree = PathBuf::from(&managed.worktree.0);
     let _ = send(&phone, message(session, "turn one")).await;
@@ -4429,21 +4558,20 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost() 
     .unwrap()
     .unwrap();
     let native_transcript =
-        std::fs::read_to_string(source.join(".fake-sessions").join(&target)).unwrap();
+        std::fs::read_to_string(source.join(".fake-sessions").join(&target))
+            .unwrap();
     assert_ne!(native_transcript.find("first post undo input"), None);
     let unnotified = first.log.subscribe(after_undo).await.unwrap().replay;
     assert_eq!(
         unnotified.iter().find(|event| matches!(
             event.kind,
-            EventKind::NativeTurnStarted { .. } | EventKind::HistoryMaterialized { .. }
+            EventKind::NativeTurnStarted { .. }
+                | EventKind::HistoryMaterialized { .. }
         )),
         None
     );
     let before_runs = argv(&source).len();
-    let Fixture { router, log, .. } = first;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    first.shutdown().await;
     let second = durable_host(&data, address).await;
     phone.reconnect().await;
     until_live(&mut updates).await;
@@ -4451,8 +4579,10 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost() 
     let unknown = checkpoint(&recovery, proto::CheckpointId(3));
     assert_eq!(unknown.history, proto::HistoryAnchor::Unknown);
     assert_ne!(
-        Some(&unknown.undo)
-            .filter(|undo| matches!(undo, proto::UndoAvailability::Unavailable { .. })),
+        Some(&unknown.undo).filter(|undo| matches!(
+            undo,
+            proto::UndoAvailability::Unavailable { .. }
+        )),
         None
     );
     assert_eq!(
@@ -4503,10 +4633,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost() 
         }
     );
     phone.stop().await.unwrap();
-    let Fixture { router, log, .. } = second;
-    router.shutdown().await.unwrap();
-    drop(router);
-    log.shutdown().await.unwrap();
+    second.shutdown().await;
 }
 
 #[tokio::test]
@@ -4515,7 +4642,8 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
     let host = host().await;
     let (phone, mut updates) = link(host.target.clone(), None).await;
     until_live(&mut updates).await;
-    let session = started_session(send(&phone, start(Provider::Claude, &source)).await);
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &source)).await);
     let managed = workspace(&events_until(&mut updates, Until::Ready).await);
     let worktree = PathBuf::from(&managed.worktree.0);
     let _ = send(&phone, message(session, "turn one")).await;
@@ -4527,9 +4655,10 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
     let _ = send(&phone, message(session, "turn two")).await;
     let failed = events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
-        failed
-            .iter()
-            .find(|event| matches!(event.kind, EventKind::CheckpointCreated { .. })),
+        failed.iter().find(|event| matches!(
+            event.kind,
+            EventKind::CheckpointCreated { .. }
+        )),
         None
     );
     assert_eq!(
@@ -4544,7 +4673,8 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
         .iter()
         .filter(|event| matches!(event.kind, EventKind::UserMessage { .. }))
         .count();
-    let rejected = send(&phone, message(session, "must not enter native history")).await;
+    let rejected =
+        send(&phone, message(session, "must not enter native history")).await;
     assert_ne!(
         Some(rejected).filter(|result| matches!(
             result,
@@ -4576,7 +4706,9 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
     let checkpoints = after
         .iter()
         .filter_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => Some(checkpoint.clone()),
+            EventKind::CheckpointCreated { checkpoint } => {
+                Some(checkpoint.clone())
+            }
             _ => None,
         })
         .collect::<Vec<proto::Checkpoint>>();
@@ -4605,4 +4737,21 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
     );
     phone.stop().await.unwrap();
     host.router.shutdown().await.unwrap();
+}
+
+fn assert_restored_files(worktree: &Path) {
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("changed.txt")).unwrap(),
+        "turn one\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("deleted.txt")).unwrap(),
+        "restore me\n"
+    );
+    assert_eq!(
+        std::fs::metadata(worktree.join("introduced.txt"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::NotFound)
+    );
 }

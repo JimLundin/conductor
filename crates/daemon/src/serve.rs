@@ -1,12 +1,14 @@
 //! Serves the protocol (`proto::ALPN`) on accepted iroh connections.
 
-use iroh::endpoint::{ClosedStream, Connection, ConnectionError, RecvStream, SendStream};
+use iroh::endpoint::{
+    ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
+};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use proto::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open, Rejection,
-    SessionId, Subscribe, Welcome,
+    AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open,
+    Rejection, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::broadcast;
 
@@ -80,7 +82,10 @@ impl ProtocolHandler for Conductor {
 impl Conductor {
     /// The first stream must be a `Hello` with the right token. Returns the
     /// client's name, or `None` if it was refused.
-    async fn authenticate(&self, conn: &Connection) -> Result<Option<ClientName>, StreamError> {
+    async fn authenticate(
+        &self,
+        conn: &Connection,
+    ) -> Result<Option<ClientName>, StreamError> {
         let started = Instant::now();
         let peer = conn.remote_id();
         let connection = conn.stable_id();
@@ -99,7 +104,11 @@ impl Conductor {
         match admitted {
             Ok(hello) => {
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello received");
-                wire::write(&mut send, &HelloReply::Welcome(self.welcome(conn).await?)).await?;
+                wire::write(
+                    &mut send,
+                    &HelloReply::Welcome(self.welcome(conn).await?),
+                )
+                .await?;
                 send.finish()?;
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome sent");
                 Ok(Some(hello.client))
@@ -128,13 +137,20 @@ impl Conductor {
         Ok(welcome)
     }
 
-    async fn streams(&self, conn: &Connection, client: &ClientName) -> ConnectionError {
+    async fn streams(
+        &self,
+        conn: &Connection,
+        client: &ClientName,
+    ) -> ConnectionError {
         loop {
             match conn.accept_bi().await {
                 Ok((send, recv)) => {
-                    let stream = self
-                        .clone()
-                        .stream(conn.clone(), send, recv, client.clone());
+                    let stream = self.clone().stream(
+                        conn.clone(),
+                        send,
+                        recv,
+                        client.clone(),
+                    );
                     tokio::spawn(async move {
                         if let Err(err) = stream.await {
                             tracing::debug!(%err, "stream ended with an error");
@@ -183,7 +199,9 @@ impl Conductor {
                 wire::write(&mut send, &result).await?;
                 send.finish()?;
             }
-            Some(Open::Subscribe(subscribe)) => self.feed(&conn, send, subscribe).await?,
+            Some(Open::Subscribe(subscribe)) => {
+                self.feed(&conn, send, subscribe).await?;
+            }
             Some(Open::Hello(_)) | None => send.finish()?,
         }
         Ok(())
@@ -203,7 +221,9 @@ impl Conductor {
                 session,
                 checkpoint,
             } => match self.registry.relaunch(session).await? {
-                Ok((handle, launch, _)) => handle.order(Order::Undo(checkpoint, launch)).await,
+                Ok((handle, launch, _)) => {
+                    handle.order(Order::Undo(checkpoint, launch)).await
+                }
                 Err(reason) => Ok(CommandResult::Rejected(reason)),
             },
             CommandBody::StartSession {
@@ -216,17 +236,23 @@ impl Conductor {
                     .start(provider, directory, (model, effort), client)
                     .await
             }
-            CommandBody::Continue { session } => match self.registry.relaunch(session).await? {
-                Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-                Ok((handle, launch, offered)) => Ok(handle
-                    .order(Order::Start(launch, offered))
-                    .await
-                    .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
-            },
+            CommandBody::Continue { session } => {
+                match self.registry.relaunch(session).await? {
+                    Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+                    Ok((handle, launch, offered)) => Ok(handle
+                        .order(Order::Start(launch, offered))
+                        .await
+                        .unwrap_or(CommandResult::Rejected(
+                            Rejection::SessionClosed,
+                        ))),
+                }
+            }
             CommandBody::SendMessage { session, text } => {
                 self.order(session, Order::Send { text, by: client }).await
             }
-            CommandBody::Interrupt { session } => self.order(session, Order::Interrupt).await,
+            CommandBody::Interrupt { session } => {
+                self.order(session, Order::Interrupt).await
+            }
             CommandBody::Resolve {
                 session,
                 request,
@@ -260,7 +286,11 @@ impl Conductor {
         }
     }
 
-    async fn order(&self, session: SessionId, order: Order) -> Result<CommandResult, Stopped> {
+    async fn order(
+        &self,
+        session: SessionId,
+        order: Order,
+    ) -> Result<CommandResult, Stopped> {
         match self.registry.find(session).await? {
             None => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
             Some(handle) => Ok(handle
@@ -278,7 +308,8 @@ impl Conductor {
     ) -> Result<(), StreamError> {
         match self.welcome(conn).await? {
             Welcome { epoch, .. } if epoch == subscribe.epoch => {
-                let subscription = self.log.subscribe(subscribe.after_seq).await?;
+                let subscription =
+                    self.log.subscribe(subscribe.after_seq).await?;
                 tracing::info!(
                     after_seq = subscribe.after_seq.0,
                     replayed = subscription.replay.len(),
@@ -303,7 +334,9 @@ impl Feed {
     async fn run(mut self, conn: &Connection) -> Result<(), StreamError> {
         loop {
             match self.next(conn).await {
-                Upcoming::Event(event) => wire::write(&mut self.send, &event).await?,
+                Upcoming::Event(event) => {
+                    wire::write(&mut self.send, &event).await?;
+                }
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
                 Upcoming::Gone => break Ok(()),
             }

@@ -11,8 +11,8 @@ pub struct Draft {
 }
 
 impl Draft {
-    pub fn new(questions: &[Question]) -> Draft {
-        Draft {
+    pub fn new(questions: &[Question]) -> Self {
+        Self {
             chosen: questions.iter().map(|_| Vec::new()).collect(),
             typed: questions.iter().map(|_| String::new()).collect(),
         }
@@ -29,8 +29,13 @@ impl Draft {
 
     /// Taps `label`. One choice replaces the last and clears the typed
     /// text; with many, a tap toggles the option.
-    pub fn pick(self, question: usize, label: String, selection: Selection) -> Draft {
-        let Draft {
+    pub fn pick(
+        self,
+        question: usize,
+        label: String,
+        selection: Selection,
+    ) -> Self {
+        let Self {
             mut chosen,
             mut typed,
         } = self;
@@ -46,16 +51,23 @@ impl Draft {
                 (Selection::Many, None) => chosen.push(label),
             }
         }
-        if let (Selection::One, Some(typed)) = (selection, typed.get_mut(question)) {
+        if let (Selection::One, Some(typed)) =
+            (selection, typed.get_mut(question))
+        {
             typed.clear();
         }
-        Draft { chosen, typed }
+        Self { chosen, typed }
     }
 
     /// Types `text` as the answer. With one choice it replaces the option
     /// chosen; with many it is one more answer.
-    pub fn r#type(self, question: usize, text: &str, selection: Selection) -> Draft {
-        let Draft {
+    pub fn r#type(
+        self,
+        question: usize,
+        text: &str,
+        selection: Selection,
+    ) -> Self {
+        let Self {
             mut chosen,
             mut typed,
         } = self;
@@ -63,10 +75,12 @@ impl Draft {
             typed.clear();
             typed.push_str(text);
         }
-        if let (Selection::One, Some(chosen)) = (selection, chosen.get_mut(question)) {
+        if let (Selection::One, Some(chosen)) =
+            (selection, chosen.get_mut(question))
+        {
             chosen.clear();
         }
-        Draft { chosen, typed }
+        Self { chosen, typed }
     }
 
     /// Every question's answer, once every question has one.
@@ -89,7 +103,8 @@ impl Draft {
                 )
             })
             .collect::<Vec<Answer>>();
-        Some(answers).filter(|answers| answers.iter().all(|answer| !answer.0.is_empty()))
+        Some(answers)
+            .filter(|answers| answers.iter().all(|answer| !answer.0.is_empty()))
     }
 }
 
@@ -114,7 +129,8 @@ mod tests {
 
     #[test]
     fn every_question_needs_an_answer_before_the_draft_is_sent() {
-        let draft = Draft::new(&[question(Selection::One), question(Selection::Many)]);
+        let draft =
+            Draft::new(&[question(Selection::One), question(Selection::Many)]);
         let empty = draft.answers();
         let draft = draft.pick(0, String::from("Red"), Selection::One);
         let one = draft.answers();
@@ -134,7 +150,10 @@ mod tests {
                 None,
                 None,
                 Some(Vec::from([answer(&["Blue"]), answer(&["Pear", "Plum"])])),
-                Some(Vec::from([answer(&["Green"]), answer(&["Pear", "Plum"])])),
+                Some(Vec::from([
+                    answer(&["Green"]),
+                    answer(&["Pear", "Plum"])
+                ])),
                 Some(Vec::from([answer(&["Red"]), answer(&["Pear", "Plum"])])),
                 String::new(),
             )

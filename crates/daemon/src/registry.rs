@@ -9,16 +9,19 @@ use agents::claude::Sandbox;
 use n0_future::MaybeFuture;
 use n0_future::boxed::BoxFuture;
 use proto::{
-    Auth, Availability, ClaudeCredential, ClientName, CloseReason, CodexCredential, CommandResult,
-    Credential, Credentials, Effort, Event, EventKind, HostPath, ModelId, Models, Provider,
-    Providers, Rejection, SessionId, TurnOutcome,
+    Auth, Availability, ClaudeCredential, ClientName, CloseReason,
+    CodexCredential, CommandResult, Credential, Credentials, Effort, Event,
+    EventKind, HostPath, ModelId, Models, Provider, Providers, Rejection,
+    SessionId, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::session::{Choice, ClaudeLaunch, CodexLaunch, Launch, Session, choose, list_models};
+use crate::session::{
+    Choice, ClaudeLaunch, CodexLaunch, Launch, Session, choose, list_models,
+};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -58,9 +61,9 @@ pub enum OwnSignIn {
 impl OwnSignIn {
     fn auth(self) -> Result<Auth, String> {
         match self {
-            OwnSignIn::SignedIn => Ok(Auth::SignedIn),
-            OwnSignIn::Unmanaged => Ok(Auth::Unmanaged),
-            OwnSignIn::Missing => Err(String::from("no credential configured")),
+            Self::SignedIn => Ok(Auth::SignedIn),
+            Self::Unmanaged => Ok(Auth::Unmanaged),
+            Self::Missing => Err(String::from("no credential configured")),
         }
     }
 }
@@ -73,13 +76,13 @@ impl Launchers {
         }
     }
 
-    fn with(self, provider: Provider, launcher: Launcher) -> Launchers {
+    fn with(self, provider: Provider, launcher: Launcher) -> Self {
         match provider {
-            Provider::Claude => Launchers {
+            Provider::Claude => Self {
                 claude: launcher,
                 ..self
             },
-            Provider::Codex => Launchers {
+            Provider::Codex => Self {
                 codex: launcher,
                 ..self
             },
@@ -178,24 +181,30 @@ struct RefreshCompletion {
 }
 
 impl ProviderRefresh {
-    fn new() -> ProviderRefresh {
-        ProviderRefresh {
+    fn new() -> Self {
+        Self {
             state: RefreshState::Idle,
             future: MaybeFuture::None,
         }
     }
 
-    fn schedule(&mut self, latest: RefreshJob, reply: oneshot::Sender<CommandResult>) {
-        let replies = match std::mem::replace(&mut self.state, RefreshState::Idle) {
-            RefreshState::Pending { mut replies, .. } => {
-                replies.push(reply);
-                replies
-            }
-            RefreshState::Idle | RefreshState::Failed(_) => {
-                self.future = MaybeFuture::Some(Box::pin(refresh(latest.clone())));
-                Vec::from([reply])
-            }
-        };
+    fn schedule(
+        &mut self,
+        latest: RefreshJob,
+        reply: oneshot::Sender<CommandResult>,
+    ) {
+        let replies =
+            match std::mem::replace(&mut self.state, RefreshState::Idle) {
+                RefreshState::Pending { mut replies, .. } => {
+                    replies.push(reply);
+                    replies
+                }
+                RefreshState::Idle | RefreshState::Failed(_) => {
+                    self.future =
+                        MaybeFuture::Some(Box::pin(refresh(latest.clone())));
+                    Vec::from([reply])
+                }
+            };
         self.state = RefreshState::Pending {
             latest: Box::new(latest),
             replies,
@@ -204,7 +213,9 @@ impl ProviderRefresh {
 
     fn finish(&mut self, result: Refreshed) -> Option<RefreshCompletion> {
         match std::mem::replace(&mut self.state, RefreshState::Idle) {
-            RefreshState::Pending { latest, replies } if latest.id == result.id => {
+            RefreshState::Pending { latest, replies }
+                if latest.id == result.id =>
+            {
                 self.state = match &result.models {
                     Ok(_) => RefreshState::Idle,
                     Err(reason) => RefreshState::Failed(reason.clone()),
@@ -215,7 +226,9 @@ impl ProviderRefresh {
                 })
             }
             RefreshState::Pending { latest, replies } => {
-                self.future = MaybeFuture::Some(Box::pin(refresh(latest.as_ref().clone())));
+                self.future = MaybeFuture::Some(Box::pin(refresh(
+                    latest.as_ref().clone(),
+                )));
                 self.state = RefreshState::Pending { latest, replies };
                 None
             }
@@ -229,7 +242,9 @@ impl ProviderRefresh {
     fn ready(&self) -> Result<(), String> {
         match &self.state {
             RefreshState::Idle => Ok(()),
-            RefreshState::Pending { .. } => Err(String::from("refreshing provider models")),
+            RefreshState::Pending { .. } => {
+                Err(String::from("refreshing provider models"))
+            }
             RefreshState::Failed(reason) => Err(reason.clone()),
         }
     }
@@ -263,7 +278,12 @@ async fn refresh_models(job: RefreshJob) -> Result<Models, String> {
 
 impl Registry {
     /// `stored` is what `store` held when it opened.
-    pub fn spawn(log: Log, launchers: Launchers, store: Store, stored: Stored) -> Registry {
+    pub fn spawn(
+        log: Log,
+        launchers: Launchers,
+        store: Store,
+        stored: Stored,
+    ) -> Self {
         if let Stored::Opened(credentials) = &stored {
             warn_unprotected(credentials);
         }
@@ -279,7 +299,7 @@ impl Registry {
         };
         let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
-        Registry { inbox }
+        Self { inbox }
     }
 
     /// Checks the directory and the provider, logs `SessionCreated` and
@@ -315,7 +335,10 @@ impl Registry {
             .await
     }
 
-    pub async fn find(&self, session: SessionId) -> Result<Option<Session>, Stopped> {
+    pub async fn find(
+        &self,
+        session: SessionId,
+    ) -> Result<Option<Session>, Stopped> {
         self.ask(|reply| RegistryMsg::Find { session, reply }).await
     }
 
@@ -326,12 +349,18 @@ impl Registry {
 
     /// Stores the credential and answers with the providers it changes. A
     /// new Codex credential restarts the shared app-server.
-    pub async fn set_credential(&self, credential: Credential) -> Result<CommandResult, Stopped> {
+    pub async fn set_credential(
+        &self,
+        credential: Credential,
+    ) -> Result<CommandResult, Stopped> {
         self.ask(|reply| RegistryMsg::SetCredential { credential, reply })
             .await
     }
 
-    pub async fn clear_credential(&self, provider: Provider) -> Result<CommandResult, Stopped> {
+    pub async fn clear_credential(
+        &self,
+        provider: Provider,
+    ) -> Result<CommandResult, Stopped> {
         self.ask(|reply| RegistryMsg::ClearCredential { provider, reply })
             .await
     }
@@ -376,7 +405,9 @@ impl RegistryActor {
                 by,
                 reply,
             } => {
-                let result = self.start(provider, directory, (model, effort), by).await?;
+                let result = self
+                    .start(provider, directory, (model, effort), by)
+                    .await?;
                 let _ = reply.send(result);
             }
             RegistryMsg::Continue { session, reply } => {
@@ -385,8 +416,12 @@ impl RegistryActor {
                     Some((provider, handle)) => {
                         let &provider = provider;
                         self.ready(provider)
-                            .map(|(launch, _)| (handle.clone(), launch, self.models(provider)))
-                            .map_err(|reason| Rejection::ProviderUnavailable { reason })
+                            .map(|(launch, _)| {
+                                (handle.clone(), launch, self.models(provider))
+                            })
+                            .map_err(|reason| Rejection::ProviderUnavailable {
+                                reason,
+                            })
                     }
                 };
                 let _ = reply.send(relaunch);
@@ -405,16 +440,17 @@ impl RegistryActor {
                 let provider = credential.provider();
                 match (credential.check(), &self.stored) {
                     (Err(reason), _) => {
-                        let _ = reply.send(CommandResult::Rejected(Rejection::InvalidCredential {
-                            reason,
-                        }));
+                        let _ = reply.send(CommandResult::Rejected(
+                            Rejection::InvalidCredential { reason },
+                        ));
                     }
                     // Saving now would overwrite the other provider's.
                     (Ok(()), Stored::Unreadable(reason)) => {
-                        let _ =
-                            reply.send(CommandResult::Rejected(Rejection::CredentialNotSaved {
+                        let _ = reply.send(CommandResult::Rejected(
+                            Rejection::CredentialNotSaved {
                                 reason: reason.clone(),
-                            }));
+                            },
+                        ));
                     }
                     (Ok(()), Stored::Opened(credentials)) => {
                         let next = credentials.clone().set(credential);
@@ -422,14 +458,22 @@ impl RegistryActor {
                     }
                 }
             }
-            RegistryMsg::ClearCredential { provider, reply } => match self.readable() {
-                Ok(credentials) => self.store(provider, credentials.clear(provider), reply),
-                Err(reason) => {
-                    let _ = reply.send(CommandResult::Rejected(Rejection::CredentialNotSaved {
-                        reason,
-                    }));
+            RegistryMsg::ClearCredential { provider, reply } => {
+                match self.readable() {
+                    Ok(credentials) => {
+                        self.store(
+                            provider,
+                            credentials.clear(provider),
+                            reply,
+                        );
+                    }
+                    Err(reason) => {
+                        let _ = reply.send(CommandResult::Rejected(
+                            Rejection::CredentialNotSaved { reason },
+                        ));
+                    }
                 }
-            },
+            }
         }
         Ok(())
     }
@@ -438,7 +482,9 @@ impl RegistryActor {
         let history = self.log.history().await?;
         let created = history
             .iter()
-            .filter(|event| matches!(event.kind, EventKind::SessionCreated { .. }))
+            .filter(|event| {
+                matches!(event.kind, EventKind::SessionCreated { .. })
+            })
             .cloned()
             .collect::<Vec<Event>>();
         for event in created {
@@ -447,7 +493,11 @@ impl RegistryActor {
         Ok(())
     }
 
-    async fn restore_session(&mut self, event: Event, history: &[Event]) -> Result<(), Stopped> {
+    async fn restore_session(
+        &mut self,
+        event: Event,
+        history: &[Event],
+    ) -> Result<(), Stopped> {
         if let EventKind::SessionCreated {
             provider,
             directory,
@@ -462,21 +512,19 @@ impl RegistryActor {
                 .filter(|event| event.session == id)
                 .cloned()
                 .collect::<Vec<Event>>();
-            let choice = events
-                .iter()
-                .fold(Choice { model, effort }, |choice, event| {
-                    match &event.kind {
-                        EventKind::ModelChanged { model, effort, .. } => Choice {
-                            model: model.clone(),
-                            effort: effort.to_owned(),
-                        },
-                        _ => choice,
-                    }
-                });
-            let conversation = match events
-                .iter()
-                .find(|event| matches!(event.kind, EventKind::UserMessage { .. }))
-            {
+            let choice = events.iter().fold(
+                Choice { model, effort },
+                |choice, event| match &event.kind {
+                    EventKind::ModelChanged { model, effort, .. } => Choice {
+                        model: model.clone(),
+                        effort: effort.to_owned(),
+                    },
+                    _ => choice,
+                },
+            );
+            let conversation = match events.iter().find(|event| {
+                matches!(event.kind, EventKind::UserMessage { .. })
+            }) {
                 Some(_) => self.log.saved_conversation(id).await?,
                 None => None,
             };
@@ -484,14 +532,18 @@ impl RegistryActor {
                 .iter()
                 .filter_map(|event| match &event.kind {
                     EventKind::RequestOpened { request, .. }
-                    | EventKind::QuestionAsked { request, .. } => Some(request.to_owned()),
+                    | EventKind::QuestionAsked { request, .. } => {
+                        Some(request.to_owned())
+                    }
                     _ => None,
                 })
                 .filter(|request| {
                     !events
                         .iter()
                         .filter_map(|event| match &event.kind {
-                            EventKind::RequestResolved { request, .. } => Some(request),
+                            EventKind::RequestResolved { request, .. } => {
+                                Some(request)
+                            }
                             _ => None,
                         })
                         .any(|resolved| resolved == request)
@@ -508,15 +560,18 @@ impl RegistryActor {
                     )
                     .await?;
             }
-            let running = events.iter().rev().find_map(|event| match &event.kind {
-                EventKind::UserMessage { .. } | EventKind::NativeTurnStarted { .. } => {
-                    Some(RecoverTurn::Running)
-                }
-                EventKind::TurnCompleted { .. } | EventKind::SessionClosed { .. } => {
-                    Some(RecoverTurn::Idle)
-                }
-                _ => None,
-            });
+            let running =
+                events.iter().rev().find_map(|event| match &event.kind {
+                    EventKind::UserMessage { .. }
+                    | EventKind::NativeTurnStarted { .. } => {
+                        Some(RecoverTurn::Running)
+                    }
+                    EventKind::TurnCompleted { .. }
+                    | EventKind::SessionClosed { .. } => {
+                        Some(RecoverTurn::Idle)
+                    }
+                    _ => None,
+                });
             if let Some(RecoverTurn::Running) = running {
                 self.recover_checkpoint(id, &events).await?;
                 self.log
@@ -528,13 +583,15 @@ impl RegistryActor {
                     )
                     .await?;
             }
-            let closed = events.iter().rev().find_map(|event| match &event.kind {
-                EventKind::SessionClosed { .. } => Some(RecoverAgent::Closed),
-                EventKind::SessionCreated { .. } | EventKind::SessionReady => {
-                    Some(RecoverAgent::Running)
-                }
-                _ => None,
-            });
+            let closed =
+                events.iter().rev().find_map(|event| match &event.kind {
+                    EventKind::SessionClosed { .. } => {
+                        Some(RecoverAgent::Closed)
+                    }
+                    EventKind::SessionCreated { .. }
+                    | EventKind::SessionReady => Some(RecoverAgent::Running),
+                    _ => None,
+                });
             if let Some(RecoverAgent::Running) = closed {
                 self.log
                     .append(
@@ -567,7 +624,11 @@ impl RegistryActor {
         Ok(())
     }
 
-    async fn recover_checkpoint(&mut self, id: SessionId, events: &[Event]) -> Result<(), Stopped> {
+    async fn recover_checkpoint(
+        &mut self,
+        id: SessionId,
+        events: &[Event],
+    ) -> Result<(), Stopped> {
         let book = crate::checkpoints::Book::replay(events);
         let started = book
             .snapshot
@@ -577,7 +638,10 @@ impl RegistryActor {
             (Some((history, turn_start)), Some(workspace), None) => {
                 let next = book.highwater.next();
                 self.log
-                    .append(id, EventKind::CheckpointReserved { checkpoint: next })
+                    .append(
+                        id,
+                        EventKind::CheckpointReserved { checkpoint: next },
+                    )
                     .await?;
                 self.log.barrier().await?;
                 match crate::workspace::snapshot(
@@ -596,7 +660,9 @@ impl RegistryActor {
                                 EventKind::CheckpointCreated {
                                     checkpoint: proto::Checkpoint {
                                         id: next,
-                                        parent: book.last().map(|checkpoint| checkpoint.id),
+                                        parent: book
+                                            .last()
+                                            .map(|checkpoint| checkpoint.id),
                                         turn_start,
                                         commit,
                                         history,
@@ -606,16 +672,17 @@ impl RegistryActor {
                             )
                             .await
                     }
-                    Err(err) => {
-                        self.log
-                            .append(
-                                id,
-                                EventKind::Error {
-                                    message: format!("interrupted turn checkpoint failed: {err}"),
-                                },
-                            )
-                            .await
-                    }
+                    Err(err) => self
+                        .log
+                        .append(
+                            id,
+                            EventKind::Error {
+                                message: format!(
+                                    "interrupted turn checkpoint failed: {err}"
+                                ),
+                            },
+                        )
+                        .await,
                 }
             }
             _ => Ok(()),
@@ -628,7 +695,10 @@ impl RegistryActor {
         match &self.stored {
             Stored::Opened(credentials) => Ok(credentials.clone()),
             Stored::Unreadable(_) => {
-                let aside = self.store.move_aside().map_err(|err| format!("{err:#}"))?;
+                let aside = self
+                    .store
+                    .move_aside()
+                    .map_err(|err| format!("{err:#}"))?;
                 tracing::warn!(aside = %aside.display(), "moved the unreadable credential store aside");
                 self.stored = Stored::Opened(Credentials::none());
                 Ok(Credentials::none())
@@ -644,9 +714,11 @@ impl RegistryActor {
     ) {
         match self.store.save(&next) {
             Err(err) => {
-                let _ = reply.send(CommandResult::Rejected(Rejection::CredentialNotSaved {
-                    reason: format!("{err:#}"),
-                }));
+                let _ = reply.send(CommandResult::Rejected(
+                    Rejection::CredentialNotSaved {
+                        reason: format!("{err:#}"),
+                    },
+                ));
             }
             Ok(()) => {
                 tracing::info!(?provider, "stored a credential change");
@@ -660,7 +732,9 @@ impl RegistryActor {
                 };
                 self.stored = Stored::Opened(next);
                 match provider {
-                    Provider::Claude => self.claude_refresh.schedule(job, reply),
+                    Provider::Claude => {
+                        self.claude_refresh.schedule(job, reply);
+                    }
                     Provider::Codex => self.codex_refresh.schedule(job, reply),
                 }
             }
@@ -690,9 +764,12 @@ impl RegistryActor {
                         own: own.to_owned(),
                         chosen: chosen.clone(),
                     };
-                    self.launchers = self.launchers.clone().with(provider, ready);
+                    self.launchers =
+                        self.launchers.clone().with(provider, ready);
                 }
-                (Err(reason), _) => tracing::warn!(%reason, ?provider, "provider refresh failed"),
+                (Err(reason), _) => {
+                    tracing::warn!(%reason, ?provider, "provider refresh failed");
+                }
                 (Ok(_), Launcher::Unavailable(_)) => {}
             }
             let result = CommandResult::Providers(self.providers());
@@ -724,7 +801,9 @@ impl RegistryActor {
     /// one, then `chosen`, then the CLI's own.
     fn models(&self, provider: Provider) -> Models {
         let (listed, chosen) = match self.launchers.of(provider) {
-            Launcher::Ready { models, chosen, .. } => (models.clone(), chosen.clone()),
+            Launcher::Ready { models, chosen, .. } => {
+                (models.clone(), chosen.clone())
+            }
             Launcher::Unavailable(_) => (Models::none(), None),
         };
         let credential = match (provider, &self.stored) {
@@ -770,7 +849,9 @@ impl RegistryActor {
             ready,
             choose(&self.models(provider), model, effort),
         ) {
-            (Err(_), _, _) => Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)),
+            (Err(_), _, _) => {
+                Ok(CommandResult::Rejected(Rejection::NoSuchDirectory))
+            }
             (Ok(_), Err(reason), _) => {
                 Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
                     reason,
@@ -788,13 +869,17 @@ impl RegistryActor {
                     model: choice.model.clone(),
                     effort: choice.effort,
                 };
-                match crate::workspace::create(self.store.dir(), &directory, id).await {
+                match crate::workspace::create(self.store.dir(), &directory, id)
+                    .await
+                {
                     Err(crate::workspace::GitError::NotRepository) => {
                         Ok(CommandResult::Rejected(Rejection::NotGitRepository))
                     }
-                    Err(err) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
-                        reason: err.to_string(),
-                    })),
+                    Err(err) => Ok(CommandResult::Rejected(
+                        Rejection::WorkspaceFailure {
+                            reason: err.to_string(),
+                        },
+                    )),
                     Ok(workspace) => match crate::workspace::snapshot(
                         &workspace,
                         id,
@@ -803,14 +888,19 @@ impl RegistryActor {
                     )
                     .await
                     {
-                        Err(err) => Ok(CommandResult::Rejected(Rejection::WorkspaceFailure {
-                            reason: err.to_string(),
-                        })),
+                        Err(err) => Ok(CommandResult::Rejected(
+                            Rejection::WorkspaceFailure {
+                                reason: err.to_string(),
+                            },
+                        )),
                         Ok(commit) => {
                             self.log.append(id, created).await?;
                             let workspace_event = self
                                 .log
-                                .record(id, EventKind::WorkspaceCreated { workspace })
+                                .record(
+                                    id,
+                                    EventKind::WorkspaceCreated { workspace },
+                                )
                                 .await?;
                             let checkpoint_event = self
                                 .log
@@ -858,7 +948,9 @@ fn configured(
 ) -> Result<(Launch, Auth), String> {
     match (launcher, stored) {
         (Launcher::Unavailable(reason), _)
-        | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => Err(reason.clone()),
+        | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => {
+            Err(reason.clone())
+        }
         (Launcher::Ready { launch, own, .. }, Stored::Opened(credentials)) => {
             let launch = match launch.clone() {
                 Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
@@ -893,8 +985,9 @@ mod tests {
 
     use agents::Home;
     use proto::{
-        ClientName, CloseReason, CommandResult, EventKind, HostPath, HostSeq, Models, Provider,
-        RequestId, Resolution, SessionId, ToolCallId, TurnOutcome,
+        ClientName, CloseReason, CommandResult, EventKind, HostPath, HostSeq,
+        Models, Provider, RequestId, Resolution, SessionId, ToolCallId,
+        TurnOutcome,
     };
 
     use super::{Launcher, Launchers, OwnSignIn, Registry};
@@ -923,14 +1016,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/e2e/claude-resumed.jsonl"),
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/e2e/claude-resumed.jsonl"),
             directory.join("stdout.jsonl"),
         )
         .unwrap();
         directory
     }
 
-    async fn seed(log: &Log, id: SessionId, kinds: Vec<EventKind>) -> Result<(), crate::Stopped> {
+    async fn seed(
+        log: &Log,
+        id: SessionId,
+        kinds: Vec<EventKind>,
+    ) -> Result<(), crate::Stopped> {
         for kind in kinds {
             log.append(id, kind).await?;
         }
@@ -938,7 +1036,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes() {
+    async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes()
+     {
         let directory = directory();
         let path = directory.join("conductor.redb");
         let id = SessionId(u128::from(ulid::Ulid::new()));
@@ -1033,12 +1132,14 @@ mod tests {
                 ),
             ]
         );
-        let (session, launch, models) = registry.relaunch(id).await.unwrap().unwrap();
+        let (session, launch, models) =
+            registry.relaunch(id).await.unwrap().unwrap();
         assert_eq!(
             session.order(Order::Start(launch, models)).await.unwrap(),
             CommandResult::Accepted
         );
-        let arguments = std::fs::read_to_string(directory.join("argv.txt")).unwrap();
+        let arguments =
+            std::fs::read_to_string(directory.join("argv.txt")).unwrap();
         assert_eq!(
             arguments
                 .lines()

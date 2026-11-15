@@ -11,15 +11,18 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use iroh::endpoint::{BindError, ConnectError, Connection, RecvStream, SendStream};
+use iroh::endpoint::{
+    BindError, ConnectError, Connection, RecvStream, SendStream,
+};
 use iroh::{Endpoint, EndpointAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{StreamExt, join_all, task};
 use proto::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult, Epoch, Event, EventKind,
-    Hello, HelloReply, HostSeq, Open, Providers, Subscribe, Ticket, Welcome,
+    AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
+    Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers,
+    Subscribe, Ticket, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -43,8 +46,8 @@ pub struct Target {
 }
 
 impl Target {
-    pub fn of_ticket(ticket: &Ticket) -> Target {
-        Target {
+    pub fn of_ticket(ticket: &Ticket) -> Self {
+        Self {
             addr: EndpointAddr::new(ticket.host)
                 .with_relay_url(proto::without_root_dot(&ticket.relay)),
             token: ticket.token,
@@ -83,8 +86,8 @@ pub struct LinkOptions {
 }
 
 impl LinkOptions {
-    pub fn new(client: ClientName) -> LinkOptions {
-        LinkOptions {
+    pub fn new(client: ClientName) -> Self {
+        Self {
             client,
             resume: None,
             network: Network::Public,
@@ -151,7 +154,7 @@ impl HostLink {
     pub async fn spawn(
         target: Target,
         options: LinkOptions,
-    ) -> Result<(HostLink, mpsc::Receiver<Update>), BindError> {
+    ) -> Result<(Self, mpsc::Receiver<Update>), BindError> {
         let endpoint = platform::bind_endpoint(options.network).await?;
         let (requests_tx, requests_rx) = mpsc::channel(16);
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
@@ -178,7 +181,7 @@ impl HostLink {
             phase: Phase::Dialing,
         };
         task::spawn(link.run());
-        let handle = HostLink {
+        let handle = Self {
             requests: requests_tx,
             status: status_rx,
         };
@@ -192,7 +195,10 @@ impl HostLink {
     /// Runs one command on its own stream. Fails fast while not connected;
     /// the caller decides whether to retry.
     /// A `Providers` answer is in the status by the time this returns.
-    pub async fn send(&self, body: CommandBody) -> Result<CommandResult, SendError> {
+    pub async fn send(
+        &self,
+        body: CommandBody,
+    ) -> Result<CommandResult, SendError> {
         let result = self.ask(|reply| Request::Send { body, reply }).await??;
         if let CommandResult::Providers(providers) = &result {
             let providers = providers.clone();
@@ -314,7 +320,7 @@ impl Link {
                 request = self.requests.recv() => Input::Request(request),
             },
             Phase::Connected(connected) => tokio::select! {
-                frame = connected.feed.next() => Input::Frame(frame.expect("frames() never ends")),
+                frame = connected.feed.next() => Input::Frame(frame.unwrap_or(Ok(None))),
                 request = self.requests.recv() => Input::Request(request),
             },
         }
@@ -335,9 +341,15 @@ impl Link {
         }
     }
 
-    async fn step(&mut self, phase: Phase, input: Input) -> Result<Phase, Stopped> {
+    async fn step(
+        &mut self,
+        phase: Phase,
+        input: Input,
+    ) -> Result<Phase, Stopped> {
         match (phase, input) {
-            (Phase::Connected(connected), input) => self.carry_on(connected, input).await,
+            (Phase::Connected(connected), input) => {
+                self.carry_on(connected, input).await
+            }
             (
                 Phase::Dialing | Phase::Waiting(_),
                 Input::Dial | Input::Request(Some(Request::Reconnect)),
@@ -346,12 +358,17 @@ impl Link {
                 let _ = reply.send(Err(SendError::NotConnected));
                 Ok(idle)
             }
-            (idle, Input::Request(Some(Request::Adopt { providers, reply }))) => {
+            (
+                idle,
+                Input::Request(Some(Request::Adopt { providers, reply })),
+            ) => {
                 self.outbox.providers(providers).await?;
                 let _ = reply.send(());
                 Ok(idle)
             }
-            (_, Input::Request(Some(Request::Stop { reply }))) => Err(self.stop(reply).await),
+            (_, Input::Request(Some(Request::Stop { reply }))) => {
+                Err(self.stop(reply).await)
+            }
             (_, Input::Request(None)) => Err(Stopped {}),
             (idle, Input::Frame(_)) => Ok(idle),
         }
@@ -364,7 +381,11 @@ impl Link {
         }
     }
 
-    async fn carry_on(&mut self, connected: Connected, input: Input) -> Result<Phase, Stopped> {
+    async fn carry_on(
+        &mut self,
+        connected: Connected,
+        input: Input,
+    ) -> Result<Phase, Stopped> {
         let conn = connected.conn.clone();
         match self.carry(connected, input).await {
             Ok(connected) => Ok(Phase::Connected(connected)),
@@ -387,7 +408,12 @@ impl Link {
             }
             lost => {
                 self.outbox.disconnected(Some(lost.to_string())).await?;
-                let delay = backoff(self.failures, random_u64(), BACKOFF_FLOOR, BACKOFF_CEILING);
+                let delay = backoff(
+                    self.failures,
+                    random_u64(),
+                    BACKOFF_FLOOR,
+                    BACKOFF_CEILING,
+                );
                 self.failures = self.failures.saturating_add(1);
                 Ok(Phase::Waiting(Box::pin(sleep(delay))))
             }
@@ -444,7 +470,8 @@ impl Link {
             })
             .await?;
         self.catch_up(self.cursor_seq(), live_at).await?;
-        let feed = frames(subscribe(conn, welcome.epoch, self.cursor_seq()).await?);
+        let feed =
+            frames(subscribe(conn, welcome.epoch, self.cursor_seq()).await?);
         Ok(Connected {
             conn: conn.clone(),
             epoch: welcome.epoch,
@@ -454,7 +481,11 @@ impl Link {
     }
 
     /// Handles one input while connected. An error ends the connection.
-    async fn carry(&mut self, connected: Connected, input: Input) -> Result<Connected, Lost> {
+    async fn carry(
+        &mut self,
+        connected: Connected,
+        input: Input,
+    ) -> Result<Connected, Lost> {
         match input {
             Input::Request(None) => Err(Lost::Stopped(Stopped {})),
             Input::Request(Some(Request::Reconnect)) => Err(Lost::Reconnect),
@@ -463,7 +494,9 @@ impl Link {
                 let _ = reply.send(());
                 Ok(connected)
             }
-            Input::Request(Some(Request::Stop { reply })) => Err(self.stop(reply).await.into()),
+            Input::Request(Some(Request::Stop { reply })) => {
+                Err(self.stop(reply).await.into())
+            }
             Input::Request(Some(Request::Send { body, reply })) => {
                 let command = Command {
                     id: random_command_id(),
@@ -477,7 +510,9 @@ impl Link {
                     .await?;
                 Ok(connected)
             }
-            Input::Frame(Ok(None)) => Err(Lost::HostClosed(String::from("subscription"))),
+            Input::Frame(Ok(None)) => {
+                Err(Lost::HostClosed(String::from("subscription")))
+            }
             Input::Frame(Err(err)) => Err(err.into()),
             Input::Dial => Ok(connected),
         }
@@ -514,7 +549,12 @@ impl Link {
         }
     }
 
-    async fn apply(&mut self, event: Event, epoch: Epoch, live_at: HostSeq) -> Result<(), Lost> {
+    async fn apply(
+        &mut self,
+        event: Event,
+        epoch: Epoch,
+        live_at: HostSeq,
+    ) -> Result<(), Lost> {
         let after = self.cursor_seq();
         let order = after.0.checked_add(1).map(|next| event.seq.0.cmp(&next));
         match (order, &event.kind) {
@@ -522,12 +562,14 @@ impl Link {
             // the stream delivered first (`EventKind::AssistantDelta`).
             (
                 Some(Ordering::Less),
-                EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. },
+                EventKind::AssistantDelta { .. }
+                | EventKind::ReasoningDelta { .. },
             ) => Ok(self.outbox.emit(Update::Event(event)).await?),
             (Some(Ordering::Less), _) => Ok(()),
             (
                 Some(Ordering::Equal),
-                EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. },
+                EventKind::AssistantDelta { .. }
+                | EventKind::ReasoningDelta { .. },
             )
             | (Some(Ordering::Greater) | None, _) => Err(Lost::Gap {
                 after: after.0,
@@ -543,7 +585,11 @@ impl Link {
     }
 
     /// Goes live once the link has applied the host's head as of `Welcome`.
-    async fn catch_up(&mut self, seq: HostSeq, live_at: HostSeq) -> Result<(), Stopped> {
+    async fn catch_up(
+        &mut self,
+        seq: HostSeq,
+        live_at: HostSeq,
+    ) -> Result<(), Stopped> {
         let state = self.outbox.state();
         if let (Ordering::Greater | Ordering::Equal, LinkState::CatchingUp) =
             (seq.cmp(&live_at), state)
@@ -622,8 +668,8 @@ struct Attempt {
 }
 
 impl Attempt {
-    fn start(endpoint: Endpoint, addr: EndpointAddr) -> Attempt {
-        Attempt {
+    fn start(endpoint: Endpoint, addr: EndpointAddr) -> Self {
+        Self {
             connecting: Box::pin(dial(endpoint.clone(), addr)),
             endpoint,
         }
@@ -638,13 +684,20 @@ struct Dialed {
     retired: Option<Endpoint>,
 }
 
-async fn dial(endpoint: Endpoint, addr: EndpointAddr) -> Result<Connection, ConnectError> {
+async fn dial(
+    endpoint: Endpoint,
+    addr: EndpointAddr,
+) -> Result<Connection, ConnectError> {
     endpoint.connect(addr, proto::ALPN).await
 }
 
 /// Dials from `endpoint`, and from a fresh endpoint too if the first dial
 /// hasn't returned after [`HEDGE_AFTER`].
-async fn dial_hedged(network: Network, endpoint: Endpoint, addr: EndpointAddr) -> Dialed {
+async fn dial_hedged(
+    network: Network,
+    endpoint: Endpoint,
+    addr: EndpointAddr,
+) -> Dialed {
     let Attempt {
         endpoint,
         mut connecting,
@@ -735,7 +788,8 @@ async fn subscribe(
     after_seq: HostSeq,
 ) -> Result<(SendStream, RecvStream), Lost> {
     let (mut send, recv) = conn.open_bi().await.map_err(WireError::from)?;
-    wire::write(&mut send, &Open::Subscribe(Subscribe { epoch, after_seq })).await?;
+    wire::write(&mut send, &Open::Subscribe(Subscribe { epoch, after_seq }))
+        .await?;
     Ok((send, recv))
 }
 
@@ -756,7 +810,9 @@ async fn hello(conn: &Connection, hello: Hello) -> Result<Welcome, Lost> {
     }
 }
 
-fn frames(halves: (SendStream, RecvStream)) -> BoxStream<Result<Option<Event>, WireError>> {
+fn frames(
+    halves: (SendStream, RecvStream),
+) -> BoxStream<Result<Option<Event>, WireError>> {
     Box::pin(n0_future::stream::unfold(
         halves,
         |(send, mut recv)| async move {
@@ -774,7 +830,10 @@ async fn answer(
     let _ = reply.send(rpc(conn, command).await);
 }
 
-async fn rpc(conn: Connection, command: Command) -> Result<CommandResult, SendError> {
+async fn rpc(
+    conn: Connection,
+    command: Command,
+) -> Result<CommandResult, SendError> {
     let (mut send, mut recv) = conn.open_bi().await.map_err(WireError::from)?;
     wire::write(&mut send, &Open::Command(command)).await?;
     send.finish().map_err(WireError::from)?;
@@ -783,7 +842,12 @@ async fn rpc(conn: Connection, command: Command) -> Result<CommandResult, SendEr
 
 /// Exponential from `floor` to `ceiling`, with the upper half jittered so
 /// many clients don't retry in step.
-fn backoff(failures: u32, random: u64, floor: Duration, ceiling: Duration) -> Duration {
+fn backoff(
+    failures: u32,
+    random: u64,
+    floor: Duration,
+    ceiling: Duration,
+) -> Duration {
     let ceiling = floor
         .saturating_mul(1u32.checked_shl(failures).unwrap_or(u32::MAX))
         .min(ceiling);

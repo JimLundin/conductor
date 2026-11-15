@@ -47,13 +47,13 @@ pub enum TicketError {
 pub struct WrongToken {}
 
 impl AuthToken {
-    pub fn from_bytes(bytes: [u8; TOKEN_LEN]) -> AuthToken {
-        AuthToken(bytes)
+    pub fn from_bytes(bytes: [u8; TOKEN_LEN]) -> Self {
+        Self(bytes)
     }
 
     /// Checks `self` against the host's token in constant time, so the
     /// time a refusal takes says nothing about the token.
-    pub fn check(&self, expected: &AuthToken) -> Result<(), WrongToken> {
+    pub fn check(&self, expected: &Self) -> Result<(), WrongToken> {
         match self.0.as_slice().ct_eq(expected.0.as_slice()).unwrap_u8() {
             1 => Ok(()),
             _ => Err(WrongToken {}),
@@ -79,28 +79,31 @@ impl Ticket {
         BASE64URL_NOPAD.encode(&bytes)
     }
 
-    pub fn parse(text: &str) -> Result<Ticket, TicketError> {
+    pub fn parse(text: &str) -> Result<Self, TicketError> {
         let bytes = BASE64URL_NOPAD
             .decode(text.trim().as_bytes())
             .map_err(|_| TicketError::Encoding)?;
-        let (version, rest) = bytes.split_first().ok_or(TicketError::Truncated)?;
+        let (version, rest) =
+            bytes.split_first().ok_or(TicketError::Truncated)?;
         match version.to_owned() {
-            VERSION => Ticket::parse_fields(rest),
+            VERSION => Self::parse_fields(rest),
             other => Err(TicketError::Version(other)),
         }
     }
 
     /// Everything after the version byte.
-    fn parse_fields(bytes: &[u8]) -> Result<Ticket, TicketError> {
+    fn parse_fields(bytes: &[u8]) -> Result<Self, TicketError> {
         let (id, rest) = bytes
             .split_first_chunk::<ID_LEN>()
             .ok_or(TicketError::Truncated)?;
         let (token, relay) = rest
             .split_first_chunk::<TOKEN_LEN>()
             .ok_or(TicketError::Truncated)?;
-        let relay = std::str::from_utf8(relay).map_err(|_| TicketError::RelayUrl)?;
-        Ok(Ticket {
-            host: EndpointId::from_bytes(id).map_err(|_| TicketError::HostId)?,
+        let relay =
+            std::str::from_utf8(relay).map_err(|_| TicketError::RelayUrl)?;
+        Ok(Self {
+            host: EndpointId::from_bytes(id)
+                .map_err(|_| TicketError::HostId)?,
             relay: relay.parse().map_err(|_| TicketError::RelayUrl)?,
             token: AuthToken(token.to_owned()),
         })
@@ -143,7 +146,9 @@ mod tests {
         let text = ticket().to_text();
         assert_eq!(Ticket::parse("not base64!"), Err(TicketError::Encoding));
         assert_eq!(
-            Ticket::parse(text.split_at_checked(20).map_or("", |(head, _)| head)),
+            Ticket::parse(
+                text.split_at_checked(20).map_or("", |(head, _)| head)
+            ),
             Err(TicketError::Truncated)
         );
         let bytes = BASE64URL_NOPAD.decode(text.as_bytes()).unwrap();

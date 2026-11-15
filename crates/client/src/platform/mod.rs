@@ -26,7 +26,9 @@ pub enum Network {
     Local,
 }
 
-pub(crate) async fn bind_endpoint(network: Network) -> Result<Endpoint, BindError> {
+pub(crate) async fn bind_endpoint(
+    network: Network,
+) -> Result<Endpoint, BindError> {
     match network {
         Network::Public => {
             Endpoint::builder(presets::N0)
@@ -44,8 +46,9 @@ pub(crate) async fn bind_endpoint(network: Network) -> Result<Endpoint, BindErro
 }
 
 /// n0's public relays, named without the root dot (`proto::without_root_dot`).
+///
 /// Every endpoint, host included, uses this map: a host advertises its home
-/// relay to peers, and a browser that dials the dotted name fails WebKit's
+/// relay to peers, and a browser that dials the dotted name fails `WebKit`'s
 /// certificate check.
 pub fn n0_relays() -> iroh::RelayMap {
     iroh::defaults::prod::default_relay_map()

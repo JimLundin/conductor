@@ -1,6 +1,8 @@
 //! The new-session form: what came of the last attempt to start a session.
 
-use proto::{Availability, CommandResult, Effort, ModelId, Models, Provider, Rejection};
+use proto::{
+    Availability, CommandResult, Effort, ModelId, Models, Provider, Rejection,
+};
 
 pub const PROVIDERS: &[Provider] = &[Provider::Claude, Provider::Codex];
 
@@ -23,7 +25,10 @@ pub enum ProviderNote {
 }
 
 /// `availability` is `None` until the host has said.
-pub fn note(provider: Provider, availability: Option<&Availability>) -> ProviderNote {
+pub fn note(
+    provider: Provider,
+    availability: Option<&Availability>,
+) -> ProviderNote {
     match (provider, availability) {
         (_, Some(Availability::Unavailable { reason })) => {
             ProviderNote::Unavailable(reason.clone())
@@ -31,7 +36,9 @@ pub fn note(provider: Provider, availability: Option<&Availability>) -> Provider
         (Provider::Codex, Some(Availability::Available { .. }) | None) => {
             ProviderNote::WritesUnasked
         }
-        (Provider::Claude, Some(Availability::Available { .. }) | None) => ProviderNote::Nothing,
+        (Provider::Claude, Some(Availability::Available { .. }) | None) => {
+            ProviderNote::Nothing
+        }
     }
 }
 
@@ -57,8 +64,7 @@ pub fn efforts(models: &Models, model: Option<&ModelId>) -> Vec<Effort> {
     model
         .or(models.default.as_ref())
         .and_then(|id| models.find(id))
-        .map(|choice| choice.efforts.clone())
-        .unwrap_or_default()
+        .map_or(Vec::new(), |choice| choice.efforts.clone())
 }
 
 /// The effort to keep when the model changes to `model`: `effort` if the
@@ -96,24 +102,24 @@ pub enum Refusal {
 
 impl Attempt {
     /// The host's answer to `StartSession`, or the reason it never arrived.
-    pub fn answered(answer: Result<CommandResult, String>) -> Attempt {
+    pub fn answered(answer: Result<CommandResult, String>) -> Self {
         match answer {
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Providers(_)
                 | CommandResult::Diff(_),
-            ) => Attempt::Editing,
+            ) => Self::Editing,
             Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
-                Attempt::Refused(Refusal::Directory)
+                Self::Refused(Refusal::Directory)
             }
-            Ok(CommandResult::Rejected(Rejection::ProviderUnavailable { reason })) => {
-                Attempt::Refused(Refusal::Provider(reason))
-            }
+            Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
+                reason,
+            })) => Self::Refused(Refusal::Provider(reason)),
             Ok(CommandResult::Rejected(rejection)) => {
-                Attempt::Refused(Refusal::Other(rejection.label()))
+                Self::Refused(Refusal::Other(rejection.label()))
             }
-            Err(error) => Attempt::Refused(Refusal::Other(error)),
+            Err(error) => Self::Refused(Refusal::Other(error)),
         }
     }
 }
@@ -121,14 +127,18 @@ impl Attempt {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Auth, Availability, CommandResult, Effort, ModelChoice, ModelId, Models, Provider,
-        Rejection,
+        Auth, Availability, CommandResult, Effort, ModelChoice, ModelId,
+        Models, Provider, Rejection,
     };
 
-    use super::{Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort, note};
+    use super::{
+        Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort,
+        note,
+    };
 
     #[test]
-    fn the_form_says_why_a_provider_is_unavailable_and_that_codex_writes_unasked() {
+    fn the_form_says_why_a_provider_is_unavailable_and_that_codex_writes_unasked()
+     {
         let unavailable = Availability::Unavailable {
             reason: String::from("codex is not on PATH"),
         };
@@ -207,11 +217,15 @@ mod tests {
                 },
                 Rejection::TurnInProgress,
             ]
-            .map(|rejection| Attempt::answered(Ok(CommandResult::Rejected(rejection)))),
+            .map(|rejection| Attempt::answered(Ok(
+                CommandResult::Rejected(rejection)
+            ))),
             [
                 Attempt::Refused(Refusal::Directory),
                 Attempt::Refused(Refusal::Provider(String::from("no codex"))),
-                Attempt::Refused(Refusal::Other(String::from("a turn is already running"))),
+                Attempt::Refused(Refusal::Other(String::from(
+                    "a turn is already running"
+                ))),
             ]
         );
     }

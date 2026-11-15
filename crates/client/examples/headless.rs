@@ -21,9 +21,10 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    Answer, Auth, Availability, Change, CheckpointId, ClaudeCredential, ClientName,
-    CodexCredential, CommandBody, CommandResult, Credential, Decision, Event, EventKind, HostPath,
-    HostSeq, Provider, SessionId, Ticket, TurnOutcome,
+    Answer, Auth, Availability, Change, CheckpointId, ClaudeCredential,
+    ClientName, CodexCredential, CommandBody, CommandResult, Credential,
+    Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId, Ticket,
+    TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -263,7 +264,7 @@ impl Session {
 
     async fn on_status(&mut self, status: Status) -> anyhow::Result<Flow> {
         let Status { state, error, .. } = status;
-        let error = error.map(|e| format!(" error={e}")).unwrap_or_default();
+        let error = error.map_or(String::new(), |e| format!(" error={e}"));
         self.log(format!("status {state:?}{error}"))?;
         let now = match state {
             LinkState::Live => Liveness::Live,
@@ -276,7 +277,9 @@ impl Session {
         self.was = now;
         match (now, was) {
             (Liveness::Live, Liveness::NotLive) => self.went_live().await,
-            (Liveness::Live, Liveness::Live) | (Liveness::NotLive, _) => Ok(Flow::Next),
+            (Liveness::Live, Liveness::Live) | (Liveness::NotLive, _) => {
+                Ok(Flow::Next)
+            }
         }
     }
 
@@ -335,23 +338,28 @@ impl Session {
                     .send(CommandBody::SetCredential { credential })
                     .await?;
                 let kind = match &result {
-                    CommandResult::Providers(providers) => match providers.of(self.provider) {
-                        Availability::Available {
-                            auth: Auth::Gateway { .. },
-                            ..
-                        } => Ok("gateway"),
-                        Availability::Available { .. } | Availability::Unavailable { .. } => {
-                            Err(anyhow::Error::msg("the host does not report the gateway"))
+                    CommandResult::Providers(providers) => {
+                        match providers.of(self.provider) {
+                            Availability::Available {
+                                auth: Auth::Gateway { .. },
+                                ..
+                            } => Ok("gateway"),
+                            Availability::Available { .. }
+                            | Availability::Unavailable { .. } => {
+                                Err(anyhow::Error::msg(
+                                    "the host does not report the gateway",
+                                ))
+                            }
                         }
-                    },
+                    }
                     CommandResult::Rejected(rejection) => {
                         Err(anyhow::Error::msg(rejection.label()))
                     }
                     CommandResult::Accepted
                     | CommandResult::Started { .. }
-                    | CommandResult::Diff(_) => {
-                        Err(anyhow::Error::msg("the host gave an unexpected answer"))
-                    }
+                    | CommandResult::Diff(_) => Err(anyhow::Error::msg(
+                        "the host gave an unexpected answer",
+                    )),
                 }?;
                 self.log(format!("registered the credential -> {kind}"))?;
                 Ok(())
@@ -432,7 +440,9 @@ impl Session {
                         decision,
                     })
                     .await?;
-                self.log(format!("resolve {request:?} {decision:?} -> {result:?}"))?;
+                self.log(format!(
+                    "resolve {request:?} {decision:?} -> {result:?}"
+                ))?;
                 Ok(Flow::Next)
             }
             // Each question gets its first option, or "yes" if it has none.
@@ -444,7 +454,10 @@ impl Session {
                             .options
                             .into_iter()
                             .next()
-                            .map_or_else(|| String::from("yes"), |option| option.label)]))
+                            .map_or_else(
+                                || String::from("yes"),
+                                |option| option.label,
+                            )]))
                     })
                     .collect::<Vec<Answer>>();
                 let result = self
@@ -455,10 +468,14 @@ impl Session {
                         answers: answers.clone(),
                     })
                     .await?;
-                self.log(format!("answer {request:?} {answers:?} -> {result:?}"))?;
+                self.log(format!(
+                    "answer {request:?} {answers:?} -> {result:?}"
+                ))?;
                 Ok(Flow::Next)
             }
-            EventKind::TurnCompleted { outcome } => self.completed(event.session, outcome).await,
+            EventKind::TurnCompleted { outcome } => {
+                self.completed(event.session, outcome).await
+            }
             EventKind::WorkspaceCreated { workspace } => {
                 self.log(format!("workspace {}", workspace.directory.0))?;
                 Ok(Flow::Next)
@@ -498,7 +515,9 @@ impl Session {
                 }
                 _ => Ok(Flow::Next),
             },
-            EventKind::UndoFailed { reason, .. } => Err(anyhow::Error::msg(reason)),
+            EventKind::UndoFailed { reason, .. } => {
+                Err(anyhow::Error::msg(reason))
+            }
             EventKind::SessionClosed { reason } => match self.stage {
                 Stage::Open => {
                     self.stage = Stage::Continuing;
@@ -508,7 +527,9 @@ impl Session {
                             session: event.session,
                         })
                         .await?;
-                    self.log(format!("continue after {reason:?} -> {result:?}"))?;
+                    self.log(format!(
+                        "continue after {reason:?} -> {result:?}"
+                    ))?;
                     Ok(Flow::Next)
                 }
                 Stage::FirstTurn
@@ -519,22 +540,24 @@ impl Session {
                     "the session closed: {reason:?}"
                 ))),
             },
-            EventKind::SessionReady => match (&self.then_continue, self.stage) {
-                (Some(text), Stage::Continuing) => {
-                    self.stage = Stage::SecondTurn;
-                    let text = text.clone();
-                    let result = self
-                        .link
-                        .send(CommandBody::SendMessage {
-                            session: event.session,
-                            text: text.clone(),
-                        })
-                        .await?;
-                    self.log(format!("message {text:?} -> {result:?}"))?;
-                    Ok(Flow::Next)
+            EventKind::SessionReady => {
+                match (&self.then_continue, self.stage) {
+                    (Some(text), Stage::Continuing) => {
+                        self.stage = Stage::SecondTurn;
+                        let text = text.clone();
+                        let result = self
+                            .link
+                            .send(CommandBody::SendMessage {
+                                session: event.session,
+                                text: text.clone(),
+                            })
+                            .await?;
+                        self.log(format!("message {text:?} -> {result:?}"))?;
+                        Ok(Flow::Next)
+                    }
+                    (_, _) => Ok(Flow::Next),
                 }
-                (_, _) => Ok(Flow::Next),
-            },
+            }
             EventKind::SessionCreated { .. }
             | EventKind::ReasoningDelta { .. }
             | EventKind::Reasoning { .. }
@@ -570,7 +593,10 @@ impl Session {
                 self.undo_receipt = self.undo_receipt.completed();
                 self.try_undo(session).await
             }
-            (Some(_), Stage::VerifyTurn, TurnOutcome::Completed) => match self.reply.trim() {
+            (Some(_), Stage::VerifyTurn, TurnOutcome::Completed) => match self
+                .reply
+                .trim()
+            {
                 "retained=amber discarded=unknown" => {
                     self.log(String::from("undo verified retained history"))?;
                     Ok(Flow::Finished)
@@ -579,7 +605,9 @@ impl Session {
                     "undo history check failed: {reply}"
                 ))),
             },
-            (Some(_), _, _) => Err(anyhow::Error::msg("the undo smoke turn did not complete")),
+            (Some(_), _, _) => {
+                Err(anyhow::Error::msg("the undo smoke turn did not complete"))
+            }
             (None, Stage::FirstTurn, _) => match &self.then_continue {
                 Some(_) => {
                     self.stage = Stage::Open;
@@ -630,7 +658,9 @@ impl Session {
                             checkpoint.0, diff.files
                         ))?;
                     }
-                    result => Err(anyhow::Error::msg(format!("diff failed: {result:?}")))?,
+                    result => Err(anyhow::Error::msg(format!(
+                        "diff failed: {result:?}"
+                    )))?,
                 }
                 self.stage = Stage::Undoing;
                 accepted(
@@ -694,30 +724,30 @@ enum Completion {
 }
 
 impl UndoReceipt {
-    fn new() -> UndoReceipt {
-        UndoReceipt {
+    fn new() -> Self {
+        Self {
             start: None,
             checkpoint: None,
             completion: Completion::Pending,
         }
     }
 
-    fn started(self, start: HostSeq) -> UndoReceipt {
-        UndoReceipt {
+    fn started(self, start: HostSeq) -> Self {
+        Self {
             start: Some(start),
             ..self
         }
     }
 
-    fn checkpoint(self, start: Option<HostSeq>, id: CheckpointId) -> UndoReceipt {
-        UndoReceipt {
+    fn checkpoint(self, start: Option<HostSeq>, id: CheckpointId) -> Self {
+        Self {
             checkpoint: start.map(|start| SeenCheckpoint { start, id }),
             ..self
         }
     }
 
-    fn completed(self) -> UndoReceipt {
-        UndoReceipt {
+    fn completed(self) -> Self {
+        Self {
             completion: Completion::Completed,
             ..self
         }
@@ -725,7 +755,9 @@ impl UndoReceipt {
 
     fn ready(self) -> Option<CheckpointId> {
         match (self.start, self.checkpoint, self.completion) {
-            (Some(start), Some(checkpoint), Completion::Completed) if start == checkpoint.start => {
+            (Some(start), Some(checkpoint), Completion::Completed)
+                if start == checkpoint.start =>
+            {
                 Some(checkpoint.id)
             }
             _ => None,
@@ -739,7 +771,8 @@ mod tests {
     use proto::{CheckpointId, HostSeq};
 
     #[test]
-    fn undo_waits_for_completion_and_the_matching_turn_snapshot_in_either_order() {
+    fn undo_waits_for_completion_and_the_matching_turn_snapshot_in_either_order()
+     {
         let second = UndoReceipt::new().started(HostSeq(20));
         let stale = second
             .checkpoint(Some(HostSeq(10)), CheckpointId(1))

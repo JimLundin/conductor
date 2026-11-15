@@ -138,7 +138,6 @@ version = "0.1.0"
 dependencies = [
  "client",
  "dioxus",
- "n0-future",
  "proto",
  "tokio",
  "tracing",
@@ -566,7 +565,6 @@ dependencies = [
  "iroh",
  "n0-future",
  "proto",
- "serde",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

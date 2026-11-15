@@ -33,12 +33,23 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 pub const ALPN: &[u8] = b"conductor/10";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct HostSeq(pub u64);
 
 impl HostSeq {
-    pub fn next(self) -> HostSeq {
-        HostSeq(self.0.saturating_add(1))
+    pub fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
@@ -53,12 +64,23 @@ pub struct CommandId(pub u128);
 
 /// An approval request or a question, assigned by the host per session, in
 /// order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct RequestId(pub u64);
 
 impl RequestId {
-    pub fn next(self) -> RequestId {
-        RequestId(self.0.saturating_add(1))
+    pub fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
@@ -147,32 +169,32 @@ pub enum Effort {
 impl Effort {
     pub fn wire(&self) -> &str {
         match self {
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High => "high",
-            Effort::XHigh => "xhigh",
-            Effort::Max => "max",
-            Effort::Ultra => "ultra",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+            Self::Ultra => "ultra",
         }
     }
 
     /// A level a CLI lists. Any other, such as Codex's `minimal`, is `None`.
-    pub fn parse(word: &str) -> Option<Effort> {
+    pub fn parse(word: &str) -> Option<Self> {
         match word {
-            "low" => Some(Effort::Low),
-            "medium" => Some(Effort::Medium),
-            "high" => Some(Effort::High),
-            "xhigh" => Some(Effort::XHigh),
-            "max" => Some(Effort::Max),
-            "ultra" => Some(Effort::Ultra),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
+            "max" => Some(Self::Max),
+            "ultra" => Some(Self::Ultra),
             _ => None,
         }
     }
 }
 
 impl Models {
-    pub fn none() -> Models {
-        Models {
+    pub fn none() -> Self {
+        Self {
             choices: Vec::new(),
             default: None,
         }
@@ -238,7 +260,7 @@ pub enum CodexCredential {
 impl std::fmt::Debug for ClaudeCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClaudeCredential::Gateway { .. } => write!(f, "Gateway"),
+            Self::Gateway { .. } => write!(f, "Gateway"),
         }
     }
 }
@@ -246,40 +268,40 @@ impl std::fmt::Debug for ClaudeCredential {
 impl std::fmt::Debug for CodexCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CodexCredential::Provider { .. } => write!(f, "Provider"),
+            Self::Provider { .. } => write!(f, "Provider"),
         }
     }
 }
 
 impl Credentials {
-    pub fn none() -> Credentials {
-        Credentials {
+    pub fn none() -> Self {
+        Self {
             claude: None,
             codex: None,
         }
     }
 
     /// These credentials with `credential` in its provider's place.
-    pub fn set(self, credential: Credential) -> Credentials {
+    pub fn set(self, credential: Credential) -> Self {
         match credential {
-            Credential::Claude(claude) => Credentials {
+            Credential::Claude(claude) => Self {
                 claude: Some(claude),
                 ..self
             },
-            Credential::Codex(codex) => Credentials {
+            Credential::Codex(codex) => Self {
                 codex: Some(codex),
                 ..self
             },
         }
     }
 
-    pub fn clear(self, provider: Provider) -> Credentials {
+    pub fn clear(self, provider: Provider) -> Self {
         match provider {
-            Provider::Claude => Credentials {
+            Provider::Claude => Self {
                 claude: None,
                 ..self
             },
-            Provider::Codex => Credentials {
+            Provider::Codex => Self {
                 codex: None,
                 ..self
             },
@@ -290,11 +312,15 @@ impl Credentials {
     /// base URL.
     pub fn auth(&self, provider: Provider) -> Option<Auth> {
         match provider {
-            Provider::Claude => self.claude.as_ref().map(|claude| match claude {
-                ClaudeCredential::Gateway { base_url, .. } => Auth::Gateway {
-                    base_url: base_url.clone(),
-                },
-            }),
+            Provider::Claude => {
+                self.claude.as_ref().map(|claude| match claude {
+                    ClaudeCredential::Gateway { base_url, .. } => {
+                        Auth::Gateway {
+                            base_url: base_url.clone(),
+                        }
+                    }
+                })
+            }
             Provider::Codex => self.codex.as_ref().map(|codex| match codex {
                 CodexCredential::Provider { base_url, .. } => Auth::Gateway {
                     base_url: base_url.clone(),
@@ -307,8 +333,8 @@ impl Credentials {
 impl Credential {
     pub fn provider(&self) -> Provider {
         match self {
-            Credential::Claude(_) => Provider::Claude,
-            Credential::Codex(_) => Provider::Codex,
+            Self::Claude(_) => Provider::Claude,
+            Self::Codex(_) => Provider::Codex,
         }
     }
 
@@ -317,10 +343,13 @@ impl Credential {
     /// not hide a secret in userinfo, a query or a fragment.
     pub fn check(&self) -> Result<(), String> {
         let base_url = match self {
-            Credential::Claude(ClaudeCredential::Gateway { base_url, .. })
-            | Credential::Codex(CodexCredential::Provider { base_url, .. }) => base_url,
+            Self::Claude(ClaudeCredential::Gateway { base_url, .. })
+            | Self::Codex(CodexCredential::Provider { base_url, .. }) => {
+                base_url
+            }
         };
-        let url = url::Url::parse(base_url).map_err(|err| format!("the base URL: {err}"))?;
+        let url = url::Url::parse(base_url)
+            .map_err(|err| format!("the base URL: {err}"))?;
         match (
             url.scheme(),
             url.username(),
@@ -332,7 +361,9 @@ impl Credential {
             ("http" | "https", _, _, _, _) => Err(String::from(
                 "the base URL may not carry a user, a password, a query or a fragment",
             )),
-            (_, _, _, _, _) => Err(String::from("the base URL must be http or https")),
+            (_, _, _, _, _) => {
+                Err(String::from("the base URL must be http or https"))
+            }
         }
     }
 }
@@ -356,7 +387,18 @@ pub struct Subscribe {
 }
 
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct SessionId(pub u128);
 
 /// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
@@ -516,34 +558,39 @@ impl Rejection {
     /// Why the host refused the command, for a person to read.
     pub fn label(&self) -> String {
         match self {
-            Rejection::NoSuchDirectory => String::from("no directory at that path on the host"),
-            Rejection::ProviderUnavailable { reason } => {
+            Self::NoSuchDirectory => {
+                String::from("no directory at that path on the host")
+            }
+            Self::ProviderUnavailable { reason } => {
                 format!("that provider is unavailable: {reason}")
             }
-            Rejection::UnknownSession => String::from("no session with that id"),
-            Rejection::SessionClosed => String::from("the session has closed"),
-            Rejection::NotOffered { reason } => reason.clone(),
-            Rejection::TurnInProgress => String::from("a turn is already running"),
-            Rejection::NoTurnRunning => String::from("no turn is running"),
-            Rejection::UnknownRequest => String::from("no request with that id"),
-            Rejection::AlreadyResolved { by } => format!("already resolved by {}", by.0),
-            Rejection::WrongReply { reason } => reason.clone(),
-            Rejection::CredentialNotSaved { reason } => {
+            Self::UnknownSession => String::from("no session with that id"),
+            Self::SessionClosed => String::from("the session has closed"),
+            Self::TurnInProgress => String::from("a turn is already running"),
+            Self::NoTurnRunning => String::from("no turn is running"),
+            Self::UnknownRequest => String::from("no request with that id"),
+            Self::AlreadyResolved { by } => {
+                format!("already resolved by {}", by.0)
+            }
+            Self::CredentialNotSaved { reason } => {
                 format!("the host could not store the credential: {reason}")
             }
-            Rejection::InvalidCredential { reason } => {
+            Self::InvalidCredential { reason } => {
                 format!("the credential is not valid: {reason}")
             }
-            Rejection::NotGitRepository => {
+            Self::NotGitRepository => {
                 String::from("choose a Git repository with a committed HEAD")
             }
-            Rejection::CheckpointUnavailable => String::from("this checkpoint cannot be undone"),
-            Rejection::UndoInProgress => {
+            Self::CheckpointUnavailable => {
+                String::from("this checkpoint cannot be undone")
+            }
+            Self::UndoInProgress => {
                 String::from("finish recovering the interrupted undo first")
             }
-            Rejection::UndoFailed { reason } | Rejection::WorkspaceFailure { reason } => {
-                reason.clone()
-            }
+            Self::NotOffered { reason }
+            | Self::WrongReply { reason }
+            | Self::UndoFailed { reason }
+            | Self::WorkspaceFailure { reason } => reason.clone(),
         }
     }
 }
@@ -685,12 +732,23 @@ pub enum EventKind {
 }
 
 /// Monotonic per session, including discarded checkpoints; zero is initial.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct CheckpointId(pub u64);
 
 impl CheckpointId {
-    pub fn next(self) -> CheckpointId {
-        CheckpointId(self.0.saturating_add(1))
+    pub fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
@@ -707,7 +765,7 @@ pub struct Workspace {
 pub struct Checkpoint {
     pub id: CheckpointId,
     pub parent: Option<CheckpointId>,
-    /// The existing UserMessage event for this turn; None for initial/autonomous turns.
+    /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
     pub turn_start: Option<HostSeq>,
     pub commit: String,
     /// Opaque provider metadata; clients never present these IDs as controls.

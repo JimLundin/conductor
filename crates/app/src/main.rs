@@ -16,7 +16,9 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use client::host_view::HostView;
-use client::{HostLink, LinkOptions, LinkState, SendError, Status, Target, Update};
+use client::{
+    HostLink, LinkOptions, LinkState, SendError, Status, Target, Update,
+};
 use dioxus::prelude::*;
 use proto::{CommandBody, CommandResult, SessionId, Ticket};
 use ticket::Opening;
@@ -47,7 +49,9 @@ pub(crate) enum Link {
 #[component]
 fn App() -> Element {
     let initial = use_hook(ticket::initial);
-    let mut opening = use_signal(|| initial.as_ref().ok().cloned().unwrap_or(Opening::Unpaired));
+    let mut opening = use_signal(|| {
+        initial.as_ref().ok().cloned().unwrap_or(Opening::Unpaired)
+    });
     let first_error = initial
         .err()
         .map(|error| format!("That join link is not valid: {error}"));
@@ -128,7 +132,8 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     // A session the host no longer reports (after a reset) falls back to the
     // list, which on a phone is the only way out of the detail pane.
     let shown = match (screen(), &session) {
-        (Screen::NewSession | Screen::Credentials, _) | (Screen::Session(_), Some(_)) => "detail",
+        (Screen::NewSession | Screen::Credentials, _)
+        | (Screen::Session(_), Some(_)) => "detail",
         (Screen::Sessions, _) | (Screen::Session(_), None) => "list",
     };
     rsx! {
@@ -241,9 +246,14 @@ async fn follow(
     }
 }
 
-pub(crate) async fn send(link: Link, body: CommandBody) -> Result<CommandResult, String> {
+pub(crate) async fn send(
+    link: Link,
+    body: CommandBody,
+) -> Result<CommandResult, String> {
     match link {
-        Link::Live(link) => link.send(body).await.map_err(|err| err.to_string()),
+        Link::Live(link) => {
+            link.send(body).await.map_err(|err| err.to_string())
+        }
         Link::Waiting => Err(String::from("Not connected to the host yet.")),
     }
 }

@@ -12,8 +12,8 @@ pub enum Exit {
 impl Exit {
     pub fn describe(&self) -> String {
         match self {
-            Exit::Status(status) => status.to_string(),
-            Exit::Unknown(error) => format!("unknown exit ({error})"),
+            Self::Status(status) => status.to_string(),
+            Self::Unknown(error) => format!("unknown exit ({error})"),
         }
     }
 }

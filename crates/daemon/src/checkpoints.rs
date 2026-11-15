@@ -1,6 +1,7 @@
 //! Replayable workspace checkpoints and the durable undo phases.
 use proto::{
-    Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor, UndoAvailability, Workspace,
+    Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor,
+    UndoAvailability, Workspace,
 };
 use std::collections::BTreeMap;
 
@@ -34,11 +35,15 @@ pub(crate) struct Book {
 }
 
 impl Book {
-    pub(crate) fn replay(events: &[Event]) -> Book {
-        Book {
-            workspace: events.iter().rev().find_map(|event| match &event.kind {
-                EventKind::WorkspaceCreated { workspace } => Some(workspace.clone()),
-                _ => None,
+    pub(crate) fn replay(events: &[Event]) -> Self {
+        Self {
+            workspace: events.iter().rev().find_map(|event| {
+                match &event.kind {
+                    EventKind::WorkspaceCreated { workspace } => {
+                        Some(workspace.clone())
+                    }
+                    _ => None,
+                }
             }),
             checkpoints: events
                 .iter()
@@ -51,8 +56,12 @@ impl Book {
                 .collect(),
             active: events.iter().fold(Vec::new(), |mut active, event| {
                 match &event.kind {
-                    EventKind::CheckpointCreated { checkpoint } => active.push(checkpoint.id),
-                    EventKind::TurnsUndone { restored, .. } => active.retain(|id| id <= restored),
+                    EventKind::CheckpointCreated { checkpoint } => {
+                        active.push(checkpoint.id);
+                    }
+                    EventKind::TurnsUndone { restored, .. } => {
+                        active.retain(|id| id <= restored);
+                    }
                     _ => {}
                 }
                 active
@@ -60,15 +69,18 @@ impl Book {
             highwater: events
                 .iter()
                 .filter_map(|event| match &event.kind {
-                    EventKind::CheckpointCreated { checkpoint } => Some(checkpoint.id),
-                    EventKind::CheckpointReserved { checkpoint } => Some(checkpoint.to_owned()),
+                    EventKind::CheckpointCreated { checkpoint } => {
+                        Some(checkpoint.id)
+                    }
+                    EventKind::CheckpointReserved { checkpoint } => {
+                        Some(checkpoint.to_owned())
+                    }
                     _ => None,
                 })
                 .max()
                 .unwrap_or(CheckpointId(0)),
-            recovery: events
-                .iter()
-                .fold(None, |pending, event| match &event.kind {
+            recovery: events.iter().fold(None, |pending, event| {
+                match &event.kind {
                     EventKind::UndoStarted {
                         checkpoint,
                         restore,
@@ -83,7 +95,9 @@ impl Book {
                         history,
                     } => pending.map(|pending| {
                         let undo = match pending {
-                            Recovery::Native(undo) | Recovery::Files(undo) => undo,
+                            Recovery::Native(undo) | Recovery::Files(undo) => {
+                                undo
+                            }
                         };
                         Recovery::Files(Undo {
                             selected: checkpoint.to_owned(),
@@ -93,50 +107,64 @@ impl Book {
                     }),
                     EventKind::TurnsUndone { .. } => None,
                     _ => pending,
+                }
+            }),
+            snapshot: events.iter().fold(None, |snapshot, event| match &event
+                .kind
+            {
+                EventKind::UserMessage { .. } => Some(Snapshot {
+                    history: HistoryAnchor::Unknown,
+                    turn_start: Some(event.seq),
                 }),
-            snapshot: events
-                .iter()
-                .fold(None, |snapshot, event| match &event.kind {
-                    EventKind::UserMessage { .. } => Some(Snapshot {
-                        history: HistoryAnchor::Unknown,
-                        turn_start: Some(event.seq),
-                    }),
-                    EventKind::NativeTurnStarted {
-                        history,
-                        turn_start,
-                    } => Some(Snapshot {
+                EventKind::NativeTurnStarted {
+                    history,
+                    turn_start,
+                } => Some(Snapshot {
+                    history: history.clone(),
+                    turn_start: turn_start.to_owned(),
+                }),
+                EventKind::HistoryMaterialized { history } => {
+                    snapshot.map(|snapshot| Snapshot {
                         history: history.clone(),
-                        turn_start: turn_start.to_owned(),
-                    }),
-                    EventKind::HistoryMaterialized { history } => {
-                        snapshot.map(|snapshot| Snapshot {
-                            history: history.clone(),
-                            ..snapshot
-                        })
+                        ..snapshot
+                    })
+                }
+                EventKind::CheckpointCreated { .. }
+                | EventKind::TurnsUndone { .. } => None,
+                _ => snapshot,
+            }),
+            resume: events.iter().fold(None, |resume, event| {
+                match &event.kind {
+                    EventKind::UndoHistoryRestored { history, .. }
+                    | EventKind::HistoryMaterialized { history } => {
+                        Some(history.clone())
                     }
-                    EventKind::CheckpointCreated { .. } | EventKind::TurnsUndone { .. } => None,
-                    _ => snapshot,
-                }),
-            resume: events.iter().fold(None, |resume, event| match &event.kind {
-                EventKind::UndoHistoryRestored { history, .. }
-                | EventKind::HistoryMaterialized { history } => Some(history.clone()),
-                EventKind::NativeTurnStarted { history, .. } => match resume {
-                    None | Some(HistoryAnchor::Fresh) => Some(history.clone()),
-                    resume => resume,
-                },
-                _ => resume,
+                    EventKind::NativeTurnStarted { history, .. } => {
+                        match resume {
+                            None | Some(HistoryAnchor::Fresh) => {
+                                Some(history.clone())
+                            }
+                            resume => resume,
+                        }
+                    }
+                    _ => resume,
+                }
             }),
         }
     }
 
-    pub(crate) fn availability(&self, history: &HistoryAnchor) -> UndoAvailability {
+    pub(crate) fn availability(
+        &self,
+        history: &HistoryAnchor,
+    ) -> UndoAvailability {
         match history {
             HistoryAnchor::Codex { .. } => match self
                 .active
                 .iter()
                 .filter_map(|id| self.checkpoints.get(id))
-                .find(|checkpoint| matches!(checkpoint.history, HistoryAnchor::Unknown))
-            {
+                .find(|checkpoint| {
+                    matches!(checkpoint.history, HistoryAnchor::Unknown)
+                }) {
                 Some(_) => UndoAvailability::Unavailable {
                     reason: String::from(
                         "retained native turn prefix contains an unobserved boundary",
@@ -174,8 +202,8 @@ pub(crate) fn availability(
                 ..
             }),
             _,
-        ) => UndoAvailability::Available,
-        (
+        )
+        | (
             Some(Checkpoint {
                 history:
                     HistoryAnchor::Claude {
@@ -184,8 +212,10 @@ pub(crate) fn availability(
                 ..
             }),
             HistoryAnchor::Claude { .. },
-        ) => UndoAvailability::Available,
-        (Some(_), HistoryAnchor::Codex { turn: Some(_), .. }) => UndoAvailability::Available,
+        )
+        | (Some(_), HistoryAnchor::Codex { turn: Some(_), .. }) => {
+            UndoAvailability::Available
+        }
         _ => UndoAvailability::Unavailable {
             reason: String::from("native history has no safe turn boundary"),
         },
@@ -196,8 +226,8 @@ pub(crate) fn availability(
 mod tests {
     use super::{Book, Recovery};
     use proto::{
-        Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor, HostSeq, SessionId,
-        UndoAvailability,
+        Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor, HostSeq,
+        SessionId, UndoAvailability,
     };
 
     fn event(kind: EventKind) -> Event {
@@ -222,7 +252,8 @@ mod tests {
     }
 
     #[test]
-    fn accepted_message_has_filesystem_intent_without_claiming_a_native_boundary() {
+    fn accepted_message_has_filesystem_intent_without_claiming_a_native_boundary()
+     {
         let events = Vec::from([
             checkpoint(0),
             event(EventKind::UserMessage {
@@ -266,7 +297,9 @@ mod tests {
                 turn: Some(String::from("later"))
             }),
             UndoAvailability::Unavailable {
-                reason: String::from("retained native turn prefix contains an unobserved boundary")
+                reason: String::from(
+                    "retained native turn prefix contains an unobserved boundary"
+                )
             }
         );
     }
@@ -337,7 +370,8 @@ mod tests {
     }
 
     #[test]
-    fn reservations_and_undone_checkpoints_keep_the_highwater_and_immutable_diff_history() {
+    fn reservations_and_undone_checkpoints_keep_the_highwater_and_immutable_diff_history()
+     {
         let book = Book::replay(&[
             checkpoint(0),
             checkpoint(1),

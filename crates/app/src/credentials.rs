@@ -5,8 +5,8 @@
 use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
-    Auth, Availability, ClaudeCredential, CodexCredential, CommandBody, CommandResult, Credential,
-    Provider, Providers,
+    Auth, Availability, ClaudeCredential, CodexCredential, CommandBody,
+    CommandResult, Credential, Provider, Providers,
 };
 
 use crate::{Link, PaneHeader, send};
@@ -48,7 +48,11 @@ pub(crate) fn CredentialsPane(
 }
 
 #[component]
-fn ClaudeGateway(host: String, availability: Option<Availability>, link: Signal<Link>) -> Element {
+fn ClaudeGateway(
+    host: String,
+    availability: Option<Availability>,
+    link: Signal<Link>,
+) -> Element {
     let base_url = use_signal(String::new);
     let mut token = use_signal(String::new);
     let sent = use_signal(|| Sent::Nothing);
@@ -78,7 +82,11 @@ fn ClaudeGateway(host: String, availability: Option<Availability>, link: Signal<
 }
 
 #[component]
-fn CodexProvider(host: String, availability: Option<Availability>, link: Signal<Link>) -> Element {
+fn CodexProvider(
+    host: String,
+    availability: Option<Availability>,
+    link: Signal<Link>,
+) -> Element {
     let name = use_signal(String::new);
     let base_url = use_signal(String::new);
     let model = use_signal(String::new);
@@ -90,7 +98,9 @@ fn CodexProvider(host: String, availability: Option<Availability>, link: Signal<
         model().trim(),
         key().as_str(),
     ) {
-        ("", _, _, _) | (_, "", _, _) | (_, _, "", _) | (_, _, _, "") => Save::Empty,
+        ("", _, _, _) | (_, "", _, _) | (_, _, "", _) | (_, _, _, "") => {
+            Save::Empty
+        }
         (_, _, _, _) => Save::Ready,
     };
     rsx! {
@@ -152,16 +162,22 @@ fn State(
                         "Clear"
                     }
                 },
-                Some(Availability::Available { auth: Auth::SignedIn | Auth::Unmanaged, .. })
-                | Some(Availability::Unavailable { .. })
-                | None => rsx! {},
+                Some(
+                    Availability::Available { auth: Auth::SignedIn | Auth::Unmanaged, .. }
+                    | Availability::Unavailable { .. }
+                ) | None => rsx! {},
             }
         }
     }
 }
 
 #[component]
-fn Field(label: String, kind: String, placeholder: String, mut value: Signal<String>) -> Element {
+fn Field(
+    label: String,
+    kind: String,
+    placeholder: String,
+    mut value: Signal<String>,
+) -> Element {
     rsx! {
         label { class: "field",
             span { class: "field-label", "{label}" }
@@ -188,14 +204,20 @@ fn Field(label: String, kind: String, placeholder: String, mut value: Signal<Str
 fn Outcome(host: String, sent: Sent) -> Element {
     match sent {
         Sent::Nothing => rsx! {},
-        Sent::Sending => rsx! { p { class: "hint muted", role: "status", "Sending…" } },
+        Sent::Sending => {
+            rsx! { p { class: "hint muted", role: "status", "Sending…" } }
+        }
         Sent::Stored => rsx! {
             p { class: "hint muted", role: "status",
                 "Sent to {host} over the encrypted link. This app doesn't keep it; your browser may offer to save it."
             }
         },
-        Sent::Cleared => rsx! { p { class: "hint muted", role: "status", "Cleared on {host}." } },
-        Sent::Failed(error) => rsx! { p { class: "hint error", role: "alert", "{error}" } },
+        Sent::Cleared => {
+            rsx! { p { class: "hint muted", role: "status", "Cleared on {host}." } }
+        }
+        Sent::Failed(error) => {
+            rsx! { p { class: "hint error", role: "alert", "{error}" } }
+        }
     }
 }
 
@@ -214,20 +236,33 @@ fn describe(availability: Option<&Availability>) -> String {
             auth: Auth::Unmanaged,
             ..
         }) => String::from("The host's own CLI, signed in on its own"),
-        Some(Availability::Unavailable { reason }) => format!("Not available: {reason}"),
+        Some(Availability::Unavailable { reason }) => {
+            format!("Not available: {reason}")
+        }
         None => String::from("Waiting for the host"),
     }
 }
 
-fn submit(link: Signal<Link>, mut sent: Signal<Sent>, body: CommandBody, done: Sent) {
+fn submit(
+    link: Signal<Link>,
+    mut sent: Signal<Sent>,
+    body: CommandBody,
+    done: Sent,
+) {
     sent.set(Sent::Sending);
     spawn(async move {
         sent.set(match send(link(), body).await {
             Ok(CommandResult::Providers(_)) => done,
-            Ok(CommandResult::Rejected(rejection)) => Sent::Failed(rejection.label()),
+            Ok(CommandResult::Rejected(rejection)) => {
+                Sent::Failed(rejection.label())
+            }
             Ok(
-                CommandResult::Accepted | CommandResult::Started { .. } | CommandResult::Diff(_),
-            ) => Sent::Failed(String::from("The host gave an unexpected answer.")),
+                CommandResult::Accepted
+                | CommandResult::Started { .. }
+                | CommandResult::Diff(_),
+            ) => Sent::Failed(String::from(
+                "The host gave an unexpected answer.",
+            )),
             Err(err) => Sent::Failed(err),
         });
     });

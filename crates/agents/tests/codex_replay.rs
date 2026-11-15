@@ -12,8 +12,9 @@ use std::time::Duration;
 
 use agents::Home;
 use agents::codex::{
-    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer, CodexThread, Decision,
-    Sandbox, ServerOptions, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
+    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer,
+    CodexThread, Decision, Sandbox, ServerOptions, ThreadEvent, ThreadId,
+    ThreadOptions, ThreadSettings, TurnId,
 };
 use n0_future::StreamExt;
 use proto::{Answer, Effort, ToolKind, ToolPhase, TurnOutcome};
@@ -107,8 +108,8 @@ struct Recorder {
 }
 
 impl Recorder {
-    async fn until(self, goal: Goal, interrupt: Interrupt) -> Recorder {
-        Recorder {
+    async fn until(self, goal: Goal, interrupt: Interrupt) -> Self {
+        Self {
             goal,
             interrupt,
             ..self
@@ -117,7 +118,7 @@ impl Recorder {
         .await
     }
 
-    async fn run(mut self) -> Recorder {
+    async fn run(mut self) -> Self {
         loop {
             let event = self.next().await;
             match self.on(event).await {
@@ -128,10 +129,11 @@ impl Recorder {
     }
 
     async fn next(&mut self) -> CodexEvent {
-        let event = tokio::time::timeout(Duration::from_secs(20), self.events.recv())
-            .await
-            .expect("no event within 20s; the replay is stuck")
-            .expect("event stream ended early");
+        let event =
+            tokio::time::timeout(Duration::from_secs(20), self.events.recv())
+                .await
+                .expect("no event within 20s; the replay is stuck")
+                .expect("event stream ended early");
         self.record(&event);
         event
     }
@@ -166,7 +168,10 @@ impl Recorder {
             ) => {
                 assert_eq!(thread, expected.id);
                 match (event, &self.interrupt) {
-                    (ThreadEvent::ApprovalRequested { .. }, Interrupt::OnRequest) => {
+                    (
+                        ThreadEvent::ApprovalRequested { .. },
+                        Interrupt::OnRequest,
+                    ) => {
                         expected.interrupt(turn.clone()).await.unwrap();
                         self.interrupt = Interrupt::Sent;
                         Progress::Playing
@@ -180,20 +185,25 @@ impl Recorder {
                         Progress::Playing
                     }
                     (
-                        ThreadEvent::AgentMessage { .. } | ThreadEvent::ToolCall { .. },
+                        ThreadEvent::AgentMessage { .. }
+                        | ThreadEvent::ToolCall { .. },
                         Interrupt::AfterFirstOutput,
                     ) => {
                         expected.interrupt(turn.clone()).await.unwrap();
                         self.interrupt = Interrupt::Sent;
                         Progress::Playing
                     }
-                    (ThreadEvent::TurnCompleted { turn: done, .. }, _) if &done == turn => {
+                    (ThreadEvent::TurnCompleted { turn: done, .. }, _)
+                        if &done == turn =>
+                    {
                         Progress::Done
                     }
                     _ => Progress::Playing,
                 }
             }
-            (Goal::Exit | Goal::Turns | Goal::Turn { .. }, _) => Progress::Playing,
+            (Goal::Exit | Goal::Turns | Goal::Turn { .. }, _) => {
+                Progress::Playing
+            }
         }
     }
 
@@ -214,14 +224,15 @@ impl Recorder {
                 .push(text.clone()),
             CodexEvent::Thread { thread, event } => {
                 if let Some(deltas) = self.deltas.remove(thread) {
-                    let line = format!("{} streams {deltas:?}", self.name(thread));
+                    let line =
+                        format!("{} streams {deltas:?}", self.name(thread));
                     self.seen.push(line);
                 }
                 let line = format!("{} {}", self.name(thread), summary(event));
                 self.seen.push(line);
             }
             CodexEvent::Exited { status } => {
-                self.seen.push(format!("exited {}", status.describe()))
+                self.seen.push(format!("exited {}", status.describe()));
             }
         }
     }
@@ -253,20 +264,30 @@ fn method(raw: &Value) -> String {
 fn summary(event: &ThreadEvent) -> String {
     match event {
         ThreadEvent::Started => String::from("started"),
-        ThreadEvent::SecretQuestionDeclined { .. } => String::from("secret question declined"),
+        ThreadEvent::SecretQuestionDeclined { .. } => {
+            String::from("secret question declined")
+        }
         ThreadEvent::TurnStarted { .. } => String::from("turn started"),
-        ThreadEvent::TurnCompleted { outcome, .. } => format!("turn {}", outcome_name(outcome)),
+        ThreadEvent::TurnCompleted { outcome, .. } => {
+            format!("turn {}", outcome_name(outcome))
+        }
         ThreadEvent::AgentDelta { text, .. } => format!("delta {text:?}"),
         ThreadEvent::AgentMessage { text, .. } => format!("says {text:?}"),
-        ThreadEvent::ReasoningDelta { text, .. } => format!("reasoning delta {text:?}"),
+        ThreadEvent::ReasoningDelta { text, .. } => {
+            format!("reasoning delta {text:?}")
+        }
         ThreadEvent::Reasoning { text, .. } => format!("reasons {text:?}"),
         ThreadEvent::ToolCall { phase, .. } => match phase {
             ToolPhase::Started { tool } => match tool {
                 ToolKind::Command { .. } => String::from("started command"),
-                ToolKind::FileChange { files } => format!("started fileChange {}", files.len()),
+                ToolKind::FileChange { files } => {
+                    format!("started fileChange {}", files.len())
+                }
                 ToolKind::Other { .. } => String::from("started other"),
             },
-            ToolPhase::Finished { outcome } => format!("finished tool {outcome:?}"),
+            ToolPhase::Finished { outcome } => {
+                format!("finished tool {outcome:?}")
+            }
         },
         ThreadEvent::ApprovalRequested {
             id, kind, options, ..
@@ -275,11 +296,15 @@ fn summary(event: &ThreadEvent) -> String {
                 ApprovalKind::Command { .. } => "command",
                 ApprovalKind::FileChange { .. } => "fileChange",
                 ApprovalKind::Permissions { .. } => "permissions",
-                ApprovalKind::UserInput { questions } => &format!("userInput {questions:?}"),
+                ApprovalKind::UserInput { questions } => {
+                    &format!("userInput {questions:?}")
+                }
             };
             format!("approval {} {kind} ({} options)", id.0, options.len())
         }
-        ThreadEvent::ApprovalCancelled { id } => format!("approval {} cancelled", id.0),
+        ThreadEvent::ApprovalCancelled { id } => {
+            format!("approval {} cancelled", id.0)
+        }
         ThreadEvent::Unknown(raw) => format!("unknown {}", method(raw)),
     }
 }
@@ -294,7 +319,8 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 
 async fn spawn(name: &str) -> Recorder {
     let (server, events) = CodexServer::spawn(ServerOptions {
-        codex_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fake-codex.sh"),
         home: Home::User,
         credential: None,
         cwd: fake_codex_dir(&fixture(name)),
@@ -472,7 +498,10 @@ async fn approve_decline_interrupt_and_two_threads() {
 async fn resume_in_a_new_process() {
     let rec = spawn("server2-resume.jsonl").await;
     let server = rec.server.clone();
-    let a = ThreadId(first_thread_id(&fixture("server1.jsonl")).expect("server1 started a thread"));
+    let a = ThreadId(
+        first_thread_id(&fixture("server1.jsonl"))
+            .expect("server1 started a thread"),
+    );
     let resumed = server.resume_thread(a.clone(), opts()).await.unwrap();
     assert_eq!(resumed.id, a);
     let rec = turn(
@@ -570,7 +599,10 @@ async fn questions_and_accept_for_session() {
     let rec = spawn("server3-questions.jsonl").await;
     let server = rec.server.clone();
     let a = server.start_thread(opts()).await.unwrap();
-    let blue = Decision::Answer(Vec::from([Answer(Vec::from([String::from("Blue")]))]));
+    let blue =
+        Decision::Answer(Vec::from([Answer(Vec::from([String::from(
+            "Blue",
+        )]))]));
     let rec = turn(rec, &a, "ask", blue, Interrupt::Never).await;
     let rec = turn(
         rec,
@@ -635,7 +667,9 @@ fn first_thread_id(fixture: &Path) -> Option<String> {
             Some("thread/started") => Some(m),
             _ => None,
         })
-        .and_then(|m| m.pointer("/params/thread/id")?.as_str().map(str::to_owned))
+        .and_then(|m| {
+            m.pointer("/params/thread/id")?.as_str().map(str::to_owned)
+        })
 }
 
 /// Each refusal recording has its own directory, even when tests run together.
@@ -647,7 +681,8 @@ fn refusal_options(name: &str, recording: &str) -> ServerOptions {
     std::fs::create_dir_all(&cwd).unwrap();
     std::fs::write(cwd.join("stdout.jsonl"), recording).unwrap();
     ServerOptions {
-        codex_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fake-codex.sh"),
         home: Home::User,
         credential: None,
         cwd,
@@ -711,7 +746,9 @@ async fn thread_refusal(method: &str, failure: &str, expected: &str) {
             .await
             .err()
             .unwrap(),
-        _ => agents::codex::Error::Command(format!("unexpected test method {method}")),
+        _ => agents::codex::Error::Command(format!(
+            "unexpected test method {method}"
+        )),
     };
     assert_eq!(error.to_string(), expected);
     // A later request must retain the same stderr reason after the actor exits.
@@ -808,13 +845,17 @@ async fn revert_targets_native_turn_and_keeps_thread_usable() {
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .find(|line| line.get("method").and_then(Value::as_str) == Some("thread/revert"))
+        .find(|line| {
+            line.get("method").and_then(Value::as_str) == Some("thread/revert")
+        })
         .unwrap();
     assert_eq!(
         sent.get("params"),
         Some(
-            &serde_json::from_str::<Value>(r#"{"threadId":"th_undo","beforeTurnId":"tu_discard"}"#)
-                .unwrap()
+            &serde_json::from_str::<Value>(
+                r#"{"threadId":"th_undo","beforeTurnId":"tu_discard"}"#
+            )
+            .unwrap()
         )
     );
     std::fs::remove_dir_all(live.cwd).unwrap();
@@ -884,7 +925,10 @@ async fn history_reads_every_page_in_chronological_order() {
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|line| line.get("method").and_then(Value::as_str) == Some("thread/turns/list"))
+        .filter(|line| {
+            line.get("method").and_then(Value::as_str)
+                == Some("thread/turns/list")
+        })
         .map(|line| line.get("params").cloned().unwrap())
         .collect::<Vec<Value>>();
     assert_eq!(requests, Vec::from([
@@ -899,10 +943,13 @@ async fn endless_history_cursor_fails_instead_of_returning_partial_prefix() {
     let pages = std::ops::RangeInclusive::new(3,102).map(|id|format!("{{\"id\":{id},\"result\":{{\"data\":[{{\"id\":\"partial\"}}],\"nextCursor\":\"endless\"}}}}"))
         .collect::<Vec<String>>().join("\n");
     let live = history_fixture("history-bound", &pages).await;
-    let error = tokio::time::timeout(Duration::from_secs(20), live.thread.history_turns())
-        .await
-        .unwrap()
-        .unwrap_err();
+    let error = tokio::time::timeout(
+        Duration::from_secs(20),
+        live.thread.history_turns(),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
     assert_eq!(
         error.to_string(),
         "codex history exceeded 100 pages; refusing an incomplete undo check"

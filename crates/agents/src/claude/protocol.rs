@@ -3,8 +3,8 @@
 //! Frames and fields we do not model are ignored or passed on as `Unknown`.
 
 use proto::{
-    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question, QuestionOption,
-    Selection, ToolKind, ToolOutcome, TurnOutcome,
+    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
+    QuestionOption, Selection, ToolKind, ToolOutcome, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,12 +38,12 @@ impl PermissionMode {
     /// The name `--permission-mode` and `set_permission_mode` take.
     pub(crate) fn wire(&self) -> &str {
         match self {
-            PermissionMode::Default => "default",
-            PermissionMode::AcceptEdits => "acceptEdits",
-            PermissionMode::Plan => "plan",
-            PermissionMode::BypassPermissions => "bypassPermissions",
-            PermissionMode::DontAsk => "dontAsk",
-            PermissionMode::Auto => "auto",
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Plan => "plan",
+            Self::BypassPermissions => "bypassPermissions",
+            Self::DontAsk => "dontAsk",
+            Self::Auto => "auto",
         }
     }
 }
@@ -57,7 +57,7 @@ pub enum AfterDeny {
     Interrupt,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionDecision {
     /// Run the tool with the input the CLI proposed.
     Allow,
@@ -80,15 +80,25 @@ pub enum Role {
 
 /// The part of each tool's `input` worth showing, as the shared tool kind.
 fn tool_kind(name: &str, input: &Value) -> ToolKind {
-    let shown = match name {
-        "Bash" => field(input, "command").map(|command| ToolKind::Command { command }),
-        "Write" => field(input, "file_path").map(|path| one_file(path, Change::Write)),
-        "Edit" | "MultiEdit" => field(input, "file_path").map(|path| one_file(path, Change::Edit)),
-        "Read" => field(input, "file_path").map(|detail| other_tool(name, detail)),
-        "Grep" | "Glob" => field(input, "pattern").map(|detail| other_tool(name, detail)),
-        "WebFetch" => field(input, "url").map(|detail| other_tool(name, detail)),
-        _ => None,
-    };
+    let shown =
+        match name {
+            "Bash" => field(input, "command")
+                .map(|command| ToolKind::Command { command }),
+            "Write" => field(input, "file_path")
+                .map(|path| one_file(path, Change::Write)),
+            "Edit" | "MultiEdit" => field(input, "file_path")
+                .map(|path| one_file(path, Change::Edit)),
+            "Read" => {
+                field(input, "file_path").map(|detail| other_tool(name, detail))
+            }
+            "Grep" | "Glob" => {
+                field(input, "pattern").map(|detail| other_tool(name, detail))
+            }
+            "WebFetch" => {
+                field(input, "url").map(|detail| other_tool(name, detail))
+            }
+            _ => None,
+        };
     shown.unwrap_or_else(|| other_tool(name, input.to_string()))
 }
 
@@ -109,7 +119,7 @@ fn field(input: &Value, name: &str) -> Option<String> {
     input.get(name).and_then(Value::as_str).map(str::to_owned)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
     Text(String),
     Thinking(String),
@@ -126,7 +136,7 @@ pub enum Block {
     Other(Value),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudeEvent {
     /// The CLI read a user message and began its turn (`system/init`, which
     /// it prints once per turn with the same `session_id`).
@@ -397,7 +407,9 @@ fn grant(suggestions: Option<Value>) -> Option<Grant> {
         .map(|rules| Grant {
             label: rules
                 .iter()
-                .filter_map(|rule| serde_json::from_value::<Rule>(rule.clone()).ok())
+                .filter_map(|rule| {
+                    serde_json::from_value::<Rule>(rule.clone()).ok()
+                })
                 .map(|rule| rule.label())
                 .collect::<Vec<String>>()
                 .join(", "),
@@ -509,7 +521,9 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
                 .then_some(terminal_reason.as_deref())
             {
                 None => TurnOutcome::Completed,
-                Some(Some("aborted_streaming" | "aborted_tools")) => TurnOutcome::Interrupted,
+                Some(Some("aborted_streaming" | "aborted_tools")) => {
+                    TurnOutcome::Interrupted
+                }
                 Some(_) => TurnOutcome::Failed {
                     message: subtype.clone(),
                 },
@@ -598,7 +612,9 @@ fn control_request(request_id: String, request: Value) -> Inbound {
                             tool: tool_kind(&tool_name, &input),
                             tool_name,
                             tool_use_id,
-                            for_session: grant.as_ref().map(|grant| grant.label.clone()),
+                            for_session: grant
+                                .as_ref()
+                                .map(|grant| grant.label.clone()),
                         },
                         grant,
                     )
@@ -629,7 +645,11 @@ fn control_request(request_id: String, request: Value) -> Inbound {
     }
 }
 
-fn message_event(role: Role, message: Message, uuid: Option<String>) -> Inbound {
+fn message_event(
+    role: Role,
+    message: Message,
+    uuid: Option<String>,
+) -> Inbound {
     Inbound::Event(ClaudeEvent::Message {
         role,
         uuid: uuid.map(MessageId),
@@ -709,7 +729,8 @@ struct Settings {
 }
 
 pub(crate) fn applied(settings: Value) -> serde_json::Result<Applied> {
-    serde_json::from_value::<Settings>(settings).map(|settings| settings.applied)
+    serde_json::from_value::<Settings>(settings)
+        .map(|settings| settings.applied)
 }
 
 /// The row of `models` that stands for whichever model is the default.
@@ -720,8 +741,7 @@ const DEFAULT_ROW: &str = "default";
 /// the default.
 pub(crate) fn models(initialize: &Value) -> Models {
     let rows = serde_json::from_value::<InitializeModels>(initialize.clone())
-        .map(|listed| listed.models)
-        .unwrap_or_default();
+        .map_or(Vec::new(), |listed| listed.models);
     let resolved = rows
         .iter()
         .find(|row| row.value == DEFAULT_ROW)
@@ -754,12 +774,15 @@ pub(crate) fn models(initialize: &Value) -> Models {
 }
 
 /// Checks the `claude_code_version` an `initialize` response reports.
-pub(crate) fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
+pub(crate) fn check_version(
+    initialize: Value,
+) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map_err(|_| UnsupportedVersion::Unreported)?
         .claude_code_version;
     match found.as_str() {
-        "2.1.316" | "2.1.317" | "2.1.318" | "2.1.319" | "2.1.320" | "2.1.321" | "2.1.322" => Ok(()),
+        "2.1.316" | "2.1.317" | "2.1.318" | "2.1.319" | "2.1.320"
+        | "2.1.321" | "2.1.322" => Ok(()),
         _ => Err(UnsupportedVersion::Outside {
             found,
             supported: String::from(SUPPORTED_VERSIONS),
@@ -857,7 +880,10 @@ enum Verdict {
     Allow {
         #[serde(rename = "updatedInput")]
         updated_input: Value,
-        #[serde(rename = "updatedPermissions", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "updatedPermissions",
+            skip_serializing_if = "Option::is_none"
+        )]
         updated_permissions: Option<Vec<Update>>,
     },
     Deny {
@@ -884,9 +910,11 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
             request: match call {
                 ControlCall::Initialize => Request::Initialize,
                 ControlCall::Interrupt => Request::Interrupt,
-                ControlCall::SetPermissionMode(mode) => Request::SetPermissionMode {
-                    mode: String::from(mode.wire()),
-                },
+                ControlCall::SetPermissionMode(mode) => {
+                    Request::SetPermissionMode {
+                        mode: String::from(mode.wire()),
+                    }
+                }
                 ControlCall::GetSettings => Request::GetSettings,
             },
         },
@@ -908,7 +936,10 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
     })
 }
 
-fn verdict(decision: PermissionDecision, open: Open) -> serde_json::Result<Verdict> {
+fn verdict(
+    decision: PermissionDecision,
+    open: Open,
+) -> serde_json::Result<Verdict> {
     Ok(match decision {
         PermissionDecision::Allow => Verdict::Allow {
             updated_input: open.input,
@@ -916,7 +947,9 @@ fn verdict(decision: PermissionDecision, open: Open) -> serde_json::Result<Verdi
         },
         PermissionDecision::AllowForSession => Verdict::Allow {
             updated_input: open.input,
-            updated_permissions: Some(open.grant.into_iter().map(|grant| grant.update).collect()),
+            updated_permissions: Some(
+                open.grant.into_iter().map(|grant| grant.update).collect(),
+            ),
         },
         PermissionDecision::Answer(answers) => Verdict::Allow {
             updated_input: answered(open.input, answers)?,
@@ -946,7 +979,9 @@ fn answered(input: Value, answers: Vec<Answer>) -> serde_json::Result<Value> {
     let answers = questions(&input)?
         .into_iter()
         .zip(answers)
-        .map(|(asked, answer)| (asked.question, Value::String(answer.0.join(", "))))
+        .map(|(asked, answer)| {
+            (asked.question, Value::String(answer.0.join(", ")))
+        })
         .collect::<serde_json::Map<String, Value>>();
     Ok(match input {
         Value::Object(fields) => Value::Object(
@@ -964,13 +999,14 @@ mod tests {
     use serde_json::Value;
 
     use proto::{
-        Answer, Change, FileChange, Question, QuestionOption, Selection, ToolKind, ToolOutcome,
-        TurnOutcome,
+        Answer, Change, FileChange, Question, QuestionOption, Selection,
+        ToolKind, ToolOutcome, TurnOutcome,
     };
 
     use super::{
-        AfterDeny, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
-        PermissionDecision, PermissionMode, PermissionRequestId, encode, parse_line,
+        AfterDeny, ClaudeEvent, ControlCall, Inbound, MessageId, Open,
+        Outbound, PermissionDecision, PermissionMode, PermissionRequestId,
+        encode, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -994,7 +1030,10 @@ mod tests {
     }
 
     /// The `response` of our answer to the request on `line`.
-    fn answered(line: &str, decision: PermissionDecision) -> (ClaudeEvent, Value) {
+    fn answered(
+        line: &str,
+        decision: PermissionDecision,
+    ) -> (ClaudeEvent, Value) {
         let (event, open) = asked(line);
         let sent = sent(Outbound::Permission {
             id: PermissionRequestId(String::from("r1")),
@@ -1039,10 +1078,15 @@ mod tests {
                 .into_iter()
                 .map(|(line, expected)| {
                     let actual = match parse_line(line).unwrap() {
-                        Inbound::Event(ClaudeEvent::Message { uuid, .. }) => uuid,
+                        Inbound::Event(ClaudeEvent::Message {
+                            uuid, ..
+                        }) => uuid,
                         Inbound::Event(ClaudeEvent::Unknown(_)) => None,
                         frame => {
-                            assert_eq!(format!("{frame:?}"), "expected message boundary");
+                            assert_eq!(
+                                format!("{frame:?}"),
+                                "expected message boundary"
+                            );
                             None
                         }
                     };
@@ -1070,7 +1114,8 @@ mod tests {
 
     #[test]
     fn allow_for_session_adds_the_suggested_rules_for_the_session_only() {
-        let (event, response) = answered(BASH, PermissionDecision::AllowForSession);
+        let (event, response) =
+            answered(BASH, PermissionDecision::AllowForSession);
         assert_eq!(
             event,
             ClaudeEvent::PermissionRequested {
@@ -1096,7 +1141,8 @@ mod tests {
 
     #[test]
     fn a_suggested_mode_is_no_session_grant() {
-        let (event, response) = answered(WRITE, PermissionDecision::AllowForSession);
+        let (event, response) =
+            answered(WRITE, PermissionDecision::AllowForSession);
         assert_eq!(
             (event, response.get("updatedPermissions")),
             (
@@ -1129,7 +1175,10 @@ mod tests {
         let (event, response) = answered(
             ASK,
             PermissionDecision::Answer(Vec::from([
-                Answer(Vec::from([String::from("Apple"), String::from("Pear")])),
+                Answer(Vec::from([
+                    String::from("Apple"),
+                    String::from("Pear"),
+                ])),
                 Answer(Vec::from([String::from("Green, really")])),
             ])),
         );
@@ -1141,13 +1190,19 @@ mod tests {
                     Question {
                         header: String::from("Fruits"),
                         text: String::from("Which fruits do you like?"),
-                        options: Vec::from([option("Apple", "Crisp"), option("Pear", "Soft")]),
+                        options: Vec::from([
+                            option("Apple", "Crisp"),
+                            option("Pear", "Soft")
+                        ]),
                         selection: Selection::Many,
                     },
                     Question {
                         header: String::from("Color"),
                         text: String::from("Which color do you prefer?"),
-                        options: Vec::from([option("Red", "Warm"), option("Blue", "Cool")]),
+                        options: Vec::from([
+                            option("Red", "Warm"),
+                            option("Blue", "Cool")
+                        ]),
                         selection: Selection::One,
                     },
                 ]),
@@ -1216,7 +1271,9 @@ mod tests {
             )
         );
         assert_eq!(
-            control(ControlCall::SetPermissionMode(PermissionMode::AcceptEdits)),
+            control(ControlCall::SetPermissionMode(
+                PermissionMode::AcceptEdits
+            )),
             json(
                 r#"{"type": "control_request", "request_id": "req_7",
                 "request": {"subtype": "set_permission_mode", "mode": "acceptEdits"}}"#
@@ -1247,7 +1304,9 @@ mod tests {
         assert_eq!(
             sent(Outbound::ControlError {
                 request_id: String::from("cli_9"),
-                message: String::from("unsupported control request subtype: hook_callback"),
+                message: String::from(
+                    "unsupported control request subtype: hook_callback"
+                ),
             }),
             json(
                 r#"{"type": "control_response", "response": {"subtype": "error", "request_id": "cli_9",

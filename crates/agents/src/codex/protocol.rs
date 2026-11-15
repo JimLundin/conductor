@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use proto::{
-    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question, QuestionOption,
-    Selection, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
+    QuestionOption, Selection, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,8 +33,8 @@ pub struct TurnId(pub String);
 pub struct ApprovalId(pub String);
 
 impl ApprovalId {
-    pub(crate) fn of(id: &RequestId) -> ApprovalId {
-        ApprovalId(match id {
+    pub(crate) fn of(id: &RequestId) -> Self {
+        Self(match id {
             RequestId::Integer(n) => n.to_string(),
             RequestId::String(s) => s.clone(),
         })
@@ -49,7 +50,7 @@ pub(crate) enum RequestId {
 }
 
 impl RequestId {
-    fn read(id: &Value) -> Option<RequestId> {
+    fn read(id: &Value) -> Option<Self> {
         serde_json::from_value(id.clone()).ok()
     }
 }
@@ -112,7 +113,7 @@ pub enum PermissionAsk {
     Write(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalKind {
     Command {
         command: Option<String>,
@@ -131,7 +132,7 @@ pub enum ApprovalKind {
     UserInput { questions: Vec<Question> },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadEvent {
     Started,
     TurnStarted {
@@ -192,7 +193,7 @@ pub enum ThreadEvent {
     Unknown(Value),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodexEvent {
     Thread {
         thread: ThreadId,
@@ -205,7 +206,7 @@ pub enum CodexEvent {
     Unknown(Value),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Accept,
     AcceptForSession,
@@ -533,7 +534,8 @@ fn inbound(envelope: Envelope, raw: Value) -> Inbound {
 }
 
 /// The plain decisions the schema allows, offered when Codex lists none.
-const PLAIN_DECISIONS: &[&str] = &["accept", "acceptForSession", "decline", "cancel"];
+const PLAIN_DECISIONS: &[&str] =
+    &["accept", "acceptForSession", "decline", "cancel"];
 
 fn plain_decisions() -> Vec<Value> {
     PLAIN_DECISIONS.iter().copied().map(Value::from).collect()
@@ -607,7 +609,9 @@ fn place(path: &Place) -> String {
         Place::Special { value } => match value {
             SpecialPlace::Root => String::from("/"),
             SpecialPlace::Minimal => String::from("the minimal system paths"),
-            SpecialPlace::ProjectRoots { subpath: None } => String::from("the project roots"),
+            SpecialPlace::ProjectRoots { subpath: None } => {
+                String::from("the project roots")
+            }
             SpecialPlace::ProjectRoots {
                 subpath: Some(subpath),
             } => format!("{subpath} in the project roots"),
@@ -632,7 +636,9 @@ fn served(request: ServerRequest) -> serde_json::Result<Served> {
             .position(|question| question.is_secret == Some(true))
         {
             Some(_) => Ok(Served::Secret),
-            None => asked(ServerRequest::UserInput { questions }).map(Served::Asked),
+            None => {
+                asked(ServerRequest::UserInput { questions }).map(Served::Asked)
+            }
         },
         request => asked(request).map(Served::Asked),
     }
@@ -665,7 +671,9 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
         } => Asked {
             kind: ApprovalKind::Permissions {
                 reason,
-                asks: permission_asks(serde_json::from_value(permissions.clone())?),
+                asks: permission_asks(serde_json::from_value(
+                    permissions.clone(),
+                )?),
             },
             shape: AnswerShape::Permissions(permissions),
             options: Vec::new(),
@@ -695,7 +703,12 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
 
 /// A request whose method we don't serve, or whose params don't fit, still
 /// gets an error reply.
-fn request(rpc_id: RequestId, method: String, params: Option<Value>, raw: Value) -> Inbound {
+fn request(
+    rpc_id: RequestId,
+    method: String,
+    params: Option<Value>,
+    raw: Value,
+) -> Inbound {
     let served = serde_json::from_value::<ServerRequest>(raw.clone())
         .and_then(served)
         .and_then(|served| {
@@ -741,7 +754,9 @@ fn on_thread(thread: String, event: ThreadEvent) -> Inbound {
 
 fn notification(raw: Value) -> Inbound {
     match serde_json::from_value::<Notification>(raw.clone()) {
-        Ok(Notification::ThreadStarted { thread }) => on_thread(thread.id, ThreadEvent::Started),
+        Ok(Notification::ThreadStarted { thread }) => {
+            on_thread(thread.id, ThreadEvent::Started)
+        }
         Ok(Notification::TurnStarted { thread_id, turn }) => on_thread(
             thread_id,
             ThreadEvent::TurnStarted {
@@ -752,12 +767,14 @@ fn notification(raw: Value) -> Inbound {
             let outcome = match turn.status {
                 TurnStatus::Completed => TurnOutcome::Completed,
                 TurnStatus::Interrupted => TurnOutcome::Interrupted,
-                TurnStatus::Failed | TurnStatus::InProgress => TurnOutcome::Failed {
-                    message: turn
-                        .error
-                        .map(|e| e.message)
-                        .unwrap_or_else(|| String::from("the turn failed")),
-                },
+                TurnStatus::Failed | TurnStatus::InProgress => {
+                    TurnOutcome::Failed {
+                        message: turn.error.map_or_else(
+                            || String::from("the turn failed"),
+                            |e| e.message,
+                        ),
+                    }
+                }
             };
             on_thread(
                 thread_id,
@@ -817,12 +834,19 @@ fn notification(raw: Value) -> Inbound {
     }
 }
 
-fn item_event(thread: String, turn: String, phase: ItemPhase, item: ThreadItem) -> Inbound {
+fn item_event(
+    thread: String,
+    turn: String,
+    phase: ItemPhase,
+    item: ThreadItem,
+) -> Inbound {
     let turn = TurnId(turn);
     on_thread(
         thread,
         match item {
-            ThreadItem::AgentMessage { text } => ThreadEvent::AgentMessage { turn, text },
+            ThreadItem::AgentMessage { text } => {
+                ThreadEvent::AgentMessage { turn, text }
+            }
             ThreadItem::Reasoning { summary } => ThreadEvent::Reasoning {
                 turn,
                 text: summary.join("\n\n"),
@@ -831,7 +855,13 @@ fn item_event(thread: String, turn: String, phase: ItemPhase, item: ThreadItem) 
                 id,
                 command,
                 status,
-            } => tool_event(turn, id, phase, ToolKind::Command { command }, status),
+            } => tool_event(
+                turn,
+                id,
+                phase,
+                ToolKind::Command { command },
+                status,
+            ),
             ThreadItem::FileChange {
                 id,
                 changes,
@@ -990,7 +1020,9 @@ struct ThreadTurnsPage {
     next_cursor: Value,
 }
 
-pub(crate) fn history_page(value: Value) -> serde_json::Result<(Vec<TurnId>, Option<String>)> {
+pub(crate) fn history_page(
+    value: Value,
+) -> serde_json::Result<(Vec<TurnId>, Option<String>)> {
     let page = serde_json::from_value::<ThreadTurnsPage>(value)?;
     // The field is required and nullable. Missing nextCursor must not look
     // like a complete history, as serde's missing Option field would.
@@ -1064,26 +1096,38 @@ impl Call {
                 },
             }),
             Self::ModelList => Ok(Value::Object(serde_json::Map::new())),
-            Self::ThreadStart(opts) => thread_params(None, Some(HistoryMode::Paginated), opts),
-            Self::ThreadResume(thread, opts) => thread_params(Some(thread.0.clone()), None, opts),
-            Self::ThreadRevert { thread, before } => serde_json::to_value(ThreadRevertParams {
-                thread_id: thread.0.clone(),
-                before_turn_id: before.0.clone(),
-            }),
-            Self::ThreadTurns { thread, cursor } => serde_json::to_value(ThreadTurnsParams {
-                thread_id: thread.0.clone(),
-                cursor: cursor.clone(),
-                limit: 100,
-                sort_direction: String::from("asc"),
-            }),
-            Self::TurnStart { thread, text } => serde_json::to_value(TurnStartParams {
-                thread_id: thread.0.clone(),
-                input: Vec::from([UserInput::Text { text: text.clone() }]),
-            }),
-            Self::TurnInterrupt { thread, turn } => serde_json::to_value(TurnInterruptParams {
-                thread_id: thread.0.clone(),
-                turn_id: turn.0.clone(),
-            }),
+            Self::ThreadStart(opts) => {
+                thread_params(None, Some(HistoryMode::Paginated), opts)
+            }
+            Self::ThreadResume(thread, opts) => {
+                thread_params(Some(thread.0.clone()), None, opts)
+            }
+            Self::ThreadRevert { thread, before } => {
+                serde_json::to_value(ThreadRevertParams {
+                    thread_id: thread.0.clone(),
+                    before_turn_id: before.0.clone(),
+                })
+            }
+            Self::ThreadTurns { thread, cursor } => {
+                serde_json::to_value(ThreadTurnsParams {
+                    thread_id: thread.0.clone(),
+                    cursor: cursor.clone(),
+                    limit: 100,
+                    sort_direction: String::from("asc"),
+                })
+            }
+            Self::TurnStart { thread, text } => {
+                serde_json::to_value(TurnStartParams {
+                    thread_id: thread.0.clone(),
+                    input: Vec::from([UserInput::Text { text: text.clone() }]),
+                })
+            }
+            Self::TurnInterrupt { thread, turn } => {
+                serde_json::to_value(TurnInterruptParams {
+                    thread_id: thread.0.clone(),
+                    turn_id: turn.0.clone(),
+                })
+            }
         }
     }
 }
@@ -1105,7 +1149,9 @@ fn thread_params(
                 default_mode_request_user_input: true,
             },
             model_reasoning_summary: String::from("auto"),
-            model_reasoning_effort: opts.effort.map(|effort| String::from(effort.wire())),
+            model_reasoning_effort: opts
+                .effort
+                .map(|effort| String::from(effort.wire())),
         },
     })
 }
@@ -1189,7 +1235,9 @@ struct InitializeResponse {
 
 /// `thread/start` and `thread/resume` both answer `{thread: {id, ..},
 /// model, reasoningEffort, ..}`.
-pub(crate) fn thread_started(result: Value) -> serde_json::Result<(ThreadId, ThreadSettings)> {
+pub(crate) fn thread_started(
+    result: Value,
+) -> serde_json::Result<(ThreadId, ThreadSettings)> {
     let r = serde_json::from_value::<ThreadResponse>(result)?;
     Ok((
         ThreadId(r.thread.id),
@@ -1267,29 +1315,42 @@ enum PlainDecision {
 }
 
 /// The JSON-RPC `result` that answers an open request with `decision`.
-pub(crate) fn answer(shape: &AnswerShape, decision: Decision) -> Result<Value, AnswerError> {
+pub(crate) fn answer(
+    shape: &AnswerShape,
+    decision: Decision,
+) -> Result<Value, AnswerError> {
     match (shape, decision) {
         (_, Decision::Raw(result)) => Ok(result),
-        (AnswerShape::UserInput(ids), Decision::Answer(answers)) => encoded(UserInputAnswer {
-            answers: ids
-                .iter()
-                .cloned()
-                .zip(answers)
-                .map(|(id, answer)| (id, QuestionAnswer { answers: answer.0 }))
-                .collect(),
-        }),
+        (AnswerShape::UserInput(ids), Decision::Answer(answers)) => {
+            encoded(UserInputAnswer {
+                answers: ids
+                    .iter()
+                    .cloned()
+                    .zip(answers)
+                    .map(|(id, answer)| {
+                        (id, QuestionAnswer { answers: answer.0 })
+                    })
+                    .collect(),
+            })
+        }
         (AnswerShape::UserInput(_), _)
         | (
-            AnswerShape::Command | AnswerShape::FileChange | AnswerShape::Permissions(_),
+            AnswerShape::Command
+            | AnswerShape::FileChange
+            | AnswerShape::Permissions(_),
             Decision::Answer(_),
         ) => Err(AnswerError::NotApplicable),
-        (AnswerShape::Command | AnswerShape::FileChange, decision) => encoded(PlainAnswer {
-            decision: plain(decision),
-        }),
-        (AnswerShape::Permissions(requested), Decision::Accept) => encoded(PermissionGrant {
-            permissions: requested.clone(),
-            scope: GrantScope::Turn,
-        }),
+        (AnswerShape::Command | AnswerShape::FileChange, decision) => {
+            encoded(PlainAnswer {
+                decision: plain(decision),
+            })
+        }
+        (AnswerShape::Permissions(requested), Decision::Accept) => {
+            encoded(PermissionGrant {
+                permissions: requested.clone(),
+                scope: GrantScope::Turn,
+            })
+        }
         (AnswerShape::Permissions(requested), Decision::AcceptForSession) => {
             encoded(PermissionGrant {
                 permissions: requested.clone(),
@@ -1309,7 +1370,9 @@ fn plain(decision: Decision) -> PlainDecision {
         Decision::Accept => PlainDecision::Accept,
         Decision::AcceptForSession => PlainDecision::AcceptForSession,
         Decision::Decline => PlainDecision::Decline,
-        Decision::Cancel | Decision::Raw(_) | Decision::Answer(_) => PlainDecision::Cancel,
+        Decision::Cancel | Decision::Raw(_) | Decision::Answer(_) => {
+            PlainDecision::Cancel
+        }
     }
 }
 
@@ -1375,7 +1438,9 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
         Outbound::Initialized => OutboundFrame::Notification {
             method: String::from("initialized"),
         },
-        Outbound::Answer { rpc_id, result } => OutboundFrame::Answer { id: rpc_id, result },
+        Outbound::Answer { rpc_id, result } => {
+            OutboundFrame::Answer { id: rpc_id, result }
+        }
         Outbound::Reject { rpc_id, message } => OutboundFrame::Reject {
             error: RpcError {
                 code: METHOD_NOT_FOUND,
@@ -1394,9 +1459,10 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call, CodexEvent,
-        Decision, Inbound, Outbound, PermissionAsk, RequestId, Sandbox, ThreadEvent, ThreadId,
-        ThreadOptions, TurnId, answer, encode, encoded, parse_line,
+        AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy,
+        Call, CodexEvent, Decision, Inbound, Outbound, PermissionAsk,
+        RequestId, Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId,
+        answer, encode, encoded, parse_line,
     };
 
     fn json(text: &str) -> Value {
@@ -1623,7 +1689,9 @@ mod tests {
 
     #[test]
     fn a_native_option_is_sent_verbatim() {
-        let option = json(r#"{"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls"]}}"#);
+        let option = json(
+            r#"{"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls"]}}"#,
+        );
         assert_eq!(
             answered(
                 &AnswerShape::Command,
@@ -1638,7 +1706,8 @@ mod tests {
 
     #[test]
     fn permissions_grant_back_what_was_requested() {
-        let shape = AnswerShape::Permissions(json(r#"{"network": {"enabled": true}}"#));
+        let shape =
+            AnswerShape::Permissions(json(r#"{"network": {"enabled": true}}"#));
         assert_eq!(
             answered(&shape, Decision::Accept),
             json(
@@ -1662,7 +1731,8 @@ mod tests {
 
     #[test]
     fn a_secret_question_is_declined_without_its_content() {
-        let line = USER_INPUT.replace(r#""isSecret": false"#, r#""isSecret": true"#);
+        let line =
+            USER_INPUT.replace(r#""isSecret": false"#, r#""isSecret": true"#);
         assert_eq!(
             parse_line(&line).unwrap(),
             Inbound::Declined {
@@ -1717,9 +1787,13 @@ mod tests {
         assert_eq!(
             answered(
                 &shape,
-                Decision::Answer(Vec::from([Answer(Vec::from([String::from("Blue")]))]))
+                Decision::Answer(Vec::from([Answer(Vec::from([
+                    String::from("Blue")
+                ]))]))
             ),
-            json(r#"{"id": 0, "result": {"answers": {"preferred_color": {"answers": ["Blue"]}}}}"#)
+            json(
+                r#"{"id": 0, "result": {"answers": {"preferred_color": {"answers": ["Blue"]}}}}"#
+            )
         );
         assert_eq!(
             match answer(&shape, Decision::Accept) {
@@ -1734,9 +1808,13 @@ mod tests {
     #[test]
     fn an_answer_that_does_not_encode_is_an_encode_error() {
         assert_eq!(
-            match encoded(BTreeMap::from([((1, 2), "a tuple is not a JSON key")])) {
+            match encoded(BTreeMap::from([(
+                (1, 2),
+                "a tuple is not a JSON key"
+            )])) {
                 Err(AnswerError::Encode(e)) => e.to_string(),
-                Err(AnswerError::NotApplicable) => String::from("not applicable"),
+                Err(AnswerError::NotApplicable) =>
+                    String::from("not applicable"),
                 Ok(value) => value.to_string(),
             },
             "key must be a string"
@@ -1748,7 +1826,9 @@ mod tests {
         assert_eq!(
             sent(Outbound::Reject {
                 rpc_id: RequestId::Integer(4),
-                message: String::from("conductor does not handle item/tool/call"),
+                message: String::from(
+                    "conductor does not handle item/tool/call"
+                ),
             }),
             json(
                 r#"{"id": 4, "error": {"code": -32601,
@@ -1806,7 +1886,9 @@ mod tests {
                 Some(String::from("to fetch")),
                 Vec::from([
                     PermissionAsk::Network,
-                    PermissionAsk::Read(Vec::from([String::from("/etc/hosts")])),
+                    PermissionAsk::Read(Vec::from([String::from(
+                        "/etc/hosts"
+                    )])),
                     PermissionAsk::Write(Vec::from([
                         String::from("/home/u/.cargo"),
                         String::from("/tmp"),
@@ -1858,8 +1940,7 @@ mod tests {
 
     #[test]
     fn resolved_names_the_request_id() {
-        let line =
-            r#"{"method":"serverRequest/resolved","params":{"threadId":"th_1","requestId":0}}"#;
+        let line = r#"{"method":"serverRequest/resolved","params":{"threadId":"th_1","requestId":0}}"#;
         assert_eq!(
             parse_line(line).unwrap(),
             Inbound::Resolved {
@@ -1871,7 +1952,9 @@ mod tests {
 
     #[test]
     fn tool_notifications_emit_shared_phases_and_file_changes() {
-        use proto::{Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase};
+        use proto::{
+            Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+        };
         let cases = [
             (
                 r#"{"method":"item/started","params":{"threadId":"th","turnId":"tu","item":{"type":"commandExecution","id":"call","command":"pwd","status":"inProgress"}}}"#,

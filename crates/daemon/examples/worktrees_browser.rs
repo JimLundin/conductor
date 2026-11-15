@@ -9,7 +9,8 @@ use anyhow::Context;
 use clap::Parser;
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    ClientName, CommandBody, CommandResult, EventKind, HostPath, Provider, SessionId, Ticket,
+    ClientName, CommandBody, CommandResult, EventKind, HostPath, Provider,
+    SessionId, Ticket,
 };
 use tokio::sync::mpsc;
 
@@ -56,7 +57,9 @@ async fn next(updates: &mut mpsc::Receiver<Update>) -> anyhow::Result<Update> {
         .context("the fake-host link stays open")
 }
 
-async fn drive_live(updates: &mut mpsc::Receiver<Update>) -> anyhow::Result<()> {
+async fn drive_live(
+    updates: &mut mpsc::Receiver<Update>,
+) -> anyhow::Result<()> {
     loop {
         match next(updates).await? {
             Update::Status(Status {

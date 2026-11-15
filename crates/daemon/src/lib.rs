@@ -47,34 +47,51 @@ pub fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
 /// first run, readable by the owner only. A new key is written whole beside
 /// the file and then linked to its name, which fails if the name exists, so
 /// of two first starts one key wins and the other start reads it.
-fn load_or_create_secret(data_dir: &Path, name: &str) -> anyhow::Result<[u8; 32]> {
+fn load_or_create_secret(
+    data_dir: &Path,
+    name: &str,
+) -> anyhow::Result<[u8; 32]> {
     let path = data_dir.join(name);
     match std::fs::read_to_string(&path) {
         Ok(text) => data_encoding::HEXLOWER
             .decode(text.trim().as_bytes())
             .ok()
             .and_then(|bytes| bytes.try_into().ok())
-            .with_context(|| format!("{} is not 64 hex digits", path.display())),
+            .with_context(|| {
+                format!("{} is not 64 hex digits", path.display())
+            }),
         Err(err) => match err.kind() {
             ErrorKind::NotFound => {
                 let key = random_key();
                 std::fs::create_dir_all(data_dir)?;
-                let next = data_dir.join(format!("{name}.{}.new", std::process::id()));
-                write_private(&next, data_encoding::HEXLOWER.encode(&key).as_bytes())
-                    .with_context(|| format!("writing {}", next.display()))?;
+                let next =
+                    data_dir.join(format!("{name}.{}.new", std::process::id()));
+                write_private(
+                    &next,
+                    data_encoding::HEXLOWER.encode(&key).as_bytes(),
+                )
+                .with_context(|| format!("writing {}", next.display()))?;
                 let linked = std::fs::hard_link(&next, &path);
                 let _ = std::fs::remove_file(&next);
                 match linked {
-                    Ok(()) => sync_dir(data_dir)
-                        .map(|()| key)
-                        .with_context(|| format!("syncing {}", data_dir.display())),
+                    Ok(()) => {
+                        sync_dir(data_dir).map(|()| key).with_context(|| {
+                            format!("syncing {}", data_dir.display())
+                        })
+                    }
                     Err(err) => match err.kind() {
-                        ErrorKind::AlreadyExists => load_or_create_secret(data_dir, name),
-                        _ => Err(err).with_context(|| format!("creating {}", path.display())),
+                        ErrorKind::AlreadyExists => {
+                            load_or_create_secret(data_dir, name)
+                        }
+                        _ => Err(err).with_context(|| {
+                            format!("creating {}", path.display())
+                        }),
                     },
                 }
             }
-            _ => Err(err).with_context(|| format!("reading {}", path.display())),
+            _ => {
+                Err(err).with_context(|| format!("reading {}", path.display()))
+            }
         },
     }
 }
@@ -95,8 +112,10 @@ pub struct Homes {
 pub fn homes(data_dir: &Path) -> anyhow::Result<Homes> {
     let claude = data_dir.join("home").join("claude");
     let codex = data_dir.join("home").join("codex");
-    std::fs::create_dir_all(&claude).with_context(|| format!("creating {}", claude.display()))?;
-    std::fs::create_dir_all(&codex).with_context(|| format!("creating {}", codex.display()))?;
+    std::fs::create_dir_all(&claude)
+        .with_context(|| format!("creating {}", claude.display()))?;
+    std::fs::create_dir_all(&codex)
+        .with_context(|| format!("creating {}", codex.display()))?;
     write_once(&claude.join("settings.json"), CLAUDE_SETTINGS)?;
     write_once(&codex.join("config.toml"), CODEX_CONFIG)?;
     Ok(Homes {
@@ -116,7 +135,9 @@ fn write_once(path: &Path, contents: &str) -> anyhow::Result<()> {
             .with_context(|| format!("writing {}", path.display())),
         Err(err) => match err.kind() {
             ErrorKind::AlreadyExists => Ok(()),
-            _ => Err(err).with_context(|| format!("creating {}", path.display())),
+            _ => {
+                Err(err).with_context(|| format!("creating {}", path.display()))
+            }
         },
     }
 }
@@ -181,7 +202,8 @@ mod tests {
 
     #[test]
     fn homes_get_their_config_once() {
-        let dir = std::env::temp_dir().join(format!("conductord-homes-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("conductord-homes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = homes(&dir).unwrap();
         let settings = dir.join("home/claude/settings.json");
@@ -212,7 +234,8 @@ mod tests {
 
     #[test]
     fn ticket_token_is_created_once_then_reloaded() {
-        let dir = std::env::temp_dir().join(format!("conductord-token-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("conductord-token-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = load_or_create_token(&dir).unwrap();
         assert_eq!(load_or_create_token(&dir).unwrap(), first);
@@ -228,7 +251,8 @@ mod tests {
 
     #[test]
     fn key_is_created_once_then_reloaded() {
-        let dir = std::env::temp_dir().join(format!("conductord-key-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("conductord-key-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = load_or_create_key(&dir).unwrap();
         let second = load_or_create_key(&dir).unwrap();

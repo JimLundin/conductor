@@ -45,9 +45,9 @@ impl Store {
         &self.dir
     }
 
-    pub fn open(data_dir: &Path) -> anyhow::Result<(Store, Stored)> {
+    pub fn open(data_dir: &Path) -> anyhow::Result<(Self, Stored)> {
         let key = crate::load_or_create_secret(data_dir, "store.key")?;
-        let store = Store {
+        let store = Self {
             dir: data_dir.to_path_buf(),
             path: data_dir.join("credentials"),
             cipher: XChaCha20Poly1305::new(&Key::from(key)),
@@ -94,7 +94,8 @@ impl Store {
             .with_context(|| format!("writing {}", next.display()))?;
         std::fs::rename(&next, &self.path)
             .with_context(|| format!("replacing {}", self.path.display()))?;
-        crate::sync_dir(&self.dir).with_context(|| format!("syncing {}", self.dir.display()))
+        crate::sync_dir(&self.dir)
+            .with_context(|| format!("syncing {}", self.dir.display()))
     }
 
     /// Moves a store that doesn't open to `credentials.unreadable`,
@@ -107,7 +108,8 @@ impl Store {
     }
 
     fn unseal(&self, file: &[u8]) -> Option<Credentials> {
-        let (nonce, ciphertext) = file.strip_prefix(&[FORMAT])?.split_at_checked(NONCE_LEN)?;
+        let (nonce, ciphertext) =
+            file.strip_prefix(&[FORMAT])?.split_at_checked(NONCE_LEN)?;
         let payload = Payload {
             msg: ciphertext,
             aad: PURPOSE,

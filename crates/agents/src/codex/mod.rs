@@ -7,7 +7,10 @@ mod protocol;
 mod server;
 
 pub use protocol::{
-    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, Decision, PermissionAsk, Sandbox,
-    ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
+    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, Decision,
+    PermissionAsk, Sandbox, ThreadEvent, ThreadId, ThreadOptions,
+    ThreadSettings, TurnId,
 };
-pub use server::{CodexServer, CodexThread, Error, ServerOptions, cli, login, login_status};
+pub use server::{
+    CodexServer, CodexThread, Error, ServerOptions, cli, login, login_status,
+};

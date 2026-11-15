@@ -3,21 +3,27 @@ use anyhow::Context;
 use std::path::Path;
 
 use proto::{CommandId, CommandResult, Epoch, Event, EventKind, SessionId};
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction};
+use redb::{
+    Database, ReadableDatabase, ReadableTable, TableDefinition,
+    WriteTransaction,
+};
 use serde::{Serialize, de::DeserializeOwned};
 
 const EVENTS: TableDefinition<u64, Vec<u8>> = TableDefinition::new("events");
 const META: TableDefinition<&str, Vec<u8>> = TableDefinition::new("metadata");
-const RECEIPTS: TableDefinition<u128, Vec<u8>> = TableDefinition::new("command_receipts");
-const CONVERSATIONS: TableDefinition<u128, Vec<u8>> = TableDefinition::new("conversations");
-const REQUESTS: TableDefinition<&str, Vec<u8>> = TableDefinition::new("pending_requests");
+const RECEIPTS: TableDefinition<u128, Vec<u8>> =
+    TableDefinition::new("command_receipts");
+const CONVERSATIONS: TableDefinition<u128, Vec<u8>> =
+    TableDefinition::new("conversations");
+const REQUESTS: TableDefinition<&str, Vec<u8>> =
+    TableDefinition::new("pending_requests");
 
 pub(crate) struct Storage {
     database: Database,
 }
 
 impl Storage {
-    pub(crate) fn open(path: &Path) -> anyhow::Result<Storage> {
+    pub(crate) fn open(path: &Path) -> anyhow::Result<Self> {
         let database = Database::create(path)?;
         let write = database.begin_write()?;
         let _ = write.open_table(EVENTS)?;
@@ -36,7 +42,7 @@ impl Storage {
             }
         }
         write.commit()?;
-        Ok(Storage { database })
+        Ok(Self { database })
     }
 
     pub(crate) fn epoch(&self) -> anyhow::Result<Epoch> {
@@ -58,7 +64,10 @@ impl Storage {
             .collect()
     }
 
-    pub(crate) fn conversation(&self, session: SessionId) -> anyhow::Result<Option<String>> {
+    pub(crate) fn conversation(
+        &self,
+        session: SessionId,
+    ) -> anyhow::Result<Option<String>> {
         let read = self.database.begin_read()?;
         let table = read.open_table(CONVERSATIONS)?;
         table
@@ -71,7 +80,10 @@ impl Storage {
         Ok(self.database.begin_write()?)
     }
 
-    pub(crate) fn receipt(&self, key: CommandId) -> anyhow::Result<Option<CommandResult>> {
+    pub(crate) fn receipt(
+        &self,
+        key: CommandId,
+    ) -> anyhow::Result<Option<CommandResult>> {
         let read = self.database.begin_read()?;
         let table = read.open_table(RECEIPTS)?;
         table
@@ -81,13 +93,18 @@ impl Storage {
     }
 }
 
-pub(crate) fn event(write: &WriteTransaction, event: &Event) -> anyhow::Result<()> {
+pub(crate) fn event(
+    write: &WriteTransaction,
+    event: &Event,
+) -> anyhow::Result<()> {
     let encoded = encode(event)?;
     let _ = write.open_table(EVENTS)?.insert(event.seq.0, &encoded)?;
     match &event.kind {
-        EventKind::RequestOpened { request, .. } | EventKind::QuestionAsked { request, .. } => {
+        EventKind::RequestOpened { request, .. }
+        | EventKind::QuestionAsked { request, .. } => {
             let key = format!("{}:{}", event.session.0, request.0);
-            let _ = write.open_table(REQUESTS)?.insert(key.as_str(), &encoded)?;
+            let _ =
+                write.open_table(REQUESTS)?.insert(key.as_str(), &encoded)?;
         }
         EventKind::RequestResolved { request, .. } => {
             let key = format!("{}:{}", event.session.0, request.0);
@@ -146,7 +163,8 @@ fn decode<T: DeserializeOwned>(value: &[u8]) -> anyhow::Result<T> {
 #[cfg(test)]
 mod tests {
     use proto::{
-        CommandResult, Event, EventKind, HostSeq, RequestId, Resolution, SessionId, ToolCallId,
+        CommandResult, Event, EventKind, HostSeq, RequestId, Resolution,
+        SessionId, ToolCallId,
     };
     use redb::{ReadableDatabase, ReadableTableMetadata};
 
@@ -154,8 +172,8 @@ mod tests {
 
     #[test]
     fn committed_events_receipts_conversations_and_requests_reopen_together() {
-        let path =
-            std::env::temp_dir().join(format!("conductor-durable-{}.redb", std::process::id()));
+        let path = std::env::temp_dir()
+            .join(format!("conductor-durable-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let first = Storage::open(&path).unwrap();
         let epoch = first.epoch().unwrap();
@@ -251,8 +269,8 @@ mod tests {
 
     #[test]
     fn an_uncommitted_command_leaves_neither_effects_nor_receipt() {
-        let path =
-            std::env::temp_dir().join(format!("conductor-rollback-{}.redb", std::process::id()));
+        let path = std::env::temp_dir()
+            .join(format!("conductor-rollback-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let first = Storage::open(&path).unwrap();
         let write = first.begin().unwrap();

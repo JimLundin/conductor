@@ -46,7 +46,7 @@ struct LoginArgs {
 enum LoginProvider {
     /// `claude auth login --claudeai`: a Claude subscription.
     Claude,
-    /// `codex login --device-auth`: ChatGPT, by device code.
+    /// `codex login --device-auth`: `ChatGPT`, by device code.
     Codex,
 }
 
@@ -85,7 +85,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,iroh=warn,noq=warn,swarm_discovery=warn".into()),
+                .unwrap_or_else(|_| {
+                    "info,iroh=warn,noq=warn,swarm_discovery=warn".into()
+                }),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -102,9 +104,14 @@ async fn main() -> anyhow::Result<()> {
             let data_dir = data_dir_or_default(data_dir)?;
             let homes = daemon::homes(&data_dir)?;
             let (store, stored) = Store::open(&data_dir)?;
-            let claude = match cli_path(Cli::Claude, claude_path, &data_dir).await {
+            let claude = match cli_path(Cli::Claude, claude_path, &data_dir)
+                .await
+            {
                 Ok((claude_path, origin)) => {
-                    let status = agents::claude::auth_status(&claude_path, &homes.claude);
+                    let status = agents::claude::auth_status(
+                        &claude_path,
+                        &homes.claude,
+                    );
                     let launch = ClaudeLaunch {
                         claude_path: claude_path.clone(),
                         home: homes.claude.clone(),
@@ -113,14 +120,18 @@ async fn main() -> anyhow::Result<()> {
                     let listed = list_models(
                         Launch::Claude(ClaudeLaunch {
                             credential: match &stored {
-                                Stored::Opened(credentials) => credentials.claude.clone(),
+                                Stored::Opened(credentials) => {
+                                    credentials.claude.clone()
+                                }
                                 Stored::Unreadable(_) => None,
                             },
                             ..launch.clone()
                         }),
                         &data_dir,
                     );
-                    match runs(agents::claude::cli(&claude_path, &homes.claude)).await {
+                    match runs(agents::claude::cli(&claude_path, &homes.claude))
+                        .await
+                    {
                         Ok(cli) => ready(
                             cli,
                             Launch::Claude(launch),
@@ -132,24 +143,30 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(reason) => unavailable(reason),
             };
-            let codex = match cli_path(Cli::Codex, codex_path, &data_dir).await {
+            let codex = match cli_path(Cli::Codex, codex_path, &data_dir).await
+            {
                 Ok((codex_path, origin)) => {
                     let version = agents::codex::cli(&codex_path, &homes.codex);
-                    let status = agents::codex::login_status(&codex_path, &homes.codex);
+                    let status =
+                        agents::codex::login_status(&codex_path, &homes.codex);
                     // The app-server's own working directory is the data dir;
                     // each thread runs in its session's directory.
                     let hub = CodexHub::spawn(ServerOptions {
                         codex_path,
                         home: homes.codex,
                         credential: match &stored {
-                            Stored::Opened(credentials) => credentials.codex.clone(),
+                            Stored::Opened(credentials) => {
+                                credentials.codex.clone()
+                            }
                             Stored::Unreadable(_) => None,
                         },
                         cwd: data_dir.clone(),
                         stdout_log: None,
                     });
-                    let listed =
-                        list_models(Launch::Codex(CodexLaunch { hub: hub.clone() }), &data_dir);
+                    let listed = list_models(
+                        Launch::Codex(CodexLaunch { hub: hub.clone() }),
+                        &data_dir,
+                    );
                     match runs(version).await {
                         Ok(cli) => ready(
                             cli,
@@ -167,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
                 host(data_dir, web_url, name, launchers, store, stored).await?;
             let ended = tokio::select! {
                 result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
-                _ = log.stopped() => Err(anyhow::Error::from(daemon::Stopped {})),
+                () = log.stopped() => Err(anyhow::Error::from(daemon::Stopped {})),
             };
             router.shutdown().await?;
             drop(router);
@@ -178,12 +195,14 @@ async fn main() -> anyhow::Result<()> {
             let data_dir = data_dir_or_default(data_dir)?;
             let homes = daemon::homes(&data_dir)?;
             let mut login = match provider {
-                LoginProvider::Claude => {
-                    agents::claude::login(&install(Cli::Claude, &data_dir).await?, &homes.claude)
-                }
-                LoginProvider::Codex => {
-                    agents::codex::login(&install(Cli::Codex, &data_dir).await?, &homes.codex)
-                }
+                LoginProvider::Claude => agents::claude::login(
+                    &install(Cli::Claude, &data_dir).await?,
+                    &homes.claude,
+                ),
+                LoginProvider::Codex => agents::codex::login(
+                    &install(Cli::Codex, &data_dir).await?,
+                    &homes.codex,
+                ),
             };
             let status = login.status().await?;
             match status.code() {
@@ -224,7 +243,9 @@ async fn cli_path(
         None => install(cli, data_dir)
             .await
             .map(|path| (path, Origin::Pinned))
-            .map_err(|err| format!("installing the pinned {}: {err}", cli.name())),
+            .map_err(|err| {
+                format!("installing the pinned {}: {err}", cli.name())
+            }),
     }
 }
 
@@ -235,17 +256,22 @@ const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 /// A given CLI signs in however it does. A pinned one is signed in when
 /// `status`, its own sign-in check against the private home, succeeds
 /// within `SIGN_IN_CHECK`. It runs once, at start.
-async fn own_sign_in(origin: Origin, mut status: tokio::process::Command) -> OwnSignIn {
+async fn own_sign_in(
+    origin: Origin,
+    mut status: tokio::process::Command,
+) -> OwnSignIn {
     status.kill_on_drop(true);
     match origin {
         Origin::Given => OwnSignIn::Unmanaged,
-        Origin::Pinned => match tokio::time::timeout(SIGN_IN_CHECK, status.output())
-            .await
-            .map(|output| output.map(|output| output.status.code()))
-        {
-            Ok(Ok(Some(0))) => OwnSignIn::SignedIn,
-            Ok(Ok(_) | Err(_)) | Err(_) => OwnSignIn::Missing,
-        },
+        Origin::Pinned => {
+            match tokio::time::timeout(SIGN_IN_CHECK, status.output())
+                .await
+                .map(|output| output.map(|output| output.status.code()))
+            {
+                Ok(Ok(Some(0))) => OwnSignIn::SignedIn,
+                Ok(Ok(_) | Err(_)) | Err(_) => OwnSignIn::Missing,
+            }
+        }
     }
 }
 
@@ -294,7 +320,9 @@ async fn host(
 }
 
 /// The CLI's path and version, when `<cli> --version` runs and succeeds.
-async fn runs(mut cli: tokio::process::Command) -> Result<(String, String), String> {
+async fn runs(
+    mut cli: tokio::process::Command,
+) -> Result<(String, String), String> {
     let path = cli.as_std().get_program().display().to_string();
     match cli.arg("--version").output().await {
         Ok(output) => match output.status.code() {
@@ -340,7 +368,11 @@ fn unavailable(reason: String) -> Launcher {
 
 /// Prints the ticket, the join link and its QR code, and writes the code as
 /// an image to the data dir.
-fn announce(data_dir: &Path, web_url: &str, ticket: &Ticket) -> anyhow::Result<()> {
+fn announce(
+    data_dir: &Path,
+    web_url: &str,
+    ticket: &Ticket,
+) -> anyhow::Result<()> {
     let text = ticket.to_text();
     let join = format!("{web_url}#join={text}");
     let mut out = std::io::stdout();
@@ -363,19 +395,27 @@ fn announce(data_dir: &Path, web_url: &str, ticket: &Ticket) -> anyhow::Result<(
                     .build()
             )?;
             let svg_path = data_dir.join("join-qr.svg");
-            let image = code.render::<svg::Color>().min_dimensions(512, 512).build();
+            let image =
+                code.render::<svg::Color>().min_dimensions(512, 512).build();
             match std::fs::write(&svg_path, image) {
                 Ok(()) => writeln!(out, "qr image: {}", svg_path.display())?,
-                Err(err) => tracing::warn!("could not write {}: {err}", svg_path.display()),
+                Err(err) => tracing::warn!(
+                    "could not write {}: {err}",
+                    svg_path.display()
+                ),
             }
         }
-        Err(err) => tracing::warn!("could not render the join link as a QR code: {err}"),
+        Err(err) => {
+            tracing::warn!(
+                "could not render the join link as a QR code: {err}"
+            );
+        }
     }
     Ok(())
 }
 
 /// n0's public relays without the root dot. A host advertises its home relay
-/// to peers, and a browser that dials the dotted name fails WebKit's
+/// to peers, and a browser that dials the dotted name fails `WebKit`'s
 /// certificate check (`proto::without_root_dot`).
 fn n0_relays() -> iroh::RelayMap {
     iroh::defaults::prod::default_relay_map()
