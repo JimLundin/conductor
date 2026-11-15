@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Replays recorded `claude` stdout (fixtures/claude) through a real
 //! `ClaudeSession`. A stand-in process prints the recording and then swallows
 //! stdin, so the actor, the boundary mapping and the exactly-once permission
@@ -188,7 +190,7 @@ struct Replay {
 }
 
 impl Replay {
-    fn new(
+    const fn new(
         session: ClaudeSession,
         events: mpsc::Receiver<ClaudeEvent>,
         decisions: Vec<PermissionDecision>,

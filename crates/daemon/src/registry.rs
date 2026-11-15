@@ -69,7 +69,7 @@ impl OwnSignIn {
 }
 
 impl Launchers {
-    fn of(&self, provider: Provider) -> &Launcher {
+    const fn of(&self, provider: Provider) -> &Launcher {
         match provider {
             Provider::Claude => &self.claude,
             Provider::Codex => &self.codex,

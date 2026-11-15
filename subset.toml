@@ -3,7 +3,7 @@
 # grows only through accepted proposals in JimLundin/subset (docs/proposals/). Each id is
 # documented in docs/subset.md there.
 
-version = 15
+version = 16
 
 # All of our code is written in the subset. tools/ (the checker itself) is
 # outside it.
@@ -16,6 +16,7 @@ allowed = [
   "item.struct.newtype",      # struct Id(Ulid); exactly one field
   "item.enum",                # variants may carry data
   "item.fn",
+  "item.fn.const",            # proposal 0060
   "item.impl.inherent",
   "item.const",
   "item.use",
@@ -295,6 +296,7 @@ boundary = 1.0
 
 # Neutral: the rest of the core.
 "item.fn" = "neutral"
+"item.fn.const" = "neutral"        # 0060
 "item.impl.inherent" = "neutral"
 "item.const" = "neutral"
 "item.use" = "neutral"

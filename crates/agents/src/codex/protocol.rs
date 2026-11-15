@@ -745,7 +745,7 @@ fn request(
     }
 }
 
-fn on_thread(thread: String, event: ThreadEvent) -> Inbound {
+const fn on_thread(thread: String, event: ThreadEvent) -> Inbound {
     Inbound::Event(CodexEvent::Thread {
         thread: ThreadId(thread),
         event,
@@ -1071,7 +1071,7 @@ struct TurnInterruptParams {
 }
 
 impl Call {
-    pub(crate) fn method(&self) -> &str {
+    pub(crate) const fn method(&self) -> &str {
         match self {
             Self::Initialize => INITIALIZE,
             Self::ModelList => "model/list",

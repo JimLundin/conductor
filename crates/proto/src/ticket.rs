@@ -47,7 +47,7 @@ pub enum TicketError {
 pub struct WrongToken {}
 
 impl AuthToken {
-    pub fn from_bytes(bytes: [u8; TOKEN_LEN]) -> Self {
+    pub const fn from_bytes(bytes: [u8; TOKEN_LEN]) -> Self {
         Self(bytes)
     }
 
@@ -117,6 +117,8 @@ mod tests {
 
     use super::{AuthToken, Ticket, TicketError};
 
+    const TOKEN: AuthToken = AuthToken::from_bytes([1; 16]);
+
     fn ticket() -> Ticket {
         // The ed25519 base point: a fixed, valid public key.
         let id = std::iter::once(0x58)
@@ -127,7 +129,7 @@ mod tests {
         Ticket {
             host: EndpointId::from_bytes(&id).unwrap(),
             relay: "https://r.example/".parse().unwrap(),
-            token: AuthToken([1; 16]),
+            token: TOKEN,
         }
     }
 

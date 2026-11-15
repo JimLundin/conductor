@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Host and client in one process over real iroh connections on loopback, with
 //! relays off so the test needs no network.
 
@@ -672,7 +674,7 @@ enum Reached {
     No,
 }
 
-fn reached(until: &Until, kind: &EventKind) -> Reached {
+const fn reached(until: &Until, kind: &EventKind) -> Reached {
     match (until, kind) {
         (Until::Ready, EventKind::SessionReady)
         | (Until::Request, EventKind::RequestOpened { .. })
@@ -784,11 +786,11 @@ fn message(session: SessionId, text: &str) -> CommandBody {
     }
 }
 
-fn interrupt(session: SessionId) -> CommandBody {
+const fn interrupt(session: SessionId) -> CommandBody {
     CommandBody::Interrupt { session }
 }
 
-fn resolve(
+const fn resolve(
     session: SessionId,
     request: u64,
     decision: Decision,
@@ -830,7 +832,7 @@ fn reply(text: &str) -> EventKind {
     }
 }
 
-fn turn_end(outcome: TurnOutcome) -> EventKind {
+const fn turn_end(outcome: TurnOutcome) -> EventKind {
     EventKind::TurnCompleted { outcome }
 }
 
@@ -2627,7 +2629,7 @@ fn start_with(
     }
 }
 
-fn continued(session: SessionId) -> CommandBody {
+const fn continued(session: SessionId) -> CommandBody {
     CommandBody::Continue { session }
 }
 

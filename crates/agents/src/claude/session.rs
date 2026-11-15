@@ -34,7 +34,7 @@ pub enum SettingSource {
 }
 
 impl SettingSource {
-    fn wire(&self) -> &str {
+    const fn wire(&self) -> &str {
         match self {
             Self::User => "user",
             Self::Project => "project",
@@ -251,17 +251,17 @@ impl ClaudeSession {
     }
 
     /// The models and efforts this CLI offers.
-    pub fn models(&self) -> &Models {
+    pub const fn models(&self) -> &Models {
         &self.models
     }
 
     /// The id `--resume` takes, which the CLI prints in every `init`.
-    pub fn id(&self) -> &SessionId {
+    pub const fn id(&self) -> &SessionId {
         &self.id
     }
 
     /// The CLI's process id, while it runs.
-    pub fn pid(&self) -> Option<u32> {
+    pub const fn pid(&self) -> Option<u32> {
         self.pid
     }
 

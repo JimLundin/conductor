@@ -29,7 +29,7 @@ pub enum Cli {
 }
 
 impl Cli {
-    pub fn name(&self) -> &str {
+    pub const fn name(&self) -> &str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",

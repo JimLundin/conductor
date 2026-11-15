@@ -163,7 +163,7 @@ impl CodexServer {
 
     /// `userAgent` from the handshake. Its first segment carries the Codex
     /// version, as in `conductor/0.166.0 (...)`.
-    pub fn pid(&self) -> Option<u32> {
+    pub const fn pid(&self) -> Option<u32> {
         self.pid
     }
 

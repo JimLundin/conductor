@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Replays recorded `codex app-server` stdout (fixtures/codex) through a real
 //! `CodexServer`. A stand-in process prints the recording, holding each
 //! response until our request with that id arrives and each

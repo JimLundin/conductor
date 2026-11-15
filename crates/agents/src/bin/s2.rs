@@ -120,7 +120,7 @@ struct Turn {
 }
 
 impl Turn {
-    fn new(thread: CodexThread, id: TurnId) -> Self {
+    const fn new(thread: CodexThread, id: TurnId) -> Self {
         Self {
             thread,
             id,
@@ -178,7 +178,7 @@ impl Turn {
 }
 
 /// The turn an event names, if it names one.
-fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
+const fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
     match event {
         ThreadEvent::TurnStarted { turn }
         | ThreadEvent::TurnCompleted { turn, .. }

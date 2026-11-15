@@ -48,7 +48,7 @@ pub const ALPN: &[u8] = b"conductor/10";
 pub struct HostSeq(pub u64);
 
 impl HostSeq {
-    pub fn next(self) -> Self {
+    pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
 }
@@ -79,7 +79,7 @@ pub struct CommandId(pub u128);
 pub struct RequestId(pub u64);
 
 impl RequestId {
-    pub fn next(self) -> Self {
+    pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
 }
@@ -167,7 +167,7 @@ pub enum Effort {
 }
 
 impl Effort {
-    pub fn wire(&self) -> &str {
+    pub const fn wire(&self) -> &str {
         match self {
             Self::Low => "low",
             Self::Medium => "medium",
@@ -193,7 +193,7 @@ impl Effort {
 }
 
 impl Models {
-    pub fn none() -> Self {
+    pub const fn none() -> Self {
         Self {
             choices: Vec::new(),
             default: None,
@@ -274,7 +274,7 @@ impl std::fmt::Debug for CodexCredential {
 }
 
 impl Credentials {
-    pub fn none() -> Self {
+    pub const fn none() -> Self {
         Self {
             claude: None,
             codex: None,
@@ -331,7 +331,7 @@ impl Credentials {
 }
 
 impl Credential {
-    pub fn provider(&self) -> Provider {
+    pub const fn provider(&self) -> Provider {
         match self {
             Self::Claude(_) => Provider::Claude,
             Self::Codex(_) => Provider::Codex,
@@ -369,7 +369,7 @@ impl Credential {
 }
 
 impl Providers {
-    pub fn of(&self, provider: Provider) -> &Availability {
+    pub const fn of(&self, provider: Provider) -> &Availability {
         match provider {
             Provider::Claude => &self.claude,
             Provider::Codex => &self.codex,
@@ -747,7 +747,7 @@ pub enum EventKind {
 pub struct CheckpointId(pub u64);
 
 impl CheckpointId {
-    pub fn next(self) -> Self {
+    pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
 }
@@ -928,6 +928,12 @@ pub enum CloseReason {
 #[cfg(test)]
 mod tests {
     use super::{ClaudeCredential, Credential};
+
+    #[test]
+    fn constant_cursor_saturates_without_wrapping() {
+        const LAST: super::HostSeq = super::HostSeq(u64::MAX).next();
+        assert_eq!(LAST, super::HostSeq(u64::MAX));
+    }
 
     #[test]
     fn durability_v9_bytes_keep_their_original_meaning() {

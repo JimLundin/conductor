@@ -609,7 +609,7 @@ async fn claude_models(
 }
 
 impl Pending {
-    fn native(&self) -> Option<&NativeRequest> {
+    const fn native(&self) -> Option<&NativeRequest> {
         match self {
             Self::Open { native, .. } => Some(native),
             Self::Resolved(_) => None,

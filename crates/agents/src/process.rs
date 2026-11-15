@@ -20,7 +20,7 @@ pub(crate) fn no_window(mut cmd: Command) -> Command {
 }
 
 #[cfg(unix)]
-pub(crate) fn no_window(cmd: Command) -> Command {
+pub(crate) const fn no_window(cmd: Command) -> Command {
     cmd
 }
 

@@ -200,7 +200,7 @@ pub enum Attention {
 }
 
 impl HostView {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             sessions: BTreeMap::new(),
         }
@@ -280,7 +280,7 @@ impl HostView {
 }
 
 impl SessionView {
-    pub fn controls(&self) -> Controls {
+    pub const fn controls(&self) -> Controls {
         let (composer, interrupt, resume) = match (&self.undo, &self.status) {
             (UndoState::Undoing(_) | UndoState::Failed { .. }, _)
             | (_, SessionStatus::Starting) => {
@@ -655,7 +655,7 @@ impl Item {
         }
     }
 
-    fn call(&self) -> Option<&ToolCallId> {
+    const fn call(&self) -> Option<&ToolCallId> {
         match self {
             Self::Tool { call, .. } => Some(call),
             Self::User { .. }

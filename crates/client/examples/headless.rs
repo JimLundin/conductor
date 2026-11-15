@@ -724,7 +724,7 @@ enum Completion {
 }
 
 impl UndoReceipt {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             start: None,
             checkpoint: None,
@@ -732,7 +732,7 @@ impl UndoReceipt {
         }
     }
 
-    fn started(self, start: HostSeq) -> Self {
+    const fn started(self, start: HostSeq) -> Self {
         Self {
             start: Some(start),
             ..self
@@ -746,7 +746,7 @@ impl UndoReceipt {
         }
     }
 
-    fn completed(self) -> Self {
+    const fn completed(self) -> Self {
         Self {
             completion: Completion::Completed,
             ..self

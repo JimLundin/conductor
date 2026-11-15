@@ -36,7 +36,7 @@ pub enum PermissionMode {
 
 impl PermissionMode {
     /// The name `--permission-mode` and `set_permission_mode` take.
-    pub(crate) fn wire(&self) -> &str {
+    pub(crate) const fn wire(&self) -> &str {
         match self {
             Self::Default => "default",
             Self::AcceptEdits => "acceptEdits",
@@ -800,7 +800,7 @@ pub(crate) enum ControlCall {
 }
 
 impl ControlCall {
-    pub(crate) fn subtype(&self) -> &str {
+    pub(crate) const fn subtype(&self) -> &str {
         match self {
             Self::Initialize => "initialize",
             Self::Interrupt => "interrupt",

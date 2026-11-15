@@ -86,7 +86,7 @@ pub struct LinkOptions {
 }
 
 impl LinkOptions {
-    pub fn new(client: ClientName) -> Self {
+    pub const fn new(client: ClientName) -> Self {
         Self {
             client,
             resume: None,
