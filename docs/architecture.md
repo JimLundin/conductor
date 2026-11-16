@@ -91,10 +91,12 @@ so one UI and one set of commands work for both agents.
   for the session; `SetEffort` changes the effort (below).
 - **Effort between turns:** `SetEffort { session, effort }` sets the
   effort of the session's later turns. It must be one the session's model
-  (or, with none named, the default) lists, else `NotOffered`; the same
-  effort again is `Accepted` and logs nothing. The host checks it against
-  what the provider offers now, so it needs the provider available
-  (`ProviderUnavailable`). It is taken while a turn runs and on a closed
+  (or, with none named, the default) lists, else `NotOffered`, by the same
+  rule as `StartSession`: a model the host doesn't list takes any effort.
+  The same effort again is `Accepted` and logs nothing. The host checks it
+  against what the provider offers now, so it needs the provider available
+  (`ProviderUnavailable`). During undo recovery it is refused as
+  `UndoInProgress`, like every order. It is taken while a turn runs and on a closed
   session: `EffortChanged { effort }` is logged at once, and the agent gets
   the effort when the next turn the user sends starts, so a running turn
   keeps the effort it began with. Claude gets it in its running process
@@ -108,11 +110,16 @@ so one UI and one set of commands work for both agents.
   the whole list. The session syncs it into the tasks it holds and logs
   `TasksChanged { tasks }`, the whole list in the agent's order, when
   anything changed. A step keeps the id of the first held task with its
-  text that no earlier step took; failing that, of the held task at its
-  position, unless a step took that one by its text; otherwise it is a new
-  task. A task no step keeps is dropped. The log is the store: the host restores a
-  session's tasks from its last `TasksChanged`, so ids survive `Continue`
-  and a restart. Only the main agent's checklist counts: a Claude
+  text that no earlier step took; failing that, if the list kept its
+  length, of the held task at its position, unless a step took that one by
+  its text; otherwise it is a new task. So a step reworded in place keeps
+  its id, but `[a, b, c]` to `[a, c']` makes `c'` a new task rather than
+  give it `b`'s id. A task no step keeps is dropped. The log is the store:
+  the host restores a session's tasks from its last `TasksChanged`, so ids
+  survive `Continue` and a restart. Undoing a turn restores the tasks as
+  they were at the checkpoint it goes back to (the last `TasksChanged`
+  before it, or none), logging `TasksChanged` with
+  `UndoHistoryRestored`. Only the main agent's checklist counts: a Claude
   subagent's `TodoWrite` carries its `parent_tool_use_id` and is left out.
   Codex's plan `explanation` is not kept, since Claude has none. Handing a
   task to another session is next (`docs/roadmap.md`); `holder` is what it

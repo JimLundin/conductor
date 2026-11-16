@@ -3975,6 +3975,24 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     let _ = send(&phone, message(session, "turn two")).await;
     let second_turn = events_until(&mut updates, Until::TurnEnd).await;
     let discarded = checkpoint(&second_turn, proto::CheckpointId(2));
+    let (kept_tasks, discarded_tasks) =
+        (task_lists(&first_turn), task_lists(&second_turn));
+    assert_eq!(
+        [&kept_tasks, &discarded_tasks].map(|lists| lists
+            .iter()
+            .map(|tasks| owned(steps(tasks)))
+            .collect::<Vec<Vec<(String, TaskStatus)>>>()),
+        [
+            Vec::from([Vec::from([(
+                String::from("turn one"),
+                TaskStatus::Completed
+            )])]),
+            Vec::from([Vec::from([
+                (String::from("turn one"), TaskStatus::Completed),
+                (String::from("turn two"), TaskStatus::InProgress),
+            ])]),
+        ]
+    );
     assert_eq!(discarded.parent, Some(retained.id));
     let diff = diff_result(
         send(
@@ -4056,6 +4074,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
             restored: retained.id
         })
     );
+    assert_eq!(task_lists(&undone), kept_tasks);
     assert_restored_files(&worktree);
     assert_eq!(
         std::fs::metadata(worktree.join("later.txt"))

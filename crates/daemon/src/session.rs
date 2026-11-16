@@ -76,35 +76,29 @@ pub fn choose(
             }),
         None => Ok(models.default.clone()),
     }?;
-    let listed = model.as_ref().and_then(|model| models.find(model));
-    match (effort, listed) {
-        (Some(effort), Some(choice)) => choice
-            .efforts
-            .iter()
-            .find(|&&offered| offered == effort)
-            .map(|_| Choice {
-                model: model.clone(),
+    match effort {
+        Some(effort) => {
+            takes(models, model.as_ref(), effort).map(|effort| Choice {
+                model,
                 effort: Some(effort),
             })
-            .ok_or_else(|| {
-                format!(
-                    "{} doesn't take the effort {}",
-                    choice.name,
-                    effort.wire()
-                )
-            }),
-        (effort, _) => Ok(Choice { model, effort }),
+        }
+        None => Ok(Choice { model, effort }),
     }
 }
 
-/// `effort`, if the session's model (`None`: the default) lists it.
-fn offers(
+/// `effort`, if `model` (`None`: the default) takes it: one of the efforts
+/// the host lists for it, or any effort when the host doesn't list the
+/// model.
+fn takes(
     models: &Models,
     model: Option<&ModelId>,
     effort: Effort,
 ) -> Result<Effort, String> {
-    let model = model.or(models.default.as_ref());
-    match model.and_then(|model| models.find(model)) {
+    match model
+        .or(models.default.as_ref())
+        .and_then(|model| models.find(model))
+    {
         Some(choice) => choice
             .efforts
             .iter()
@@ -117,10 +111,7 @@ fn offers(
                     effort.wire()
                 )
             }),
-        None => Err(format!(
-            "this host lists no efforts for {}",
-            model.map_or("the default model", |model| model.0.as_str())
-        )),
+        None => Ok(effort),
     }
 }
 
@@ -936,7 +927,7 @@ impl SessionActor {
         offered: &Models,
     ) -> Result<CommandResult, Stopped> {
         match (
-            offers(offered, self.choice.model.as_ref(), effort),
+            takes(offered, self.choice.model.as_ref(), effort),
             self.choice.effort,
         ) {
             (Err(reason), _) => {
@@ -1511,6 +1502,7 @@ impl SessionActor {
                                 history: history.clone(),
                             })
                             .await?;
+                            self.restore_tasks(undo.restored).await?;
                             self.book.resume = Some(history.clone());
                             self.book.recovery = Some(Recovery::Files(Undo {
                                 history,
@@ -1555,6 +1547,39 @@ impl SessionActor {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// The tasks as they were when checkpoint `restored` was taken: the
+    /// last `TasksChanged` before it, or none.
+    async fn restore_tasks(
+        &mut self,
+        restored: CheckpointId,
+    ) -> Result<(), Stopped> {
+        let history = self.log.history().await?;
+        let taken = history.iter().find_map(|event| match &event.kind {
+            EventKind::CheckpointCreated { checkpoint }
+                if checkpoint.id == restored =>
+            {
+                Some(event.seq)
+            }
+            _ => None,
+        });
+        let tasks = history
+            .iter()
+            .filter(|event| event.session == self.id && Some(event.seq) < taken)
+            .rev()
+            .find_map(|event| match &event.kind {
+                EventKind::TasksChanged { tasks } => Some(tasks.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        match tasks {
+            tasks if tasks == self.tasks => Ok(()),
+            tasks => {
+                self.tasks = tasks.clone();
+                self.emit(EventKind::TasksChanged { tasks }).await
             }
         }
     }

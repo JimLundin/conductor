@@ -91,18 +91,6 @@ Each item ends in something to try. The fleet design is
    (`tools/live-host.sh` checks it as `continue=pass`); ask an agent to plan
    a change as a checklist and watch it tick off on the phone, then lower
    the effort from the header before the next message.
-9. **Hand tasks between sessions** (#30). It builds on the task model of
-   item 2: tasks are the host's own, with a `TaskId` that survives every
-   checklist update, `Continue` and a host restart, and a `holder` that
-   names the session working on each. Next: how an agent receives or
-   claims a task, and how a task leaves one session or agent for another.
-   *Try:* hand a task from a Claude session to a Codex session and watch it
-   leave one checklist and join the other.
-10. **Monitor the subagents** (#31) each session runs: Claude's `Agent`
-    tool, whose subagent frames carry `parent_tool_use_id` (Claude
-    `PROTOCOL.md`), and Codex's collab and spawn-agent items, shown in the
-    app. Round C keeps a subagent's checklist out of its session's tasks.
-    *Try:* watch a session's subagents work, and finish, from the phone.
 3. **Sign in from the app** (#12) (§6.3), on one host. Built first, on
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
@@ -135,6 +123,18 @@ Each item ends in something to try. The fleet design is
    the branch, copy the transcript and the events, resume on the target.
    *Try:* move a session from WSL to the Mac between turns and continue it
    from the phone.
+9. **Hand tasks between sessions** (#30). It builds on the task model of
+   item 2: tasks are the host's own, with a `TaskId` that survives every
+   checklist update, `Continue` and a host restart, and a `holder` that
+   names the session working on each. Next: how an agent receives or
+   claims a task, and how a task leaves one session or agent for another.
+   *Try:* hand a task from a Claude session to a Codex session and watch it
+   leave one checklist and join the other.
+10. **Monitor the subagents** (#31) each session runs: Claude's `Agent`
+    tool, whose subagent frames carry `parent_tool_use_id` (Claude
+    `PROTOCOL.md`), and Codex's collab and spawn-agent items, shown in the
+    app. Round C keeps a subagent's checklist out of its session's tasks.
+    *Try:* watch a session's subagents work, and finish, from the phone.
 
 ## Known bugs
 

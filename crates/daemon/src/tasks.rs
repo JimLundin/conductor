@@ -6,9 +6,9 @@ use proto::{SessionId, Task, TaskId};
 
 /// The tasks `holder` holds once its agent rewrote the checklist as `steps`.
 /// A step keeps the id of the first task with its text that no earlier
-/// step took; failing that, of the task at its position, unless a step
-/// took that one by its text; otherwise it is a new task. A task no step
-/// keeps is dropped.
+/// step took; failing that, when the list kept its length, of the task at
+/// its position, unless a step took that one by its text; otherwise it is
+/// a new task. A task no step keeps is dropped.
 pub(crate) fn synced(
     held: &[Task],
     steps: Vec<PlanStep>,
@@ -49,8 +49,10 @@ fn kept(held: &[Task], steps: &[PlanStep]) -> Vec<Option<TaskId>> {
         .map(|(position, index)| {
             index
                 .or_else(|| {
-                    Some(position)
-                        .filter(|&position| !by_text.contains(&Some(position)))
+                    Some(position).filter(|&position| {
+                        steps.len() == held.len()
+                            && !by_text.contains(&Some(position))
+                    })
                 })
                 .and_then(|index| held.get(index))
                 .map(|task| task.id)
@@ -88,12 +90,15 @@ mod tests {
     }
 
     #[test]
-    fn a_step_keeps_its_task_by_text_then_by_position() {
+    fn a_step_keeps_its_task_by_text_then_by_position_in_a_list_of_the_same_length()
+     {
         let a_b_c = held(&[(1, "a"), (2, "b"), (3, "c")]);
         assert_eq!(
             [
                 kept(&a_b_c, &steps(&["a", "b", "c"])),
                 kept(&a_b_c, &steps(&["c", "a"])),
+                kept(&a_b_c, &steps(&["a", "b2", "c"])),
+                kept(&a_b_c, &steps(&["a", "c2"])),
                 kept(&a_b_c, &steps(&["a", "b2", "c", "d"])),
                 kept(&a_b_c, &steps(&["x", "a"])),
                 kept(&held(&[(1, "a"), (2, "a")]), &steps(&["a", "a", "a"])),
@@ -102,12 +107,9 @@ mod tests {
             [
                 Vec::from([Some(TaskId(1)), Some(TaskId(2)), Some(TaskId(3))]),
                 Vec::from([Some(TaskId(3)), Some(TaskId(1))]),
-                Vec::from([
-                    Some(TaskId(1)),
-                    Some(TaskId(2)),
-                    Some(TaskId(3)),
-                    None,
-                ]),
+                Vec::from([Some(TaskId(1)), Some(TaskId(2)), Some(TaskId(3))]),
+                Vec::from([Some(TaskId(1)), None]),
+                Vec::from([Some(TaskId(1)), None, Some(TaskId(3)), None]),
                 Vec::from([None, Some(TaskId(1))]),
                 Vec::from([Some(TaskId(1)), Some(TaskId(2)), None]),
                 Vec::from([None]),

@@ -324,9 +324,11 @@ impl Registry {
         .await
     }
 
-    /// The session, how its provider runs now and what it offers, for a
-    /// `Continue`. The session starts its agent itself, so a slow start
-    /// never blocks the registry.
+    /// The session, how its provider runs now and what it offers, for an
+    /// order that may start the agent or is checked against what the
+    /// provider offers: `Continue`, `UndoTurn` and `SetEffort`. The
+    /// session starts its agent itself, so a slow start never blocks the
+    /// registry.
     pub async fn relaunch(
         &self,
         session: SessionId,

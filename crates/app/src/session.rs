@@ -8,14 +8,14 @@ use client::host_view::{
 use client::new_session::{efforts, label, models};
 use dioxus::prelude::*;
 use proto::{
-    Answer, Change, CloseReason, CommandBody, Decision, Effort, Providers,
-    Question, RequestId, Resolution, Selection, SessionId, Task, TaskStatus,
-    ToolKind, ToolOutcome, TurnOutcome,
+    Answer, Change, CloseReason, CommandBody, CommandResult, Decision, Effort,
+    Providers, Question, RequestId, Resolution, Selection, SessionId, Task,
+    TaskStatus, ToolKind, ToolOutcome, TurnOutcome,
 };
 
 use crate::checkpoints::TurnChanges;
 use crate::sessions::short;
-use crate::{Link, PaneHeader, run_command};
+use crate::{Link, PaneHeader, run_command, send};
 
 #[component]
 pub(crate) fn SessionPane(
@@ -68,11 +68,7 @@ pub(crate) fn SessionPane(
             PaneHeader { title: "{short(&session.directory)}", subtitle: "{session.directory.0}", on_back,
                 span { class: "pill", "data-status": "{status}", "{provider}, {status}" }
                 span { class: "runs-with", "{model}" }
-                EffortPicker {
-                    effort: session.effort,
-                    efforts: offered,
-                    on_pick: move |effort| run_command(link, notice, CommandBody::SetEffort { session: id, effort }),
-                }
+                EffortPicker { id, effort: session.effort, efforts: offered, link, notice }
                 match controls.interrupt {
                     Interrupt::Offered => rsx! {
                         button {
@@ -177,9 +173,11 @@ pub(crate) fn SessionPane(
 /// the model's efforts, or the effort alone when the host lists none.
 #[component]
 fn EffortPicker(
+    id: SessionId,
     effort: Option<Effort>,
     efforts: Vec<Effort>,
-    on_pick: EventHandler<Effort>,
+    link: Signal<Link>,
+    notice: Signal<Option<String>>,
 ) -> Element {
     match (efforts.first(), effort) {
         (None, Some(effort)) => rsx! {
@@ -192,8 +190,8 @@ fn EffortPicker(
                 name: "session-effort",
                 "aria-label": "Effort from the next turn",
                 onchange: move |event| {
-                    if let Some(effort) = Effort::parse(&event.value()) {
-                        on_pick(effort);
+                    if let Some(picked) = Effort::parse(&event.value()) {
+                        set_effort(link, notice, (id, picked), effort);
                     }
                 },
                 match effort {
@@ -210,6 +208,38 @@ fn EffortPicker(
             }
         },
     }
+}
+
+/// Sends `SetEffort`. A refusal goes to the notice, and the picker goes
+/// back to `shown`, the effort the session still has.
+fn set_effort(
+    link: Signal<Link>,
+    mut notice: Signal<Option<String>>,
+    picked: (SessionId, Effort),
+    shown: Option<Effort>,
+) {
+    let (session, effort) = picked;
+    spawn(async move {
+        let refused = match send(
+            link(),
+            CommandBody::SetEffort { session, effort },
+        )
+        .await
+        {
+            Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
+            Ok(_) => None,
+            Err(err) => Some(err),
+        };
+        if let Some(reason) = refused {
+            notice.set(Some(reason));
+            document::eval(&format!(
+                "document.querySelector('select.effort-pick').value = '{}'",
+                shown.map_or_else(String::new, |shown| String::from(
+                    shown.wire()
+                ))
+            ));
+        }
+    });
 }
 
 /// The agent's checklist, as the session holds it: open by default, and
