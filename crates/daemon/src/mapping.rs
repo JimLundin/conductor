@@ -133,7 +133,7 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
             Some(Step::Emit(EventKind::AssistantMessage { text }))
         }
         (Role::Assistant, Block::Thinking(text)) => reasoning(text),
-        (Role::Assistant, Block::Checklist { steps, .. }) => {
+        (Role::Assistant, Block::Checklist(steps)) => {
             Some(Step::Checklist(steps))
         }
         (Role::Assistant, Block::ToolUse { id, name, tool }) => {
@@ -161,7 +161,7 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
             Block::Text(_)
             | Block::ToolUse { .. }
             | Block::Thinking(_)
-            | Block::Checklist { .. },
+            | Block::Checklist(_),
         )
         | (Role::Assistant, Block::ToolResult { .. })
         | (_, Block::Other(_)) => None,
@@ -626,10 +626,7 @@ mod tests {
                 got: claude_steps(ClaudeEvent::Message {
                     uuid: None,
                     role: Role::Assistant,
-                    content: Vec::from([Block::Checklist {
-                        id: String::from("toolu_4"),
-                        steps: Vec::from([step()]),
-                    }]),
+                    content: Vec::from([Block::Checklist(Vec::from([step()]))]),
                 }),
                 want: Vec::from([Step::Checklist(Vec::from([step()]))]),
             },

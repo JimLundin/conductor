@@ -85,7 +85,7 @@ fn block_summary(block: &Block) -> String {
             format!("tool_use {name} {tool:?}")
         }
         Block::ToolResult { outcome, .. } => format!("tool_result {outcome:?}"),
-        Block::Checklist { steps, .. } => format!(
+        Block::Checklist(steps) => format!(
             "checklist {:?}",
             steps
                 .iter()

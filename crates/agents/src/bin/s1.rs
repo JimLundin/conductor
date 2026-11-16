@@ -215,7 +215,7 @@ impl Turn {
                         | Block::Text(_)
                         | Block::Thinking(_)
                         | Block::ToolUse { .. }
-                        | Block::Checklist { .. }
+                        | Block::Checklist(_)
                         | Block::Other(_) => None,
                     },
                 ));
@@ -311,12 +311,12 @@ impl Turn {
                 Block::Text(_)
                 | Block::ToolUse { .. }
                 | Block::ToolResult { .. }
-                | Block::Checklist { .. }
+                | Block::Checklist(_)
                 | Block::Other(_) => None,
             }));
         self.checklists.extend(content.iter().filter_map(
             |block| match block {
-                Block::Checklist { steps, .. } => Some(steps.clone()),
+                Block::Checklist(steps) => Some(steps.clone()),
                 Block::Text(_)
                 | Block::Thinking(_)
                 | Block::ToolUse { .. }
@@ -331,7 +331,7 @@ impl Turn {
                 Block::Thinking(_)
                 | Block::ToolUse { .. }
                 | Block::ToolResult { .. }
-                | Block::Checklist { .. }
+                | Block::Checklist(_)
                 | Block::Other(_) => None,
             })
             .collect::<String>();

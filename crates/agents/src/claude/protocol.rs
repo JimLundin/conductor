@@ -134,10 +134,7 @@ pub enum Block {
         outcome: ToolOutcome,
     },
     /// A `TodoWrite` call: the whole checklist as the model wrote it.
-    Checklist {
-        id: String,
-        steps: Vec<PlanStep>,
-    },
+    Checklist(Vec<PlanStep>),
     Other(Value),
 }
 
@@ -710,7 +707,7 @@ fn block(raw: Value) -> Block {
         Ok(ContentBlock::Thinking { thinking }) => Block::Thinking(thinking),
         Ok(ContentBlock::ToolUse { id, name, input }) => {
             match (name.as_str(), todos(&input)) {
-                (TODO_WRITE, Ok(steps)) => Block::Checklist { id, steps },
+                (TODO_WRITE, Ok(steps)) => Block::Checklist(steps),
                 (_, _) => Block::ToolUse {
                     tool: tool_kind(&name, &input),
                     id,
@@ -1550,7 +1547,7 @@ mod tests {
             let got = match parse_line(&line).unwrap() {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolUse { tool, .. } => Some(tool),
-                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolResult { .. } | super::Block::Checklist { .. } | super::Block::Other(_) => None,
+                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolResult { .. } | super::Block::Checklist(_) | super::Block::Other(_) => None,
                 }),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };
@@ -1626,7 +1623,7 @@ mod tests {
             let got = match parse_line(&line).unwrap() {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolResult { outcome, .. } => Some(outcome),
-                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolUse { .. } | super::Block::Checklist { .. } | super::Block::Other(_) => None,
+                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolUse { .. } | super::Block::Checklist(_) | super::Block::Other(_) => None,
                 }),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };
