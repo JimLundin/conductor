@@ -4,6 +4,13 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Managed CLIs** (#1) (§6.2). `conductord` installs the pinned Claude
+  Code and Codex into its data dir, checks their hashes and runs only those,
+  with private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off. Gateway
+  credentials run them (`tools/live-host.sh --register`). Subscription
+  sign-in and its check on a host without the CLIs are postponed to #12;
+  `conductord login claude|codex` remains as the host-terminal fallback.
+
 - **Responsive provider refresh** (#23). Credential saves, model discovery
   and Codex reconfiguration no longer hold the registry or the global
   command transaction while a CLI responds. Refreshes are serialized per
@@ -63,17 +70,6 @@ What is built and what comes next. Update it in the commit that changes it.
 Each item ends in something to try. The fleet design is
 `docs/architecture.md` §6.
 
-1. **Managed CLIs** (§6.2). `conductord` installs the pinned Claude Code and
-   Codex into its data dir, checks their hashes, and runs only those, with
-   private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off.
-   `tools/pin` records a pin; a test ties each pin to its fixtures; `s1`
-   and `s2` run the pinned copies. Until the app can sign in,
-   `conductord login claude|codex` runs the same sign-in flow on the host's
-   terminal. *Try:* on a machine with neither CLI installed, start
-   `conductord`, sign in, run a session of each, and check that `~/.claude`
-   and `~/.codex` are untouched. Built on `managed-cli`; the *Try* waits for
-   the owner's sign-in (`conductord login`, then `tools/live-host.sh
-   --data-dir`).
 2. **A wider session model** (§3). Built in round A, on
    `session-questions`: questions to the user (Claude's `AskUserQuestion`,
    Codex's `requestUserInput`) as a question card with options and typed
