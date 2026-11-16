@@ -59,8 +59,9 @@ state and approval wording. The app only ever sees the provider-neutral model,
 so one UI and one set of commands work for both agents.
 
 - **Commands:** `StartSession { provider, directory, model, effort }`,
-  `SendMessage`, `Interrupt`, `Continue`, `Resolve { request, Approve |
-  ApproveForSession | Deny }`, `Answer { request, answers }`. Each command
+  `SendMessage`, `Interrupt`, `Continue`, `SetEffort { session, effort }`,
+  `Resolve { request, Approve | ApproveForSession | Deny }`, `Answer {
+  request, answers }`. Each command
   gets one `CommandResult`. A reply that doesn't fit its request (a
   decision for a question, the wrong number of answers, `ApproveForSession`
   where none is offered) is refused as `WrongReply`.
@@ -70,7 +71,8 @@ so one UI and one set of commands work for both agents.
   text; tool calls (`Command`, `FileChange`, `Other`) started and finished;
   approval requests opened and resolved (first decision wins, and a late
   one is told who decided); questions asked and answered; a turn
-  completes, is interrupted or fails.
+  completes, is interrupted or fails; the session's tasks change
+  (`TasksChanged`, the whole list); its effort changes (`EffortChanged`).
 - **Model and effort:** `Welcome` lists, for each provider the host can
   run, the models its CLI offers with the current credential (`Models`:
   each model's id, name, description and efforts, and the default). The
@@ -85,8 +87,36 @@ so one UI and one set of commands work for both agents.
   the session runs with. A `Continue` after a credential change whose
   models no longer include the session's (neither listed nor the default)
   runs on the new default, keeping the effort if that model takes it, and
-  logs `ModelChanged` with the reason first. Otherwise the model and
-  effort are fixed for the session.
+  logs `ModelChanged` with the reason first. Otherwise the model is fixed
+  for the session; `SetEffort` changes the effort (below).
+- **Effort between turns:** `SetEffort { session, effort }` sets the
+  effort of the session's later turns. It must be one the session's model
+  (or, with none named, the default) lists, else `NotOffered`; the same
+  effort again is `Accepted` and logs nothing. The host checks it against
+  what the provider offers now, so it needs the provider available
+  (`ProviderUnavailable`). It is taken while a turn runs and on a closed
+  session: `EffortChanged { effort }` is logged at once, and the agent gets
+  the effort when the next turn the user sends starts, so a running turn
+  keeps the effort it began with. Claude gets it in its running process
+  (`apply_flag_settings`) right before that message, Codex as `effort` on
+  that `turn/start`. A `Continue` or a host restart starts the CLI at the
+  new effort.
+- **Tasks:** the host keeps the agent's checklist (Claude's `TodoWrite`,
+  Codex's plan) as tasks of its own: `Task { id, text, status, holder }`,
+  with a host-assigned ULID `TaskId`, a status of pending, in progress or
+  completed, and the session that holds it. Each update from the agent is
+  the whole list. The session syncs it into the tasks it holds and logs
+  `TasksChanged { tasks }`, the whole list in the agent's order, when
+  anything changed. A step keeps the id of the first held task with its
+  text that no earlier step took; failing that, of the held task at its
+  position, unless a step took that one by its text; otherwise it is a new
+  task. A task no step keeps is dropped. The log is the store: the host restores a
+  session's tasks from its last `TasksChanged`, so ids survive `Continue`
+  and a restart. Only the main agent's checklist counts: a Claude
+  subagent's `TodoWrite` carries its `parent_tool_use_id` and is left out.
+  Codex's plan `explanation` is not kept, since Claude has none. Handing a
+  task to another session is next (`docs/roadmap.md`); `holder` is what it
+  will change.
 - **Reasoning:** `ReasoningDelta` streams and `Reasoning` stores the
   finished text, which is the provider's summary of the model's reasoning:
   a few sentences per stretch, never the raw thoughts, so the host stores
@@ -141,14 +171,16 @@ How each agent carries these, from the `s1` and `s2` recordings:
 | Refused | Duplicate question texts, by the CLI before it asks | A question with `isSecret`, by the host, which logs and replays every answer |
 | Models | The `initialize` response's `models`, with `supportedEffortLevels`; a `default` row | `model/list`, with `supportedReasoningEfforts` and `isDefault` |
 | Effort | `--effort`; `get_settings` reports it back | `model_reasoning_effort` in the thread's `config`; `thread/start` reports it back |
+| Effort change | `apply_flag_settings` with `{effortLevel}` in the running process; `get_settings` reports it back | `effort` on `turn/start`, for that turn and later ones; `thread/settings/updated` reports it back |
+| Plan | A `TodoWrite` call, `input.todos: [{content, status, activeForm}]`, offered with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and `CLAUDE_CODE_ENABLE_TASKS=0`; asks no permission | `turn/plan/updated`: `explanation` and `plan: [{step, status}]`, with `tools.update_plan.enabled` in the thread's `config` |
 | Reasoning | `thinking_delta`s and a `thinking` block; text only with `--thinking-display summarized` and experimental betas on | `item/reasoning/summaryTextDelta` and the item's `summary`, with `model_reasoning_summary` set |
 | Resume | `--resume <session_id>` in a new process | `thread/resume { threadId }` on a new app-server |
 
 The `AskUserQuestion` tool call is not shown as a tool call; its question
-card is.
+card is. Nor is a `TodoWrite` call; the session's tasks are.
 
-Next in the model (`docs/roadmap.md`): plans, and the effort changed
-between turns.
+Next in the model (`docs/roadmap.md`): handing tasks between sessions
+(#30), and the subagents each session runs (#31).
 
 ## 4. Transport
 
@@ -228,14 +260,17 @@ claude --input-format stream-json --output-format stream-json --verbose \
        --setting-sources user,project,local
 ```
 
-with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
+with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2), and
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` with `CLAUDE_CODE_ENABLE_TASKS=0`, without
+which 2.1.316 gives a 5.x model no checklist tool.
 
 - stdout is JSON lines: `system`/`init` (once per turn, with the
   `session_id`), `assistant` and `user` messages with content blocks,
   `stream_event` partials and `result`.
 - The control protocol runs both ways as `control_request` /
-  `control_response`. We send `initialize`, `interrupt` and
-  `set_permission_mode`; the CLI sends `can_use_tool`, answered with
+  `control_response`. We send `initialize`, `interrupt`,
+  `set_permission_mode` and `apply_flag_settings`; the CLI sends
+  `can_use_tool`, answered with
   `allow` (echoing the input as `updatedInput`) or `deny`. Every control
   request we don't serve gets an error reply, or the CLI waits forever.
 - An interrupted turn reports `error_during_execution`; only
@@ -251,7 +286,8 @@ with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
 - We call `thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`
   and `model/list` (when the host starts and after a credential change), and handle
   `turn/started`, `turn/completed`, `item/started`, `item/completed`,
-  `item/agentMessage/delta` and `item/reasoning/summaryTextDelta`.
+  `item/agentMessage/delta`, `item/reasoning/summaryTextDelta`,
+  `turn/plan/updated` and `thread/settings/updated`.
 - Approvals arrive as server requests (`item/commandExecution/requestApproval`,
   `item/fileChange/requestApproval`, `item/permissions/requestApproval`,
   `item/tool/requestUserInput`) and `serverRequest/resolved` withdraws one.
@@ -267,7 +303,8 @@ with `CLAUDE_CONFIG_DIR` set to the host's private home (§6.2).
   on, so the model can ask questions outside plan mode. Codex marks it
   under development and sends a `warning` for it. Every thread also sets
   `model_reasoning_summary = "auto"`: with a custom model provider Codex
-  sends no reasoning summary otherwise.
+  sends no reasoning summary otherwise. And every thread turns the plan tool
+  on (`tools.update_plan.enabled`), which 0.166 leaves off.
 
 **Verification:** replay tests feed recorded stdio from `fixtures/` through
 the parsers and assert the exact events. `cargo run --bin s1` and `s2` drive

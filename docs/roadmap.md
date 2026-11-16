@@ -81,9 +81,28 @@ Each item ends in something to try. The fleet design is
    provider's resume in the private home. Claude's reasoning text needs
    experimental betas on, which the owner's gateway refuses, so through it
    Claude shows none (Claude `PROTOCOL.md`). Continue covers CLI and host restarts, with the durable log and native
-   conversation ids from item 4. Next: plans,
-   and the effort changed between turns. *Try:* restart a session's CLI and
-   continue it (`tools/live-host.sh` checks it as `continue=pass`).
+   conversation ids from item 4. Built in round C, on `session-model-c`:
+   the agent's checklist (Claude's `TodoWrite`, Codex's plan) kept by the
+   host as its own tasks, each with a stable id and the session that holds
+   it, shown above the transcript; and the effort changed between turns
+   from the session's header, which the next turn takes (Claude in its
+   running process, Codex on that `turn/start`). Both CLIs need a switch for
+   the checklist tool (§5.2). *Try:* restart a session's CLI and continue it
+   (`tools/live-host.sh` checks it as `continue=pass`); ask an agent to plan
+   a change as a checklist and watch it tick off on the phone, then lower
+   the effort from the header before the next message.
+9. **Hand tasks between sessions** (#30). It builds on the task model of
+   item 2: tasks are the host's own, with a `TaskId` that survives every
+   checklist update, `Continue` and a host restart, and a `holder` that
+   names the session working on each. Next: how an agent receives or
+   claims a task, and how a task leaves one session or agent for another.
+   *Try:* hand a task from a Claude session to a Codex session and watch it
+   leave one checklist and join the other.
+10. **Monitor the subagents** (#31) each session runs: Claude's `Agent`
+    tool, whose subagent frames carry `parent_tool_use_id` (Claude
+    `PROTOCOL.md`), and Codex's collab and spawn-agent items, shown in the
+    app. Round C keeps a subagent's checklist out of its session's tasks.
+    *Try:* watch a session's subagents work, and finish, from the phone.
 3. **Sign in from the app** (#12) (§6.3), on one host. Built first, on
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
