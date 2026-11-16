@@ -32,12 +32,21 @@ rm -rf "$scratch"
 mkdir -p "$scratch"
 trap 'kill "$server" 2>/dev/null || true; rm -rf "$site" "$scratch"' EXIT
 
-# session <dir> <recording> [filter...]: a directory holding the recording,
+# repo <dir>: a Git repository with one commit, which a session needs to
+# start (its worktree branches from it).
+repo() {
+  mkdir -p "$1"
+  git -C "$1" init -q
+  echo baseline >"$1/baseline.txt"
+  git -C "$1" add baseline.txt
+  git -C "$1" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm baseline -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
+}
+# session <dir> <recording> [filter...]: a repository holding the recording,
 # passed through the filter, as the fake's stdout.jsonl.
 session() {
   local dir=$1 recording=$2
   shift 2
-  mkdir -p "$dir"
+  repo "$dir"
   "${@:-cat}" <"$recordings/$recording" >"$dir/stdout.jsonl"
 }
 # Claude's turn plays a line every 200 ms once the message arrives, so the
@@ -121,7 +130,8 @@ set +e
   expect turn 6 'serve: command client="iPhone"' 'both turns'"'"' commands reached the host'
 
   session "$scratch/codex" codex-two-threads-listed.jsonl
-  mkdir "$scratch/codex/first" "$scratch/codex/second"
+  repo "$scratch/codex/first"
+  repo "$scratch/codex/second"
   codex=$fakes/fake-codex.sh start_host codex
   echo
   echo "## Codex, two sessions on one app-server, chromium"
