@@ -519,6 +519,10 @@ impl RegistryActor {
                         model: model.clone(),
                         effort: effort.to_owned(),
                     },
+                    EventKind::EffortChanged { effort } => Choice {
+                        effort: Some(effort.to_owned()),
+                        ..choice
+                    },
                     _ => choice,
                 },
             );

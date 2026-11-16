@@ -27,6 +27,7 @@ PROBE = HERE.parent / "claude" / "probe-thinking.jsonl"
 SESSION4 = HERE.parent / "claude" / "session4-chosen-killed.jsonl"
 SESSION5 = HERE.parent / "claude" / "session5-resumed.jsonl"
 SESSION6 = HERE.parent / "claude" / "session6-resume-missing.jsonl"
+SESSION9 = HERE.parent / "claude" / "session9-checklist-effort.jsonl"
 
 # The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt at
 # start, pong, 3c interrupt mid-stream, pong, 3d interrupt at send, pong,
@@ -111,4 +112,20 @@ refused = SESSION6.read_text().splitlines()
 reason = json.loads(refused[-1])["errors"][-1]
 (HERE / "claude-resume-missing.jsonl").write_text(
     "\n".join(refused + [json.dumps({"fake": "fail", "stderr": reason, "status": 1})]) + "\n"
+)
+
+# `s1` steps 15 and 16: a turn that keeps a checklist with `TodoWrite`, then
+# `apply_flag_settings`, answered with no `response`, which the session sends
+# right before the next message, and that turn. `s1` also asked
+# `get_settings` around it, which a session never does.
+recorded = SESSION9.read_text().splitlines()
+initialize, played = turns(recorded)
+applied = next(
+    line
+    for line in recorded
+    if json.loads(line).get("type") == "control_response" and "response" not in json.loads(line)["response"]
+)
+lines = renumbered([initialize] + played[0] + [applied] + played[1])
+(HERE / "claude-checklist-effort.jsonl").write_text(
+    "\n".join(m for line in lines for m in gated(line, False, False)) + "\n"
 )

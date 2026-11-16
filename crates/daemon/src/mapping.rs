@@ -1,6 +1,7 @@
 //! Agent events to protocol events. Pure: a provider event in, the steps the
 //! session applies out. Request ids and the turn belong to the session.
 
+use agents::PlanStep;
 use agents::claude::{
     ASK_USER_QUESTION, AfterDeny, Block, ClaudeEvent, PermissionDecision, Role,
 };
@@ -61,6 +62,8 @@ pub(crate) enum Step {
     /// The agent process is gone: the session logs this and waits for a
     /// `Continue`.
     Closed(CloseReason),
+    /// The agent rewrote its checklist: the session syncs its tasks to it.
+    Checklist(Vec<PlanStep>),
 }
 
 pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
@@ -121,14 +124,18 @@ pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
 }
 
 /// A question's `AskUserQuestion` call is not shown as a tool call: its
-/// `QuestionAsked` shows it. Its result then finishes a call no client saw
-/// start, which a client ignores.
+/// `QuestionAsked` shows it. Nor is a `TodoWrite` call: the session's tasks
+/// show it. Their results then finish a call no client saw start, which a
+/// client ignores.
 fn claude_block(role: Role, block: Block) -> Option<Step> {
     match (role, block) {
         (Role::Assistant, Block::Text(text)) => {
             Some(Step::Emit(EventKind::AssistantMessage { text }))
         }
         (Role::Assistant, Block::Thinking(text)) => reasoning(text),
+        (Role::Assistant, Block::Checklist { steps, .. }) => {
+            Some(Step::Checklist(steps))
+        }
         (Role::Assistant, Block::ToolUse { id, name, tool }) => {
             match name.as_str() {
                 ASK_USER_QUESTION => None,
@@ -151,7 +158,10 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
         }),
         (
             Role::User,
-            Block::Text(_) | Block::ToolUse { .. } | Block::Thinking(_),
+            Block::Text(_)
+            | Block::ToolUse { .. }
+            | Block::Thinking(_)
+            | Block::Checklist { .. },
         )
         | (Role::Assistant, Block::ToolResult { .. })
         | (_, Block::Other(_)) => None,
@@ -259,6 +269,13 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         ThreadEvent::TurnCompleted { outcome, .. } => {
             Vec::from([Step::TurnEnded(outcome)])
         }
+        ThreadEvent::PlanUpdated { steps, .. } => {
+            Vec::from([Step::Checklist(steps)])
+        }
+        ThreadEvent::SettingsChanged(settings) => {
+            tracing::debug!(?settings, "codex thread settings");
+            Vec::new()
+        }
         ThreadEvent::Unknown(frame) => {
             tracing::trace!(%frame, "unmapped codex thread frame");
             Vec::new()
@@ -343,7 +360,6 @@ pub(crate) fn codex_answer(reply: Reply) -> codex::Decision {
 
 #[cfg(test)]
 mod tests {
-    use agents::Exit;
     use agents::claude::{
         AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionRequestId,
         Role,
@@ -352,9 +368,10 @@ mod tests {
         self, ApprovalId, ApprovalKind, CodexEvent, PermissionAsk, ThreadEvent,
         ThreadId, TurnId,
     };
+    use agents::{Exit, PlanStep};
     use proto::{
         Answer, ClientName, CloseReason, Decision, EventKind, Question,
-        QuestionOption, Selection, ToolCallId, ToolKind,
+        QuestionOption, Selection, TaskStatus, ToolCallId, ToolKind,
     };
 
     use super::{
@@ -386,6 +403,13 @@ mod tests {
 
     fn turn() -> TurnId {
         TurnId(String::from("tu_1"))
+    }
+
+    fn step() -> PlanStep {
+        PlanStep {
+            text: String::from("write a.txt"),
+            status: TaskStatus::InProgress,
+        }
     }
 
     fn color() -> Question {
@@ -597,6 +621,24 @@ mod tests {
                     )]),
                 }),
                 want: Vec::new(),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::Message {
+                    uuid: None,
+                    role: Role::Assistant,
+                    content: Vec::from([Block::Checklist {
+                        id: String::from("toolu_4"),
+                        steps: Vec::from([step()]),
+                    }]),
+                }),
+                want: Vec::from([Step::Checklist(Vec::from([step()]))]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::PlanUpdated {
+                    turn: turn(),
+                    steps: Vec::from([step()]),
+                }),
+                want: Vec::from([Step::Checklist(Vec::from([step()]))]),
             },
             Case {
                 got: claude_steps(ClaudeEvent::QuestionAsked {

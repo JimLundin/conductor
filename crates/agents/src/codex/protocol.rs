@@ -8,13 +8,13 @@ use std::path::PathBuf;
 
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
-    QuestionOption, Selection, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    QuestionOption, Selection, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
+    ToolPhase, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::Exit;
+use crate::{Exit, PlanStep};
 
 pub(crate) const INITIALIZE: &str = "initialize";
 
@@ -190,6 +190,13 @@ pub enum ThreadEvent {
     ApprovalCancelled {
         id: ApprovalId,
     },
+    /// The whole plan, as the model updated it (`turn/plan/updated`).
+    PlanUpdated {
+        turn: TurnId,
+        steps: Vec<PlanStep>,
+    },
+    /// What the thread runs its later turns with (`thread/settings/updated`).
+    SettingsChanged(ThreadSettings),
     Unknown(Value),
 }
 
@@ -382,6 +389,41 @@ enum Notification {
         turn_id: String,
         item: ThreadItem,
     },
+    #[serde(rename = "turn/plan/updated")]
+    PlanUpdated {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        plan: Vec<WirePlanStep>,
+    },
+    #[serde(rename = "thread/settings/updated")]
+    SettingsUpdated {
+        #[serde(rename = "threadId")]
+        thread_id: String,
+        #[serde(rename = "threadSettings")]
+        settings: WireSettings,
+    },
+}
+
+#[derive(Deserialize)]
+struct WirePlanStep {
+    step: String,
+    status: WirePlanStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum WirePlanStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Deserialize)]
+struct WireSettings {
+    model: String,
+    effort: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -831,6 +873,39 @@ fn notification(raw: Value) -> Inbound {
             turn_id,
             item,
         }) => item_event(thread_id, turn_id, ItemPhase::Completed, item),
+        Ok(Notification::PlanUpdated {
+            thread_id,
+            turn_id,
+            plan,
+        }) => on_thread(
+            thread_id,
+            ThreadEvent::PlanUpdated {
+                turn: TurnId(turn_id),
+                steps: plan
+                    .into_iter()
+                    .map(|step| PlanStep {
+                        text: step.step,
+                        status: match step.status {
+                            WirePlanStatus::Pending => TaskStatus::Pending,
+                            WirePlanStatus::InProgress => {
+                                TaskStatus::InProgress
+                            }
+                            WirePlanStatus::Completed => TaskStatus::Completed,
+                        },
+                    })
+                    .collect(),
+            },
+        ),
+        Ok(Notification::SettingsUpdated {
+            thread_id,
+            settings,
+        }) => on_thread(
+            thread_id,
+            ThreadEvent::SettingsChanged(ThreadSettings {
+                model: settings.model,
+                effort: settings.effort.as_deref().and_then(Effort::parse),
+            }),
+        ),
     }
 }
 
@@ -943,9 +1018,11 @@ pub(crate) enum Call {
         thread: ThreadId,
         cursor: Option<String>,
     },
+    /// `effort` overrides the thread's own for this turn and later ones.
     TurnStart {
         thread: ThreadId,
         text: String,
+        effort: Option<Effort>,
     },
     TurnInterrupt {
         thread: ThreadId,
@@ -1035,11 +1112,13 @@ pub(crate) fn history_page(
 
 /// The `config` overrides of every thread: the reasoning effort, if set;
 /// reasoning summaries, which a custom model provider gets none of by
-/// default (PROTOCOL.md); and the feature that lets the model ask the user
-/// questions outside plan mode, which Codex 0.166 marks under development.
+/// default (PROTOCOL.md); the feature that lets the model ask the user
+/// questions outside plan mode, which Codex 0.166 marks under development;
+/// and the plan tool, which the model has only when it is on.
 #[derive(Serialize)]
 struct ThreadConfig {
     features: Features,
+    tools: Tools,
     model_reasoning_summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     model_reasoning_effort: Option<String>,
@@ -1051,10 +1130,22 @@ struct Features {
 }
 
 #[derive(Serialize)]
+struct Tools {
+    update_plan: Enabled,
+}
+
+#[derive(Serialize)]
+struct Enabled {
+    enabled: bool,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TurnStartParams {
     thread_id: String,
     input: Vec<UserInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1116,12 +1207,15 @@ impl Call {
                     sort_direction: String::from("asc"),
                 })
             }
-            Self::TurnStart { thread, text } => {
-                serde_json::to_value(TurnStartParams {
-                    thread_id: thread.0.clone(),
-                    input: Vec::from([UserInput::Text { text: text.clone() }]),
-                })
-            }
+            Self::TurnStart {
+                thread,
+                text,
+                effort,
+            } => serde_json::to_value(TurnStartParams {
+                thread_id: thread.0.clone(),
+                input: Vec::from([UserInput::Text { text: text.clone() }]),
+                effort: effort.map(|effort| String::from(effort.wire())),
+            }),
             Self::TurnInterrupt { thread, turn } => {
                 serde_json::to_value(TurnInterruptParams {
                     thread_id: thread.0.clone(),
@@ -1147,6 +1241,9 @@ fn thread_params(
         config: ThreadConfig {
             features: Features {
                 default_mode_request_user_input: true,
+            },
+            tools: Tools {
+                update_plan: Enabled { enabled: true },
             },
             model_reasoning_summary: String::from("auto"),
             model_reasoning_effort: opts
@@ -1581,7 +1678,8 @@ mod tests {
                 r#"{"id":7,"method":"thread/start","params":{"historyMode":"paginated",
                 "approvalPolicy":"on-request","sandbox":"read-only","cwd":"/tmp/s2-scratch",
                 "config":{"features":{"default_mode_request_user_input":true},
-                "model_reasoning_summary":"auto"}}}"#
+                "model_reasoning_summary":"auto",
+                "tools":{"update_plan":{"enabled":true}}}}}"#
             )
         );
     }
@@ -1611,7 +1709,8 @@ mod tests {
                 r#"{"id": 7, "method": "thread/start", "params": {"historyMode":"paginated",
                 "approvalPolicy": "on-request", "sandbox": "read-only", "cwd": "/tmp/s2-scratch",
                 "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low",
-                "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true}}}}"#
+                "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true},
+                "tools": {"update_plan": {"enabled": true}}}}}"#
             )
         );
         assert_eq!(
@@ -1621,7 +1720,8 @@ mod tests {
                 "threadId": "th_1", "approvalPolicy": "on-request", "sandbox": "read-only",
                 "cwd": "/tmp/s2-scratch", "model": "gpt-6-luna",
                 "config": {"model_reasoning_effort": "low",
-                "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true}}}}"#
+                "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true},
+                "tools": {"update_plan": {"enabled": true}}}}}"#
             )
         );
     }
@@ -1631,11 +1731,24 @@ mod tests {
         assert_eq!(
             request(Call::TurnStart {
                 thread: ThreadId(String::from("th_1")),
-                text: String::from("create a.txt")
+                text: String::from("create a.txt"),
+                effort: None,
             }),
             json(
                 r#"{"id": 7, "method": "turn/start", "params": {
                 "threadId": "th_1", "input": [{"type": "text", "text": "create a.txt"}]}}"#
+            )
+        );
+        assert_eq!(
+            request(Call::TurnStart {
+                thread: ThreadId(String::from("th_1")),
+                text: String::from("pong"),
+                effort: Some(Effort::High),
+            }),
+            json(
+                r#"{"id": 7, "method": "turn/start", "params": {
+                "threadId": "th_1", "input": [{"type": "text", "text": "pong"}],
+                "effort": "high"}}"#
             )
         );
         assert_eq!(

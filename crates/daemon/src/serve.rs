@@ -247,6 +247,17 @@ impl Conductor {
                         ))),
                 }
             }
+            CommandBody::SetEffort { session, effort } => {
+                match self.registry.relaunch(session).await? {
+                    Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+                    Ok((handle, _, offered)) => Ok(handle
+                        .order(Order::Effort(effort, offered))
+                        .await
+                        .unwrap_or(CommandResult::Rejected(
+                            Rejection::SessionClosed,
+                        ))),
+                }
+            }
             CommandBody::SendMessage { session, text } => {
                 self.order(session, Order::Send { text, by: client }).await
             }

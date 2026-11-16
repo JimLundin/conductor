@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use n0_future::StreamExt;
-use proto::CodexCredential;
+use proto::{CodexCredential, Effort};
 use serde_json::Value;
 
 use crate::{Exit, Home};
@@ -231,11 +231,17 @@ impl CodexServer {
 }
 
 impl CodexThread {
-    /// Starts a turn. The turn's events follow on the server's stream.
-    pub async fn send_turn(&self, text: String) -> Result<TurnId, Error> {
+    /// Starts a turn, at `effort` if given: it stays the thread's effort
+    /// for later turns. The turn's events follow on the server's stream.
+    pub async fn send_turn(
+        &self,
+        text: String,
+        effort: Option<Effort>,
+    ) -> Result<TurnId, Error> {
         let call = Call::TurnStart {
             thread: self.id.clone(),
             text,
+            effort,
         };
         Ok(turn_id(request(&self.server.commands, call).await?)?)
     }

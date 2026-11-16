@@ -564,6 +564,8 @@ impl Session {
             | EventKind::ToolCall { .. }
             | EventKind::RequestResolved { .. }
             | EventKind::ModelChanged { .. }
+            | EventKind::EffortChanged { .. }
+            | EventKind::TasksChanged { .. }
             | EventKind::CheckpointReserved { .. }
             | EventKind::HistoryMaterialized { .. }
             | EventKind::NativeTurnStarted { .. }

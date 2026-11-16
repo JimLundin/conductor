@@ -6,8 +6,10 @@ recordings in `fixtures/claude/` are one 2026-11-11 run with
 `--include-partial-messages`, steps 1 to 6 including 3c and 3d,
 `session3-questions.jsonl` from a 2026-11-12 run, steps 7 to 9, and
 `session4-chosen-killed.jsonl` and `session5-resumed.jsonl` from a later
-2026-11-12 run, steps 11 to 13. `probe-thinking.jsonl` is a probe, not an
-`s1` run (see Reasoning). The 2026-11-10
+2026-11-12 run, steps 11 to 13, and `session9-checklist-effort.jsonl` from
+a 2026-11-16 run through the owner's gateway, steps 15 and 16.
+`probe-thinking.jsonl` (see Reasoning) and `probe-subagent-todo.jsonl` (see
+Subagents) are probes, not `s1` runs. The 2026-11-10
 recordings they replaced are in git history. Where this file disagrees with the
 Python SDK source, trust this file and re-check it when the CLI version changes.
 
@@ -128,8 +130,72 @@ From the 2026-11-12 `s1` run, steps 11 to 13, and probes the same day.
   --effort high`. (Step 11.)
 - The request body carried `output_config: {effort: "high"}` for
   `--effort high`. (Probe, through a logging proxy.)
-- Changing the effort mid-session is not used. `apply_flag_settings` and
-  `system/per_turn_effort_changed` exist in the binary; neither was probed.
+- The `apply_flag_settings` control request with `{"settings":
+  {"effortLevel": "low"}}` changes the running process's effort. The CLI
+  answers `success` with no `response`. `get_settings` then reports
+  `applied.effort: "low"`, `effective: {"effortLevel": "low"}` and the
+  source `flagSettings`, and still does after the next turn, which runs
+  normally. (Step 16, from `--effort high`, and a probe the same day.) The
+  binary describes the request as a shallow merge into the flag-settings
+  layer. The host sends it right before the next user message, so a
+  running turn keeps its effort.
+- `system/per_turn_effort_changed` never arrived. The binary sends it only
+  when the API refuses a per-turn effort, to say the effort now goes as a
+  top-level parameter; nothing in Conductor depends on it.
+
+## Checklist
+
+From the 2026-11-16 `s1` run, step 15, in
+`fixtures/claude/session9-checklist-effort.jsonl`, and probes the same day.
+
+- 2.1.316 gives a 5.x model no checklist tool by default: `init` lists
+  neither `TodoWrite` nor the task tools, and a model that searched for
+  `TodoWrite` (`ToolSearch` with `select:TodoWrite`) found nothing and said
+  so. (Probe, haiku.) The binary turns the todo tools on for older
+  (4.x) models, a background job, a `--tools` list that names one, or
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS`. With them on, `CLAUDE_CODE_ENABLE_TASKS`
+  (on unless set false) picks the task tools (`TaskCreate`, `TaskUpdate`,
+  ...), which keep a task list on disk; off, it picks `TodoWrite`. The
+  adapter sets `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and
+  `CLAUDE_CODE_ENABLE_TASKS=0`, and `init` then lists `TodoWrite`.
+- `TodoWrite` is a deferred tool: in one probe the model first called
+  `ToolSearch` with `select:TodoWrite` (shown as an ordinary tool call), in
+  step 15 it called `TodoWrite` straight away.
+- Each call's `input` is the whole list: `{"todos": [{"content", "status",
+  "activeForm"}]}`, with `status` one of `pending`, `in_progress` and
+  `completed`. Its `tool_result` reads "Todos have been modified
+  successfully. ...". (Step 15: three calls, the first step pending, in
+  progress, then completed.) The second and third calls were two
+  `tool_use` blocks of one API response, printed as two `assistant`
+  frames.
+- `TodoWrite` asked no permission (no `can_use_tool`) in `default` mode,
+  the only mode Conductor runs. (Step 15 and probes.)
+- The adapter reads a `TodoWrite` call as `Block::Checklist`; an input that
+  doesn't parse stays an ordinary tool call.
+
+## Subagents
+
+From `probe-subagent-todo.jsonl`, a 2026-11-16 probe through the owner's
+gateway in which the main agent ran one `general-purpose` subagent that
+used `TodoWrite` twice. Its `initialize` answer's `request_id` is
+renumbered `req_1`, as a replay numbers it; the rest is the CLI's own
+stdout.
+
+- The main agent calls the `Agent` tool (`subagent_type`, `description`,
+  `prompt`, `run_in_background`). The CLI then prints `system/task_started`
+  (`task_id`, `tool_use_id` of that call, `subagent_type`,
+  `spawn_depth`), `system/task_progress` per subagent tool call (with
+  `last_tool_name` and `usage`), `system/task_updated` (`patch.status:
+  "completed"`) and `system/task_notification` (`status`, `summary`,
+  `output_file`).
+- The subagent's own `user` and `assistant` frames carry
+  `parent_tool_use_id`, the `Agent` call's id; its `TodoWrite` calls are
+  among them. Its report comes back as the `tool_result` of the `Agent`
+  call, in the main agent's frames.
+- The adapter leaves every frame with a `parent_tool_use_id` `Unknown`, so
+  a subagent's checklist never becomes the session's tasks. The `Agent`
+  call shows as an ordinary tool call. Conductor does not model subagents
+  yet.
 
 ## Reasoning
 

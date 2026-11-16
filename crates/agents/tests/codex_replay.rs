@@ -19,7 +19,7 @@ use agents::codex::{
     ThreadOptions, ThreadSettings, TurnId,
 };
 use n0_future::StreamExt;
-use proto::{Answer, Effort, ToolKind, ToolPhase, TurnOutcome};
+use proto::{Answer, Effort, TaskStatus, ToolKind, ToolPhase, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -307,6 +307,16 @@ fn summary(event: &ThreadEvent) -> String {
         ThreadEvent::ApprovalCancelled { id } => {
             format!("approval {} cancelled", id.0)
         }
+        ThreadEvent::PlanUpdated { steps, .. } => format!(
+            "plan {:?}",
+            steps
+                .iter()
+                .map(|step| (step.text.as_str(), step.status))
+                .collect::<Vec<(&str, TaskStatus)>>()
+        ),
+        ThreadEvent::SettingsChanged(settings) => {
+            format!("settings {settings:?}")
+        }
         ThreadEvent::Unknown(raw) => format!("unknown {}", method(raw)),
     }
 }
@@ -352,7 +362,7 @@ async fn turn(
     decision: Decision,
     interrupt: Interrupt,
 ) -> Recorder {
-    let turn = thread.send_turn(String::from(text)).await.unwrap();
+    let turn = thread.send_turn(String::from(text), None).await.unwrap();
     let goal = Goal::Turn {
         thread: thread.clone(),
         turn,
@@ -398,8 +408,8 @@ async fn approve_decline_interrupt_and_two_threads() {
     let b = server.start_thread(opts()).await.unwrap();
     let c = server.start_thread(opts()).await.unwrap();
     let (tb, tc) = n0_future::future::try_zip(
-        b.send_turn(String::from("alpha")),
-        c.send_turn(String::from("bravo")),
+        b.send_turn(String::from("alpha"), None),
+        c.send_turn(String::from("bravo"), None),
     )
     .await
     .unwrap();
@@ -586,6 +596,75 @@ async fn chosen_effort_and_reasoning() {
                 format!("A reasons {reasoning:?}"),
                 String::from("A streams [\"Yes\", \".\"]"),
                 String::from("A says \"Yes.\""),
+                String::from("A turn completed"),
+                String::from("exited exit status: 0"),
+            ])
+        )
+    );
+}
+
+/// `s2` steps 14 and 15: three plan updates, each the whole plan, and a
+/// turn started at `high`, which Codex reports as the thread's effort.
+#[tokio::test]
+async fn plan_and_effort_changed_with_the_turn() {
+    let rec = spawn("server8-plan-effort.jsonl").await;
+    let server = rec.server.clone();
+    let a = server.start_thread(opts()).await.unwrap();
+    let rec = turn(rec, &a, "plan", Decision::Decline, Interrupt::Never).await;
+    let high = a
+        .send_turn(String::from("pong"), Some(Effort::High))
+        .await
+        .unwrap();
+    let rec = rec
+        .until(
+            Goal::Turn {
+                thread: a.clone(),
+                turn: high,
+                decision: Decision::Decline,
+            },
+            Interrupt::Never,
+        )
+        .await;
+    assert_eq!(
+        server.shutdown().await.unwrap().describe(),
+        "exit status: 0"
+    );
+    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    let plan = |first| {
+        format!(
+            "A plan [(\"write a.txt\", {first}), (\"write b.txt\", Pending), (\"write c.txt\", Pending)]"
+        )
+    };
+    let started = std::fs::read_to_string(
+        fake_codex_dir(&fixture("server8-plan-effort.jsonl"))
+            .join("stdin.jsonl"),
+    )
+    .unwrap()
+    .lines()
+    .map(|line| serde_json::from_str::<Value>(line).unwrap())
+    .filter(|request| request.get("method") == Some(&Value::from("turn/start")))
+    .map(|request| request.pointer("/params/effort").cloned())
+    .collect::<Vec<Option<Value>>>();
+    assert_eq!(
+        (started, rec.seen.into_iter().collect::<Vec<String>>()),
+        (
+            Vec::from([None, Some(Value::from("high"))]),
+            Vec::from([
+                String::from("A started"),
+                String::from("A turn started"),
+                String::from("A reasons \"\""),
+                plan("Pending"),
+                plan("InProgress"),
+                plan("Completed"),
+                String::from("A streams [\"done\"]"),
+                String::from("A says \"done\""),
+                String::from("A turn completed"),
+                String::from(
+                    "A settings ThreadSettings { model: \"gpt-6-luna\", effort: Some(High) }"
+                ),
+                String::from("A turn started"),
+                String::from("A streams [\"pong\"]"),
+                String::from("A says \"pong\""),
                 String::from("A turn completed"),
                 String::from("exited exit status: 0"),
             ])
@@ -815,8 +894,14 @@ async fn revert_fixture(name: &str, outcome: &str) -> RevertFixture {
     let cwd = options.cwd.clone();
     let (server, _events) = CodexServer::spawn(options).await.unwrap();
     let thread = server.start_thread(opts()).await.unwrap();
-    let _ = thread.send_turn(String::from("retain")).await.unwrap();
-    let _ = thread.send_turn(String::from("discard")).await.unwrap();
+    let _ = thread
+        .send_turn(String::from("retain"), None)
+        .await
+        .unwrap();
+    let _ = thread
+        .send_turn(String::from("discard"), None)
+        .await
+        .unwrap();
     RevertFixture {
         server,
         thread,
@@ -837,7 +922,7 @@ async fn revert_targets_native_turn_and_keeps_thread_usable() {
         .unwrap();
     assert_eq!(
         live.thread
-            .send_turn(String::from("after undo"))
+            .send_turn(String::from("after undo"), None)
             .await
             .unwrap(),
         TurnId(String::from("tu_after"))
@@ -881,7 +966,7 @@ async fn revert_refusal_preserves_reason_and_does_not_close_thread() {
     );
     assert_eq!(
         live.thread
-            .send_turn(String::from("after refusal"))
+            .send_turn(String::from("after refusal"), None)
             .await
             .unwrap(),
         TurnId(String::from("tu_after"))

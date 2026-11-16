@@ -37,7 +37,8 @@ use proto::{
     Credential, Decision, Effort, Epoch, Event, EventKind, FileChange,
     HostPath, HostSeq, ModelChoice, ModelId, Models, Provider, Providers,
     Question, QuestionOption, Rejection, RequestId, Resolution, Selection,
-    SessionId, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    SessionId, Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
+    ToolPhase, TurnOutcome,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -4756,4 +4757,326 @@ fn assert_restored_files(worktree: &Path) {
             .map(|error| error.kind()),
         Some(std::io::ErrorKind::NotFound)
     );
+}
+
+const fn set_effort(session: SessionId, effort: Effort) -> CommandBody {
+    CommandBody::SetEffort { session, effort }
+}
+
+/// The task lists in `events`, in order.
+fn task_lists(events: &[Event]) -> Vec<Vec<Task>> {
+    events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::TasksChanged { tasks } => Some(tasks.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Each task's text and status, the ids and holder aside.
+fn steps(tasks: &[Task]) -> Vec<(&str, TaskStatus)> {
+    tasks
+        .iter()
+        .map(|task| (task.text.as_str(), task.status))
+        .collect()
+}
+
+/// The three lists `s1` step 15 and `s2` step 14 wrote: three steps, the
+/// first pending, then in progress, then done.
+fn written(a: &str, b: &str, c: &str) -> Vec<Vec<(String, TaskStatus)>> {
+    [
+        TaskStatus::Pending,
+        TaskStatus::InProgress,
+        TaskStatus::Completed,
+    ]
+    .into_iter()
+    .map(|first| {
+        Vec::from([
+            (String::from(a), first),
+            (String::from(b), TaskStatus::Pending),
+            (String::from(c), TaskStatus::Pending),
+        ])
+    })
+    .collect()
+}
+
+fn owned(steps: Vec<(&str, TaskStatus)>) -> Vec<(String, TaskStatus)> {
+    steps
+        .into_iter()
+        .map(|(text, status)| (String::from(text), status))
+        .collect()
+}
+
+/// Each task's id and holder, list by list.
+fn owners(lists: &[Vec<Task>]) -> Vec<Vec<(TaskId, SessionId)>> {
+    lists
+        .iter()
+        .map(|tasks| tasks.iter().map(|task| (task.id, task.holder)).collect())
+        .collect()
+}
+
+/// The first list's ids, held by `session`, as many times as there are
+/// lists: what `owners` gives when every list keeps them.
+fn kept(
+    session: SessionId,
+    lists: &[Vec<Task>],
+) -> Vec<Vec<(TaskId, SessionId)>> {
+    let first = lists
+        .first()
+        .map(|tasks| tasks.iter().map(|task| (task.id, session)).collect())
+        .unwrap_or_default();
+    lists.iter().map(|_| Vec::clone(&first)).collect()
+}
+
+/// What each line the session wrote to the Claude stand-in was: a control
+/// request's subtype and settings, or a user message's text.
+fn written_to_claude(dir: &Path) -> Vec<String> {
+    sent_to_agent(dir)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .map(|line| match line.pointer("/request/subtype") {
+            Some(subtype) => format!(
+                "{} {}",
+                subtype.as_str().unwrap_or_default(),
+                line.pointer("/request/settings")
+                    .map(serde_json::Value::to_string)
+                    .unwrap_or_default()
+            ),
+            None => line
+                .pointer("/message/content/0/text")
+                .and_then(serde_json::Value::as_str)
+                .map(String::from)
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// Holds the recording's first turn until the test writes `release`.
+fn hold_first_turn(dir: &Path) {
+    let stdout = dir.join("stdout.jsonl");
+    let user = r#"{"fake": "await", "match": {"type": "user"}}"#;
+    let held = read(&stdout).replacen(
+        user,
+        &format!("{user}\n{{\"fake\": \"release\", \"file\": \"release\"}}"),
+        1,
+    );
+    std::fs::write(stdout, held).unwrap();
+}
+
+/// A Claude turn's `TodoWrite` calls become the session's tasks: one
+/// `TasksChanged` per call, each task keeping its id, and no call shown as
+/// a tool call. An effort set while the turn runs is checked against the
+/// model's efforts, logged at once, and reaches the CLI with the next
+/// message (`apply_flag_settings`, then the message), not during the turn.
+#[tokio::test]
+async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_turn()
+ {
+    let fx = host().await;
+    let dir = scratch("checklist", "claude-checklist-effort.jsonl");
+    hold_first_turn(&dir);
+    let (phone, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let opened = legacy_events_until(&mut updates, Until::Ready).await;
+    let _ = send(&phone, message(session, "plan")).await;
+    let mid_turn = [
+        send(&phone, set_effort(session, Effort::Max)).await,
+        send(&phone, set_effort(session, Effort::Low)).await,
+        send(&phone, set_effort(session, Effort::Low)).await,
+    ];
+    let before = written_to_claude(&dir);
+    std::fs::write(dir.join("release"), "").unwrap();
+    let turn = legacy_events_until(&mut updates, Until::TurnEnd).await;
+    let lists = task_lists(&turn);
+    assert_eq!(
+        (
+            mid_turn,
+            before,
+            lists
+                .iter()
+                .map(|tasks| owned(steps(tasks)))
+                .collect::<Vec<Vec<(String, TaskStatus)>>>(),
+            owners(&lists),
+            turn.iter()
+                .filter(|event| matches!(
+                    event.kind,
+                    EventKind::ToolCall {
+                        phase: ToolPhase::Started { .. },
+                        ..
+                    } | EventKind::RequestOpened { .. }
+                ))
+                .count(),
+            turn.iter()
+                .filter(|event| matches!(
+                    event.kind,
+                    EventKind::EffortChanged { .. }
+                ))
+                .map(|event| event.kind.clone())
+                .collect::<Vec<EventKind>>(),
+        ),
+        (
+            [
+                CommandResult::Rejected(Rejection::NotOffered {
+                    reason: String::from("Big doesn't take the effort max"),
+                }),
+                CommandResult::Accepted,
+                CommandResult::Accepted,
+            ],
+            Vec::from([String::from("initialize "), String::from("plan")]),
+            written("Write a.txt", "Write b.txt", "Write c.txt"),
+            kept(session, &lists),
+            0,
+            Vec::from([EventKind::EffortChanged {
+                effort: Effort::Low
+            }]),
+        )
+    );
+    let _ = send(&phone, message(session, "pong")).await;
+    let next = legacy_events_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        written_to_claude(&dir),
+        [
+            "initialize ",
+            "plan",
+            r#"apply_flag_settings {"effortLevel":"low"}"#,
+            "pong"
+        ]
+    );
+    let view = fold([opened, turn, next].concat());
+    assert_eq!(
+        view.sessions
+            .get(&session)
+            .map(|view| (view.effort, view.tasks.clone())),
+        Some((Some(Effort::Low), lists.last().cloned().unwrap_or_default()))
+    );
+    phone.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// A Codex turn's plan updates become the session's tasks as Claude's
+/// checklist does, and a new effort rides on the next `turn/start`.
+#[tokio::test]
+async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn() {
+    let (fx, dir) = codex_host("codex-plan-effort.jsonl").await;
+    let (phone, mut updates) = link(fx.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let session =
+        started_session(send(&phone, start(Provider::Codex, &dir)).await);
+    let _ = legacy_events_until(&mut updates, Until::Ready).await;
+    let _ = send(&phone, message(session, "plan")).await;
+    let turn = legacy_events_until(&mut updates, Until::TurnEnd).await;
+    let lists = task_lists(&turn);
+    let set = send(&phone, set_effort(session, Effort::High)).await;
+    let _ = send(&phone, message(session, "pong")).await;
+    let next = kinds_until(&mut updates, Until::TurnEnd).await;
+    assert_eq!(
+        (
+            lists
+                .iter()
+                .map(|tasks| owned(steps(tasks)))
+                .collect::<Vec<Vec<(String, TaskStatus)>>>(),
+            owners(&lists),
+            set,
+            next.into_iter()
+                .filter(|kind| !matches!(
+                    kind,
+                    EventKind::AssistantDelta { .. }
+                ))
+                .collect::<Vec<EventKind>>(),
+            requests(&dir, "stdin.jsonl", "turn/start")
+                .iter()
+                .map(|params| params.get("effort").cloned())
+                .collect::<Vec<Option<serde_json::Value>>>(),
+        ),
+        (
+            written("write a.txt", "write b.txt", "write c.txt"),
+            kept(session, &lists),
+            CommandResult::Accepted,
+            Vec::from([
+                EventKind::EffortChanged {
+                    effort: Effort::High
+                },
+                user("pong"),
+                reply("pong"),
+                turn_end(TurnOutcome::Completed),
+            ]),
+            Vec::from([None, Some(serde_json::Value::from("high"))]),
+        )
+    );
+    phone.stop().await.unwrap();
+    fx.router.shutdown().await.unwrap();
+}
+
+/// A host restart keeps the session's tasks and its effort: `Continue`
+/// starts the CLI at that effort, and the agent's next checklist keeps the
+/// tasks' ids.
+#[tokio::test]
+async fn tasks_and_effort_survive_a_host_restart() {
+    let dir = scratch("tasks-restart", "claude-checklist-effort.jsonl");
+    let data = data_dir("tasks-restart");
+    std::fs::copy(dir.join("stdout.jsonl"), dir.join("stdout.2.jsonl"))
+        .unwrap();
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
+    let address = first.address();
+    let (phone, mut updates) = link(first.target.clone(), None).await;
+    until_live(&mut updates).await;
+    let session =
+        started_session(send(&phone, start(Provider::Claude, &dir)).await);
+    let _ = send(&phone, message(session, "plan")).await;
+    let before =
+        task_lists(&legacy_events_until(&mut updates, Until::TurnEnd).await);
+    let set = send(&phone, set_effort(session, Effort::Low)).await;
+    first.shutdown().await;
+
+    let second = durable_host(&data, address).await;
+    phone.reconnect().await;
+    let _ = until_live(&mut updates).await;
+    let continued = send(&phone, continued(session)).await;
+    let _ = kinds_until(&mut updates, Until::Ready).await;
+    let _ = send(&phone, message(session, "plan")).await;
+    let after =
+        task_lists(&legacy_events_until(&mut updates, Until::TurnEnd).await);
+    let (late, mut late_updates) = link(second.target.clone(), None).await;
+    let view = fold(
+        until_live(&mut late_updates)
+            .await
+            .into_iter()
+            .filter_map(|update| match update {
+                Update::Event(event) => Some(event),
+                Update::Status(_) | Update::Reset(_) => None,
+            })
+            .collect(),
+    );
+    assert_eq!(
+        (
+            set,
+            continued,
+            argv(&dir)
+                .iter()
+                .map(|run| flag(run, "--effort"))
+                .collect::<Vec<Option<String>>>(),
+            owners(&[before.clone(), after.clone()].concat()),
+            after.len(),
+            view.sessions
+                .get(&session)
+                .map(|view| (view.effort, view.tasks.clone())),
+        ),
+        (
+            CommandResult::Accepted,
+            CommandResult::Accepted,
+            Vec::from([None, Some(String::from("low"))]),
+            kept(session, &[before, after.clone()].concat()),
+            3,
+            Some((
+                Some(Effort::Low),
+                after.last().cloned().unwrap_or_default()
+            )),
+        )
+    );
+    late.stop().await.unwrap();
+    phone.stop().await.unwrap();
+    second.shutdown().await;
 }

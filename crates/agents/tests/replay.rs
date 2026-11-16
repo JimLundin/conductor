@@ -18,7 +18,7 @@ use agents::claude::{
     SettingSource, VersionPolicy,
 };
 use n0_future::StreamExt;
-use proto::{Effort, ModelId};
+use proto::{Effort, ModelId, TaskStatus};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -85,6 +85,13 @@ fn block_summary(block: &Block) -> String {
             format!("tool_use {name} {tool:?}")
         }
         Block::ToolResult { outcome, .. } => format!("tool_result {outcome:?}"),
+        Block::Checklist { steps, .. } => format!(
+            "checklist {:?}",
+            steps
+                .iter()
+                .map(|step| (step.text.as_str(), step.status))
+                .collect::<Vec<(&str, TaskStatus)>>()
+        ),
         Block::Other(_) => String::from("other"),
     }
 }
@@ -497,6 +504,115 @@ async fn summarized_thinking_recording() {
             String::from("assistant: text \"18\""),
             String::from("finished success Completed Some(\"completed\")"),
         ]
+    );
+}
+
+/// `s1` step 15: three `TodoWrite` calls, each the whole checklist, and no
+/// permission request for any; step 16's turn after the effort changed.
+/// The recording's answers to step 16's control requests play unasked here.
+#[tokio::test]
+async fn checklist_and_effort_recording() {
+    let replayed = replay("session9-checklist-effort.jsonl", Vec::new()).await;
+    let checklist = |first, second| {
+        format!(
+            "assistant: checklist [(\"Write a.txt\", {first}), (\"Write b.txt\", {second}), (\"Write c.txt\", {second})]"
+        )
+    };
+    assert_eq!(
+        replayed
+            .events
+            .into_iter()
+            .filter(|line| !line.starts_with("streams")
+                && !line.starts_with("thinks")
+                && !line.starts_with("user: tool_result"))
+            .collect::<Vec<String>>(),
+        [
+            String::from("turn_started 2349376c-a74e-4a6b-8067-323f34176c03"),
+            String::from(
+                "user: text \"Use the TodoWrite tool to make a checklist of exactly three steps: write a.txt, write b.txt, write c.txt. Then mark the first step in progress, then completed, with TodoWrite each time. Do not create any files and use no other tool besides finding TodoWrite. Then reply done.\""
+            ),
+            String::from("assistant: thinking \"\""),
+            checklist("Pending", "Pending"),
+            checklist("InProgress", "Pending"),
+            checklist("Completed", "Pending"),
+            String::from("assistant: thinking \"\""),
+            String::from(
+                "assistant: text \"Done. I made the three-item checklist, then marked \\\"Write a.txt\\\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created.\""
+            ),
+            String::from("finished success Completed Some(\"completed\")"),
+            String::from("turn_started 2349376c-a74e-4a6b-8067-323f34176c03"),
+            String::from("user: text \"Reply with just the word pong.\""),
+            String::from("assistant: text \"pong\""),
+            String::from("finished success Completed Some(\"completed\")"),
+        ]
+    );
+}
+
+/// `s1` step 16: `apply_flag_settings` with `effortLevel`, then
+/// `get_settings`, answered as the pinned CLI answered them.
+#[tokio::test]
+async fn the_effort_is_set_in_the_running_process() {
+    let recorded =
+        std::fs::read_to_string(fixture("session9-checklist-effort.jsonl"))
+            .unwrap();
+    let line = |at| recorded.lines().nth(at).unwrap();
+    let (initialize, set, applied) = (line(0), line(164), line(165));
+    let stdout = recording(
+        "set-effort",
+        Vec::from([
+            initialize,
+            r#"{"fake":"await","match":{"type":"control_request","request":{"subtype":"apply_flag_settings"}}}"#,
+            &set.replace("req_3", "req_2"),
+            r#"{"fake":"await","match":{"type":"control_request","request":{"subtype":"get_settings"}}}"#,
+            &applied.replace("req_4", "req_3"),
+        ]),
+    );
+    let claude = fake_claude("set-effort", &stdout);
+    let (session, _events) =
+        ClaudeSession::spawn(options(&claude)).await.unwrap();
+    let set = session.set_effort(Effort::Low).await;
+    let applied = session.applied().await.map(|applied| applied.effort);
+    let _ = session.shutdown().await.unwrap();
+    assert_eq!(
+        (
+            set.map_err(|err| err.to_string()),
+            applied.map_err(|err| err.to_string()),
+            std::fs::read_to_string(claude.stdin_log)
+                .unwrap()
+                .lines()
+                .nth(1)
+                .map(|line| serde_json::from_str::<Value>(line).unwrap()),
+        ),
+        (
+            Ok(()),
+            Ok(Some(String::from("low"))),
+            Some(
+                serde_json::from_str::<Value>(
+                    r#"{"type": "control_request", "request_id": "req_2", "request": {"subtype": "apply_flag_settings", "settings": {"effortLevel": "low"}}}"#
+                )
+                .unwrap()
+            ),
+        )
+    );
+}
+
+/// A probe: the main agent runs a subagent, whose two `TodoWrite` calls
+/// carry its `parent_tool_use_id`. They are not the session's checklist.
+#[tokio::test]
+async fn a_subagents_checklist_is_not_the_sessions() {
+    let replayed = replay("probe-subagent-todo.jsonl", Vec::new()).await;
+    assert_eq!(
+        (
+            replayed
+                .events
+                .iter()
+                .filter(|line| line.starts_with("assistant: checklist"))
+                .count(),
+            replayed.unknown.get("assistant/-"),
+            replayed.unknown.get("user/-"),
+            replayed.unknown.get("system/task_started"),
+        ),
+        (0, Some(&2), Some(&3), Some(&1))
     );
 }
 

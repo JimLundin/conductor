@@ -10,6 +10,7 @@ pub mod registry;
 pub mod serve;
 pub mod session;
 mod storage;
+mod tasks;
 mod workspace;
 
 use std::io::{ErrorKind, Write};

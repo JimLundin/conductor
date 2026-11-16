@@ -1,7 +1,8 @@
 //! S1 live checklist: drives the real `claude` CLI through approve, deny,
 //! interrupt, resume, `set_permission_mode`, questions, approval for the
-//! session, a chosen model and effort, reasoning, and a killed CLI resumed,
-//! printing PASS/FAIL per step.
+//! session, a chosen model and effort, reasoning, a killed CLI resumed, a
+//! checklist and the effort changed between turns, printing PASS/FAIL per
+//! step.
 //!
 //! Usage: s1 [`FIXTURE_DIR`]
 //! Writes raw CLI stdout per step to `FIXTURE_DIR`/<step>.jsonl when given.
@@ -10,18 +11,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::Home;
 use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession, Error,
-    MessageId, PermissionDecision, PermissionMode, PermissionRequestId, Resume,
-    Role, SessionId, SettingSource, VersionPolicy,
+    AfterDeny, Applied, Block, ClaudeEvent, ClaudeOptions, ClaudeSession,
+    Error, MessageId, PermissionDecision, PermissionMode, PermissionRequestId,
+    Resume, Role, SessionId, SettingSource, VersionPolicy,
 };
 use agents::install::{Cli, install};
 use agents::live::{
     Cue, Presence, Verdict, fresh_scratch, log_path, presence, report,
 };
+use agents::{Home, PlanStep};
 use anyhow::{Context, Result};
-use proto::{Answer, Effort, Question, ToolOutcome, TurnOutcome};
+use proto::{Answer, Effort, Question, TaskStatus, ToolOutcome, TurnOutcome};
 use tokio::sync::mpsc;
 
 /// Where the pinned CLIs are installed for the live checks, under this
@@ -117,6 +118,8 @@ struct Turn {
     thinking: Vec<String>,
     /// The text of every `ThinkingDelta`, joined.
     thought: String,
+    /// Each `TodoWrite` checklist, in order.
+    checklists: Vec<Vec<PlanStep>>,
     /// How the CLI exited, under `Plan::Kill`.
     exited: Option<String>,
     finished: Option<Finished>,
@@ -143,6 +146,7 @@ impl Turn {
             streamed: String::new(),
             thinking: Vec::new(),
             thought: String::new(),
+            checklists: Vec::new(),
             exited: None,
             finished: None,
             session_id: None,
@@ -211,6 +215,7 @@ impl Turn {
                         | Block::Text(_)
                         | Block::Thinking(_)
                         | Block::ToolUse { .. }
+                        | Block::Checklist { .. }
                         | Block::Other(_) => None,
                     },
                 ));
@@ -306,8 +311,19 @@ impl Turn {
                 Block::Text(_)
                 | Block::ToolUse { .. }
                 | Block::ToolResult { .. }
+                | Block::Checklist { .. }
                 | Block::Other(_) => None,
             }));
+        self.checklists.extend(content.iter().filter_map(
+            |block| match block {
+                Block::Checklist { steps, .. } => Some(steps.clone()),
+                Block::Text(_)
+                | Block::Thinking(_)
+                | Block::ToolUse { .. }
+                | Block::ToolResult { .. }
+                | Block::Other(_) => None,
+            },
+        ));
         let text = content
             .into_iter()
             .filter_map(|block| match block {
@@ -315,6 +331,7 @@ impl Turn {
                 Block::Thinking(_)
                 | Block::ToolUse { .. }
                 | Block::ToolResult { .. }
+                | Block::Checklist { .. }
                 | Block::Other(_) => None,
             })
             .collect::<String>();
@@ -519,6 +536,110 @@ async fn chosen_and_killed(
     let status = t.live.session.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     Ok((model, reasoning, resumed))
+}
+
+/// The effort `get_settings` reported, if it answered.
+fn applied_effort(applied: &Result<Applied, Error>) -> Option<String> {
+    applied
+        .as_ref()
+        .ok()
+        .and_then(|applied| applied.effort.clone())
+}
+
+/// The statuses of a checklist's steps, in order.
+fn statuses(steps: &[PlanStep]) -> Vec<TaskStatus> {
+    steps.iter().map(|step| step.status).collect()
+}
+
+/// Steps 15 and 16, in a fifth session started at `high` effort: a turn
+/// that keeps a checklist with `TodoWrite`, which asks no permission, and
+/// the effort set to `low` in the running process before the next turn.
+async fn checklist_and_effort(
+    claude: &Path,
+    fixtures: Option<&Path>,
+) -> Result<(Verdict, Verdict)> {
+    let (session, events) = ClaudeSession::spawn(ClaudeOptions {
+        effort: Some(Effort::High),
+        ..options(
+            claude,
+            None,
+            log_path(fixtures, "session9-checklist-effort"),
+        )
+    })
+    .await?;
+    let t = Turn::start(
+        Live { session, events },
+        "Use the TodoWrite tool to make a checklist of exactly three steps: write a.txt, write b.txt, write c.txt. Then mark the first step in progress, then completed, with TodoWrite each time. Do not create any files and use no other tool besides finding TodoWrite. Then reply done.",
+        Plan::Answer(Policy::Deny(String::from("only the checklist"))),
+    )
+    .await?;
+    let checklist = report(
+        "15 checklist",
+        match (
+            t.checklists.get(1),
+            t.checklists.last().map(|steps| statuses(steps)),
+            t.permissions.first(),
+            t.result(),
+        ) {
+            (
+                Some(_),
+                Some(last),
+                None,
+                Some(("success", TurnOutcome::Completed)),
+            ) if last
+                == [
+                    TaskStatus::Completed,
+                    TaskStatus::Pending,
+                    TaskStatus::Pending,
+                ] =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "checklists={:?} permissions={:?} finished={:?} reply={:?}",
+            t.checklists, t.permissions, t.finished, t.text
+        ),
+    )?;
+    let before = t.live.session.applied().await;
+    let set = t.live.session.set_effort(Effort::Low).await;
+    let applied = t.live.session.applied().await;
+    let after = Turn::start(
+        t.live,
+        "Reply with just the word pong.",
+        Plan::Answer(Policy::Deny(String::from("no tools"))),
+    )
+    .await?;
+    let kept = after.live.session.applied().await;
+    let changed = report(
+        "16 effort changed",
+        match (
+            applied_effort(&before).as_deref(),
+            &set,
+            applied_effort(&applied).as_deref(),
+            applied_effort(&kept).as_deref(),
+            after.result(),
+            after.text.to_lowercase().find("pong"),
+        ) {
+            (
+                Some("high"),
+                Ok(()),
+                Some("low"),
+                Some("low"),
+                Some(("success", TurnOutcome::Completed)),
+                Some(_),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "before={before:?} set_effort()={set:?} applied={applied:?} after the turn={kept:?} finished={:?} reply={:?}",
+            after.finished, after.text
+        ),
+    )?;
+    let status = after.live.session.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((checklist, changed))
 }
 
 /// What an interrupt at a cue does to the turn.
@@ -793,7 +914,7 @@ async fn undo_history(
     let (session, _events) = ClaudeSession::spawn(fork.clone()).await?;
     let _ = session.shutdown().await?;
     let (session, events) = ClaudeSession::spawn(fork).await?;
-    let prompt = "What are my retained and discarded codewords? Reply only <retained>/<discarded>, using unknown for a codeword not supplied in this conversation. Do not use tools.";
+    let prompt = "What are my retained and discarded codewords? Reply with only the two codewords joined by a slash, retained first, as in red/blue, writing unknown for a codeword not supplied in this conversation. Do not use tools.";
     let after = Turn::start(
         Live { session, events },
         prompt,
@@ -1045,6 +1166,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let (chosen, reasoning, resumed) =
         chosen_and_killed(&claude, fixtures).await?;
     let undo = undo_history(&claude, fixtures).await?;
+    let (checklist, effort) = checklist_and_effort(&claude, fixtures).await?;
     let failed = [
         approve,
         deny,
@@ -1063,6 +1185,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         reasoning,
         resumed,
         undo,
+        checklist,
+        effort,
     ]
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

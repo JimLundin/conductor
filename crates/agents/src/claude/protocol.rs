@@ -4,12 +4,12 @@
 
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
-    QuestionOption, Selection, ToolKind, ToolOutcome, TurnOutcome,
+    QuestionOption, Selection, TaskStatus, ToolKind, ToolOutcome, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::Exit;
+use crate::{Exit, PlanStep};
 
 /// A Claude session id, as printed in `system/init` and accepted by `--resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -132,6 +132,11 @@ pub enum Block {
         tool_use_id: String,
         content: Value,
         outcome: ToolOutcome,
+    },
+    /// A `TodoWrite` call: the whole checklist as the model wrote it.
+    Checklist {
+        id: String,
+        steps: Vec<PlanStep>,
     },
     Other(Value),
 }
@@ -372,6 +377,48 @@ struct Asked {
 
 /// The tool Claude asks the user questions with.
 pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
+
+/// The tool Claude keeps its checklist with. 2.1.316 offers it to a 5.x
+/// model only with `CLAUDE_CODE_ENABLE_TODO_TOOLS` on and
+/// `CLAUDE_CODE_ENABLE_TASKS` off (PROTOCOL.md).
+const TODO_WRITE: &str = "TodoWrite";
+
+/// `TodoWrite`'s input, as far as we read it.
+#[derive(Deserialize)]
+struct TodoInput {
+    todos: Vec<Todo>,
+}
+
+#[derive(Deserialize)]
+struct Todo {
+    content: String,
+    status: TodoStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+fn todos(input: &Value) -> serde_json::Result<Vec<PlanStep>> {
+    serde_json::from_value::<TodoInput>(input.clone()).map(|input| {
+        input
+            .todos
+            .into_iter()
+            .map(|todo| PlanStep {
+                text: todo.content,
+                status: match todo.status {
+                    TodoStatus::Pending => TaskStatus::Pending,
+                    TodoStatus::InProgress => TaskStatus::InProgress,
+                    TodoStatus::Completed => TaskStatus::Completed,
+                },
+            })
+            .collect()
+    })
+}
 
 impl Rule {
     /// The rule as the CLI writes it in settings: `Bash(git status)`.
@@ -661,11 +708,16 @@ fn block(raw: Value) -> Block {
     match serde_json::from_value::<ContentBlock>(raw.clone()) {
         Ok(ContentBlock::Text { text }) => Block::Text(text),
         Ok(ContentBlock::Thinking { thinking }) => Block::Thinking(thinking),
-        Ok(ContentBlock::ToolUse { id, name, input }) => Block::ToolUse {
-            tool: tool_kind(&name, &input),
-            id,
-            name,
-        },
+        Ok(ContentBlock::ToolUse { id, name, input }) => {
+            match (name.as_str(), todos(&input)) {
+                (TODO_WRITE, Ok(steps)) => Block::Checklist { id, steps },
+                (_, _) => Block::ToolUse {
+                    tool: tool_kind(&name, &input),
+                    id,
+                    name,
+                },
+            }
+        }
         Ok(ContentBlock::ToolResult {
             tool_use_id,
             content,
@@ -797,6 +849,8 @@ pub(crate) enum ControlCall {
     Interrupt,
     SetPermissionMode(PermissionMode),
     GetSettings,
+    /// `apply_flag_settings` with `effortLevel`.
+    SetEffort(Effort),
 }
 
 impl ControlCall {
@@ -806,6 +860,7 @@ impl ControlCall {
             Self::Interrupt => "interrupt",
             Self::SetPermissionMode(_) => "set_permission_mode",
             Self::GetSettings => "get_settings",
+            Self::SetEffort(_) => "apply_flag_settings",
         }
     }
 }
@@ -864,6 +919,13 @@ enum Request {
     Interrupt,
     SetPermissionMode { mode: String },
     GetSettings,
+    ApplyFlagSettings { settings: FlagSettings },
+}
+
+#[derive(Serialize)]
+struct FlagSettings {
+    #[serde(rename = "effortLevel")]
+    effort_level: String,
 }
 
 #[derive(Serialize)]
@@ -916,6 +978,11 @@ pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
                     }
                 }
                 ControlCall::GetSettings => Request::GetSettings,
+                ControlCall::SetEffort(effort) => Request::ApplyFlagSettings {
+                    settings: FlagSettings {
+                        effort_level: String::from(effort.wire()),
+                    },
+                },
             },
         },
         Outbound::Permission { id, decision, open } => Line::ControlResponse {
@@ -1469,10 +1536,12 @@ mod tests {
             },
             Case {
                 name: String::from("TodoWrite"),
-                input: json(r#"{"todos":[]}"#),
+                input: json(r#"{"todos":[{"content":"a","status":"later"}]}"#),
                 want: ToolKind::Other {
                     name: String::from("TodoWrite"),
-                    detail: String::from(r#"{"todos":[]}"#),
+                    detail: String::from(
+                        r#"{"todos":[{"content":"a","status":"later"}]}"#,
+                    ),
                 },
             },
         ];
@@ -1481,7 +1550,7 @@ mod tests {
             let got = match parse_line(&line).unwrap() {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolUse { tool, .. } => Some(tool),
-                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolResult { .. } | super::Block::Other(_) => None,
+                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolResult { .. } | super::Block::Checklist { .. } | super::Block::Other(_) => None,
                 }),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };
@@ -1557,7 +1626,7 @@ mod tests {
             let got = match parse_line(&line).unwrap() {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolResult { outcome, .. } => Some(outcome),
-                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolUse { .. } | super::Block::Other(_) => None,
+                    super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolUse { .. } | super::Block::Checklist { .. } | super::Block::Other(_) => None,
                 }),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };

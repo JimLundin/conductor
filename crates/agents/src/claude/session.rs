@@ -270,6 +270,13 @@ impl ClaudeSession {
         Ok(applied(self.control(ControlCall::GetSettings).await?)?)
     }
 
+    /// Changes the effort of the CLI's later API requests, in this process
+    /// (`apply_flag_settings`); `applied` reports it back.
+    pub async fn set_effort(&self, effort: Effort) -> Result<(), Error> {
+        let _ = self.control(ControlCall::SetEffort(effort)).await?;
+        Ok(())
+    }
+
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
         self.ask(|reply| CommandMsg::SendUser { text, reply })
             .await?
@@ -429,6 +436,10 @@ pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
         }
         None => {}
     }
+    // `TodoWrite`, the checklist the host keeps as tasks, rather than the
+    // task tools that would take its place (PROTOCOL.md).
+    cmd.env("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")
+        .env("CLAUDE_CODE_ENABLE_TASKS", "0");
     cmd.args([
         "--print",
         "--verbose",

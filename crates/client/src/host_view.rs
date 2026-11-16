@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use proto::{
     CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath,
     HostSeq, ModelId, Provider, Question, RequestId, Resolution, SessionId,
-    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability, Workspace,
 };
 
@@ -24,6 +24,8 @@ pub struct SessionView {
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
+    /// The tasks the session holds, in its agent's order.
+    pub tasks: Vec<Task>,
     pub workspace: Option<Workspace>,
     pub checkpoints: Vec<TurnCheckpoint>,
     pub undo: UndoState,
@@ -225,6 +227,7 @@ impl HostView {
                 model,
                 effort,
                 status: SessionStatus::Starting,
+                tasks: Vec::new(),
                 workspace: None,
                 checkpoints: Vec::new(),
                 undo: UndoState::Ready,
@@ -466,6 +469,11 @@ impl SessionView {
                 .push(Item::TurnCompleted(outcome)),
             EventKind::WorkspaceCreated { workspace } => Self {
                 workspace: Some(workspace),
+                ..self
+            },
+            EventKind::TasksChanged { tasks } => Self { tasks, ..self },
+            EventKind::EffortChanged { effort } => Self {
+                effort: Some(effort),
                 ..self
             },
             EventKind::CheckpointCreated { checkpoint } => {
@@ -761,10 +769,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use proto::{
-        Answer, ClientName, CloseReason, Decision, Event, EventKind, HostPath,
-        HostSeq, ModelId, Provider, Question, QuestionOption, RequestId,
-        Resolution, Selection, SessionId, ToolCallId, ToolKind, ToolOutcome,
-        ToolPhase, TurnOutcome,
+        Answer, ClientName, CloseReason, Decision, Effort, Event, EventKind,
+        HostPath, HostSeq, ModelId, Provider, Question, QuestionOption,
+        RequestId, Resolution, Selection, SessionId, Task, TaskId, TaskStatus,
+        ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     };
 
     use super::{
@@ -914,6 +922,7 @@ mod tests {
                         model: None,
                         effort: None,
                         status: SessionStatus::Idle,
+                        tasks: Vec::new(),
                         items: Vec::from([
                             Item::User {
                                 text: text("hi"),
@@ -981,6 +990,7 @@ mod tests {
                         status: SessionStatus::Closed(CloseReason::Exited {
                             status: text("1")
                         }),
+                        tasks: Vec::new(),
                         items: Vec::from([Item::Error(text("odd"))]),
                         workspace: None,
                         checkpoints: Vec::new(),
@@ -1260,6 +1270,51 @@ mod tests {
                     "Model changed to gpt: small is not offered"
                 ))])
             ))
+        );
+    }
+
+    fn task(id: u128, text: &str, status: TaskStatus) -> Task {
+        Task {
+            id: TaskId(id),
+            text: String::from(text),
+            status,
+            holder: SessionId(1),
+        }
+    }
+
+    /// Each change replaces the tasks, and a new effort shows in the
+    /// header, with no transcript item for either.
+    #[test]
+    fn tasks_are_replaced_and_the_effort_follows_its_last_change() {
+        let first = Vec::from([
+            task(1, "write a.txt", TaskStatus::InProgress),
+            task(2, "write b.txt", TaskStatus::Pending),
+        ]);
+        let later = Vec::from([task(1, "write a.txt", TaskStatus::Completed)]);
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (1, EventKind::TasksChanged { tasks: first }),
+            (
+                1,
+                EventKind::TasksChanged {
+                    tasks: later.clone(),
+                },
+            ),
+            (
+                1,
+                EventKind::EffortChanged {
+                    effort: Effort::Low,
+                },
+            ),
+        ]));
+        assert_eq!(
+            view.sessions.get(&SessionId(1)).map(|session| (
+                session.tasks.clone(),
+                session.effort,
+                session.items.clone()
+            )),
+            Some((later, Some(Effort::Low), Vec::new()))
         );
     }
 

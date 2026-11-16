@@ -5,7 +5,9 @@ mod home;
 pub mod install;
 pub mod live;
 mod pins;
+mod plan;
 mod process;
 
 pub use exit::Exit;
 pub use home::Home;
+pub use plan::PlanStep;

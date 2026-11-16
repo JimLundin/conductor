@@ -30,7 +30,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/10";
+pub const ALPN: &[u8] = b"conductor/11";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -483,6 +483,13 @@ pub enum CommandBody {
         session: SessionId,
         checkpoint: CheckpointId,
     },
+    /// Sets the effort of the session's later turns, one its model lists.
+    /// A running turn keeps its effort: the next turn the user starts, or
+    /// a `Continue`, takes the new one.
+    SetEffort {
+        session: SessionId,
+        effort: Effort,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -729,6 +736,38 @@ pub enum EventKind {
         history: HistoryAnchor,
         turn_start: Option<HostSeq>,
     },
+    /// Every task the session holds now, in the agent's order. It replaces
+    /// the list before it.
+    TasksChanged {
+        tasks: Vec<Task>,
+    },
+    /// The effort of the session's later turns, after a `SetEffort`.
+    EffortChanged {
+        effort: Effort,
+    },
+}
+
+/// A fleet-unique ULID assigned by the host, represented as its 128 bits.
+/// A task keeps it while the agent rewrites its checklist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TaskId(pub u128);
+
+/// A step of an agent's checklist (Claude's `TodoWrite`, Codex's plan), as
+/// the host keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Task {
+    pub id: TaskId,
+    pub text: String,
+    pub status: TaskStatus,
+    /// The session whose agent works on it.
+    pub holder: SessionId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
 }
 
 /// Monotonic per session, including discarded checkpoints; zero is initial.

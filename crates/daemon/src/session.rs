@@ -22,7 +22,7 @@ use proto::{
     Answer, Checkpoint, CheckpointId, ClaudeCredential, ClientName,
     CloseReason, CommandResult, Decision, Effort, EventKind, HistoryAnchor,
     HostPath, HostSeq, ModelId, Models, Rejection, RequestId, Resolution,
-    SessionId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    SessionId, Task, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -32,7 +32,7 @@ use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
 use crate::codex_hub::{CodexHub, HubError, Routed};
 use crate::log::Log;
 use crate::mapping::{self, NativeRequest, NativeTurn, Step};
-use crate::workspace;
+use crate::{tasks, workspace};
 
 /// How the host runs Claude. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -50,8 +50,8 @@ pub struct CodexLaunch {
     pub hub: CodexHub,
 }
 
-/// The model and effort a session runs with, chosen when it starts. `None`
-/// leaves the CLI's default.
+/// The model and effort a session runs with, chosen when it starts; a
+/// `SetEffort` changes the effort. `None` leaves the CLI's default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
     pub model: Option<ModelId>,
@@ -97,6 +97,33 @@ pub fn choose(
     }
 }
 
+/// `effort`, if the session's model (`None`: the default) lists it.
+fn offers(
+    models: &Models,
+    model: Option<&ModelId>,
+    effort: Effort,
+) -> Result<Effort, String> {
+    let model = model.or(models.default.as_ref());
+    match model.and_then(|model| models.find(model)) {
+        Some(choice) => choice
+            .efforts
+            .iter()
+            .find(|&&offered| offered == effort)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "{} doesn't take the effort {}",
+                    choice.name,
+                    effort.wire()
+                )
+            }),
+        None => Err(format!(
+            "this host lists no efforts for {}",
+            model.map_or("the default model", |model| model.0.as_str())
+        )),
+    }
+}
+
 /// What a session task needs to start its agent.
 #[derive(Debug, Clone)]
 pub enum Launch {
@@ -129,6 +156,9 @@ pub enum Order {
     /// session has one: when the session starts, and on `Continue`. The
     /// models are what the provider offers now.
     Start(Launch, Models),
+    /// Sets the effort of later turns, if the session's model in these
+    /// models takes it. The agent gets it when the next turn starts.
+    Effort(Effort, Models),
 }
 
 /// A reply to an open request: a decision for an approval, answers for a
@@ -145,15 +175,17 @@ struct SessionMsg {
     reply: oneshot::Sender<CommandResult>,
 }
 
-/// The agent, and where its events arrive.
+/// The agent, where its events arrive, and the effort it runs with.
 enum Agent {
     Claude {
         session: ClaudeSession,
         events: mpsc::Receiver<ClaudeEvent>,
+        effort: Option<Effort>,
     },
     Codex {
         thread: CodexThread,
         events: mpsc::Receiver<Routed>,
+        effort: Option<Effort>,
     },
     /// No agent runs: it exited, the host stopped it, or it never started.
     Down,
@@ -229,6 +261,8 @@ struct SessionActor {
     boundary: Option<String>,
     /// Tool calls the user denied, whose failed result means `Declined`.
     declined: HashSet<ToolCallId>,
+    /// The tasks the session holds, from its agent's checklist.
+    tasks: Vec<Task>,
 }
 
 enum Input {
@@ -381,6 +415,14 @@ impl Session {
                 .max()
                 .unwrap_or(RequestId(0)),
             declined: HashSet::new(),
+            tasks: history
+                .iter()
+                .rev()
+                .find_map(|event| match &event.kind {
+                    EventKind::TasksChanged { tasks } => Some(tasks.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -534,7 +576,11 @@ async fn start(
                 }
             };
             let (session, events) = started?;
-            Ok(Agent::Claude { session, events })
+            Ok(Agent::Claude {
+                session,
+                events,
+                effort: choice.effort,
+            })
         }
         // Paseo's preset: Codex asks before leaving the workspace.
         Launch::Codex(CodexLaunch { hub }) => {
@@ -557,7 +603,11 @@ async fn start(
                     },
                 )
                 .await?;
-            Ok(Agent::Codex { thread, events })
+            Ok(Agent::Codex {
+                thread,
+                events,
+                effort: choice.effort,
+            })
         }
     }
 }
@@ -606,6 +656,12 @@ async fn claude_models(
     let models = session.models().clone();
     let _ = session.shutdown().await;
     Ok(models)
+}
+
+/// The effort the agent should change to before its next turn, if it runs
+/// another than `wanted`.
+fn changed(wanted: Option<Effort>, running: &Option<Effort>) -> Option<Effort> {
+    wanted.filter(|wanted| running.as_ref() != Some(wanted))
 }
 
 impl Pending {
@@ -787,6 +843,10 @@ impl SessionActor {
             }
             // Continue is idempotent: the agent already runs.
             (Order::Start(_, _), _, _) => Ok(CommandResult::Accepted),
+            // A closed session takes it too: `Continue` starts at it.
+            (Order::Effort(effort, offered), _, _) => {
+                self.set_effort(effort, &offered).await
+            }
             (_, _, Agent::Down) => {
                 Ok(CommandResult::Rejected(Rejection::SessionClosed))
             }
@@ -869,6 +929,33 @@ impl SessionActor {
         Ok(CommandResult::Accepted)
     }
 
+    /// The same effort again is `Accepted` and logs nothing.
+    async fn set_effort(
+        &mut self,
+        effort: Effort,
+        offered: &Models,
+    ) -> Result<CommandResult, Stopped> {
+        match (
+            offers(offered, self.choice.model.as_ref(), effort),
+            self.choice.effort,
+        ) {
+            (Err(reason), _) => {
+                Ok(CommandResult::Rejected(Rejection::NotOffered { reason }))
+            }
+            (Ok(offered), Some(current)) if offered == current => {
+                Ok(CommandResult::Accepted)
+            }
+            (Ok(_), _) => {
+                self.choice = Choice {
+                    effort: Some(effort),
+                    ..self.choice.clone()
+                };
+                self.emit(EventKind::EffortChanged { effort }).await?;
+                Ok(CommandResult::Accepted)
+            }
+        }
+    }
+
     async fn reply(
         &mut self,
         request: RequestId,
@@ -925,15 +1012,28 @@ impl SessionActor {
         }
     }
 
-    /// Codex returns the turn's id here too; the session takes it from
+    /// Starts a turn, at the session's effort if the agent runs another:
+    /// Claude changes it in its process first, Codex with the turn. Codex
+    /// returns the turn's id here too; the session takes it from
     /// `TurnStarted`, which an interrupt must wait for anyway.
-    async fn send(&self, text: String) -> Result<(), AgentError> {
-        match &self.agent {
-            Agent::Claude { session, .. } => {
+    async fn send(&mut self, text: String) -> Result<(), AgentError> {
+        let wanted = self.choice.effort;
+        match &mut self.agent {
+            Agent::Claude {
+                session, effort, ..
+            } => {
+                if let Some(change) = changed(wanted, effort) {
+                    session.set_effort(change).await?;
+                    let _ = effort.replace(change);
+                }
                 Ok(session.send_user(text).await?)
             }
-            Agent::Codex { thread, .. } => {
-                let _ = thread.send_turn(text).await?;
+            Agent::Codex { thread, effort, .. } => {
+                let change = changed(wanted, effort);
+                let _ = thread.send_turn(text, change).await?;
+                if let Some(change) = change {
+                    let _ = effort.replace(change);
+                }
                 Ok(())
             }
             Agent::Down => Err(AgentError::Down),
@@ -1036,6 +1136,15 @@ impl SessionActor {
                 .await
             }
             Step::Withdraw(native) => self.withdraw(native).await,
+            Step::Checklist(steps) => {
+                match tasks::synced(&self.tasks, steps, self.id) {
+                    tasks if tasks == self.tasks => Ok(()),
+                    tasks => {
+                        self.tasks = tasks.clone();
+                        self.emit(EventKind::TasksChanged { tasks }).await
+                    }
+                }
+            }
             // A request still open when the turn ends can't be answered any
             // more: Codex withdraws it only after `TurnCompleted`, and an
             // answer in between would log a decision for a command that

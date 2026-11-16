@@ -3,7 +3,9 @@
 These facts come from `s2` runs against codex-cli 0.166.0 with model
 `gpt-6-luna` and reasoning effort `low`, on 2026-11-10, steps 7 to 9 on
 2026-11-12, and steps 10 to 12 later that day with effort `high`. Steps refer to the
-`s2` checklist. The committed recordings are in `fixtures/codex/`. "Probe"
+`s2` checklist; steps 14 and 15 come from a 2026-11-16 run, recorded in
+`fixtures/codex/server8-plan-effort.jsonl`. The committed recordings are in
+`fixtures/codex/`. "Probe"
 means a hand-written JSON-RPC session run before `s2` existed; its output is
 not committed. Where this file disagrees with the JSON Schema or architecture
 §7.2, trust this file and re-check it when the CLI version changes.
@@ -149,7 +151,42 @@ provider.
   config sets `model_reasoning_summary`; `auto`, `concise` and `detailed`
   each gave a summary. Every thread gets `auto`. The raw `content` was empty
   in every run. (Probes, step 11.)
-- Changing the effort per turn is not used. Not probed.
+- `turn/start` takes `effort`, which the schema describes as an override
+  for that turn and later ones. With `effort: "high"` on a thread started
+  at `low`, Codex sent `thread/settings/updated` (`threadSettings` with
+  `model`, `effort: "high"` and `collaborationMode.settings.reasoning_effort`)
+  before it answered `turn/start`, and the turn ran. (Step 15, and a probe
+  the same day that also moved a thread to `medium` this way.)
+- `thread/settings/update` with `effort` changes the thread's effort
+  between turns too: it answers `{}` and sends the same
+  `thread/settings/updated`, and the next turn runs at it. (Probe.) The
+  adapter uses the `turn/start` field instead, which takes no extra request
+  and leaves a running turn as it is. `turn/settings/update` would change a
+  running turn's effort; it is not used.
+
+## Plans
+
+From the 2026-11-16 `s2` run, step 14, and probes the same day.
+
+- The plan tool (`update_plan`) is off in 0.166 unless the thread's config
+  sets `tools.update_plan` to `{"enabled": true}` (`UpdatePlanToolConfig`
+  in the pinned source); `true` alone is refused at `thread/start` with
+  "invalid type: boolean `true`, expected struct UpdatePlanToolConfig".
+  Without it the model said it had no `update_plan` tool. (Probes.) Every
+  thread turns it on.
+- Each plan update is the notification `turn/plan/updated` with
+  `threadId`, `turnId`, `explanation` (`null` in every run) and `plan:
+  [{step, status}]`, the whole plan; `status` is `pending`, `inProgress` or
+  `completed`. No `item/started` names the tool call and no approval is
+  asked. (Step 14: three updates, the first step pending, in progress,
+  then completed.)
+- The adapter reads it as `ThreadEvent::PlanUpdated`; the explanation is
+  dropped, since Claude's checklist has none.
+
+## Subagents
+
+No run started a Codex subagent (the `collab` and spawn-agent items): no
+`s2` step or probe asked for one, so their frames are not recorded.
 
 ## Interrupt
 

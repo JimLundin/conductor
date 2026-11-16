@@ -2,7 +2,8 @@
 //! decline, interrupt, interrupt with an approval open, two concurrent
 //! threads on one process, resume in a new process, an unknown approval
 //! id, questions and approval for the session, a chosen model and effort,
-//! reasoning, and a killed app-server resumed, printing PASS/FAIL per step.
+//! reasoning, a killed app-server resumed, a plan and the effort changed
+//! between turns, printing PASS/FAIL per step.
 //!
 //! Usage: s2 [`FIXTURE_DIR`]
 //! Writes raw app-server stdout per process to `FIXTURE_DIR`/<name>.jsonl when given.
@@ -12,19 +13,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::Home;
 use agents::codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer,
     CodexThread, Decision, Error, Sandbox, ServerOptions, ThreadEvent,
-    ThreadId, ThreadOptions, TurnId,
+    ThreadId, ThreadOptions, ThreadSettings, TurnId,
 };
 use agents::install::{Cli, install};
 use agents::live::{
     Cue, Presence, Verdict, fresh_scratch, log_path, presence, report,
 };
+use agents::{Home, PlanStep};
 use anyhow::{Context, Result};
 use n0_future::StreamExt;
-use proto::{Answer, Effort, TurnOutcome};
+use proto::{Answer, Effort, TaskStatus, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -116,6 +117,10 @@ struct Turn {
     reasoning: Vec<String>,
     /// The text of every `ReasoningDelta`, joined.
     thought: String,
+    /// Each plan the model wrote, in order.
+    plans: Vec<Vec<PlanStep>>,
+    /// What each `thread/settings/updated` reported.
+    settings: Vec<ThreadSettings>,
     outcome: Option<TurnOutcome>,
 }
 
@@ -132,6 +137,8 @@ impl Turn {
             streamed: String::new(),
             reasoning: Vec::new(),
             thought: String::new(),
+            plans: Vec::new(),
+            settings: Vec::new(),
             outcome: None,
         }
     }
@@ -173,6 +180,10 @@ impl Turn {
             ThreadEvent::ApprovalCancelled { .. } => {
                 self.cancelled = self.cancelled.saturating_add(1);
             }
+            ThreadEvent::PlanUpdated { steps, .. } => self.plans.push(steps),
+            ThreadEvent::SettingsChanged(settings) => {
+                self.settings.push(settings);
+            }
         }
     }
 }
@@ -188,9 +199,11 @@ const fn event_turn(event: &ThreadEvent) -> Option<&TurnId> {
         | ThreadEvent::Reasoning { turn, .. }
         | ThreadEvent::ToolCall { turn, .. }
         | ThreadEvent::ApprovalRequested { turn, .. }
+        | ThreadEvent::PlanUpdated { turn, .. }
         | ThreadEvent::SecretQuestionDeclined { turn } => Some(turn),
         ThreadEvent::Started
         | ThreadEvent::ApprovalCancelled { .. }
+        | ThreadEvent::SettingsChanged(_)
         | ThreadEvent::Unknown(_) => None,
     }
 }
@@ -334,6 +347,8 @@ impl Run {
             | ThreadEvent::Reasoning { .. }
             | ThreadEvent::ToolCall { .. }
             | ThreadEvent::ApprovalCancelled { .. }
+            | ThreadEvent::PlanUpdated { .. }
+            | ThreadEvent::SettingsChanged(_)
             | ThreadEvent::SecretQuestionDeclined { .. } => {}
             ThreadEvent::TurnStarted { .. } => {
                 self.cue(thread, Cue::Start).await?;
@@ -402,7 +417,18 @@ async fn single(
     prompt: &str,
     plan: Plan,
 ) -> Result<Single> {
-    let id = thread.send_turn(String::from(prompt)).await?;
+    single_at(live, thread, prompt, None, plan).await
+}
+
+/// A run of one turn, started at `effort` if given.
+async fn single_at(
+    live: Live,
+    thread: &CodexThread,
+    prompt: &str,
+    effort: Option<Effort>,
+    plan: Plan,
+) -> Result<Single> {
+    let id = thread.send_turn(String::from(prompt), effort).await?;
     let Run {
         live,
         turns,
@@ -533,6 +559,87 @@ async fn chosen_and_killed(
     let status = s.live.server.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     Ok((model, reasoning, resume))
+}
+
+/// The statuses of a plan's steps, in order.
+fn statuses(steps: &[PlanStep]) -> Vec<TaskStatus> {
+    steps.iter().map(|step| step.status).collect()
+}
+
+/// Steps 14 and 15, on a fifth process at the other steps' `low` effort: a
+/// turn that keeps a plan with the plan tool, and a turn started at `high`,
+/// which Codex then reports as the thread's effort.
+async fn plan_and_effort(
+    codex: &Path,
+    fixtures: Option<&Path>,
+    thread_opts: ThreadOptions,
+) -> Result<(Verdict, Verdict)> {
+    let live = spawn(codex, log_path(fixtures, "server8-plan-effort")).await?;
+    let a = live.server.start_thread(thread_opts).await?;
+    let s = single(
+        live,
+        &a,
+        "Use your plan tool (update_plan) to make a plan of exactly three steps: write a.txt, write b.txt, write c.txt. Then update the plan to mark the first step in progress, then update it again marking it completed. Do not run any commands or create files; only update the plan. Then reply done.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let t = &s.turn;
+    let plan = report(
+        "14 plan",
+        match (
+            t.plans.get(1),
+            t.plans.last().map(|steps| statuses(steps)),
+            t.approvals.first(),
+            &t.outcome,
+        ) {
+            (Some(_), Some(last), None, Some(TurnOutcome::Completed))
+                if last
+                    == [
+                        TaskStatus::Completed,
+                        TaskStatus::Pending,
+                        TaskStatus::Pending,
+                    ] =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        format!(
+            "plans={:?} approvals={:?} items={:?} outcome={:?} reply={:?}",
+            t.plans, t.approvals, t.items, t.outcome, t.text
+        ),
+    )?;
+    let s = single_at(
+        s.live,
+        &a,
+        "Reply with just the word pong. Use no tools.",
+        Some(Effort::High),
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let t = &s.turn;
+    let effort = report(
+        "15 effort changed",
+        match (
+            t.settings.last().map(|settings| settings.effort),
+            &t.outcome,
+            t.text.to_lowercase().find("pong"),
+        ) {
+            (
+                Some(Some(Effort::High)),
+                Some(TurnOutcome::Completed),
+                Some(_),
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        format!(
+            "settings={:?} outcome={:?} reply={:?}",
+            t.settings, t.outcome, t.text
+        ),
+    )?;
+    let status = s.live.server.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((plan, effort))
 }
 
 /// What an interrupt at a cue does to the turn.
@@ -1005,12 +1112,14 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     let b = live.server.start_thread(thread_opts.clone()).await?;
     let c = live.server.start_thread(thread_opts.clone()).await?;
     let (tb, tc) = n0_future::future::try_zip(
-        b.send_turn(String::from(
-            "Reply with just the word alpha. Use no tools.",
-        )),
-        c.send_turn(String::from(
-            "Reply with just the word bravo. Use no tools.",
-        )),
+        b.send_turn(
+            String::from("Reply with just the word alpha. Use no tools."),
+            None,
+        ),
+        c.send_turn(
+            String::from("Reply with just the word bravo. Use no tools."),
+            None,
+        ),
     )
     .await?;
     let both = Run::drive(
@@ -1117,7 +1226,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         questions(&codex, scratch, fixtures, thread_opts.clone()).await?;
     let (chosen, reasoning, resumed) =
         chosen_and_killed(&codex, fixtures, thread_opts.clone()).await?;
-    let undo = undo_history(&codex, fixtures, thread_opts).await?;
+    let undo = undo_history(&codex, fixtures, thread_opts.clone()).await?;
+    let (plan, effort) = plan_and_effort(&codex, fixtures, thread_opts).await?;
     let failed = [
         approve,
         decline,
@@ -1135,6 +1245,8 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
         reasoning,
         resumed,
         undo,
+        plan,
+        effort,
     ]
     .into_iter()
     .filter(|verdict| matches!(verdict, Verdict::Fail))

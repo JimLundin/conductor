@@ -27,6 +27,7 @@ SOURCE = HERE.parent / "codex" / "server1-u5.jsonl"
 QUESTIONS = HERE.parent / "codex" / "server3-questions.jsonl"
 CHOSEN = HERE.parent / "codex" / "server4-chosen-killed.jsonl"
 RESUMED = HERE.parent / "codex" / "server5-resumed.jsonl"
+PLANNED = HERE.parent / "codex" / "server8-plan-effort.jsonl"
 # The turn `s2` step 12 killed the app-server in; the e2e test sends it.
 COUNT = "Count from 1 to 300, one number per line."
 
@@ -153,6 +154,11 @@ q_first = q_threads[0]
 # `s2`'s fourth process: 11 a turn that reasons, then the turn it killed;
 # its fifth: 12 the thread resumed.
 c_head, c_threads, c_turns = split(CHOSEN)
+# `s2`'s eighth process: 14 a turn that keeps a plan, 15 a turn started at
+# `high`, which Codex reports with `thread/settings/updated` before its answer.
+p_head, p_threads, p_turns = split(PLANNED)
+applied = p_turns[0][-1]
+assert json.loads(applied)["method"] == "thread/settings/updated"
 r_head, r_threads, r_turns = split(RESUMED)
 killed = [
     wait({"method": "turn/start", "params": {"input": [{"type": "text", "text": COUNT}]}}),
@@ -192,6 +198,11 @@ RECORDINGS = {
     + answered(q_turns[FOR_SESSION], "acceptForSession")
     + q_turns[AGAIN],
     "codex-question-withdraw.jsonl": q_head + q_first + withdrawn(q_turns[QUESTION_WITHDRAWN]),
+    "codex-plan-effort.jsonl": p_head
+    + p_threads[0]
+    + p_turns[0][:-1]
+    + [wait({"method": "turn/start", "params": {"effort": "high"}}), applied]
+    + p_turns[1],
     # The stand-in dies as the next turn starts, before it answers `turn/start`.
     "codex-killed.jsonl": c_head + c_threads[0] + c_turns[0] + killed,
     # The live kill: after `turn/started`, with the recorded deltas sent.
