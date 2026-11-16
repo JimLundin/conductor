@@ -6,9 +6,12 @@
 # own host: a Claude turn with approval in both engines (turn), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
-# CLI continued and the Thinking disclosure (continue), and the screenshots of the
+# CLI continued and the Thinking disclosure (continue), a checklist shown as the
+# session's tasks and the effort changed between turns (tasks, WebKit), and the
+# screenshots of the
 # states a real CLI shows only with careful timing (screens).
-# Output: docs/p1/browser-run.txt and docs/p1/screens/*-{running,closed,idle}.png.
+# Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
+# and docs/p1/screens/phone-light-tasks.png.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
@@ -169,6 +172,22 @@ set +e
   echo
   expect continue-host 1 'body: Continue {' 'one Continue reached the host'
   expect continue-host 1 'model: Some(ModelId("sonnet")), effort: Some(High)' 'the picked model and effort reached the host'
+
+  session "$scratch/tasks" claude-checklist-effort.jsonl
+  start_host tasks
+  echo
+  echo "## Tasks and the effort changed between turns, webkit"
+  run webkit tasks docs/p1/screens/phone-light-tasks.png "$scratch/tasks"
+  echo
+  echo "## Tasks, host log"
+  host_log tasks
+  echo
+  expect tasks 1 'body: SetEffort {' 'one effort change reached the host'
+  # The CLI gets the effort right before the next message, not mid-turn.
+  order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/tasks/stdin.jsonl" | tr '\n' ' ')
+  [ "$order" = '"subtype":"initialize" "text":"plan" "subtype":"apply_flag_settings" "text":"pong" ' ] ||
+    { echo "FAILED: host tasks: what the CLI read ($order)"; exit 1; }
+  echo "ok: host tasks: the CLI read apply_flag_settings right before the next message"
 
   start_host credentials
   echo

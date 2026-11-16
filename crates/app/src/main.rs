@@ -169,6 +169,7 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
                                 key: "{id.0}",
                                 id,
                                 session,
+                                providers: status().and_then(|status| status.providers),
                                 link,
                                 notice,
                                 on_back: move |()| screen.set(Screen::Sessions),

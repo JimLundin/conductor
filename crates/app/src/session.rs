@@ -5,11 +5,12 @@ use client::host_view::{
     self, Approval, Interrupt, Item, ReplyState, RequestState, Resume,
     SessionStatus, SessionView, ToolState, UndoState, Working,
 };
-use client::new_session::label;
+use client::new_session::{efforts, label, models};
 use dioxus::prelude::*;
 use proto::{
-    Answer, Change, CloseReason, CommandBody, Decision, Question, RequestId,
-    Resolution, Selection, SessionId, ToolKind, ToolOutcome, TurnOutcome,
+    Answer, Change, CloseReason, CommandBody, Decision, Effort, Providers,
+    Question, RequestId, Resolution, Selection, SessionId, Task, TaskStatus,
+    ToolKind, ToolOutcome, TurnOutcome,
 };
 
 use crate::checkpoints::TurnChanges;
@@ -20,6 +21,7 @@ use crate::{Link, PaneHeader, run_command};
 pub(crate) fn SessionPane(
     id: SessionId,
     session: SessionView,
+    providers: Option<Providers>,
     link: Signal<Link>,
     notice: Signal<Option<String>>,
     on_back: EventHandler<()>,
@@ -35,7 +37,18 @@ pub(crate) fn SessionPane(
         UndoState::Failed { .. } => String::from("recovery needed"),
         UndoState::Ready | UndoState::Undone => session.status.word(),
     };
-    let runs = runs_with(&session);
+    let model = session
+        .model
+        .as_ref()
+        .map_or_else(|| String::from("default model"), |model| model.0.clone());
+    let offered = efforts(
+        &models(
+            providers
+                .as_ref()
+                .map(|providers| providers.of(session.provider)),
+        ),
+        session.model.as_ref(),
+    );
     let checkpoints = session.checkpoints.clone();
     let undo = session.undo.clone();
     let empty = match (&session.status, session.items.first()) {
@@ -54,7 +67,12 @@ pub(crate) fn SessionPane(
         section { class: "pane session-pane", "data-status": "{status}",
             PaneHeader { title: "{short(&session.directory)}", subtitle: "{session.directory.0}", on_back,
                 span { class: "pill", "data-status": "{status}", "{provider}, {status}" }
-                span { class: "runs-with", "{runs}" }
+                span { class: "runs-with", "{model}" }
+                EffortPicker {
+                    effort: session.effort,
+                    efforts: offered,
+                    on_pick: move |effort| run_command(link, notice, CommandBody::SetEffort { session: id, effort }),
+                }
                 match controls.interrupt {
                     Interrupt::Offered => rsx! {
                         button {
@@ -89,6 +107,7 @@ pub(crate) fn SessionPane(
                 UndoState::Undone => rsx! { p { key: "undo-done-{id.0}", class: "undo-status", role: "status", tabindex: "-1", onmounted: move |_| { document::eval("requestAnimationFrame(() => (document.querySelector('.composer textarea:not(:disabled)') || document.querySelector('.undo-status'))?.focus())"); }, "Turn and all later file and conversation changes undone." } },
                 UndoState::Ready => rsx! {},
             }
+            Tasks { tasks: session.tasks.clone() }
             div { class: "transcript",
                 div { class: "items", role: "log",
                     match empty {
@@ -154,16 +173,89 @@ pub(crate) fn SessionPane(
     }
 }
 
-/// The model and effort in the header, as the session started them.
-fn runs_with(session: &SessionView) -> String {
-    let model = session
-        .model
-        .as_ref()
-        .map_or_else(|| String::from("default model"), |model| model.0.clone());
-    match session.effort {
-        Some(effort) => format!("{model}, {} effort", effort.wire()),
-        None => model,
+/// The session's effort, which changes from the next turn on: a picker of
+/// the model's efforts, or the effort alone when the host lists none.
+#[component]
+fn EffortPicker(
+    effort: Option<Effort>,
+    efforts: Vec<Effort>,
+    on_pick: EventHandler<Effort>,
+) -> Element {
+    match (efforts.first(), effort) {
+        (None, Some(effort)) => rsx! {
+            span { class: "runs-with", "{effort.wire()} effort" }
+        },
+        (None, None) => rsx! {},
+        (Some(_), _) => rsx! {
+            select {
+                class: "effort-pick",
+                name: "session-effort",
+                "aria-label": "Effort from the next turn",
+                onchange: move |event| {
+                    if let Some(effort) = Effort::parse(&event.value()) {
+                        on_pick(effort);
+                    }
+                },
+                match effort {
+                    Some(_) => rsx! {},
+                    None => rsx! { option { value: "", selected: true, disabled: true, "default effort" } },
+                }
+                for offered in efforts {
+                    option {
+                        value: "{offered.wire()}",
+                        selected: Some(offered) == effort,
+                        "{offered.wire()} effort"
+                    }
+                }
+            }
+        },
     }
+}
+
+/// The agent's checklist, as the session holds it: open by default, and
+/// collapsible so a phone keeps room for the transcript.
+#[component]
+fn Tasks(tasks: Vec<Task>) -> Element {
+    let done = tasks
+        .iter()
+        .filter(|task| matches!(task.status, TaskStatus::Completed))
+        .count();
+    let total = tasks.len();
+    match tasks.first() {
+        None => rsx! {},
+        Some(_) => rsx! {
+            details { class: "tasks", open: true,
+                summary {
+                    span { class: "tasks-title", "Tasks" }
+                    span { class: "tasks-count", "{done} of {total} done" }
+                }
+                ol {
+                    for task in tasks {
+                        li { key: "{task.id.0}", class: "task", "data-status": "{status_word(task.status)}",
+                            span { class: "task-mark", role: "img", "aria-label": "{status_label(task.status)}" }
+                            span { class: "task-text", "{task.text}" }
+                        }
+                    }
+                }
+            }
+        },
+    }
+}
+
+fn status_word(status: TaskStatus) -> String {
+    String::from(match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::InProgress => "in-progress",
+        TaskStatus::Completed => "completed",
+    })
+}
+
+fn status_label(status: TaskStatus) -> String {
+    String::from(match status {
+        TaskStatus::Pending => "To do",
+        TaskStatus::InProgress => "In progress",
+        TaskStatus::Completed => "Done",
+    })
 }
 
 fn closed(reason: &CloseReason) -> String {

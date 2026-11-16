@@ -21,6 +21,9 @@
 //             an effort picked in the form, its CLI killed mid-turn and
 //             continued; and one in <dir>/reasoning whose reasoning streams
 //             under "Thinking…" and folds into a "Thinking" disclosure.
+//   tasks     A Claude session in <dir> whose turn keeps a checklist, shown
+//             as its tasks, and whose effort is changed in the header
+//             before the next turn; <out> is the phone screenshot.
 //   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
 //             (the CLI hangs up) and <dir>/notes (never sent to), shot at
 //             1280x800 and 390x844, light and dark.
@@ -370,7 +373,8 @@ if (scenario === 'turn') {
   await page.locator('input[name="directory"]').fill(`${dir}/killed`);
   await page.getByRole('button', { name: 'Start session' }).click();
   await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
-  check((await text('.runs-with')) === 'sonnet, high effort', 'the header shows the model and effort');
+  check((await text('.runs-with')) === 'sonnet', 'the header shows the model');
+  check((await pane.locator('select.effort-pick').inputValue()) === 'high', 'the header shows the effort');
   await send('sheep?');
   await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
   await send('count');
@@ -417,6 +421,51 @@ if (scenario === 'turn') {
     'it shows the reasoning text',
   );
   await page.screenshot({ path: out });
+} else if (scenario === 'tasks') {
+  // fixtures/e2e/claude-checklist-effort.jsonl: a turn whose three TodoWrite
+  // calls keep a checklist, then the effort set to low and a turn at it.
+  await startSession('Claude Code', dir);
+  const picker = pane.locator('select.effort-pick');
+  const offered = async () => (await picker.locator('option').allInnerTexts()).join(', ');
+  check(
+    (await offered()) === 'default effort, low effort, medium effort, high effort, xhigh effort, max effort',
+    'the header offers the model\'s efforts, starting at its default',
+  );
+  check((await pane.locator('details.tasks').count()) === 0, 'no checklist before the agent writes one');
+  await send('plan');
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  const tasks = pane.locator('details.tasks');
+  check((await tasks.locator('summary').innerText()).replace(/\s+/g, ' ').trim() === 'Tasks 1 of 3 done', 'the checklist counts what is done');
+  check(
+    (await tasks.locator('.task').evaluateAll((items) => items.map((t) => `${t.dataset.status}: ${t.innerText.trim()}`))).join(' | ') ===
+      'completed: Write a.txt | pending: Write b.txt | pending: Write c.txt',
+    'each task shows its status and text, in the agent\'s order',
+  );
+  check((await tasks.locator('.task-mark').first().getAttribute('aria-label')) === 'Done', 'a status is announced in words');
+  check(await tasks.evaluate((d) => d.open), 'the checklist starts open');
+  check((await pane.locator('.tool').count()) === 0, 'the checklist calls show no tool cards');
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page overflow at phone width');
+  const summary = await tasks.locator('summary').boundingBox();
+  check(summary.height >= 44, `the checklist's summary is a thumb-sized target (${Math.round(summary.height)}px)`);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: out });
+  log(`screenshot ${out}`);
+  await picker.selectOption('low');
+  await page.waitForFunction(() => document.querySelectorAll('select.effort-pick option').length === 5, null, { timeout: 10_000 });
+  check((await picker.inputValue()) === 'low', 'the header shows the new effort once the host has logged it');
+  await send('pong');
+  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
+  check((await text('.reply')).endsWith('pong'), 'the next turn ran');
+  await tasks.locator('summary').tap();
+  check(!(await tasks.evaluate((d) => d.open)), 'a tap folds the checklist away');
+  await page.reload();
+  await waitFor('header.status[data-state="Live"]', 60_000);
+  await openRow(dir.split('/').pop());
+  await pane.locator('details.tasks').waitFor({ timeout: 10_000 });
+  check(
+    (await pane.locator('.task').count()) === 3 && (await pane.locator('select.effort-pick').inputValue()) === 'low',
+    'the tasks and the effort replay after a reload',
+  );
 } else if (scenario === 'credentials') {
   const GATEWAY = 'https://gateway.conductor-test.invalid';
   const TOKEN = 'conductor-test-browser-token';
