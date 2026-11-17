@@ -9,6 +9,7 @@ mod mapping;
 pub mod registry;
 pub mod serve;
 pub mod session;
+pub mod start;
 mod storage;
 mod tasks;
 mod workspace;

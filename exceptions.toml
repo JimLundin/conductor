@@ -24,3 +24,13 @@ reason = "client holds the iroh link to a host and its reconnect loop"
 path = "crates/daemon/Cargo.toml"
 rule = "std"
 reason = "daemon serves iroh connections and stores the event log in redb"
+
+[[exception]]
+path = "crates/proto/src/frame.rs"
+rule = "api"
+reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
+
+[[exception]]
+path = "crates/agents/src/bin/s*.rs"
+rule = "shell"
+reason = "s1 and s2 are live checks that script the real CLIs step by step; their branches check what each CLI answered"
