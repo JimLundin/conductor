@@ -16,11 +16,12 @@ use agents::{Reply, Step};
 use claude::{ClaudeEvent, PermissionMode, PermissionRequestId, claude_answer};
 use claude::{SettingSource, VersionPolicy};
 use claude_cli::{ClaudeOptions, ClaudeSession};
+use codex::hub::Routed;
 use codex::{
     ApprovalId, ApprovalPolicy, Sandbox, ThreadId, ThreadOptions, TurnId,
     codex_answer,
 };
-use codex_cli::CodexThread;
+use codex_cli::{CodexThread, Hub};
 use host::session::{
     Call, Choice, ClaudeResume, Compared, Effect, Input, Launching, Resume,
     Session as Core, Unstarted,
@@ -34,7 +35,6 @@ use proto::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
-use crate::codex_hub::{CodexHub, Routed};
 use crate::log::Log;
 use crate::workspace;
 
@@ -57,7 +57,7 @@ pub struct ClaudeLaunch {
 /// How the host runs Codex: threads on the hub's shared app-server.
 #[derive(Debug, Clone)]
 pub struct CodexLaunch {
-    pub hub: CodexHub,
+    pub hub: Hub,
 }
 
 /// What a session task needs to start its agent.
@@ -294,7 +294,7 @@ async fn claude_models(
     Ok(models)
 }
 
-async fn codex_models(hub: CodexHub) -> Result<Models, String> {
+async fn codex_models(hub: Hub) -> Result<Models, String> {
     hub.models().await.map_err(|err| err.to_string())
 }
 
@@ -641,17 +641,15 @@ fn unstarted(err: &claude_cli::Error) -> Unstarted {
 }
 
 async fn start_codex(
-    hub: CodexHub,
+    hub: Hub,
     options: ThreadOptions,
     resume: Option<ThreadId>,
 ) -> Result<(Agent, String), Unstarted> {
     let (thread, events) =
-        hub.start_thread(options, resume)
-            .await
-            .map_err(|err| Unstarted {
-                message: err.to_string(),
-                missing: None,
-            })?;
+        hub.thread(options, resume).await.map_err(|err| Unstarted {
+            message: err.to_string(),
+            missing: None,
+        })?;
     let conversation = thread.id.0.clone();
     Ok((Agent::Codex { thread, events }, conversation))
 }

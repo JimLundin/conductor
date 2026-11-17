@@ -16,9 +16,8 @@ use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
     ToolState,
 };
-use codex_cli::ServerOptions;
+use codex_cli::{Hub, ServerOptions};
 use daemon::Stopped;
-use daemon::codex_hub::CodexHub;
 use daemon::credentials::Store;
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
@@ -118,7 +117,7 @@ async fn host_with(claude_path: PathBuf) -> Fallible<Fixture> {
 /// the directory it returns, and whose Claude is unavailable.
 async fn codex_host(recording: &str) -> Fallible<(Fixture, PathBuf)> {
     let server = scratch(recording, recording)?;
-    let hub = CodexHub::spawn(ServerOptions {
+    let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home: Home::User,
         credential: None,
@@ -2457,7 +2456,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
     let (log, logging) = capture_log("codex-provider")?;
     let server = scratch("codex-provider", "codex-two-threads-listed.jsonl")?;
     let homes = daemon::homes(&data)?;
-    let hub = CodexHub::spawn(ServerOptions {
+    let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home: homes.codex,
         credential: None,
@@ -3850,7 +3849,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let server = scratch("refresh-codex", "codex-two-threads-listed.jsonl")?;
     hold_codex_listing(&server)?;
     let homes = daemon::homes(&data)?;
-    let hub = CodexHub::spawn(ServerOptions {
+    let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home: homes.codex,
         credential: None,

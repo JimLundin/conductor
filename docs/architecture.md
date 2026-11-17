@@ -250,8 +250,6 @@ Every piece of state has one owner task; handles talk to it over channels.
   open request is withdrawn when the turn ends. It outlives the agent's
   process: once that exits it takes only `Continue`, which starts the agent
   again on the same conversation.
-- **CodexHub** owns the one `codex app-server` process per host and routes
-  its threads to their sessions.
 - **Serve** accepts connections, checks `Hello`, dispatches commands and
   feeds subscriptions.
 
@@ -263,6 +261,11 @@ Every piece of state has one owner task; handles talk to it over channels.
   mapping into `agents`. Pure `no_std`.
 - `claude-cli` and `codex-cli`: run and drive each CLI's process over tokio,
   with their replay tests.
+- The Codex hub, `codex_cli::Hub`, is the one task that owns the host's
+  `codex app-server` and routes each thread's events to its session; its
+  decisions are the state machine `codex::hub`. A daemon session asks it for
+  a thread and gets that thread's events, as a Claude session gets its own
+  process, and never manages the shared server.
 - `install`: what both CLIs share: the pinned installs, each CLI's home and
   process start and stop.
 
@@ -1028,7 +1031,7 @@ under a `MoveId`, and every step is safe to repeat.
 1. **Settle.** The source refuses while a turn is running or a request is
    open; the app offers *Interrupt and move*. Otherwise it marks the session
    `Moving`, which refuses `SendMessage`. Then it stops the agent. It ends the
-   Claude process, or drops the Codex thread from `CodexHub`.
+   Claude process, or drops the Codex thread from the Codex hub.
 2. **Check the target.** The target must run the same CLI pin, which holds
    in one fleet unless an upgrade is half done, and must be signed in to
    the provider. It must also have the project, meaning a

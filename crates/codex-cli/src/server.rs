@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use n0_future::{MaybeFuture, StreamExt, future};
@@ -71,6 +72,12 @@ pub enum Error {
     UnknownApproval(ApprovalId),
     #[error("approval {} cannot be answered with that decision", .0.0)]
     DecisionNotApplicable(ApprovalId),
+    /// The hub's app-server didn't start, which every ask that waited for
+    /// it shares.
+    #[error("{0}")]
+    Start(Arc<Self>),
+    #[error("the codex hub has stopped")]
+    HubStopped,
 }
 
 impl From<Failure<std::io::Error>> for Error {
@@ -171,10 +178,7 @@ impl CodexServer {
         &self,
         opts: ThreadOptions,
     ) -> Result<CodexThread, Error> {
-        let (id, settings) = thread_started(
-            request(&self.commands, Call::ThreadStart(opts)).await?,
-        )?;
-        Ok(self.thread(id, settings))
+        self.open_thread(opts, None).await
     }
 
     /// Loads a thread from Codex's own history; works in a new process.
@@ -187,10 +191,23 @@ impl CodexServer {
         id: ThreadId,
         opts: ThreadOptions,
     ) -> Result<CodexThread, Error> {
-        let (resumed, settings) = thread_started(
-            request(&self.commands, Call::ThreadResume(id, opts)).await?,
+        self.open_thread(opts, Some(id)).await
+    }
+
+    /// Resumes `resume` if given, or else starts a thread.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
+    pub async fn open_thread(
+        &self,
+        opts: ThreadOptions,
+        resume: Option<ThreadId>,
+    ) -> Result<CodexThread, Error> {
+        let (id, settings) = thread_started(
+            request(&self.commands, Call::open(opts, resume)).await?,
         )?;
-        Ok(self.thread(resumed, settings))
+        Ok(self.thread(id, settings))
     }
 
     /// Answers an open approval or user-input request exactly once.

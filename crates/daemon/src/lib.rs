@@ -1,7 +1,6 @@
 //! `conductord`: the host daemon. It serves the event log and the sessions
 //! over iroh (`conductord host`).
 
-pub mod codex_hub;
 pub mod credentials;
 pub mod log;
 pub mod registry;

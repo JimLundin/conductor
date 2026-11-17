@@ -264,7 +264,7 @@ async fn refresh_models(job: RefreshJob) -> Result<Models, String> {
         ..
     } = &job.launcher
     {
-        hub.configure(job.credentials.codex.clone())
+        hub.set_credential(job.credentials.codex.clone())
             .await
             .map_err(|err| err.to_string())?;
     }

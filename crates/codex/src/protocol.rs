@@ -17,7 +17,7 @@ use crate::prelude::*;
 pub const INITIALIZE: &str = "initialize";
 
 /// A Codex thread id, as returned by `thread/start` and accepted by `thread/resume`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ThreadId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1038,6 +1038,17 @@ pub enum Call {
         thread: ThreadId,
         turn: TurnId,
     },
+}
+
+impl Call {
+    /// `thread/resume` for `resume`, or else `thread/start`.
+    #[must_use]
+    pub fn open(options: ThreadOptions, resume: Option<ThreadId>) -> Self {
+        match resume {
+            Some(thread) => Self::ThreadResume(thread, options),
+            None => Self::ThreadStart(options),
+        }
+    }
 }
 
 #[derive(Serialize)]

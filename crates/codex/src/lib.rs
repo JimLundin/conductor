@@ -1,6 +1,7 @@
 //! Codex's `codex app-server` JSON-RPC: the few messages we read and write,
 //! and their events mapped into the agent API (`agents`), how the server
-//! starts and what the server actor decides. `codex-cli` runs the server
+//! starts, what the server actor decides and what the hub that shares
+//! the server among threads decides. `codex-cli` runs the server
 //! that speaks it.
 
 #![cfg_attr(not(test), no_std)]
@@ -8,6 +9,7 @@
 extern crate alloc;
 
 mod driver;
+pub mod hub;
 mod launch;
 mod mapping;
 mod prelude;

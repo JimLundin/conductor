@@ -64,11 +64,6 @@ rule = "shell"
 reason = "sequence, epoch and barrier rules still run in the log actor; they move into host"
 
 [[exception]]
-path = "crates/daemon/src/codex_hub.rs"
-rule = "shell"
-reason = "thread routing and server restarts are still decided in the hub actor; they move into host"
-
-[[exception]]
 path = "crates/daemon/src/workspace.rs"
 rule = "shell"
 reason = "git output is still parsed and checked beside the git commands; the parsing moves into host"

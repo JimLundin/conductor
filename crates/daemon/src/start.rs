@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::codex_hub::CodexHub;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use crate::registry::{Launcher, Launchers, OwnSignIn, Registry};
@@ -11,7 +10,7 @@ use crate::serve::Conductor;
 use crate::session::{ClaudeLaunch, CodexLaunch, Launch, list_models};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
-use codex_cli::ServerOptions;
+use codex_cli::{Hub, ServerOptions};
 use install::Home;
 use install::{Cli, install};
 use iroh::endpoint::presets;
@@ -192,7 +191,7 @@ async fn codex_launcher(
     let status = codex_cli::login_status(&codex_path, &home);
     // The app-server's own working directory is the data dir;
     // each thread runs in its session's directory.
-    let hub = CodexHub::spawn(ServerOptions {
+    let hub = Hub::spawn(ServerOptions {
         codex_path,
         home,
         credential: match stored {
