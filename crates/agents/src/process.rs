@@ -20,21 +20,21 @@ pub(crate) fn no_window(mut cmd: Command) -> Command {
 }
 
 #[cfg(unix)]
-pub(crate) const fn no_window(cmd: Command) -> Command {
+pub const fn no_window(cmd: Command) -> Command {
     cmd
 }
 
 /// Closes stdin, waits briefly for a clean exit, then kills.
-pub(crate) async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
+pub async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
     drop(stdin);
-    match tokio::time::timeout(EXIT_GRACE, child.wait()).await {
-        Ok(Ok(status)) => Exit::Status(status),
-        Ok(Err(_)) | Err(_) => {
-            let _ = child.start_kill();
-            match child.wait().await {
-                Ok(status) => Exit::Status(status),
-                Err(e) => Exit::Unknown(e.to_string()),
-            }
+    if let Ok(Ok(status)) = tokio::time::timeout(EXIT_GRACE, child.wait()).await
+    {
+        Exit::Status(status)
+    } else {
+        let _ = child.start_kill();
+        match child.wait().await {
+            Ok(status) => Exit::Status(status),
+            Err(e) => Exit::Unknown(e.to_string()),
         }
     }
 }

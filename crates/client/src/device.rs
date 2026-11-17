@@ -61,6 +61,7 @@ const DEVICES: &[Row] = &[
 
 /// iPadOS Safari sends a Mac's user agent, so a "Mac" with a touchscreen is
 /// an iPad. A user agent that names no known device is a "Browser".
+#[must_use]
 pub fn device_name(user_agent: &str, touch: Touch) -> ClientName {
     let name = DEVICES
         .iter()

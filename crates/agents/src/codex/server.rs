@@ -163,14 +163,17 @@ impl CodexServer {
 
     /// `userAgent` from the handshake. Its first segment carries the Codex
     /// version, as in `conductor/0.166.0 (...)`.
+    #[must_use]
     pub const fn pid(&self) -> Option<u32> {
         self.pid
     }
 
+    #[must_use]
     pub fn user_agent(&self) -> &str {
         &self.user_agent
     }
 
+    #[must_use]
     pub fn codex_version(&self) -> Option<&str> {
         let first = self.user_agent.split_whitespace().next()?;
         first.split_once('/').map(|(_, version)| version)
@@ -371,6 +374,7 @@ async fn ask<T>(
 }
 
 /// `codex` with its home.
+#[must_use]
 pub fn cli(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(codex_path);
     if let Home::Private(dir) = home {
@@ -382,6 +386,7 @@ pub fn cli(codex_path: &Path, home: &Home) -> Command {
 }
 
 /// `codex login status`, which succeeds when `home` is signed in.
+#[must_use]
 pub fn login_status(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = cli(codex_path, home);
     cmd.args(["login", "status"]);
@@ -390,13 +395,14 @@ pub fn login_status(codex_path: &Path, home: &Home) -> Command {
 
 /// The `ChatGPT` sign-in by device code, `codex login --device-auth`, into
 /// `home`. It stores the credential there itself.
+#[must_use]
 pub fn login(codex_path: &Path, home: &Home) -> Command {
     let mut cmd = cli(codex_path, home);
     cmd.args(["login", "--device-auth"]);
     cmd
 }
 
-pub(crate) fn command(opts: &ServerOptions) -> Command {
+pub fn command(opts: &ServerOptions) -> Command {
     let mut cmd = cli(&opts.codex_path, &opts.home);
     match &opts.credential {
         Some(CodexCredential::Provider { key, .. }) => {
@@ -640,16 +646,15 @@ impl Actor {
             RequestId::Integer(n) => self.pending.remove(n),
             RequestId::String(_) => None,
         };
-        match pending {
-            Some(Pending { method, reply }) => {
-                if let (INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
-                    self.initialized().await;
-                }
-                let _ = reply.send(
-                    outcome.map_err(|message| Error::Rpc { method, message }),
-                );
+        if let Some(Pending { method, reply }) = pending {
+            if let (INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
+                self.initialized().await;
             }
-            None => tracing::warn!("response for unknown request {id:?}"),
+            let _ = reply.send(
+                outcome.map_err(|message| Error::Rpc { method, message }),
+            );
+        } else {
+            tracing::warn!("response for unknown request {id:?}")
         }
     }
 
@@ -834,7 +839,7 @@ mod tests {
     }
 
     #[test]
-    fn app_server_argv() {
+    fn app_server_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(&ServerOptions {
             codex_path: "/opt/codex".into(),
             home: Home::User,
@@ -845,10 +850,12 @@ mod tests {
         let std = cmd.as_std();
         let args = std
             .get_args()
-            .map(|a| a.to_str().unwrap())
-            .collect::<Vec<&str>>();
+            .map(|a| a.to_str())
+            .collect::<Option<Vec<&str>>>()
+            .ok_or("an argument is not UTF-8")?;
         assert_eq!(std.get_program(), "/opt/codex");
         assert_eq!(std.get_current_dir(), Some(Path::new("/tmp")));
         assert_eq!(args, ["app-server", "--listen", "stdio://"]);
+        Ok(())
     }
 }

@@ -143,6 +143,7 @@ struct LogActor {
 }
 
 impl Log {
+    #[must_use]
     pub fn spawn(name: String, epoch: Epoch) -> Self {
         Self::start(name, epoch, Vec::new(), None)
     }
@@ -625,24 +626,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deltas_go_live_with_the_last_seq_and_are_never_replayed() {
+    async fn deltas_go_live_with_the_last_seq_and_are_never_replayed()
+    -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), Epoch(5));
-        let mut live = log.subscribe(HostSeq(0)).await.unwrap().live;
-        log.append(SessionId(1), EventKind::SessionReady)
-            .await
-            .unwrap();
-        log.append(SessionId(1), delta("a")).await.unwrap();
+        let mut live = log.subscribe(HostSeq(0)).await?.live;
+        log.append(SessionId(1), EventKind::SessionReady).await?;
+        log.append(SessionId(1), delta("a")).await?;
         log.append(
             SessionId(1),
             EventKind::ReasoningDelta {
                 text: String::from("thinking"),
             },
         )
-        .await
-        .unwrap();
-        log.append(SessionId(1), message("a")).await.unwrap();
+        .await?;
+        log.append(SessionId(1), message("a")).await?;
         assert_eq!(
-            log.welcome(providers()).await.unwrap(),
+            log.welcome(providers()).await?,
             Welcome {
                 host: String::from("test"),
                 epoch: Epoch(5),
@@ -651,10 +650,10 @@ mod tests {
             }
         );
         let seen = [
-            live.recv().await.unwrap(),
-            live.recv().await.unwrap(),
-            live.recv().await.unwrap(),
-            live.recv().await.unwrap(),
+            live.recv().await?,
+            live.recv().await?,
+            live.recv().await?,
+            live.recv().await?,
         ];
         assert_eq!(
             seen.into_iter()
@@ -672,7 +671,7 @@ mod tests {
                 (HostSeq(2), message("a")),
             ]
         );
-        let replay = log.subscribe(HostSeq(1)).await.unwrap().replay;
+        let replay = log.subscribe(HostSeq(1)).await?.replay;
         assert_eq!(
             replay
                 .into_iter()
@@ -680,6 +679,7 @@ mod tests {
                 .collect::<Vec<(HostSeq, EventKind)>>(),
             [(HostSeq(2), message("a"))]
         );
+        Ok(())
     }
 }
 
@@ -704,25 +704,22 @@ mod durability_tests {
 
     #[tokio::test]
     async fn credential_receipts_wait_for_commit_without_holding_the_event_transaction()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/tmp");
-        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&directory)?;
         let path = directory
             .join(format!("credential-receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let log = Log::open(String::from("test"), &path).unwrap();
-        let credential =
-            match log.begin_credential(CommandId(23)).await.unwrap() {
-                BeginCommand::Execute(lease) => Some(lease),
-                BeginCommand::Cached(_) => None,
-            }
-            .unwrap();
+        let log = Log::open(String::from("test"), &path)?;
+        let credential = match log.begin_credential(CommandId(23)).await? {
+            BeginCommand::Execute(lease) => Some(lease),
+            BeginCommand::Cached(_) => None,
+        }
+        .ok_or("expected a value")?;
         let ordinary =
             tokio::time::timeout(Duration::from_secs(2), lease(&log, 24))
-                .await
-                .unwrap()
-                .unwrap();
+                .await??;
         let (finished_reply, mut finished) = oneshot::channel();
         log.inbox
             .send(LogMsg::Finish {
@@ -730,8 +727,7 @@ mod durability_tests {
                 result: CommandResult::Accepted,
                 reply: finished_reply,
             })
-            .await
-            .unwrap();
+            .await?;
         let (retry_reply, retry) = oneshot::channel();
         log.inbox
             .send(LogMsg::Begin(CommandStart {
@@ -739,9 +735,8 @@ mod durability_tests {
                 kind: super::CommandKind::Session,
                 reply: retry_reply,
             }))
-            .await
-            .unwrap();
-        let _ = log.history().await.unwrap();
+            .await?;
+        let _ = log.history().await?;
         assert_eq!(
             tokio::time::timeout(Duration::from_millis(20), &mut finished)
                 .await
@@ -749,61 +744,58 @@ mod durability_tests {
                 .map(|_| "pending"),
             Some("pending")
         );
-        ordinary.finish(CommandResult::Accepted).await.unwrap();
-        finished.await.unwrap();
+        ordinary.finish(CommandResult::Accepted).await?;
+        finished.await?;
         drop(credential);
-        let retried = match retry.await.unwrap() {
+        let retried = match retry.await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
         assert_eq!(retried, Some(CommandResult::Accepted));
-        log.shutdown().await.unwrap();
-        let reopened = Log::open(String::from("test"), &path).unwrap();
-        let cached =
-            match reopened.begin_credential(CommandId(23)).await.unwrap() {
-                BeginCommand::Cached(result) => Some(result),
-                BeginCommand::Execute(_) => None,
-            };
+        log.shutdown().await?;
+        let reopened = Log::open(String::from("test"), &path)?;
+        let cached = match reopened.begin_credential(CommandId(23)).await? {
+            BeginCommand::Cached(result) => Some(result),
+            BeginCommand::Execute(_) => None,
+        };
         assert_eq!(cached, Some(CommandResult::Accepted));
-        reopened.shutdown().await.unwrap();
+        reopened.shutdown().await?;
+        Ok(())
     }
 
     #[tokio::test]
-    async fn credential_lease_drop_fails_closed() {
+    async fn credential_lease_drop_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), proto::Epoch(1));
-        let credential =
-            match log.begin_credential(CommandId(23)).await.unwrap() {
-                BeginCommand::Execute(lease) => Some(lease),
-                BeginCommand::Cached(_) => None,
-            }
-            .unwrap();
+        let credential = match log.begin_credential(CommandId(23)).await? {
+            BeginCommand::Execute(lease) => Some(lease),
+            BeginCommand::Cached(_) => None,
+        }
+        .ok_or("expected a value")?;
         drop(credential);
-        tokio::time::timeout(Duration::from_secs(2), log.stopped())
-            .await
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), log.stopped()).await?;
+        Ok(())
     }
 
     #[tokio::test]
-    async fn receipt_and_events_commit_before_live_and_queued_retries_drain() {
+    async fn receipt_and_events_commit_before_live_and_queued_retries_drain()
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir()
             .join(format!("conductor-staging-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let log = Log::open(String::from("test"), &path).unwrap();
-        let first = lease(&log, 1).await.unwrap();
+        let log = Log::open(String::from("test"), &path)?;
+        let first = lease(&log, 1).await?;
         let super::Subscription { mut live, .. } =
-            log.subscribe(HostSeq(0)).await.unwrap();
-        log.append(SessionId(1), EventKind::SessionReady)
-            .await
-            .unwrap();
+            log.subscribe(HostSeq(0)).await?;
+        log.append(SessionId(1), EventKind::SessionReady).await?;
         log.append(
             SessionId(1),
             EventKind::AssistantDelta {
                 text: String::from("a"),
             },
         )
-        .await
-        .unwrap();
-        assert_eq!(log.subscribe(HostSeq(0)).await.unwrap().replay, Vec::new());
+        .await?;
+        assert_eq!(log.subscribe(HostSeq(0)).await?.replay, Vec::new());
         assert_eq!(
             tokio::time::timeout(Duration::from_millis(20), live.recv())
                 .await
@@ -818,8 +810,7 @@ mod durability_tests {
                 kind: super::CommandKind::Session,
                 reply: duplicate_reply,
             }))
-            .await
-            .unwrap();
+            .await?;
         let (next_reply, next) = oneshot::channel();
         log.inbox
             .send(LogMsg::Begin(CommandStart {
@@ -827,58 +818,54 @@ mod durability_tests {
                 kind: super::CommandKind::Session,
                 reply: next_reply,
             }))
-            .await
-            .unwrap();
-        first.finish(CommandResult::Accepted).await.unwrap();
-        assert_eq!(live.recv().await.unwrap().kind, EventKind::SessionReady);
-        assert_eq!(live.recv().await.unwrap().seq, HostSeq(1));
-        let cached = match duplicate.await.unwrap() {
+            .await?;
+        first.finish(CommandResult::Accepted).await?;
+        assert_eq!(live.recv().await?.kind, EventKind::SessionReady);
+        assert_eq!(live.recv().await?.seq, HostSeq(1));
+        let cached = match duplicate.await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
         assert_eq!(cached, Some(CommandResult::Accepted));
-        let second = match next.await.unwrap() {
+        let second = match next.await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
-        .unwrap();
-        second.finish(CommandResult::Accepted).await.unwrap();
-        log.shutdown().await.unwrap();
-        let reopened = Log::open(String::from("test"), &path).unwrap();
-        assert_eq!(
-            reopened.subscribe(HostSeq(0)).await.unwrap().replay.len(),
-            1
-        );
-        let cached = match reopened.begin(CommandId(1)).await.unwrap() {
+        .ok_or("expected a value")?;
+        second.finish(CommandResult::Accepted).await?;
+        log.shutdown().await?;
+        let reopened = Log::open(String::from("test"), &path)?;
+        assert_eq!(reopened.subscribe(HostSeq(0)).await?.replay.len(), 1);
+        let cached = match reopened.begin(CommandId(1)).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
         assert_eq!(cached, Some(CommandResult::Accepted));
-        reopened.shutdown().await.unwrap();
+        reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
+        Ok(())
     }
 
     #[tokio::test]
     async fn cancelled_undo_preserves_committed_intent_but_rolls_back_its_suffix()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir().join(format!(
             "conductor-undo-barrier-{}.redb",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);
-        let log = Log::open(String::from("test"), &path).unwrap();
-        let command = lease(&log, 9).await.unwrap();
+        let log = Log::open(String::from("test"), &path)?;
+        let command = lease(&log, 9).await?;
         let started = EventKind::UndoStarted {
             checkpoint: proto::CheckpointId(2),
             restore: proto::CheckpointId(1),
             history: proto::HistoryAnchor::Fresh,
         };
-        log.append(SessionId(1), started.clone()).await.unwrap();
-        log.barrier().await.unwrap();
+        log.append(SessionId(1), started.clone()).await?;
+        log.barrier().await?;
         assert_eq!(
             log.subscribe(HostSeq(0))
-                .await
-                .unwrap()
+                .await?
                 .replay
                 .into_iter()
                 .map(|event| event.kind)
@@ -892,54 +879,49 @@ mod durability_tests {
                 history: proto::HistoryAnchor::Fresh,
             },
         )
-        .await
-        .unwrap();
+        .await?;
         let inbox = log.inbox.clone();
         drop(command);
-        tokio::time::timeout(Duration::from_secs(2), inbox.closed())
-            .await
-            .unwrap();
-        let reopened = Log::open(String::from("test"), &path).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), inbox.closed()).await?;
+        let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(
             reopened
                 .history()
-                .await
-                .unwrap()
+                .await?
                 .into_iter()
                 .map(|event| event.kind)
                 .collect::<Vec<EventKind>>(),
             Vec::from([started])
         );
-        let retried = lease(&reopened, 9).await.unwrap();
-        retried.finish(CommandResult::Accepted).await.unwrap();
-        reopened.shutdown().await.unwrap();
+        let retried = lease(&reopened, 9).await?;
+        retried.finish(CommandResult::Accepted).await?;
+        reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn dropping_an_unfinished_command_rolls_back_and_fails_closed() {
+    async fn dropping_an_unfinished_command_rolls_back_and_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir()
             .join(format!("conductor-abort-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let log = Log::open(String::from("test"), &path).unwrap();
-        let command = lease(&log, 1).await.unwrap();
-        log.append(SessionId(1), EventKind::SessionReady)
-            .await
-            .unwrap();
+        let log = Log::open(String::from("test"), &path)?;
+        let command = lease(&log, 1).await?;
+        log.append(SessionId(1), EventKind::SessionReady).await?;
         let inbox = log.inbox.clone();
         drop(command);
-        tokio::time::timeout(Duration::from_secs(2), inbox.closed())
-            .await
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), inbox.closed()).await?;
         assert_eq!(
             log.history().await.err().map(|_| String::from("stopped")),
             Some(String::from("stopped"))
         );
-        let reopened = Log::open(String::from("test"), &path).unwrap();
-        assert_eq!(reopened.history().await.unwrap(), Vec::new());
-        let retried = lease(&reopened, 1).await.unwrap();
-        retried.finish(CommandResult::Accepted).await.unwrap();
-        reopened.shutdown().await.unwrap();
+        let reopened = Log::open(String::from("test"), &path)?;
+        assert_eq!(reopened.history().await?, Vec::new());
+        let retried = lease(&reopened, 1).await?;
+        retried.finish(CommandResult::Accepted).await?;
+        reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
+        Ok(())
     }
 }

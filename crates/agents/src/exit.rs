@@ -10,6 +10,7 @@ pub enum Exit {
 }
 
 impl Exit {
+    #[must_use]
     pub fn describe(&self) -> String {
         match self {
             Self::Status(status) => status.to_string(),

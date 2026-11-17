@@ -185,12 +185,14 @@ fn random_key() -> [u8; 32] {
     bytes
 }
 
+#[must_use]
 pub fn random_token() -> AuthToken {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS has a random source");
     AuthToken::from_bytes(bytes)
 }
 
+#[must_use]
 pub fn random_epoch() -> Epoch {
     Epoch(getrandom::u64().expect("the OS has a random source"))
 }
@@ -202,19 +204,19 @@ mod tests {
     use super::{homes, load_or_create_key, load_or_create_token};
 
     #[test]
-    fn homes_get_their_config_once() {
+    fn homes_get_their_config_once() -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir()
             .join(format!("conductord-homes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let first = homes(&dir).unwrap();
+        let first = homes(&dir)?;
         let settings = dir.join("home/claude/settings.json");
         let config = dir.join("home/codex/config.toml");
         let written = (
-            std::fs::read_to_string(&settings).unwrap(),
-            std::fs::read_to_string(&config).unwrap(),
+            std::fs::read_to_string(&settings)?,
+            std::fs::read_to_string(&config)?,
         );
-        std::fs::write(&settings, "{}").unwrap();
-        let _ = homes(&dir).unwrap();
+        std::fs::write(&settings, "{}")?;
+        let _ = homes(&dir)?;
         assert_eq!(
             (first.claude, first.codex),
             (
@@ -229,18 +231,20 @@ mod tests {
                 String::from("check_for_update_on_startup = false\n")
             )
         );
-        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{}");
+        assert_eq!(std::fs::read_to_string(&settings)?, "{}");
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
-    fn ticket_token_is_created_once_then_reloaded() {
+    fn ticket_token_is_created_once_then_reloaded()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir()
             .join(format!("conductord-token-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let first = load_or_create_token(&dir).unwrap();
-        assert_eq!(load_or_create_token(&dir).unwrap(), first);
-        std::fs::write(dir.join("auth.key"), "not a key").unwrap();
+        let first = load_or_create_token(&dir)?;
+        assert_eq!(load_or_create_token(&dir)?, first);
+        std::fs::write(dir.join("auth.key"), "not a key")?;
         assert_eq!(
             load_or_create_token(&dir)
                 .err()
@@ -248,17 +252,19 @@ mod tests {
             Some(String::from("refused"))
         );
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
-    fn key_is_created_once_then_reloaded() {
+    fn key_is_created_once_then_reloaded()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir()
             .join(format!("conductord-key-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let first = load_or_create_key(&dir).unwrap();
-        let second = load_or_create_key(&dir).unwrap();
+        let first = load_or_create_key(&dir)?;
+        let second = load_or_create_key(&dir)?;
         assert_eq!(first.public(), second.public());
-        std::fs::write(dir.join("host.key"), "nope").unwrap();
+        std::fs::write(dir.join("host.key"), "nope")?;
         assert_eq!(
             load_or_create_key(&dir).err().map(|err| err.to_string()),
             Some(format!(
@@ -267,5 +273,6 @@ mod tests {
             ))
         );
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 }

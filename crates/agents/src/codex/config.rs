@@ -13,11 +13,11 @@ use super::server::Error;
 /// Our provider's id in `model_providers`.
 const PROVIDER_ID: &str = "conductor";
 /// The variable our provider's `env_key` names, which carries its key.
-pub(crate) const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
+pub const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
 
 /// Writes `credential`'s provider into `<home>/config.toml`, or takes ours
 /// out for `None`. The key stays out of the file.
-pub(crate) fn write(
+pub fn write(
     home: &Path,
     credential: Option<&CodexCredential>,
 ) -> Result<(), Error> {
@@ -120,18 +120,20 @@ mod tests {
     const CODEX_WROTE: &str = "check_for_update_on_startup = false\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n";
 
     #[test]
-    fn the_provider_goes_in_and_out_and_codex_keeps_its_own() {
+    fn the_provider_goes_in_and_out_and_codex_keeps_its_own()
+    -> Result<(), Box<dyn std::error::Error>> {
         let credential = CodexCredential::Provider {
             name: String::from("Gateway"),
             base_url: String::from("https://gateway.example/v1"),
             key: String::from("sk-never-written"),
             model: String::from("gpt-6"),
         };
-        let set = with_provider(CODEX_WROTE, Some(&credential)).unwrap();
+        let set = with_provider(CODEX_WROTE, Some(&credential))?;
         assert_eq!(
             set,
             "check_for_update_on_startup = false\nmodel_provider = \"conductor\"\nmodel = \"gpt-6\"\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n\n[model_providers.conductor]\nname = \"Gateway\"\nbase_url = \"https://gateway.example/v1\"\nenv_key = \"CONDUCTOR_CODEX_KEY\"\nwire_api = \"responses\"\n\n[shell_environment_policy.filters]\nCONDUCTOR_CODEX_KEY = \"exclude\"\n"
         );
-        assert_eq!(with_provider(&set, None).unwrap(), CODEX_WROTE);
+        assert_eq!(with_provider(&set, None)?, CODEX_WROTE);
+        Ok(())
     }
 }

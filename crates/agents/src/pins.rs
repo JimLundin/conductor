@@ -1,10 +1,10 @@
 //! The pinned CLIs, written by `tools/pin`. Run it again to change a pin.
 
 /// Verified: manifest.json.sig is a good signature by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE; every binary matches the manifest
-pub(crate) const CLAUDE_VERSION: &str = "2.1.316";
+pub const CLAUDE_VERSION: &str = "2.1.316";
 
 /// The SHA-256 of the `claude` binary for a platform named as in Claude's manifest.
-pub(crate) fn claude_sha256(platform: &str) -> Option<String> {
+pub fn claude_sha256(platform: &str) -> Option<String> {
     match platform {
         "darwin-arm64" => Some(String::from(
             "64c327e92b2c5e0f78c0a980c5a518121e1f0d140ca771ca5dd4488d1a2dcb3f",
@@ -35,10 +35,10 @@ pub(crate) fn claude_sha256(platform: &str) -> Option<String> {
 }
 
 /// Verified: every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles were skipped: cosign was not installed
-pub(crate) const CODEX_VERSION: &str = "0.166.0";
+pub const CODEX_VERSION: &str = "0.166.0";
 
 /// The SHA-256 of the `codex-package-<triple>.tar.gz` release asset for a target triple.
-pub(crate) fn codex_sha256(platform: &str) -> Option<String> {
+pub fn codex_sha256(platform: &str) -> Option<String> {
     match platform {
         "x86_64-unknown-linux-musl" => Some(String::from(
             "1d44b28bc4ac9937d7d3532264baa68a507ce364956a0d4ebb856f331cdee254",

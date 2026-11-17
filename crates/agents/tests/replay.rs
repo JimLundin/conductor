@@ -551,11 +551,11 @@ async fn checklist_and_effort_recording() {
 /// `s1` step 16: `apply_flag_settings` with `effortLevel`, then
 /// `get_settings`, answered as the pinned CLI answered them.
 #[tokio::test]
-async fn the_effort_is_set_in_the_running_process() {
+async fn the_effort_is_set_in_the_running_process()
+-> Result<(), Box<dyn std::error::Error>> {
     let recorded =
-        std::fs::read_to_string(fixture("session9-checklist-effort.jsonl"))
-            .unwrap();
-    let line = |at| recorded.lines().nth(at).unwrap();
+        std::fs::read_to_string(fixture("session9-checklist-effort.jsonl"))?;
+    let line = |at| recorded.lines().nth(at).unwrap_or_default();
     let (initialize, set, applied) = (line(0), line(164), line(165));
     let stdout = recording(
         "set-effort",
@@ -568,32 +568,29 @@ async fn the_effort_is_set_in_the_running_process() {
         ]),
     );
     let claude = fake_claude("set-effort", &stdout);
-    let (session, _events) =
-        ClaudeSession::spawn(options(&claude)).await.unwrap();
+    let (session, _events) = ClaudeSession::spawn(options(&claude)).await?;
     let set = session.set_effort(Effort::Low).await;
     let applied = session.applied().await.map(|applied| applied.effort);
-    let _ = session.shutdown().await.unwrap();
+    let _ = session.shutdown().await?;
     assert_eq!(
         (
             set.map_err(|err| err.to_string()),
             applied.map_err(|err| err.to_string()),
-            std::fs::read_to_string(claude.stdin_log)
-                .unwrap()
+            std::fs::read_to_string(claude.stdin_log)?
                 .lines()
                 .nth(1)
-                .map(|line| serde_json::from_str::<Value>(line).unwrap()),
+                .map(serde_json::from_str::<Value>)
+                .transpose()?,
         ),
         (
             Ok(()),
             Ok(Some(String::from("low"))),
-            Some(
-                serde_json::from_str::<Value>(
-                    r#"{"type": "control_request", "request_id": "req_2", "request": {"subtype": "apply_flag_settings", "settings": {"effortLevel": "low"}}}"#
-                )
-                .unwrap()
-            ),
+            Some(serde_json::from_str::<Value>(
+                r#"{"type": "control_request", "request_id": "req_2", "request": {"subtype": "apply_flag_settings", "settings": {"effortLevel": "low"}}}"#
+            )?),
         )
     );
+    Ok(())
 }
 
 /// A probe: the main agent runs a subagent, whose two `TodoWrite` calls
@@ -617,12 +614,11 @@ async fn a_subagents_checklist_is_not_the_sessions() {
 }
 
 #[tokio::test]
-async fn initialize_lists_the_models_and_their_efforts() {
+async fn initialize_lists_the_models_and_their_efforts()
+-> Result<(), Box<dyn std::error::Error>> {
     let path = fixture("session4-chosen-killed.jsonl");
     let (session, _events) =
-        ClaudeSession::spawn(options(&fake_claude("models", &path)))
-            .await
-            .unwrap();
+        ClaudeSession::spawn(options(&fake_claude("models", &path))).await?;
     let models = session.models();
     assert_eq!(
         (
@@ -653,6 +649,7 @@ async fn initialize_lists_the_models_and_their_efforts() {
             ])),
         )
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -728,7 +725,8 @@ fn recorded_result() -> String {
 const INITIALIZED: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.1.316"}}}"#;
 
 #[tokio::test]
-async fn unknown_control_request_gets_an_error_reply() {
+async fn unknown_control_request_gets_an_error_reply()
+-> Result<(), Box<dyn std::error::Error>> {
     let stdout = recording(
         "unknown-control",
         Vec::from([
@@ -739,12 +737,11 @@ async fn unknown_control_request_gets_an_error_reply() {
         ]),
     );
     let claude = fake_claude("unknown-control", &stdout);
-    let (session, events) =
-        ClaudeSession::spawn(options(&claude)).await.unwrap();
+    let (session, events) = ClaudeSession::spawn(options(&claude)).await?;
     let played = Replay::new(session, events, Vec::new())
         .until(Until::Turns(1))
         .await;
-    played.session.shutdown().await.unwrap();
+    played.session.shutdown().await?;
     assert_eq!(
         played.seen,
         ["finished success Completed Some(\"completed\")"]
@@ -753,35 +750,33 @@ async fn unknown_control_request_gets_an_error_reply() {
         played.unknown,
         BTreeMap::from([("brand_new_frame/-".to_owned(), 1)])
     );
-    let written = std::fs::read_to_string(claude.stdin_log)
-        .unwrap()
+    let written = std::fs::read_to_string(claude.stdin_log)?
         .lines()
-        .map(|l| serde_json::from_str::<Value>(l).unwrap())
-        .collect::<Vec<Value>>();
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<Value>, _>>()?;
     assert_eq!(
         written,
         [
             serde_json::from_str::<Value>(
                 r#"{"type": "control_request", "request_id": "req_1", "request": {"subtype": "initialize"}}"#
-            )
-            .unwrap(),
+            )?,
             serde_json::from_str::<Value>(
                 r#"{"type": "control_response", "response": {"subtype": "error", "request_id": "cli_3",
                 "error": "unsupported control request subtype: elicit_frobnicate"}}"#
-            )
-            .unwrap(),
+            )?,
         ]
     );
+    Ok(())
 }
 
 /// The pinned CLI's answer to `--resume` with no transcript in its home:
 /// one `result` on stdout and the same text on stderr, then exit 1, with no
 /// answer to `initialize`.
 #[tokio::test]
-async fn a_resume_with_no_transcript_fails_with_the_clis_reason() {
+async fn a_resume_with_no_transcript_fails_with_the_clis_reason()
+-> Result<(), Box<dyn std::error::Error>> {
     let recorded =
-        std::fs::read_to_string(fixture("session6-resume-missing.jsonl"))
-            .unwrap();
+        std::fs::read_to_string(fixture("session6-resume-missing.jsonl"))?;
     let stdout = recording(
         "resume-missing",
         Vec::from([
@@ -800,10 +795,12 @@ async fn a_resume_with_no_transcript_fails_with_the_clis_reason() {
             "claude exited: No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10"
         )
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn missing_requested_resume_target_has_a_typed_recovery_error() {
+async fn missing_requested_resume_target_has_a_typed_recovery_error()
+-> Result<(), Box<dyn std::error::Error>> {
     let id = agents::claude::SessionId(String::from("target"));
     let stdout = recording(
         "typed-resume-missing",
@@ -817,7 +814,10 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error() {
         resume: agents::claude::Resume::Session(id.clone()),
         ..options(&claude)
     };
-    let error = ClaudeSession::spawn(opts).await.err().unwrap();
+    let error = ClaudeSession::spawn(opts)
+        .await
+        .err()
+        .ok_or("expected a value")?;
     assert_eq!(
         error.to_string(),
         "claude exited: No conversation found with session ID: target"
@@ -829,6 +829,7 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error() {
         },
         Some(id)
     );
+    Ok(())
 }
 
 /// A CLI that prints no `result`, as one without a flag we pass, fails
@@ -889,18 +890,17 @@ async fn cli_that_reports_no_version_is_refused() {
 }
 
 #[tokio::test]
-async fn allow_untested_version_runs_it_anyway() {
+async fn allow_untested_version_runs_it_anyway()
+-> Result<(), Box<dyn std::error::Error>> {
     let stdout = recording("future-cli-allowed", Vec::from([FUTURE_CLI]));
     let claude = fake_claude("future-cli-allowed", &stdout);
     let opts = ClaudeOptions {
         versions: VersionPolicy::AllowUntested,
         ..options(&claude)
     };
-    let (session, _events) = ClaudeSession::spawn(opts).await.unwrap();
-    assert_eq!(
-        session.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    let (session, _events) = ClaudeSession::spawn(opts).await?;
+    assert_eq!(session.shutdown().await?.describe(), "exit status: 0");
+    Ok(())
 }
 
 /// How long a gated stand-in must stay silent to count as waiting.
@@ -927,11 +927,12 @@ async fn gated(name: &str) -> Replay {
 }
 
 #[tokio::test]
-async fn approve_recording_waits_for_the_message_and_the_answer() {
+async fn approve_recording_waits_for_the_message_and_the_answer()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut r = gated("claude-approve.jsonl").await;
     assert_eq!(early(&mut r.events).await, None);
 
-    r.session.send_user(String::from("a.txt")).await.unwrap();
+    r.session.send_user(String::from("a.txt")).await?;
     let mut r = r.until(Until::Permission).await;
     assert_eq!(early(&mut r.events).await, None);
 
@@ -942,8 +943,7 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
             )),
             PermissionDecision::Allow,
         )
-        .await
-        .unwrap();
+        .await?;
     let r = r.until(Until::Turns(1)).await;
     assert_eq!(
         r.seen,
@@ -957,18 +957,17 @@ async fn approve_recording_waits_for_the_message_and_the_answer() {
             "finished success Completed Some(\"completed\")",
         ]
     );
-    assert_eq!(
-        r.session.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(r.session.shutdown().await?.describe(), "exit status: 0");
+    Ok(())
 }
 
 #[tokio::test]
-async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
+async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut r = gated("claude-deny-interrupt.jsonl").await;
     assert_eq!(early(&mut r.events).await, None);
 
-    r.session.send_user(String::from("b.txt")).await.unwrap();
+    r.session.send_user(String::from("b.txt")).await?;
     let mut r = r.until(Until::Permission).await;
     assert_eq!(early(&mut r.events).await, None);
 
@@ -983,20 +982,19 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
             )),
             deny,
         )
-        .await
-        .unwrap();
+        .await?;
     let mut r = r.until(Until::Turns(1)).await;
     assert_eq!(early(&mut r.events).await, None);
 
     // The ack waits for our interrupt; had it come first, `interrupt` would
     // time out on an ack it never matched.
-    r.session.send_user(String::from("count")).await.unwrap();
+    r.session.send_user(String::from("count")).await?;
     let r = r.until(Until::Delta).await;
-    r.session.interrupt().await.unwrap();
+    r.session.interrupt().await?;
     let mut r = r.until(Until::Turns(2)).await;
     assert_eq!(early(&mut r.events).await, None);
 
-    r.session.send_user(String::from("pong")).await.unwrap();
+    r.session.send_user(String::from("pong")).await?;
     let r = r.until(Until::Turns(3)).await;
     assert_eq!(
         r.seen,
@@ -1019,10 +1017,8 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt() {
             "finished success Completed Some(\"completed\")",
         ]
     );
-    assert_eq!(
-        r.session.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(r.session.shutdown().await?.describe(), "exit status: 0");
+    Ok(())
 }
 
 async fn drive_boundary(
@@ -1042,7 +1038,7 @@ async fn drive_boundary(
 
 #[tokio::test]
 async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
-{
+-> Result<(), Box<dyn std::error::Error>> {
     let dir = test_dir("native-boundaries");
     let fake = FakeClaude {
         stdin_log: dir.join("stdin.jsonl"),
@@ -1061,14 +1057,13 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
         r#"{"type":"user","uuid":"interrupted","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#,
         r#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":"native"}"#,
     ]).join("\n");
-    std::fs::write(dir.join("stdout.jsonl"), recording).unwrap();
-    let (session, mut events) =
-        ClaudeSession::spawn(options(&fake)).await.unwrap();
-    session.send_user(String::from("first")).await.unwrap();
+    std::fs::write(dir.join("stdout.jsonl"), recording)?;
+    let (session, mut events) = ClaudeSession::spawn(options(&fake)).await?;
+    session.send_user(String::from("first")).await?;
     let first = drive_boundary(&mut events).await;
-    session.send_user(String::from("second")).await.unwrap();
+    session.send_user(String::from("second")).await?;
     let second = drive_boundary(&mut events).await;
-    session.send_user(String::from("third")).await.unwrap();
+    session.send_user(String::from("third")).await?;
     let third = drive_boundary(&mut events).await;
     assert_eq!(
         Vec::from([first, second, third]),
@@ -1078,6 +1073,7 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
             Some(agents::claude::MessageId(String::from("interrupted")))
         ])
     );
-    let _ = session.shutdown().await.unwrap();
-    std::fs::remove_dir_all(dir).unwrap();
+    let _ = session.shutdown().await?;
+    std::fs::remove_dir_all(dir)?;
+    Ok(())
 }

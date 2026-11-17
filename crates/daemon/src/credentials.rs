@@ -41,6 +41,7 @@ impl Store {
     /// reads what it holds. Only a store key that can't be read or made
     /// fails it.
     /// The data dir the store is in.
+    #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
     }

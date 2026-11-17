@@ -11,6 +11,7 @@ pub struct Draft {
 }
 
 impl Draft {
+    #[must_use]
     pub fn new(questions: &[Question]) -> Self {
         Self {
             chosen: questions.iter().map(|_| Vec::new()).collect(),
@@ -19,16 +20,19 @@ impl Draft {
     }
 
     /// The labels chosen for `question`.
+    #[must_use]
     pub fn chosen(&self, question: usize) -> Vec<String> {
         self.chosen.get(question).cloned().unwrap_or_default()
     }
 
+    #[must_use]
     pub fn typed(&self, question: usize) -> String {
         self.typed.get(question).cloned().unwrap_or_default()
     }
 
     /// Taps `label`. One choice replaces the last and clears the typed
     /// text; with many, a tap toggles the option.
+    #[must_use]
     pub fn pick(
         self,
         question: usize,
@@ -61,6 +65,7 @@ impl Draft {
 
     /// Types `text` as the answer. With one choice it replaces the option
     /// chosen; with many it is one more answer.
+    #[must_use]
     pub fn r#type(
         self,
         question: usize,
@@ -84,6 +89,7 @@ impl Draft {
     }
 
     /// Every question's answer, once every question has one.
+    #[must_use]
     pub fn answers(&self) -> Option<Vec<Answer>> {
         let answers = self
             .chosen

@@ -20,7 +20,7 @@ const TOTAL_LIMIT: usize = 262_144;
 const FILE_LIMIT: usize = 100;
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum GitError {
+pub enum GitError {
     #[error(
         "the selected directory is not a Git repository with a committed HEAD"
     )]
@@ -96,7 +96,7 @@ async fn capture(mut child: Child) -> Result<Capture, GitError> {
         .read_to_end(&mut bytes)
         .await
         .map_err(|error| failure("reading git stdout", &error.to_string()))?;
-    if let Ordering::Greater = bytes.len().cmp(&PATCH_LIMIT) {
+    if bytes.len().cmp(&PATCH_LIMIT) == Ordering::Greater {
         child.kill().await.map_err(|error| {
             failure("stopping oversized git output", &error.to_string())
         })?;
@@ -264,7 +264,7 @@ async fn validate(workspace: &Workspace) -> Result<PathBuf, GitError> {
     }
 }
 
-pub(crate) async fn create(
+pub async fn create(
     data_dir: &Path,
     original: &HostPath,
     session: SessionId,
@@ -273,123 +273,113 @@ pub(crate) async fn create(
     let probe =
         execute(&mut git(&original_path, &["rev-parse", "--show-toplevel"]))
             .await?;
-    match probe.status.success().then_some(()) {
-        None => Err(GitError::NotRepository),
-        Some(()) => {
-            let repository = canonical(Path::new(
-                &String::from_utf8(checked(probe, "repository root")?)
-                    .map_err(|error| {
-                        failure("repository root", &error.to_string())
-                    })?
-                    .trim_end_matches('\n'),
-            ))?;
-            let head = execute(&mut git(
-                &repository,
-                &["rev-parse", "--verify", "HEAD^{commit}"],
-            ))
-            .await?;
-            match head.status.success().then_some(()) {
-                None => Err(GitError::NotRepository),
-                Some(()) => {
-                    let head =
-                        String::from_utf8(checked(head, "committed HEAD")?)
-                            .map_err(|error| {
-                                failure("committed HEAD", &error.to_string())
-                            })?;
-                    let relative = original_path
-                        .strip_prefix(&repository)
-                        .map_err(|error| {
-                            failure("selected subdirectory", &error.to_string())
-                        })?;
-                    match host(relative)?.0.as_str() {
-                        "" => Ok(()),
-                        relative => {
-                            let kind = text(
-                                &repository,
-                                &[
-                                    "cat-file",
-                                    "-t",
-                                    &format!("{}:{relative}", head.trim()),
-                                ],
-                            )
-                            .await?;
-                            same(
-                                &kind,
-                                "tree",
-                                "selected subdirectory must exist in committed HEAD",
-                            )
-                        }
-                    }?;
-                    let parent = data_dir.join("worktrees");
-                    std::fs::create_dir_all(&parent).map_err(|error| {
-                        failure("creating worktree parent", &error.to_string())
-                    })?;
-                    let path = canonical(&parent)?
-                        .join(ulid::Ulid::from(session.0).to_string());
-                    let relative = original_path
-                        .strip_prefix(&repository)
-                        .map_err(|error| {
-                            failure("selected subdirectory", &error.to_string())
-                        })?;
-                    let workspace = Workspace {
-                        repository: host(&repository)?,
-                        original: host(&original_path)?,
-                        worktree: host(&path)?,
-                        directory: host(&path.join(relative))?,
-                        branch: format!(
-                            "conductor/{}",
-                            ulid::Ulid::from(session.0)
-                        ),
-                    };
-                    match std::fs::symlink_metadata(&path) {
-                        Ok(_) => {
-                            let _ = validate(&workspace).await?;
-                            Ok(workspace)
-                        }
-                        Err(error) => {
-                            match error.kind() {
-                                std::io::ErrorKind::NotFound => {
-                                    let _ = text(
-                                        &repository,
-                                        &[
-                                            "worktree",
-                                            "add",
-                                            "-b",
-                                            &workspace.branch,
-                                            &workspace.worktree.0,
-                                            head.trim(),
-                                        ],
-                                    )
-                                    .await?;
-                                    let dir = git_dir(&path).await?;
-                                    let mut ownership = std::fs::OpenOptions::new()
-                                    .write(true)
-                                    .create_new(true)
-                                    .open(dir.join("conductor-workspace"))
-                                    .map_err(|error| {
-                                        failure("recording worktree ownership", &error.to_string())
-                                    })?;
-                                    std::io::Write::write_all(
-                                        &mut ownership,
-                                        marker(&workspace).as_bytes(),
-                                    )
-                                    .map_err(|error| {
-                                        failure(
-                                            "recording worktree ownership",
-                                            &error.to_string(),
-                                        )
-                                    })?;
-                                    let _ = validate(&workspace).await?;
-                                    Ok(workspace)
-                                }
-                                _ => Err(failure(
-                                    "worktree path",
-                                    &error.to_string(),
-                                )),
-                            }
-                        }
-                    }
+    if probe.status.success().then_some(()) == None {
+        Err(GitError::NotRepository)
+    } else {
+        let repository = canonical(Path::new(
+            &String::from_utf8(checked(probe, "repository root")?)
+                .map_err(|error| {
+                    failure("repository root", &error.to_string())
+                })?
+                .trim_end_matches('\n'),
+        ))?;
+        let head = execute(&mut git(
+            &repository,
+            &["rev-parse", "--verify", "HEAD^{commit}"],
+        ))
+        .await?;
+        if head.status.success().then_some(()).is_none() {
+            Err(GitError::NotRepository)
+        } else {
+            let head = String::from_utf8(checked(head, "committed HEAD")?)
+                .map_err(|error| {
+                    failure("committed HEAD", &error.to_string())
+                })?;
+            let relative =
+                original_path.strip_prefix(&repository).map_err(|error| {
+                    failure("selected subdirectory", &error.to_string())
+                })?;
+            match host(relative)?.0.as_str() {
+                "" => Ok(()),
+                relative => {
+                    let kind = text(
+                        &repository,
+                        &[
+                            "cat-file",
+                            "-t",
+                            &format!("{}:{relative}", head.trim()),
+                        ],
+                    )
+                    .await?;
+                    same(
+                        &kind,
+                        "tree",
+                        "selected subdirectory must exist in committed HEAD",
+                    )
                 }
+            }?;
+            let parent = data_dir.join("worktrees");
+            std::fs::create_dir_all(&parent).map_err(|error| {
+                failure("creating worktree parent", &error.to_string())
+            })?;
+            let path = canonical(&parent)?
+                .join(ulid::Ulid::from(session.0).to_string());
+            let relative =
+                original_path.strip_prefix(&repository).map_err(|error| {
+                    failure("selected subdirectory", &error.to_string())
+                })?;
+            let workspace = Workspace {
+                repository: host(&repository)?,
+                original: host(&original_path)?,
+                worktree: host(&path)?,
+                directory: host(&path.join(relative))?,
+                branch: format!("conductor/{}", ulid::Ulid::from(session.0)),
+            };
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) => {
+                    let _ = validate(&workspace).await?;
+                    Ok(workspace)
+                }
+                Err(error) => match error.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        let _ = text(
+                            &repository,
+                            &[
+                                "worktree",
+                                "add",
+                                "-b",
+                                &workspace.branch,
+                                &workspace.worktree.0,
+                                head.trim(),
+                            ],
+                        )
+                        .await?;
+                        let dir = git_dir(&path).await?;
+                        let mut ownership = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(dir.join("conductor-workspace"))
+                            .map_err(|error| {
+                                failure(
+                                    "recording worktree ownership",
+                                    &error.to_string(),
+                                )
+                            })?;
+                        std::io::Write::write_all(
+                            &mut ownership,
+                            marker(&workspace).as_bytes(),
+                        )
+                        .map_err(|error| {
+                            failure(
+                                "recording worktree ownership",
+                                &error.to_string(),
+                            )
+                        })?;
+                        let _ = validate(&workspace).await?;
+                        Ok(workspace)
+                    }
+                    _ => Err(failure("worktree path", &error.to_string())),
+                },
             }
         }
     }
@@ -471,39 +461,34 @@ async fn snapshot_index(
     let reference = reference(workspace, checkpoint)?;
     let existing =
         execute(&mut git(path, &["rev-parse", "--verify", &reference])).await?;
-    match existing.status.success().then_some(()) {
-        Some(()) => {
-            let commit =
-                String::from_utf8(checked(existing, "existing checkpoint")?)
-                    .map_err(|error| {
-                        failure("existing checkpoint", &error.to_string())
-                    })?
-                    .trim()
-                    .to_owned();
-            let actual_tree =
-                text(path, &["rev-parse", &format!("{commit}^{{tree}}")])
-                    .await?;
-            let actual_parent =
-                text(path, &["rev-parse", &format!("{commit}^")]).await?;
-            same(
-                &actual_tree,
-                tree.trim(),
-                "checkpoint id already records a different tree",
-            )?;
-            same(
-                &actual_parent,
-                &parent,
-                "checkpoint id already records a different parent",
-            )?;
-            Ok(commit)
-        }
-        None => {
-            let commit =
-                text_commit(path, tree.trim(), &parent, checkpoint).await?;
-            let _ =
-                text(path, &["update-ref", &reference, &commit, ""]).await?;
-            Ok(commit)
-        }
+    if existing.status.success().then_some(()) == Some(()) {
+        let commit =
+            String::from_utf8(checked(existing, "existing checkpoint")?)
+                .map_err(|error| {
+                    failure("existing checkpoint", &error.to_string())
+                })?
+                .trim()
+                .to_owned();
+        let actual_tree =
+            text(path, &["rev-parse", &format!("{commit}^{{tree}}")]).await?;
+        let actual_parent =
+            text(path, &["rev-parse", &format!("{commit}^")]).await?;
+        same(
+            &actual_tree,
+            tree.trim(),
+            "checkpoint id already records a different tree",
+        )?;
+        same(
+            &actual_parent,
+            &parent,
+            "checkpoint id already records a different parent",
+        )?;
+        Ok(commit)
+    } else {
+        let commit =
+            text_commit(path, tree.trim(), &parent, checkpoint).await?;
+        let _ = text(path, &["update-ref", &reference, &commit, ""]).await?;
+        Ok(commit)
     }
 }
 
@@ -564,7 +549,7 @@ impl Drop for Scratch {
     }
 }
 
-pub(crate) async fn snapshot(
+pub async fn snapshot(
     workspace: &Workspace,
     session: SessionId,
     checkpoint: CheckpointId,
@@ -581,7 +566,7 @@ pub(crate) async fn snapshot(
         .await
 }
 
-pub(crate) async fn preflight(
+pub async fn preflight(
     workspace: &Workspace,
     commit: &str,
 ) -> Result<(), GitError> {
@@ -589,7 +574,7 @@ pub(crate) async fn preflight(
     owned_commit(workspace, commit).await
 }
 
-pub(crate) async fn restore(
+pub async fn restore(
     workspace: &Workspace,
     commit: &str,
 ) -> Result<(), GitError> {
@@ -680,7 +665,7 @@ async fn patch(
     })
 }
 
-pub(crate) async fn diff(
+pub async fn diff(
     workspace: &Workspace,
     checkpoint: &Checkpoint,
     parent: &Checkpoint,
@@ -759,18 +744,15 @@ pub(crate) async fn diff(
                         | FilePatch::TooLarge
                         | FilePatch::Unsupported { .. } => 0,
                     };
-                    match budget.checked_sub(size) {
-                        Some(remaining) => {
-                            files.push(file);
-                            (files, remaining, extent)
-                        }
-                        None => {
-                            files.push(CheckpointFile {
-                                patch: FilePatch::TooLarge,
-                                ..file
-                            });
-                            (files, budget, DiffExtent::Truncated)
-                        }
+                    if let Some(remaining) = budget.checked_sub(size) {
+                        files.push(file);
+                        (files, remaining, extent)
+                    } else {
+                        files.push(CheckpointFile {
+                            patch: FilePatch::TooLarge,
+                            ..file
+                        });
+                        (files, budget, DiffExtent::Truncated)
                     }
                 },
             );
@@ -875,85 +857,67 @@ mod tests {
 
     #[tokio::test]
     async fn snapshots_and_restore_preserve_source_index_head_and_ignored_files()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await;
-        std::fs::write(repo.source.join("deleted.txt"), "staged source edit\n")
-            .unwrap();
-        let _ = text(&repo.source, &["add", "deleted.txt"]).await.unwrap();
+        std::fs::write(
+            repo.source.join("deleted.txt"),
+            "staged source edit\n",
+        )?;
+        let _ = text(&repo.source, &["add", "deleted.txt"]).await?;
         std::fs::write(
             repo.source.join("sub dir/original.txt"),
             "dirty source\n",
-        )
-        .unwrap();
-        std::fs::write(repo.source.join("untracked.txt"), "source untracked\n")
-            .unwrap();
+        )?;
+        std::fs::write(
+            repo.source.join("untracked.txt"),
+            "source untracked\n",
+        )?;
         std::fs::write(
             repo.source.join(".git/hooks/post-checkout"),
             "#!/bin/sh\nexit 91\n",
-        )
-        .unwrap();
+        )?;
         executable(&repo.source.join(".git/hooks/post-checkout"));
-        let source_index =
-            std::fs::read(repo.source.join(".git/index")).unwrap();
-        let source_head =
-            text(&repo.source, &["rev-parse", "HEAD"]).await.unwrap();
+        let source_index = std::fs::read(repo.source.join(".git/index"))?;
+        let source_head = text(&repo.source, &["rev-parse", "HEAD"]).await?;
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace = create(
-            &repo.data,
-            &host(&repo.source.join("sub dir")).unwrap(),
-            id,
-        )
-        .await
-        .unwrap();
+        let workspace =
+            create(&repo.data, &host(&repo.source.join("sub dir"))?, id)
+                .await?;
         assert_eq!(
-            create(&repo.data, &workspace.original, id).await.unwrap(),
+            create(&repo.data, &workspace.original, id).await?,
             workspace
         );
         let root = Path::new(&workspace.worktree.0);
         let original_mode = mode(&root.join("sub dir/original.txt"));
-        let initial = snapshot(&workspace, id, CheckpointId(0), None)
-            .await
-            .unwrap();
+        let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
         assert_eq!(
-            text(root, &["show", &format!("{initial}:deleted.txt")])
-                .await
-                .unwrap(),
+            text(root, &["show", &format!("{initial}:deleted.txt")]).await?,
             "keep"
         );
-        std::fs::write(root.join("sub dir/original.txt"), "changed\n").unwrap();
+        std::fs::write(root.join("sub dir/original.txt"), "changed\n")?;
         executable(&root.join("sub dir/original.txt"));
-        std::fs::remove_file(root.join("deleted.txt")).unwrap();
-        std::fs::write(root.join("space 雪.txt"), "added\n").unwrap();
-        std::fs::write(root.join("binary.dat"), [0, 254, 2]).unwrap();
-        std::fs::write(root.join("ignored.txt"), "private\n").unwrap();
+        std::fs::remove_file(root.join("deleted.txt"))?;
+        std::fs::write(root.join("space 雪.txt"), "added\n")?;
+        std::fs::write(root.join("binary.dat"), [0, 254, 2])?;
+        std::fs::write(root.join("ignored.txt"), "private\n")?;
         let worktree_index =
-            std::fs::read(super::git_dir(root).await.unwrap().join("index"))
-                .unwrap();
-        let changed = snapshot(&workspace, id, CheckpointId(1), Some(&initial))
-            .await
-            .unwrap();
+            std::fs::read(super::git_dir(root).await?.join("index"))?;
+        let changed =
+            snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?;
         assert_eq!(
-            snapshot(&workspace, id, CheckpointId(1), Some(&initial))
-                .await
-                .unwrap(),
+            snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?,
             changed
         );
         assert_eq!(
-            std::fs::read(super::git_dir(root).await.unwrap().join("index"))
-                .unwrap(),
+            std::fs::read(super::git_dir(root).await?.join("index"))?,
             worktree_index
         );
         assert_eq!(
-            text(root, &["show", &format!("{changed}:space 雪.txt")])
-                .await
-                .unwrap(),
+            text(root, &["show", &format!("{changed}:space 雪.txt")]).await?,
             "added"
         );
-        assert_eq!(
-            text(root, &["rev-parse", "HEAD"]).await.unwrap(),
-            source_head
-        );
-        std::fs::write(root.join("space 雪.txt"), "different\n").unwrap();
+        assert_eq!(text(root, &["rev-parse", "HEAD"]).await?, source_head);
+        std::fs::write(root.join("space 雪.txt"), "different\n")?;
         assert_eq!(
             matches!(
                 snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await,
@@ -962,46 +926,36 @@ mod tests {
             .then_some(()),
             Some(())
         );
-        std::fs::write(root.join("after.txt"), "untracked after checkpoint\n")
-            .unwrap();
+        std::fs::write(root.join("after.txt"), "untracked after checkpoint\n")?;
         for number in std::ops::RangeInclusive::new(0, 2000) {
             std::fs::write(
                 root.join(format!(
                     "untracked-with-long-removal-output-{number:05}-雪.txt"
                 )),
                 "cleanup\n",
-            )
-            .unwrap();
+            )?;
         }
-        restore(&workspace, &initial).await.unwrap();
+        restore(&workspace, &initial).await?;
         assert_eq!(
-            std::fs::read_to_string(root.join("deleted.txt")).unwrap(),
+            std::fs::read_to_string(root.join("deleted.txt"))?,
             "keep\n"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("sub dir/original.txt")).unwrap(),
+            std::fs::read_to_string(root.join("sub dir/original.txt"))?,
             "original\n"
         );
         assert_eq!(mode(&root.join("sub dir/original.txt")), original_mode);
         assert_eq!(
-            std::fs::read(root.join("binary.dat")).unwrap(),
+            std::fs::read(root.join("binary.dat"))?,
             Vec::from([0, 255, 1])
         );
+        assert_eq!(root.join("space 雪.txt").try_exists()?.then_some(()), None);
+        assert_eq!(root.join("after.txt").try_exists()?.then_some(()), None);
         assert_eq!(
-            root.join("space 雪.txt")
-                .try_exists()
-                .unwrap()
-                .then_some(()),
-            None
-        );
-        assert_eq!(
-            root.join("after.txt").try_exists().unwrap().then_some(()),
-            None
-        );
-        assert_eq!(
-            std::fs::read_dir(root)
-                .unwrap()
-                .map(|entry| entry.unwrap().file_name())
+            std::fs::read_dir(root)?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|entry| entry.file_name())
                 .any(|name| name
                     .to_string_lossy()
                     .starts_with("untracked-with-long"))
@@ -1009,69 +963,60 @@ mod tests {
             None
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("ignored.txt")).unwrap(),
+            std::fs::read_to_string(root.join("ignored.txt"))?,
             "private\n"
         );
+        assert_eq!(text(root, &["rev-parse", "HEAD"]).await?, source_head);
         assert_eq!(
-            text(root, &["rev-parse", "HEAD"]).await.unwrap(),
-            source_head
-        );
-        assert_eq!(
-            std::fs::read(repo.source.join(".git/index")).unwrap(),
+            std::fs::read(repo.source.join(".git/index"))?,
             source_index
         );
         assert_eq!(
-            text(&repo.source, &["rev-parse", "HEAD"]).await.unwrap(),
+            text(&repo.source, &["rev-parse", "HEAD"]).await?,
             source_head
         );
         assert_eq!(
-            std::fs::read_to_string(repo.source.join("sub dir/original.txt"))
-                .unwrap(),
+            std::fs::read_to_string(repo.source.join("sub dir/original.txt"))?,
             "dirty source\n"
         );
         assert_eq!(
-            std::fs::read_to_string(repo.source.join("untracked.txt")).unwrap(),
+            std::fs::read_to_string(repo.source.join("untracked.txt"))?,
             "source untracked\n"
         );
+        Ok(())
     }
 
     #[tokio::test]
     async fn diff_reports_binary_large_unicode_and_file_limit_from_immutable_refs()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await;
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace = create(&repo.data, &host(&repo.source).unwrap(), id)
-            .await
-            .unwrap();
+        let workspace = create(&repo.data, &host(&repo.source)?, id).await?;
         let root = Path::new(&workspace.worktree.0);
         let initial = checkpoint(
             0,
-            snapshot(&workspace, id, CheckpointId(0), None)
-                .await
-                .unwrap(),
+            snapshot(&workspace, id, CheckpointId(0), None).await?,
         );
-        std::fs::write(root.join("binary.dat"), [0, 254, 2]).unwrap();
-        std::fs::write(root.join("large.txt"), "a".repeat(70000)).unwrap();
-        std::fs::write(root.join("雪 space.txt"), "hello\n").unwrap();
+        std::fs::write(root.join("binary.dat"), [0, 254, 2])?;
+        std::fs::write(root.join("large.txt"), "a".repeat(70000))?;
+        std::fs::write(root.join("雪 space.txt"), "hello\n")?;
         let changed = checkpoint(
             1,
             snapshot(&workspace, id, CheckpointId(1), Some(&initial.commit))
-                .await
-                .unwrap(),
+                .await?,
         );
         std::fs::write(
             root.join("雪 space.txt"),
             "live edit must not appear\n",
-        )
-        .unwrap();
-        let difference = diff(&workspace, &changed, &initial).await.unwrap();
+        )?;
+        let difference = diff(&workspace, &changed, &initial).await?;
         assert_eq!(difference.extent, DiffExtent::Complete);
         assert_eq!(
             difference
                 .files
                 .iter()
                 .find(|file| file.path == "binary.dat")
-                .unwrap()
+                .ok_or("expected a value")?
                 .patch,
             FilePatch::Binary
         );
@@ -1080,7 +1025,7 @@ mod tests {
                 .files
                 .iter()
                 .find(|file| file.path == "large.txt")
-                .unwrap()
+                .ok_or("expected a value")?
                 .patch,
             FilePatch::TooLarge
         );
@@ -1096,25 +1041,22 @@ mod tests {
             Some(())
         );
         for number in std::ops::RangeInclusive::new(0, 110) {
-            std::fs::write(root.join(format!("file-{number:03}.txt")), "a\n")
-                .unwrap();
+            std::fs::write(root.join(format!("file-{number:03}.txt")), "a\n")?;
         }
         let many = checkpoint(
             2,
             snapshot(&workspace, id, CheckpointId(2), Some(&changed.commit))
-                .await
-                .unwrap(),
+                .await?,
         );
-        let difference = diff(&workspace, &many, &changed).await.unwrap();
+        let difference = diff(&workspace, &many, &changed).await?;
         assert_eq!(difference.extent, DiffExtent::Truncated);
         assert_eq!(difference.files.len(), 100);
         if let Some(path) = invalid_name(root) {
-            std::fs::write(path, "unsupported name\n").unwrap();
+            std::fs::write(path, "unsupported name\n")?;
             let unsupported = checkpoint(
                 3,
                 snapshot(&workspace, id, CheckpointId(3), Some(&many.commit))
-                    .await
-                    .unwrap(),
+                    .await?,
             );
             assert_eq!(
                 matches!(
@@ -1125,83 +1067,78 @@ mod tests {
                 Some(())
             );
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn deleting_selected_directory_can_be_snapshotted_and_undone() {
+    async fn deleting_selected_directory_can_be_snapshotted_and_undone()
+    -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await;
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace = create(
-            &repo.data,
-            &host(&repo.source.join("sub dir")).unwrap(),
-            id,
-        )
-        .await
-        .unwrap();
-        let initial = snapshot(&workspace, id, CheckpointId(0), None)
-            .await
-            .unwrap();
-        std::fs::remove_dir_all(&workspace.directory.0).unwrap();
-        let deleted = snapshot(&workspace, id, CheckpointId(1), Some(&initial))
-            .await
-            .unwrap();
+        let workspace =
+            create(&repo.data, &host(&repo.source.join("sub dir"))?, id)
+                .await?;
+        let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
+        std::fs::remove_dir_all(&workspace.directory.0)?;
+        let deleted =
+            snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?;
         assert_ne!(deleted, initial);
-        restore(&workspace, &initial).await.unwrap();
+        restore(&workspace, &initial).await?;
         assert_eq!(
             std::fs::read_to_string(
                 Path::new(&workspace.directory.0).join("original.txt")
-            )
-            .unwrap(),
+            )?,
             "original\n"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn cancellation_drops_owned_scratch_index_and_lock() {
+    async fn cancellation_drops_owned_scratch_index_and_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await;
-        let dir = super::git_dir(&repo.source).await.unwrap();
+        let dir = super::git_dir(&repo.source).await?;
         let (send, receive) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
-            let scratch = super::Scratch::create(&dir).unwrap();
-            std::fs::write(scratch.path.join("index"), "index").unwrap();
-            std::fs::write(scratch.path.join("index.lock"), "lock").unwrap();
-            send.send(scratch.path.clone()).unwrap();
+            let scratch = super::Scratch::create(&dir)?;
+            std::fs::write(scratch.path.join("index"), "index")?;
+            std::fs::write(scratch.path.join("index.lock"), "lock")?;
+            send.send(scratch.path.clone())
+                .map_err(|_| "the test stopped")?;
             std::future::pending::<()>().await;
             drop(scratch);
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
         });
-        let scratch = receive.await.unwrap();
-        assert_eq!(scratch.try_exists().unwrap().then_some(()), Some(()));
+        let scratch = receive.await?;
+        assert_eq!(scratch.try_exists()?.then_some(()), Some(()));
         task.abort();
         let _ = task.await;
-        assert_eq!(scratch.try_exists().unwrap().then_some(()), None);
+        assert_eq!(scratch.try_exists()?.then_some(()), None);
         assert_eq!(
-            repo.source
-                .join(".git/index")
-                .try_exists()
-                .unwrap()
-                .then_some(()),
+            repo.source.join(".git/index").try_exists()?.then_some(()),
             Some(())
         );
+        Ok(())
     }
 
     #[tokio::test]
     async fn refuses_uncommitted_repository_unowned_directory_and_changed_branch()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await;
         let plain = repo.root.join("plain");
-        std::fs::create_dir(&plain).unwrap();
+        std::fs::create_dir(&plain)?;
         assert_eq!(
             matches!(
-                create(&repo.data, &host(&plain).unwrap(), SessionId(1)).await,
+                create(&repo.data, &host(&plain)?, SessionId(1)).await,
                 Err(GitError::NotRepository)
             )
             .then_some(()),
             Some(())
         );
-        let _ = text(&plain, &["init", "-q"]).await.unwrap();
+        let _ = text(&plain, &["init", "-q"]).await?;
         assert_eq!(
             matches!(
-                create(&repo.data, &host(&plain).unwrap(), SessionId(1)).await,
+                create(&repo.data, &host(&plain)?, SessionId(1)).await,
                 Err(GitError::NotRepository)
             )
             .then_some(()),
@@ -1212,31 +1149,26 @@ mod tests {
             .data
             .join("worktrees")
             .join(ulid::Ulid::from(id.0).to_string());
-        std::fs::create_dir_all(&occupied).unwrap();
-        std::fs::write(occupied.join("unrelated.txt"), "keep\n").unwrap();
+        std::fs::create_dir_all(&occupied)?;
+        std::fs::write(occupied.join("unrelated.txt"), "keep\n")?;
         assert_eq!(
             matches!(
-                create(&repo.data, &host(&repo.source).unwrap(), id).await,
+                create(&repo.data, &host(&repo.source)?, id).await,
                 Err(GitError::Failed(_))
             )
             .then_some(()),
             Some(())
         );
         assert_eq!(
-            std::fs::read_to_string(occupied.join("unrelated.txt")).unwrap(),
+            std::fs::read_to_string(occupied.join("unrelated.txt"))?,
             "keep\n"
         );
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace = create(&repo.data, &host(&repo.source).unwrap(), id)
-            .await
-            .unwrap();
-        let commit = snapshot(&workspace, id, CheckpointId(0), None)
-            .await
-            .unwrap();
+        let workspace = create(&repo.data, &host(&repo.source)?, id).await?;
+        let commit = snapshot(&workspace, id, CheckpointId(0), None).await?;
         let root = Path::new(&workspace.worktree.0);
         let _ = text(root, &["symbolic-ref", "HEAD", "refs/heads/unrelated"])
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(
             matches!(
                 restore(&workspace, &commit).await,
@@ -1245,5 +1177,6 @@ mod tests {
             .then_some(()),
             Some(())
         );
+        Ok(())
     }
 }

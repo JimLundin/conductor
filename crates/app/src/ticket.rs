@@ -93,16 +93,18 @@ mod tests {
     const TICKET: &str = "AOr1251Bb2p0aTNfacOjGWA_ymOblEoyognrqD1bXfA_j1NbKmHUzEVqXP2oBgk2pGh0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay4v";
 
     #[test]
-    fn accepts_a_whole_join_link_or_a_bare_ticket() {
+    fn accepts_a_whole_join_link_or_a_bare_ticket()
+    -> Result<(), Box<dyn std::error::Error>> {
         let link =
             format!("  https://jimlundin.github.io/conductor/#join={TICKET}\n");
-        assert_eq!(parse_join(&link).unwrap().to_text(), TICKET);
-        assert_eq!(parse_join(TICKET).unwrap().to_text(), TICKET);
+        assert_eq!(parse_join(&link)?.to_text(), TICKET);
+        assert_eq!(parse_join(TICKET)?.to_text(), TICKET);
         assert_eq!(
             parse_join("https://jimlundin.github.io/conductor/")
                 .ok()
                 .map(|ticket| ticket.to_text()),
             None
         );
+        Ok(())
     }
 }

@@ -60,20 +60,17 @@ struct Feed {
 impl ProtocolHandler for Conductor {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         let peer = conn.remote_id();
-        match self
+        if let Some(client) = self
             .authenticate(&conn)
             .await
             .map_err(AcceptError::from_err)?
         {
-            Some(client) => {
-                tracing::info!(%peer, client = client.0, "client connected");
-                let err = self.streams(&conn, &client).await;
-                tracing::info!(%peer, client = client.0, %err, "client disconnected");
-            }
-            None => {
-                tracing::info!(%peer, "refused a client");
-                conn.close(1u32.into(), b"refused");
-            }
+            tracing::info!(%peer, client = client.0, "client connected");
+            let err = self.streams(&conn, &client).await;
+            tracing::info!(%peer, client = client.0, %err, "client disconnected");
+        } else {
+            tracing::info!(%peer, "refused a client");
+            conn.close(1u32.into(), b"refused");
         }
         Ok(())
     }
@@ -355,13 +352,14 @@ impl Feed {
     }
 
     async fn next(&mut self, conn: &Connection) -> Upcoming {
-        match self.replay.next() {
-            Some(event) => Upcoming::Event(event),
-            None => tokio::select! {
+        if let Some(event) = self.replay.next() {
+            Upcoming::Event(event)
+        } else {
+            tokio::select! {
                 next = self.live.recv() => next.map_or(Upcoming::Resubscribe, Upcoming::Event),
                 // Without this, an idle feed would outlive its connection.
                 _ = conn.closed() => Upcoming::Gone,
-            },
+            }
         }
     }
 }

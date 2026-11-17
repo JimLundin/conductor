@@ -95,6 +95,7 @@ enum HubInput {
 
 impl CodexHub {
     /// Starts the hub's task. The app-server starts with the first thread.
+    #[must_use]
     pub fn spawn(options: ServerOptions) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let actor = HubActor {

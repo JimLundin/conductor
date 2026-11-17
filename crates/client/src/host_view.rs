@@ -149,6 +149,7 @@ enum Change {
 
 impl SessionStatus {
     /// The status in one word, for the UI's text and its `data-status`.
+    #[must_use]
     pub fn word(&self) -> String {
         String::from(match self {
             Self::Starting => "starting",
@@ -202,6 +203,7 @@ pub enum Attention {
 }
 
 impl HostView {
+    #[must_use]
     pub const fn empty() -> Self {
         Self {
             sessions: BTreeMap::new(),
@@ -209,6 +211,7 @@ impl HostView {
     }
 
     /// An event for a session this view never saw created is dropped.
+    #[must_use]
     pub fn apply(self, event: Event) -> Self {
         let mut sessions = self.sessions;
         let session = match (sessions.remove(&event.session), event.kind) {
@@ -254,6 +257,7 @@ impl HostView {
     }
 
     /// The sessions' ids, the most recently active first.
+    #[must_use]
     pub fn recent(&self) -> Vec<SessionId> {
         self.sessions
             .iter()
@@ -266,6 +270,7 @@ impl HostView {
 
     /// Each directory a session ran in, once, the most recent first: the
     /// suggestions for a new session.
+    #[must_use]
     pub fn directories(&self) -> Vec<HostPath> {
         self.recent()
             .iter()
@@ -283,6 +288,7 @@ impl HostView {
 }
 
 impl SessionView {
+    #[must_use]
     pub const fn controls(&self) -> Controls {
         let (composer, interrupt, resume) = match (&self.undo, &self.status) {
             (UndoState::Undoing(_) | UndoState::Failed { .. }, _)
@@ -309,6 +315,7 @@ impl SessionView {
     /// A running turn shows it is working, unless it waits on a person or
     /// its last item is live already: a reply or reasoning streaming in, or
     /// a tool call running.
+    #[must_use]
     pub fn working(&self) -> Working {
         match self.undo {
             UndoState::Undoing(_) | UndoState::Failed { .. } => Working::Hidden,
@@ -350,6 +357,7 @@ impl SessionView {
         }
     }
 
+    #[must_use]
     pub fn attention(&self) -> Attention {
         let open = self
             .items
@@ -1418,7 +1426,8 @@ mod tests {
     }
 
     #[test]
-    fn rv_no_thinking_under_an_open_approval_after_a_parallel_tool_finished() {
+    fn rv_no_thinking_under_an_open_approval_after_a_parallel_tool_finished()
+    -> Result<(), Box<dyn std::error::Error>> {
         let view = fold(Vec::from([
             (1, created("/a")),
             (1, EventKind::SessionReady),
@@ -1442,13 +1451,16 @@ mod tests {
             ),
             (1, opened(1)),
         ]));
-        let session = view.sessions.values().next().unwrap();
+        let session =
+            view.sessions.values().next().ok_or("expected a value")?;
         assert_eq!(session.attention(), Attention::Requests(1));
         assert_eq!(session.working(), Working::Hidden);
+        Ok(())
     }
 
     #[test]
-    fn rv_no_thinking_under_an_open_approval_after_a_commentary_reply() {
+    fn rv_no_thinking_under_an_open_approval_after_a_commentary_reply()
+    -> Result<(), Box<dyn std::error::Error>> {
         let view = fold(Vec::from([
             (1, created("/a")),
             (1, EventKind::SessionReady),
@@ -1468,9 +1480,11 @@ mod tests {
             ),
             (1, opened(1)),
         ]));
-        let session = view.sessions.values().next().unwrap();
+        let session =
+            view.sessions.values().next().ok_or("expected a value")?;
         assert_eq!(session.attention(), Attention::Requests(1));
         assert_eq!(session.working(), Working::Hidden);
+        Ok(())
     }
 
     #[test]
@@ -1671,7 +1685,7 @@ mod tests {
 
     #[test]
     fn undo_removes_selected_and_later_turns_on_live_fold_replay_and_reconnect()
-    {
+    -> Result<(), Box<dyn std::error::Error>> {
         let events = numbered(
             checkpoint_events()
                 .into_iter()
@@ -1704,19 +1718,26 @@ mod tests {
         let reconnect =
             events.into_iter().skip(15).fold(reconnect, HostView::apply);
         assert_eq!(live, reconnect);
-        let session = live.sessions.get(&SessionId(1)).unwrap();
+        let session =
+            live.sessions.get(&SessionId(1)).ok_or("expected a value")?;
         assert_eq!(session.items.len(), 3);
         assert_eq!(session.checkpoints.len(), 1);
         assert_eq!(
-            session.checkpoints.first().unwrap().checkpoint,
+            session
+                .checkpoints
+                .first()
+                .ok_or("expected a value")?
+                .checkpoint,
             proto::CheckpointId(1)
         );
         assert_eq!(session.undo, super::UndoState::Undone);
         assert_eq!(session.controls().composer, Composer::Open);
+        Ok(())
     }
 
     #[test]
-    fn in_progress_and_failed_undo_preserve_transcript_and_block_controls() {
+    fn in_progress_and_failed_undo_preserve_transcript_and_block_controls()
+    -> Result<(), Box<dyn std::error::Error>> {
         let original = numbered(checkpoint_events())
             .into_iter()
             .fold(HostView::empty(), HostView::apply);
@@ -1729,7 +1750,10 @@ mod tests {
                 history: proto::HistoryAnchor::Fresh,
             },
         });
-        let session = pending.sessions.get(&SessionId(1)).unwrap();
+        let session = pending
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
         assert_eq!(session.items.len(), 9);
         assert_eq!(
             session.controls(),
@@ -1747,10 +1771,17 @@ mod tests {
                 reason: text("restore failed"),
             },
         });
-        let session = failed.sessions.get(&SessionId(1)).unwrap();
+        let session = failed
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
         assert_eq!(
             session.items,
-            original.sessions.get(&SessionId(1)).unwrap().items
+            original
+                .sessions
+                .get(&SessionId(1))
+                .ok_or("expected a value")?
+                .items
         );
         assert_eq!(session.checkpoints.len(), 3);
         assert_eq!(
@@ -1761,23 +1792,27 @@ mod tests {
             }
         );
         assert_eq!(session.controls().composer, Composer::Busy);
+        Ok(())
     }
 
     #[test]
-    fn legacy_session_stays_usable_without_workspace_or_checkpoint_controls() {
+    fn legacy_session_stays_usable_without_workspace_or_checkpoint_controls()
+    -> Result<(), Box<dyn std::error::Error>> {
         let view = fold(Vec::from([
             (1, created("/legacy")),
             (1, EventKind::SessionReady),
         ]));
-        let session = view.sessions.get(&SessionId(1)).unwrap();
+        let session =
+            view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
         assert_eq!(session.workspace, None);
         assert_eq!(session.checkpoints, Vec::new());
         assert_eq!(session.controls().composer, Composer::Open);
+        Ok(())
     }
 
     #[test]
     fn autonomous_checkpoint_has_a_turn_boundary_but_initial_checkpoint_does_not()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let initial = EventKind::CheckpointCreated {
             checkpoint: proto::Checkpoint {
                 id: proto::CheckpointId(0),
@@ -1810,9 +1845,17 @@ mod tests {
             autonomous,
         ]));
         let view = events.into_iter().fold(HostView::empty(), HostView::apply);
-        let session = view.sessions.get(&SessionId(1)).unwrap();
+        let session =
+            view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
         assert_eq!(session.checkpoints.len(), 1);
-        assert_eq!(session.checkpoints.first().unwrap().start, 0);
-        assert_eq!(session.checkpoints.first().unwrap().end, 1);
+        assert_eq!(
+            session.checkpoints.first().ok_or("expected a value")?.start,
+            0
+        );
+        assert_eq!(
+            session.checkpoints.first().ok_or("expected a value")?.end,
+            1
+        );
+        Ok(())
     }
 }

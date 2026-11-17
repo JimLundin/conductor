@@ -4,6 +4,7 @@
 use proto::ClientName;
 
 /// Its OS. The headless example and the tests give their own names.
+#[must_use]
 pub fn client_name() -> ClientName {
     ClientName(String::from(std::env::consts::OS))
 }

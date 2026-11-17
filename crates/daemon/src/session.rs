@@ -271,6 +271,7 @@ enum Input {
 impl Session {
     /// Starts the session's task, which starts the agent in `directory` and
     /// logs `SessionReady` or `SessionClosed`.
+    #[must_use]
     pub fn spawn(
         id: SessionId,
         directory: HostPath,
@@ -963,14 +964,12 @@ impl SessionActor {
             )) => Ok(CommandResult::Rejected(Rejection::AlreadyResolved {
                 by: first,
             })),
-            Some(Pending::Open { native, asked }) => match fits(&asked, &reply)
-            {
-                Err(reason) => {
+            Some(Pending::Open { native, asked }) => {
+                if let Err(reason) = fits(&asked, &reply) {
                     Ok(CommandResult::Rejected(Rejection::WrongReply {
                         reason,
                     }))
-                }
-                Ok(()) => {
+                } else {
                     if let (
                         Asked::Approval { call, .. },
                         Reply::Decide(Decision::Deny),
@@ -999,7 +998,7 @@ impl SessionActor {
                     self.note(sent).await?;
                     Ok(CommandResult::Accepted)
                 }
-            },
+            }
         }
     }
 
@@ -1462,18 +1461,17 @@ impl SessionActor {
     }
 
     async fn begin_undo(&mut self, undo: &Undo) -> Result<(), Stopped> {
-        match &self.book.recovery {
-            Some(_) => Ok(()),
-            None => {
-                self.emit(EventKind::UndoStarted {
-                    checkpoint: undo.selected,
-                    restore: undo.restored,
-                    history: undo.history.clone(),
-                })
-                .await?;
-                self.book.recovery = Some(Recovery::Native(undo.clone()));
-                self.log.barrier().await
-            }
+        if self.book.recovery.is_some() {
+            Ok(())
+        } else {
+            self.emit(EventKind::UndoStarted {
+                checkpoint: undo.selected,
+                restore: undo.restored,
+                history: undo.history.clone(),
+            })
+            .await?;
+            self.book.recovery = Some(Recovery::Native(undo.clone()));
+            self.log.barrier().await
         }
     }
 
@@ -1605,21 +1603,20 @@ impl SessionActor {
             }),
             _ => Ok(()),
         };
-        match running {
-            Err(reason) => self.undo_failed(undo.selected, reason).await,
-            Ok(()) => {
-                self.emit(EventKind::TurnsUndone {
-                    checkpoint: undo.selected,
-                    restored: undo.restored,
-                })
-                .await?;
-                self.book.active.retain(|id| id <= &undo.restored);
-                self.book.recovery = None;
-                self.book.snapshot = None;
-                self.turn_start = None;
-                self.boundary = None;
-                Ok(CommandResult::Accepted)
-            }
+        if let Err(reason) = running {
+            self.undo_failed(undo.selected, reason).await
+        } else {
+            self.emit(EventKind::TurnsUndone {
+                checkpoint: undo.selected,
+                restored: undo.restored,
+            })
+            .await?;
+            self.book.active.retain(|id| id <= &undo.restored);
+            self.book.recovery = None;
+            self.book.snapshot = None;
+            self.turn_start = None;
+            self.boundary = None;
+            Ok(CommandResult::Accepted)
         }
     }
 
@@ -1834,7 +1831,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_checkpoint_preserves_fork_recipe_and_fresh_accepted_send_resume_id()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let created = recovery_event(proto::EventKind::SessionCreated {
             provider: proto::Provider::Claude,
             directory: proto::HostPath(String::from("/work")),
@@ -1880,14 +1877,14 @@ mod tests {
             state.conversation,
             Some(super::Conversation(String::from("target")))
         );
-        state.log.shutdown().await.unwrap();
+        state.log.shutdown().await?;
         let fresh = recovery_event(proto::EventKind::UndoHistoryRestored {
             checkpoint: proto::CheckpointId(2),
             history: proto::HistoryAnchor::Fresh,
         });
         let state = recovered(&[created.clone(), fresh.clone()], "new-id");
         assert_eq!(state.book.resume, Some(proto::HistoryAnchor::Fresh));
-        state.log.shutdown().await.unwrap();
+        state.log.shutdown().await?;
         let state = recovered(&[created, fresh, user, unknown], "new-id");
         assert_eq!(
             state.book.resume,
@@ -1896,7 +1893,8 @@ mod tests {
                 message: None
             })
         );
-        state.log.shutdown().await.unwrap();
+        state.log.shutdown().await?;
+        Ok(())
     }
 
     #[test]

@@ -88,6 +88,7 @@ pub struct LinkOptions {
 }
 
 impl LinkOptions {
+    #[must_use]
     pub const fn new(client: ClientName) -> Self {
         Self {
             client,
@@ -190,6 +191,7 @@ impl HostLink {
         Ok((handle, updates_rx))
     }
 
+    #[must_use]
     pub fn status(&self) -> Status {
         self.status.borrow().clone()
     }

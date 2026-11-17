@@ -278,6 +278,7 @@ async fn refresh_models(job: RefreshJob) -> Result<Models, String> {
 
 impl Registry {
     /// `stored` is what `store` held when it opened.
+    #[must_use]
     pub fn spawn(
         log: Log,
         launchers: Launchers,
@@ -578,7 +579,7 @@ impl RegistryActor {
                     }
                     _ => None,
                 });
-            if let Some(RecoverTurn::Running) = running {
+            if matches!(running, Some(RecoverTurn::Running)) {
                 self.recover_checkpoint(id, &events).await?;
                 self.log
                     .append(
@@ -598,7 +599,7 @@ impl RegistryActor {
                     | EventKind::SessionReady => Some(RecoverAgent::Running),
                     _ => None,
                 });
-            if let Some(RecoverAgent::Running) = closed {
+            if matches!(closed, Some(RecoverAgent::Running)) {
                 self.log
                     .append(
                         id,
@@ -718,31 +719,28 @@ impl RegistryActor {
         next: Credentials,
         reply: oneshot::Sender<CommandResult>,
     ) {
-        match self.store.save(&next) {
-            Err(err) => {
-                let _ = reply.send(CommandResult::Rejected(
-                    Rejection::CredentialNotSaved {
-                        reason: format!("{err:#}"),
-                    },
-                ));
-            }
-            Ok(()) => {
-                tracing::info!(?provider, "stored a credential change");
-                warn_unprotected(&next);
-                let job = RefreshJob {
-                    id: ulid::Ulid::new(),
-                    provider,
-                    launcher: self.launchers.of(provider).clone(),
-                    credentials: next.clone(),
-                    directory: self.store.dir().to_path_buf(),
-                };
-                self.stored = Stored::Opened(next);
-                match provider {
-                    Provider::Claude => {
-                        self.claude_refresh.schedule(job, reply);
-                    }
-                    Provider::Codex => self.codex_refresh.schedule(job, reply),
+        if let Err(err) = self.store.save(&next) {
+            let _ = reply.send(CommandResult::Rejected(
+                Rejection::CredentialNotSaved {
+                    reason: format!("{err:#}"),
+                },
+            ));
+        } else {
+            tracing::info!(?provider, "stored a credential change");
+            warn_unprotected(&next);
+            let job = RefreshJob {
+                id: ulid::Ulid::new(),
+                provider,
+                launcher: self.launchers.of(provider).clone(),
+                credentials: next.clone(),
+                directory: self.store.dir().to_path_buf(),
+            };
+            self.stored = Stored::Opened(next);
+            match provider {
+                Provider::Claude => {
+                    self.claude_refresh.schedule(job, reply);
                 }
+                Provider::Codex => self.codex_refresh.schedule(job, reply),
             }
         }
     }
@@ -1043,11 +1041,11 @@ mod tests {
 
     #[tokio::test]
     async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes()
-     {
+    -> Result<(), Box<dyn std::error::Error>> {
         let directory = directory();
         let path = directory.join("conductor.redb");
         let id = SessionId(u128::from(ulid::Ulid::new()));
-        let first = Log::open(String::from("test"), &path).unwrap();
+        let first = Log::open(String::from("test"), &path)?;
         seed(
             &first,
             id,
@@ -1076,12 +1074,10 @@ mod tests {
                 },
             ]),
         )
-        .await
-        .unwrap();
+        .await?;
         first
             .conversation(id, String::from("restored-native-conversation"))
-            .await
-            .unwrap();
+            .await?;
         let epoch = first
             .welcome(proto::Providers {
                 claude: proto::Availability::Unavailable {
@@ -1091,12 +1087,11 @@ mod tests {
                     reason: String::from("test"),
                 },
             })
-            .await
-            .unwrap()
+            .await?
             .epoch;
-        first.shutdown().await.unwrap();
-        let second = Log::open(String::from("test"), &path).unwrap();
-        let (store, stored) = Store::open(&directory).unwrap();
+        first.shutdown().await?;
+        let second = Log::open(String::from("test"), &path)?;
+        let (store, stored) = Store::open(&directory)?;
         let registry = Registry::spawn(
             second.clone(),
             Launchers {
@@ -1106,9 +1101,9 @@ mod tests {
             store,
             stored,
         );
-        let providers = registry.providers().await.unwrap();
-        assert_eq!(second.welcome(providers).await.unwrap().epoch, epoch);
-        let replay = second.subscribe(HostSeq(4)).await.unwrap().replay;
+        let providers = registry.providers().await?;
+        assert_eq!(second.welcome(providers).await?.epoch, epoch);
+        let replay = second.subscribe(HostSeq(4)).await?.replay;
         assert_eq!(
             replay
                 .iter()
@@ -1138,27 +1133,29 @@ mod tests {
                 ),
             ]
         );
-        let (session, launch, models) =
-            registry.relaunch(id).await.unwrap().unwrap();
+        let (session, launch, models) = registry
+            .relaunch(id)
+            .await?
+            .map_err(|rejection| format!("{rejection:?}"))?;
         assert_eq!(
-            session.order(Order::Start(launch, models)).await.unwrap(),
+            session.order(Order::Start(launch, models)).await?,
             CommandResult::Accepted
         );
-        let arguments =
-            std::fs::read_to_string(directory.join("argv.txt")).unwrap();
+        let arguments = std::fs::read_to_string(directory.join("argv.txt"))?;
         assert_eq!(
             arguments
                 .lines()
                 .find(|argument| argument.starts_with("--resume=")),
             Some("--resume=restored-native-conversation")
         );
-        let ready = second.subscribe(HostSeq(7)).await.unwrap().replay;
+        let ready = second.subscribe(HostSeq(7)).await?.replay;
         assert_eq!(
             ready.iter().map(|event| &event.kind).collect::<Vec<_>>(),
             [&EventKind::SessionReady]
         );
-        second.shutdown().await.unwrap();
+        second.shutdown().await?;
         drop(session);
         drop(registry);
+        Ok(())
     }
 }

@@ -12,6 +12,7 @@ pub enum Presence {
     Present,
     Missing,
 }
+#[must_use]
 pub fn presence(path: &Path) -> Presence {
     match std::fs::metadata(path) {
         Ok(_) => Presence::Present,
@@ -43,6 +44,7 @@ pub fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
     writeln!(std::io::stdout(), "{label} {step}: {detail}")?;
     Ok(verdict)
 }
+#[must_use]
 pub fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
     fixtures.map(|dir| {
         let path = dir.join(format!("{name}.jsonl"));
@@ -51,7 +53,7 @@ pub fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
     })
 }
 pub fn fresh_scratch(scratch: &Path) -> Result<()> {
-    if let Presence::Present = presence(scratch) {
+    if matches!(presence(scratch), Presence::Present) {
         std::fs::remove_dir_all(scratch)?;
     }
     std::fs::create_dir_all(scratch)?;

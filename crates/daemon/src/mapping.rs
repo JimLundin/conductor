@@ -19,15 +19,15 @@ use crate::session::Reply;
 /// provider: a session's steps come only from its own agent's events
 /// (`Agent::next`), so its agent reads the id back as its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NativeRequest(pub(crate) String);
+pub struct NativeRequest(pub(crate) String);
 
 /// The running turn as the provider interrupts it, by the provider's id:
 /// Claude's session, Codex's turn. Read like [`NativeRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NativeTurn(pub(crate) String);
+pub struct NativeTurn(pub(crate) String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Step {
+pub enum Step {
     Emit(EventKind),
     /// The session assigns the `RequestId`, stores it open and logs
     /// `RequestOpened`.
@@ -66,7 +66,7 @@ pub(crate) enum Step {
     Checklist(Vec<PlanStep>),
 }
 
-pub(crate) fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
+pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
     match event {
         ClaudeEvent::TurnStarted { session_id } => {
             Vec::from([Step::TurnStarted(NativeTurn(session_id.0))])
@@ -184,10 +184,7 @@ fn reasoning_delta(text: String) -> Option<Step> {
         .map(|text| Step::Emit(EventKind::ReasoningDelta { text }))
 }
 
-pub(crate) fn claude_answer(
-    reply: Reply,
-    by: &ClientName,
-) -> PermissionDecision {
+pub fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
     match reply {
         Reply::Decide(Decision::Approve) => PermissionDecision::Allow,
         Reply::Decide(Decision::ApproveForSession) => {
@@ -205,7 +202,7 @@ pub(crate) fn claude_answer(
 /// every client, so none can be kept secret.
 const SECRET_DECLINED: &str = "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.";
 
-pub(crate) fn codex_steps(event: CodexEvent) -> Vec<Step> {
+pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
     match event {
         CodexEvent::Thread { event, .. } => codex_thread_steps(event),
         CodexEvent::Exited { status } => {
@@ -347,7 +344,7 @@ fn approval_step(
     }
 }
 
-pub(crate) fn codex_answer(reply: Reply) -> codex::Decision {
+pub fn codex_answer(reply: Reply) -> codex::Decision {
     match reply {
         Reply::Decide(Decision::Approve) => codex::Decision::Accept,
         Reply::Decide(Decision::ApproveForSession) => {

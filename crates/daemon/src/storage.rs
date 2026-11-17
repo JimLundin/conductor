@@ -18,7 +18,7 @@ const CONVERSATIONS: TableDefinition<u128, Vec<u8>> =
 const REQUESTS: TableDefinition<&str, Vec<u8>> =
     TableDefinition::new("pending_requests");
 
-pub(crate) struct Storage {
+pub struct Storage {
     database: Database,
 }
 
@@ -33,12 +33,10 @@ impl Storage {
         {
             let mut meta = write.open_table(META)?;
             let stored = meta.get("epoch")?.map(|value| value.value());
-            match stored {
-                Some(_) => {}
-                None => {
-                    let encoded = encode(&crate::random_epoch())?;
-                    let _ = meta.insert("epoch", &encoded)?;
-                }
+            if stored.is_some() {
+            } else {
+                let encoded = encode(&crate::random_epoch())?;
+                let _ = meta.insert("epoch", &encoded)?;
             }
         }
         write.commit()?;
@@ -93,10 +91,7 @@ impl Storage {
     }
 }
 
-pub(crate) fn event(
-    write: &WriteTransaction,
-    event: &Event,
-) -> anyhow::Result<()> {
+pub fn event(write: &WriteTransaction, event: &Event) -> anyhow::Result<()> {
     let encoded = encode(event)?;
     let _ = write.open_table(EVENTS)?.insert(event.seq.0, &encoded)?;
     match &event.kind {
@@ -130,7 +125,7 @@ pub(crate) fn event(
     Ok(())
 }
 
-pub(crate) fn conversation(
+pub fn conversation(
     write: &WriteTransaction,
     session: SessionId,
     id: &str,
@@ -142,7 +137,7 @@ pub(crate) fn conversation(
     Ok(())
 }
 
-pub(crate) fn receipt(
+pub fn receipt(
     write: &WriteTransaction,
     key: CommandId,
     result: &CommandResult,
@@ -171,12 +166,13 @@ mod tests {
     use super::{REQUESTS, Storage, conversation, event, receipt};
 
     #[test]
-    fn committed_events_receipts_conversations_and_requests_reopen_together() {
+    fn committed_events_receipts_conversations_and_requests_reopen_together()
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir()
             .join(format!("conductor-durable-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let first = Storage::open(&path).unwrap();
-        let epoch = first.epoch().unwrap();
+        let first = Storage::open(&path)?;
+        let epoch = first.epoch()?;
         let opened = Event {
             seq: HostSeq(1),
             session: SessionId(7),
@@ -191,27 +187,27 @@ mod tests {
                 for_session: None,
             },
         };
-        let write = first.begin().unwrap();
-        event(&write, &opened).unwrap();
-        conversation(&write, SessionId(7), "native-conversation").unwrap();
-        receipt(&write, proto::CommandId(1), &CommandResult::Accepted).unwrap();
-        write.commit().unwrap();
+        let write = first.begin()?;
+        event(&write, &opened)?;
+        conversation(&write, SessionId(7), "native-conversation")?;
+        receipt(&write, proto::CommandId(1), &CommandResult::Accepted)?;
+        write.commit()?;
         drop(first);
-        let second = Storage::open(&path).unwrap();
-        assert_eq!(second.epoch().unwrap(), epoch);
-        assert_eq!(second.events().unwrap(), std::slice::from_ref(&opened));
+        let second = Storage::open(&path)?;
+        assert_eq!(second.epoch()?, epoch);
+        assert_eq!(second.events()?, std::slice::from_ref(&opened));
         assert_eq!(
-            second.conversation(SessionId(7)).unwrap(),
+            second.conversation(SessionId(7))?,
             Some(String::from("native-conversation"))
         );
         assert_eq!(
-            second.receipt(proto::CommandId(1)).unwrap(),
+            second.receipt(proto::CommandId(1))?,
             Some(CommandResult::Accepted)
         );
-        let read = second.database.begin_read().unwrap();
-        assert_eq!(read.open_table(REQUESTS).unwrap().len().unwrap(), 1);
+        let read = second.database.begin_read()?;
+        assert_eq!(read.open_table(REQUESTS)?.len()?, 1);
         drop(read);
-        let write = second.begin().unwrap();
+        let write = second.begin()?;
         event(
             &write,
             &Event {
@@ -222,21 +218,19 @@ mod tests {
                     resolution: Resolution::Withdrawn,
                 },
             },
-        )
-        .unwrap();
-        write.commit().unwrap();
-        let read = second.database.begin_read().unwrap();
-        assert_eq!(read.open_table(REQUESTS).unwrap().len().unwrap(), 0);
+        )?;
+        write.commit()?;
+        let read = second.database.begin_read()?;
+        assert_eq!(read.open_table(REQUESTS)?.len()?, 0);
         drop(read);
-        let write = second.begin().unwrap();
+        let write = second.begin()?;
         event(
             &write,
             &Event {
                 seq: HostSeq(3),
                 ..opened.clone()
             },
-        )
-        .unwrap();
+        )?;
         event(
             &write,
             &Event {
@@ -244,8 +238,7 @@ mod tests {
                 session: SessionId(70),
                 ..opened
             },
-        )
-        .unwrap();
+        )?;
         event(
             &write,
             &Event {
@@ -257,23 +250,24 @@ mod tests {
                     },
                 },
             },
-        )
-        .unwrap();
-        write.commit().unwrap();
-        let read = second.database.begin_read().unwrap();
-        assert_eq!(read.open_table(REQUESTS).unwrap().len().unwrap(), 1);
+        )?;
+        write.commit()?;
+        let read = second.database.begin_read()?;
+        assert_eq!(read.open_table(REQUESTS)?.len()?, 1);
         drop(read);
         drop(second);
         let _ = std::fs::remove_file(path);
+        Ok(())
     }
 
     #[test]
-    fn an_uncommitted_command_leaves_neither_effects_nor_receipt() {
+    fn an_uncommitted_command_leaves_neither_effects_nor_receipt()
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir()
             .join(format!("conductor-rollback-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let first = Storage::open(&path).unwrap();
-        let write = first.begin().unwrap();
+        let first = Storage::open(&path)?;
+        let write = first.begin()?;
         event(
             &write,
             &Event {
@@ -281,15 +275,15 @@ mod tests {
                 session: SessionId(1),
                 kind: EventKind::SessionReady,
             },
-        )
-        .unwrap();
-        receipt(&write, proto::CommandId(1), &CommandResult::Accepted).unwrap();
+        )?;
+        receipt(&write, proto::CommandId(1), &CommandResult::Accepted)?;
         drop(write);
         drop(first);
-        let second = Storage::open(&path).unwrap();
-        assert_eq!(second.events().unwrap(), Vec::new());
-        assert_eq!(second.receipt(proto::CommandId(1)).unwrap(), None);
+        let second = Storage::open(&path)?;
+        assert_eq!(second.events()?, Vec::new());
+        assert_eq!(second.receipt(proto::CommandId(1))?, None);
         drop(second);
         let _ = std::fs::remove_file(path);
+        Ok(())
     }
 }

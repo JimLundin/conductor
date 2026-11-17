@@ -6,25 +6,25 @@ use proto::{
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
-pub(crate) struct Undo {
+pub struct Undo {
     pub(crate) selected: CheckpointId,
     pub(crate) restored: CheckpointId,
     pub(crate) history: HistoryAnchor,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Recovery {
+pub enum Recovery {
     Native(Undo),
     Files(Undo),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Snapshot {
+pub struct Snapshot {
     pub(crate) history: HistoryAnchor,
     pub(crate) turn_start: Option<proto::HostSeq>,
 }
 
-pub(crate) struct Book {
+pub struct Book {
     pub(crate) workspace: Option<Workspace>,
     pub(crate) checkpoints: BTreeMap<CheckpointId, Checkpoint>,
     pub(crate) active: Vec<CheckpointId>,
@@ -181,7 +181,7 @@ impl Book {
     }
 }
 
-pub(crate) fn availability(
+pub fn availability(
     parent: Option<&Checkpoint>,
     history: &HistoryAnchor,
 ) -> UndoAvailability {

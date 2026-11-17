@@ -205,7 +205,7 @@ pub enum ClaudeEvent {
 
 /// What one stdout line means to the session actor.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Inbound {
+pub enum Inbound {
     Event(ClaudeEvent),
     /// A `can_use_tool` request. The actor keeps `open` for the answer and
     /// emits `event`, a `PermissionRequested` or a `QuestionAsked`.
@@ -307,7 +307,7 @@ enum ControlRequest {
 
 /// What an answer to an open `can_use_tool` request needs.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Open {
+pub struct Open {
     /// The CLI's proposed input, which `allow` echoes as `updatedInput`.
     input: Value,
     grant: Option<Grant>,
@@ -504,7 +504,7 @@ enum ContentBlock {
     },
 }
 
-pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
+pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
     Ok(match serde_json::from_value::<Frame>(raw.clone()) {
         Ok(frame) => inbound(frame, raw),
@@ -624,8 +624,10 @@ fn control_request(request_id: String, request: Value) -> Inbound {
             permission_suggestions,
         }) => {
             let id = PermissionRequestId(request_id);
-            let (event, grant) = match (tool_name.as_str(), questions(&input)) {
-                (ASK_USER_QUESTION, Ok(asked)) => (
+            let (event, grant) = if let (ASK_USER_QUESTION, Ok(asked)) =
+                (tool_name.as_str(), questions(&input))
+            {
+                (
                     ClaudeEvent::QuestionAsked {
                         id: id.clone(),
                         questions: asked
@@ -647,22 +649,21 @@ fn control_request(request_id: String, request: Value) -> Inbound {
                         tool_use_id,
                     },
                     None,
-                ),
-                (_, _) => {
-                    let grant = grant(permission_suggestions);
-                    (
-                        ClaudeEvent::PermissionRequested {
-                            id: id.clone(),
-                            tool: tool_kind(&tool_name, &input),
-                            tool_name,
-                            tool_use_id,
-                            for_session: grant
-                                .as_ref()
-                                .map(|grant| grant.label.clone()),
-                        },
-                        grant,
-                    )
-                }
+                )
+            } else {
+                let grant = grant(permission_suggestions);
+                (
+                    ClaudeEvent::PermissionRequested {
+                        id: id.clone(),
+                        tool: tool_kind(&tool_name, &input),
+                        tool_name,
+                        tool_use_id,
+                        for_session: grant
+                            .as_ref()
+                            .map(|grant| grant.label.clone()),
+                    },
+                    grant,
+                )
             };
             Inbound::Permission {
                 id,
@@ -735,7 +736,7 @@ const SUPPORTED_VERSIONS: &str = "2.1.316 to 2.1.322";
 
 /// Why the CLI's version is not one we support.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum UnsupportedVersion {
+pub enum UnsupportedVersion {
     /// The `initialize` response names no `claude_code_version`.
     Unreported,
     Outside {
@@ -777,7 +778,7 @@ struct Settings {
     applied: Applied,
 }
 
-pub(crate) fn applied(settings: Value) -> serde_json::Result<Applied> {
+pub fn applied(settings: Value) -> serde_json::Result<Applied> {
     serde_json::from_value::<Settings>(settings)
         .map(|settings| settings.applied)
 }
@@ -788,7 +789,7 @@ const DEFAULT_ROW: &str = "default";
 /// The models an `initialize` response lists. The `default` row is not a
 /// choice of its own: it names the row with the same `resolvedModel` as
 /// the default.
-pub(crate) fn models(initialize: &Value) -> Models {
+pub fn models(initialize: &Value) -> Models {
     let rows = serde_json::from_value::<InitializeModels>(initialize.clone())
         .map_or(Vec::new(), |listed| listed.models);
     let resolved = rows
@@ -823,9 +824,7 @@ pub(crate) fn models(initialize: &Value) -> Models {
 }
 
 /// Checks the `claude_code_version` an `initialize` response reports.
-pub(crate) fn check_version(
-    initialize: Value,
-) -> Result<(), UnsupportedVersion> {
+pub fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map_err(|_| UnsupportedVersion::Unreported)?
         .claude_code_version;
@@ -841,7 +840,7 @@ pub(crate) fn check_version(
 
 /// A control request we originate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ControlCall {
+pub enum ControlCall {
     Initialize,
     Interrupt,
     SetPermissionMode(PermissionMode),
@@ -862,7 +861,7 @@ impl ControlCall {
     }
 }
 
-pub(crate) enum Outbound {
+pub enum Outbound {
     User(String),
     Control {
         request_id: String,
@@ -953,7 +952,7 @@ enum Verdict {
     },
 }
 
-pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
+pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
         Outbound::User(text) => Line::User {
             message: UserMessage {
@@ -1118,7 +1117,8 @@ mod tests {
     const WRITE: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/a.txt","content":"hi"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_2"}}"#;
 
     #[test]
-    fn message_boundaries_read_transcript_uuid_not_api_message_id() {
+    fn message_boundaries_read_transcript_uuid_not_api_message_id()
+    -> Result<(), Box<dyn std::error::Error>> {
         let cases = Vec::from([
             (
                 r#"{"type":"assistant","uuid":"assistant-entry","message":{"id":"msg_api","content":[]}}"#,
@@ -1141,7 +1141,7 @@ mod tests {
             cases
                 .into_iter()
                 .map(|(line, expected)| {
-                    let actual = match parse_line(line).unwrap() {
+                    let actual = match parse_line(line)? {
                         Inbound::Event(ClaudeEvent::Message {
                             uuid, ..
                         }) => uuid,
@@ -1154,14 +1154,15 @@ mod tests {
                             None
                         }
                     };
-                    (actual, expected)
+                    Ok::<_, Box<dyn std::error::Error>>((actual, expected))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .all(|(actual, expected)| actual == expected)
                 .then_some(()),
             Some(())
         );
+        Ok(())
     }
 
     const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","display_name":"AskUserQuestion","input":{"questions":[{"question":"Which fruits do you like?","header":"Fruits","options":[{"label":"Apple","description":"Crisp"},{"label":"Pear","description":"Soft"}],"multiSelect":true},{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false}]},"tool_use_id":"toolu_3","requires_user_interaction":true}}"#;
@@ -1380,66 +1381,77 @@ mod tests {
     }
 
     #[test]
-    fn unknown_type_becomes_unknown_event_with_the_raw_json() {
+    fn unknown_type_becomes_unknown_event_with_the_raw_json()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"type":"brand_new_frame","x":1}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::Event(ClaudeEvent::Unknown(json(
                 r#"{"type": "brand_new_frame", "x": 1}"#
             )))
         );
+        Ok(())
     }
 
     #[test]
-    fn unknown_control_subtype_still_yields_its_request_id() {
+    fn unknown_control_subtype_still_yields_its_request_id()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"type":"control_request","request_id":"cli_3","request":{"subtype":"elicit_frobnicate","q":1}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::UnsupportedControlRequest {
                 request_id: String::from("cli_3"),
                 subtype: String::from("elicit_frobnicate")
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn malformed_can_use_tool_is_still_answered() {
+    fn malformed_can_use_tool_is_still_answered()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"type":"control_request","request_id":"cli_5","request":{"subtype":"can_use_tool"}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::UnsupportedControlRequest {
                 request_id: String::from("cli_5"),
                 subtype: String::from("can_use_tool")
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn can_use_tool_without_its_tool_use_id_is_refused() {
+    fn can_use_tool_without_its_tool_use_id_is_refused()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"type":"control_request","request_id":"cli_6","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"a.txt"}}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::UnsupportedControlRequest {
                 request_id: String::from("cli_6"),
                 subtype: String::from("can_use_tool without tool_use_id")
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn hook_callback_is_unsupported_not_unknown() {
+    fn hook_callback_is_unsupported_not_unknown()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"type":"control_request","request_id":"cli_4","request":{"subtype":"hook_callback","callback_id":"hook_0","input":{}}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::UnsupportedControlRequest {
                 request_id: String::from("cli_4"),
                 subtype: String::from("hook_callback")
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn tool_inputs_become_shared_tool_kinds() {
+    fn tool_inputs_become_shared_tool_kinds()
+    -> Result<(), Box<dyn std::error::Error>> {
         struct Case {
             name: String,
             input: Value,
@@ -1543,21 +1555,23 @@ mod tests {
             },
         ];
         let (got, want) = cases.into_iter().map(|case| {
-            let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"call","name":{},"input":{}}}]}}}}"#, serde_json::to_string(&case.name).unwrap(), case.input);
-            let got = match parse_line(&line).unwrap() {
+            let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"call","name":{},"input":{}}}]}}}}"#, serde_json::to_string(&case.name)?, case.input);
+            let got = match parse_line(&line)? {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolUse { tool, .. } => Some(tool),
                     super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolResult { .. } | super::Block::Checklist(_) | super::Block::Other(_) => None,
                 }),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };
-            (got, Some(case.want))
-        }).unzip::<Option<ToolKind>, Option<ToolKind>, Vec<Option<ToolKind>>, Vec<Option<ToolKind>>>();
+            Ok((got, Some(case.want)))
+        }).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?.into_iter().unzip::<Option<ToolKind>, Option<ToolKind>, Vec<Option<ToolKind>>, Vec<Option<ToolKind>>>();
         assert_eq!(got, want);
+        Ok(())
     }
 
     #[test]
-    fn turn_results_distinguish_errors_from_interrupts() {
+    fn turn_results_distinguish_errors_from_interrupts()
+    -> Result<(), Box<dyn std::error::Error>> {
         struct Case {
             is_error: String,
             reason: Option<String>,
@@ -1600,18 +1614,20 @@ mod tests {
             },
         ];
         let (got, want) = cases.into_iter().map(|case| {
-            let line = format!(r#"{{"type":"result","subtype":"error_during_execution","session_id":"s","is_error":{},"terminal_reason":{}}}"#, case.is_error, serde_json::to_string(&case.reason).unwrap());
-            let got = match parse_line(&line).unwrap() {
+            let line = format!(r#"{{"type":"result","subtype":"error_during_execution","session_id":"s","is_error":{},"terminal_reason":{}}}"#, case.is_error, serde_json::to_string(&case.reason)?);
+            let got = match parse_line(&line)? {
                 Inbound::Event(ClaudeEvent::TurnFinished { outcome, .. }) => Some(outcome),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };
-            (got, Some(case.want))
-        }).unzip::<Option<TurnOutcome>, Option<TurnOutcome>, Vec<Option<TurnOutcome>>, Vec<Option<TurnOutcome>>>();
+            Ok((got, Some(case.want)))
+        }).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?.into_iter().unzip::<Option<TurnOutcome>, Option<TurnOutcome>, Vec<Option<TurnOutcome>>, Vec<Option<TurnOutcome>>>();
         assert_eq!(got, want);
+        Ok(())
     }
 
     #[test]
-    fn tool_results_use_the_shared_outcome_and_default_to_success() {
+    fn tool_results_use_the_shared_outcome_and_default_to_success()
+    -> Result<(), Box<dyn std::error::Error>> {
         let cases = [
             ("", ToolOutcome::Succeeded),
             (r#","is_error":null"#, ToolOutcome::Succeeded),
@@ -1620,15 +1636,16 @@ mod tests {
         ];
         let (got, want) = cases.into_iter().map(|(field, want)| {
             let line = format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"call"{field}}}]}}}}"#);
-            let got = match parse_line(&line).unwrap() {
+            let got = match parse_line(&line)? {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolResult { outcome, .. } => Some(outcome),
                     super::Block::Text(_) | super::Block::Thinking(_) | super::Block::ToolUse { .. } | super::Block::Checklist(_) | super::Block::Other(_) => None,
                 }),
                 Inbound::Event(_) | Inbound::Permission { .. } | Inbound::ControlResponse { .. } | Inbound::UnsupportedControlRequest { .. } => None,
             };
-            (got, Some(want))
-        }).unzip::<Option<ToolOutcome>, Option<ToolOutcome>, Vec<Option<ToolOutcome>>, Vec<Option<ToolOutcome>>>();
+            Ok((got, Some(want)))
+        }).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?.into_iter().unzip::<Option<ToolOutcome>, Option<ToolOutcome>, Vec<Option<ToolOutcome>>, Vec<Option<ToolOutcome>>>();
         assert_eq!(got, want);
+        Ok(())
     }
 }

@@ -251,16 +251,19 @@ impl ClaudeSession {
     }
 
     /// The models and efforts this CLI offers.
+    #[must_use]
     pub const fn models(&self) -> &Models {
         &self.models
     }
 
     /// The id `--resume` takes, which the CLI prints in every `init`.
+    #[must_use]
     pub const fn id(&self) -> &SessionId {
         &self.id
     }
 
     /// The CLI's process id, while it runs.
+    #[must_use]
     pub const fn pid(&self) -> Option<u32> {
         self.pid
     }
@@ -368,6 +371,7 @@ const INHERITED_LOGIN: &[&str] = &[
 
 /// `claude` with what every run of it gets: its home, and its own updates
 /// off, since the host installs the version it runs.
+#[must_use]
 pub fn cli(claude_path: &Path, home: &Home) -> Command {
     let mut cmd = Command::new(claude_path);
     cmd.env("DISABLE_UPDATES", "1");
@@ -397,6 +401,7 @@ const SANDBOX_TOOLS: &[&str] = &["bwrap", "socat"];
 /// docs/architecture.md): Seatbelt on macOS always, on Linux and WSL2 with
 /// `bwrap` and `socat` on `PATH`, and never on native Windows, where Claude
 /// runs commands unsandboxed.
+#[must_use]
 pub fn sandbox() -> Sandbox {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let dirs = std::env::split_paths(&path).collect::<Vec<PathBuf>>();
@@ -410,6 +415,7 @@ pub fn sandbox() -> Sandbox {
 }
 
 /// `claude auth status`, which succeeds when `home` is signed in.
+#[must_use]
 pub fn auth_status(claude_path: &Path, home: &Home) -> Command {
     let mut cmd = cli(claude_path, home);
     cmd.args(["auth", "status"]);
@@ -418,13 +424,14 @@ pub fn auth_status(claude_path: &Path, home: &Home) -> Command {
 
 /// The subscription sign-in, `claude auth login --claudeai`, into `home`. It
 /// stores the credential there itself.
+#[must_use]
 pub fn login(claude_path: &Path, home: &Home) -> Command {
     let mut cmd = cli(claude_path, home);
     cmd.args(["auth", "login", "--claudeai"]);
     cmd
 }
 
-pub(crate) fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
+pub fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
     let mut cmd = cli(&opts.claude_path, &opts.home);
     if let Some(name) = &opts.project_name {
         cmd.env("CLAUDE_CODE_PROJECT_DIR_NAME", name);
@@ -734,18 +741,21 @@ impl Actor {
             Inbound::ControlResponse {
                 request_id,
                 outcome,
-            } => match self.pending.remove(&request_id) {
-                Some(Pending { call, reply }) => {
+            } => {
+                if let Some(Pending { call, reply }) =
+                    self.pending.remove(&request_id)
+                {
                     let _ =
                         reply.send(outcome.map_err(|message| Error::Control {
                             subtype: String::from(call.subtype()),
                             message,
                         }));
+                } else {
+                    tracing::warn!(
+                        "control_response for unknown request {request_id}"
+                    )
                 }
-                None => tracing::warn!(
-                    "control_response for unknown request {request_id}"
-                ),
-            },
+            }
             Inbound::UnsupportedControlRequest {
                 request_id,
                 subtype,
@@ -770,7 +780,7 @@ impl Actor {
         match cmd {
             CommandMsg::SendUser { text, reply } => {
                 let result = self.write(Outbound::User(text)).await;
-                if let Ok(()) = &result {
+                if matches!(&result, Ok(())) {
                     self.last_message = None;
                 }
                 let _ = reply.send(result);
@@ -888,7 +898,8 @@ mod tests {
     }
 
     #[test]
-    fn prefix_fork_uses_inclusive_uuid_and_chosen_new_session() {
+    fn prefix_fork_uses_inclusive_uuid_and_chosen_new_session()
+    -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
             &ClaudeOptions {
                 claude_path: "/opt/claude".into(),
@@ -913,8 +924,9 @@ mod tests {
         let args = cmd
             .as_std()
             .get_args()
-            .map(|arg| arg.to_str().unwrap())
-            .collect::<Vec<&str>>();
+            .map(|arg| arg.to_str())
+            .collect::<Option<Vec<&str>>>()
+            .ok_or("an argument is not UTF-8")?;
         assert_eq!(
             args,
             Vec::from([
@@ -939,10 +951,11 @@ mod tests {
                 "stdio"
             ])
         );
+        Ok(())
     }
 
     #[test]
-    fn resumed_session_argv() {
+    fn resumed_session_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
             &ClaudeOptions {
                 claude_path: "/opt/claude".into(),
@@ -968,8 +981,9 @@ mod tests {
         let std = cmd.as_std();
         let args = std
             .get_args()
-            .map(|a| a.to_str().unwrap())
-            .collect::<Vec<&str>>();
+            .map(|a| a.to_str())
+            .collect::<Option<Vec<&str>>>()
+            .ok_or("an argument is not UTF-8")?;
         assert_eq!(std.get_program(), "/opt/claude");
         assert_eq!(std.get_current_dir(), Some(Path::new("/tmp")));
         assert_eq!(
@@ -1023,8 +1037,9 @@ mod tests {
                 ) => Some((key, value.to_str())),
                 _ => None,
             })
-            .map(|(key, value)| (key.to_str().unwrap(), value))
-            .collect::<Vec<(&str, Option<&str>)>>();
+            .map(|(key, value)| key.to_str().map(|name| (name, value)))
+            .collect::<Option<Vec<(&str, Option<&str>)>>>()
+            .ok_or("a variable is not UTF-8")?;
         assert_eq!(
             env,
             [
@@ -1043,5 +1058,6 @@ mod tests {
                 ("DISABLE_UPDATES", Some("1")),
             ]
         );
+        Ok(())
     }
 }

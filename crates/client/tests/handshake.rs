@@ -103,7 +103,8 @@ async fn until_live(updates: &mut mpsc::Receiver<Update>) -> Vec<Status> {
 }
 
 #[tokio::test]
-async fn stalled_hello_closes_the_connection_and_retries() {
+async fn stalled_hello_closes_the_connection_and_retries()
+-> Result<(), Box<dyn std::error::Error>> {
     let host = endpoint().await;
     let server = host.clone();
     let serving = tokio::spawn(async move {
@@ -111,9 +112,7 @@ async fn stalled_hello_closes_the_connection_and_retries() {
         delayed_hello(&server).await;
     });
     let (link, mut updates) = link(&host).await;
-    let seen = tokio::time::timeout(STEP, until_live(&mut updates))
-        .await
-        .unwrap();
+    let seen = tokio::time::timeout(STEP, until_live(&mut updates)).await?;
     assert_eq!(
         seen.iter().map(|status| status.state).collect::<Vec<_>>(),
         Vec::from([
@@ -136,20 +135,20 @@ async fn stalled_hello_closes_the_connection_and_retries() {
         )])
     );
     assert_eq!(link.status().error, None);
-    link.stop().await.unwrap();
-    serving.await.unwrap();
+    link.stop().await?;
+    serving.await?;
     host.close().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn slow_hello_succeeds_without_reconnecting() {
+async fn slow_hello_succeeds_without_reconnecting()
+-> Result<(), Box<dyn std::error::Error>> {
     let host = endpoint().await;
     let server = host.clone();
     let serving = tokio::spawn(async move { delayed_hello(&server).await });
     let (link, mut updates) = link(&host).await;
-    let seen = tokio::time::timeout(STEP, until_live(&mut updates))
-        .await
-        .unwrap();
+    let seen = tokio::time::timeout(STEP, until_live(&mut updates)).await?;
     assert_eq!(
         seen.into_iter()
             .map(|status| status.state)
@@ -161,7 +160,8 @@ async fn slow_hello_succeeds_without_reconnecting() {
             LinkState::Live,
         ])
     );
-    link.stop().await.unwrap();
-    serving.await.unwrap();
+    link.stop().await?;
+    serving.await?;
     host.close().await;
+    Ok(())
 }

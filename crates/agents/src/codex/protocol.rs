@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::{Exit, PlanStep};
 
-pub(crate) const INITIALIZE: &str = "initialize";
+pub const INITIALIZE: &str = "initialize";
 
 /// A Codex thread id, as returned by `thread/start` and accepted by `thread/resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,7 +44,7 @@ impl ApprovalId {
 /// A JSON-RPC id, which Codex sends as a number or a string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum RequestId {
+pub enum RequestId {
     Integer(i64),
     String(String),
 }
@@ -229,7 +229,7 @@ pub enum Decision {
 
 /// What an answer to an open request has to look like.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum AnswerShape {
+pub enum AnswerShape {
     Command,
     FileChange,
     /// Holds the requested profile, which an accept grants back.
@@ -240,7 +240,7 @@ pub(crate) enum AnswerShape {
 
 /// What one stdout line means to the server actor.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Inbound {
+pub enum Inbound {
     Event(CodexEvent),
     /// Answer to a request we sent.
     Response {
@@ -539,7 +539,7 @@ enum SpecialPlace {
     },
 }
 
-pub(crate) fn parse_line(line: &str) -> serde_json::Result<Inbound> {
+pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
     Ok(match serde_json::from_value::<Envelope>(raw.clone()) {
         Ok(envelope) => inbound(envelope, raw),
@@ -1005,7 +1005,7 @@ fn thread_unknown(raw: Value) -> CodexEvent {
 
 /// A request we originate.
 #[derive(Debug, Clone)]
-pub(crate) enum Call {
+pub enum Call {
     Initialize,
     ModelList,
     ThreadStart(ThreadOptions),
@@ -1097,7 +1097,7 @@ struct ThreadTurnsPage {
     next_cursor: Value,
 }
 
-pub(crate) fn history_page(
+pub fn history_page(
     value: Value,
 ) -> serde_json::Result<(Vec<TurnId>, Option<String>)> {
     let page = serde_json::from_value::<ThreadTurnsPage>(value)?;
@@ -1276,7 +1276,7 @@ struct SupportedEffort {
 }
 
 /// The models `model/list` offers, without the hidden ones.
-pub(crate) fn models(result: Value) -> serde_json::Result<Models> {
+pub fn models(result: Value) -> serde_json::Result<Models> {
     let list = serde_json::from_value::<ModelList>(result)?;
     let shown = list
         .data
@@ -1332,7 +1332,7 @@ struct InitializeResponse {
 
 /// `thread/start` and `thread/resume` both answer `{thread: {id, ..},
 /// model, reasoningEffort, ..}`.
-pub(crate) fn thread_started(
+pub fn thread_started(
     result: Value,
 ) -> serde_json::Result<(ThreadId, ThreadSettings)> {
     let r = serde_json::from_value::<ThreadResponse>(result)?;
@@ -1345,18 +1345,18 @@ pub(crate) fn thread_started(
     ))
 }
 
-pub(crate) fn turn_id(result: Value) -> serde_json::Result<TurnId> {
+pub fn turn_id(result: Value) -> serde_json::Result<TurnId> {
     let r = serde_json::from_value::<TurnResponse>(result)?;
     Ok(TurnId(r.turn.id))
 }
 
 /// `userAgent` from `initialize`, such as `conductor/0.166.0 (Ubuntu ...)`.
-pub(crate) fn user_agent(result: Value) -> serde_json::Result<String> {
+pub fn user_agent(result: Value) -> serde_json::Result<String> {
     let r = serde_json::from_value::<InitializeResponse>(result)?;
     Ok(r.user_agent)
 }
 
-pub(crate) enum Outbound {
+pub enum Outbound {
     Request {
         id: i64,
         call: Call,
@@ -1375,7 +1375,7 @@ pub(crate) enum Outbound {
 
 /// Why a decision did not become an answer.
 #[derive(Debug)]
-pub(crate) enum AnswerError {
+pub enum AnswerError {
     /// The decision cannot answer a request of this shape.
     NotApplicable,
     /// The answer would not encode as JSON.
@@ -1412,7 +1412,7 @@ enum PlainDecision {
 }
 
 /// The JSON-RPC `result` that answers an open request with `decision`.
-pub(crate) fn answer(
+pub fn answer(
     shape: &AnswerShape,
     decision: Decision,
 ) -> Result<Value, AnswerError> {
@@ -1525,7 +1525,7 @@ struct RpcError {
     message: String,
 }
 
-pub(crate) fn encode(msg: Outbound) -> serde_json::Result<String> {
+pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
         Outbound::Request { id, call } => OutboundFrame::Request {
             id: RequestId::Integer(id),
@@ -1585,9 +1585,20 @@ mod tests {
     }
 
     #[test]
-    fn history_reads_native_turns_and_cursor_only() {
-        assert_eq!(super::history_page(json(r#"{"data":[{"id":"tu_1","status":"completed","items":[]},{"id":"tu_2","status":"interrupted"}],"nextCursor":"page-2","backwardsCursor":"unused"}"#)).unwrap(),
-            (Vec::from([TurnId(String::from("tu_1")),TurnId(String::from("tu_2"))]),Some(String::from("page-2"))));
+    fn history_reads_native_turns_and_cursor_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            super::history_page(json(
+                r#"{"data":[{"id":"tu_1","status":"completed","items":[]},{"id":"tu_2","status":"interrupted"}],"nextCursor":"page-2","backwardsCursor":"unused"}"#
+            ))?,
+            (
+                Vec::from([
+                    TurnId(String::from("tu_1")),
+                    TurnId(String::from("tu_2"))
+                ]),
+                Some(String::from("page-2"))
+            )
+        );
         assert_eq!(
             request(Call::ThreadTurns {
                 thread: ThreadId(String::from("th_1")),
@@ -1597,6 +1608,7 @@ mod tests {
                 r#"{"id":7,"method":"thread/turns/list","params":{"threadId":"th_1","cursor":"page-2","limit":100,"sortDirection":"asc"}}"#
             )
         );
+        Ok(())
     }
 
     #[test]
@@ -1654,15 +1666,16 @@ mod tests {
     }
 
     #[test]
-    fn replies_keep_a_null_result_and_a_string_id() {
+    fn replies_keep_a_null_result_and_a_string_id()
+    -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             encode(Outbound::Answer {
                 rpc_id: RequestId::String(String::from("rpc-1")),
                 result: Value::Null,
-            })
-            .unwrap(),
+            })?,
             r#"{"id":"rpc-1","result":null}"#
         );
+        Ok(())
     }
 
     #[test]
@@ -1843,11 +1856,12 @@ mod tests {
     const USER_INPUT: &str = r#"{"method": "item/tool/requestUserInput", "id": 0, "params": {"threadId": "th_1", "turnId": "tu_1", "itemId": "call_1", "questions": [{"id": "preferred_color", "header": "Color", "question": "Which color do you prefer?", "isOther": true, "isSecret": false, "options": [{"label": "Red", "description": "Choose Red."}, {"label": "Blue", "description": "Choose Blue."}]}], "isBlocking": false, "autoResolutionMs": null}}"#;
 
     #[test]
-    fn a_secret_question_is_declined_without_its_content() {
+    fn a_secret_question_is_declined_without_its_content()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line =
             USER_INPUT.replace(r#""isSecret": false"#, r#""isSecret": true"#);
         assert_eq!(
-            parse_line(&line).unwrap(),
+            parse_line(&line)?,
             Inbound::Declined {
                 rpc_id: RequestId::Integer(0),
                 event: CodexEvent::Thread {
@@ -1858,11 +1872,13 @@ mod tests {
                 },
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn user_input_is_a_question_answered_by_question_id() {
-        let (shape, event) = match parse_line(USER_INPUT).unwrap() {
+    fn user_input_is_a_question_answered_by_question_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (shape, event) = match parse_line(USER_INPUT)? {
             Inbound::Approval { shape, event, .. } => Some((shape, event)),
             Inbound::Event(_)
             | Inbound::Response { .. }
@@ -1870,7 +1886,7 @@ mod tests {
             | Inbound::Unsupported { .. }
             | Inbound::Declined { .. } => None,
         }
-        .unwrap();
+        .ok_or("expected a value")?;
         assert_eq!(
             event,
             ThreadEvent::ApprovalRequested {
@@ -1916,6 +1932,7 @@ mod tests {
             },
             "not applicable"
         );
+        Ok(())
     }
 
     #[test]
@@ -1951,10 +1968,11 @@ mod tests {
     }
 
     #[test]
-    fn command_approval_keeps_codex_options_in_order() {
+    fn command_approval_keeps_codex_options_in_order()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"method":"item/commandExecution/requestApproval","id":0,"params":{"kind":"command","threadId":"th_1","turnId":"tu_1","itemId":"exec-1","startedAtMs":1,"reason":"May I?","command":"printf hi > a.txt","cwd":"/tmp/s","availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"]}},"cancel"]}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::Approval {
                 rpc_id: RequestId::Integer(0),
                 thread: ThreadId(String::from("th_1")),
@@ -1978,13 +1996,15 @@ mod tests {
                 },
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn a_permissions_request_lists_what_it_asks_for() {
+    fn a_permissions_request_lists_what_it_asks_for()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"method":"item/permissions/requestApproval","id":3,"params":{"threadId":"th_1","turnId":"tu_1","itemId":"exec-2","startedAtMs":1,"cwd":"/w","reason":"to fetch","permissions":{"network":{"enabled":true},"fileSystem":{"write":["/home/u/.cargo"],"entries":[{"access":"write","path":{"type":"special","value":{"kind":"slashTmp"}}},{"access":"read","path":{"type":"path","path":"/etc/hosts"}}]}}}}"#;
         assert_eq!(
-            match parse_line(line).unwrap() {
+            match parse_line(line)? {
                 Inbound::Approval {
                     event:
                         ThreadEvent::ApprovalRequested {
@@ -2009,37 +2029,43 @@ mod tests {
                 ])
             ))
         );
+        Ok(())
     }
 
     #[test]
-    fn unknown_notification_keeps_its_thread() {
+    fn unknown_notification_keeps_its_thread()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"method":"thread/brandNew","params":{"threadId":"th_1","x":1}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::Event(CodexEvent::Thread {
                 thread: ThreadId(String::from("th_1")),
                 event: ThreadEvent::Unknown(json(line)),
             })
         );
+        Ok(())
     }
 
     #[test]
-    fn known_method_with_drifted_params_becomes_unknown() {
+    fn known_method_with_drifted_params_becomes_unknown()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"method":"turn/completed","params":{"threadId":"th_1","turn":{"id":"tu_1","items":[],"status":"paused"}}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::Event(CodexEvent::Thread {
                 thread: ThreadId(String::from("th_1")),
                 event: ThreadEvent::Unknown(json(line)),
             })
         );
+        Ok(())
     }
 
     #[test]
-    fn unknown_server_request_still_yields_its_id() {
+    fn unknown_server_request_still_yields_its_id()
+    -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"method":"item/frobnicate","id":9,"params":{"threadId":"th_1"}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::Unsupported {
                 rpc_id: RequestId::Integer(9),
                 method: String::from("item/frobnicate"),
@@ -2049,22 +2075,26 @@ mod tests {
                 },
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn resolved_names_the_request_id() {
+    fn resolved_names_the_request_id() -> Result<(), Box<dyn std::error::Error>>
+    {
         let line = r#"{"method":"serverRequest/resolved","params":{"threadId":"th_1","requestId":0}}"#;
         assert_eq!(
-            parse_line(line).unwrap(),
+            parse_line(line)?,
             Inbound::Resolved {
                 thread: ThreadId(String::from("th_1")),
                 rpc_id: RequestId::Integer(0),
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn tool_notifications_emit_shared_phases_and_file_changes() {
+    fn tool_notifications_emit_shared_phases_and_file_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
         use proto::{
             Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
         };
@@ -2126,8 +2156,8 @@ mod tests {
         let (got, want) = cases
             .into_iter()
             .map(|(line, phase)| {
-                (
-                    parse_line(line).unwrap(),
+                Ok((
+                    parse_line(line)?,
                     Inbound::Event(CodexEvent::Thread {
                         thread: super::ThreadId(String::from("th")),
                         event: super::ThreadEvent::ToolCall {
@@ -2136,14 +2166,18 @@ mod tests {
                             phase,
                         },
                     }),
-                )
+                ))
             })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?
+            .into_iter()
             .unzip::<Inbound, Inbound, Vec<Inbound>, Vec<Inbound>>();
         assert_eq!(got, want);
+        Ok(())
     }
 
     #[test]
-    fn completed_turns_emit_shared_outcomes_with_failure_messages() {
+    fn completed_turns_emit_shared_outcomes_with_failure_messages()
+    -> Result<(), Box<dyn std::error::Error>> {
         use proto::TurnOutcome;
         let cases = [
             (
@@ -2176,8 +2210,8 @@ mod tests {
         let (got, want) = cases
             .into_iter()
             .map(|(line, outcome)| {
-                (
-                    parse_line(line).unwrap(),
+                Ok((
+                    parse_line(line)?,
                     Inbound::Event(CodexEvent::Thread {
                         thread: super::ThreadId(String::from("th")),
                         event: super::ThreadEvent::TurnCompleted {
@@ -2185,9 +2219,12 @@ mod tests {
                             outcome,
                         },
                     }),
-                )
+                ))
             })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?
+            .into_iter()
             .unzip::<Inbound, Inbound, Vec<Inbound>, Vec<Inbound>>();
         assert_eq!(got, want);
+        Ok(())
     }
 }

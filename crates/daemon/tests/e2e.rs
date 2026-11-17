@@ -399,7 +399,8 @@ fn models() -> Models {
 }
 
 #[tokio::test]
-async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
+async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     assert_eq!(
@@ -433,7 +434,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
             result: CommandResult::Rejected(Rejection::NoSuchDirectory),
         },
         Case {
-            body: start(Provider::Claude, &std::env::current_exe().unwrap()),
+            body: start(Provider::Claude, &std::env::current_exe()?),
             result: CommandResult::Rejected(Rejection::NoSuchDirectory),
         },
         Case {
@@ -464,46 +465,43 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary() {
             .map(|case| case.result)
             .collect::<Vec<CommandResult>>()
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
 async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created(), reply("Hel"), reply("lo")]))
-        .await
-        .unwrap();
+    append(&fx.log, Vec::from([created(), reply("Hel"), reply("lo")])).await?;
     let before = events_through(&mut updates, HostSeq(3)).await;
 
-    append(&fx.log, Vec::from([reply(" wor"), reply("ld")]))
-        .await
-        .unwrap();
+    append(&fx.log, Vec::from([reply(" wor"), reply("ld")])).await?;
     link.reconnect().await;
-    append(&fx.log, Vec::from([reply("!")])).await.unwrap();
+    append(&fx.log, Vec::from([reply("!")])).await?;
     let after = events_through(&mut updates, HostSeq(6)).await;
     let seen = before.into_iter().chain(after).collect::<Vec<Event>>();
     assert_eq!(seqs(&seen), [1, 2, 3, 4, 5, 6].map(HostSeq));
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_new_client_resumes_from_a_dead_clients_cursor() {
+async fn a_new_client_resumes_from_a_dead_clients_cursor()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let (first, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created(), reply("Hel")]))
-        .await
-        .unwrap();
+    append(&fx.log, Vec::from([created(), reply("Hel")])).await?;
     events_through(&mut updates, HostSeq(2)).await;
-    first.stop().await.unwrap();
+    first.stop().await?;
     drop(updates);
 
-    append(&fx.log, Vec::from([reply("Hello")])).await.unwrap();
+    append(&fx.log, Vec::from([reply("Hello")])).await?;
     let cursor = Cursor {
         epoch: Epoch(11),
         seq: HostSeq(2),
@@ -511,30 +509,31 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() {
     let (second, mut updates) = link(fx.target.clone(), Some(cursor)).await;
     let rest = events_through(&mut updates, HostSeq(3)).await;
     assert_eq!(seqs(&rest), [HostSeq(3)]);
-    second.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    second.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message() {
+async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let (first, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
-    append(&fx.log, Vec::from([created()])).await.unwrap();
+    append(&fx.log, Vec::from([created()])).await?;
     let seen = events_through(&mut updates, HostSeq(1)).await;
     append(
         &fx.log,
         Vec::from([delta("Hel"), delta("lo"), reply("Hello")]),
     )
-    .await
-    .unwrap();
+    .await?;
     let live = events_through(&mut updates, HostSeq(2)).await;
     assert_eq!(seqs(&live), [1, 1, 2].map(HostSeq));
     assert_eq!(
         of(SessionId(1), &live),
         [delta("Hel"), delta("lo"), reply("Hello")]
     );
-    first.stop().await.unwrap();
+    first.stop().await?;
     drop(updates);
 
     let cursor = Cursor {
@@ -548,16 +547,16 @@ async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message() {
         fold(seen.iter().chain(&live).cloned().collect()),
         fold(seen.into_iter().chain(rest).collect())
     );
-    second.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    second.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
+async fn a_cursor_from_another_epoch_starts_over_from_the_beginning()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
-    append(&fx.log, Vec::from([created(), delta("H"), reply("Hi")]))
-        .await
-        .unwrap();
+    append(&fx.log, Vec::from([created(), delta("H"), reply("Hi")])).await?;
     let stale = Cursor {
         epoch: Epoch(10),
         seq: HostSeq(40),
@@ -599,8 +598,9 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() {
             HostSeq(2)
         ))
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Git commands use this test repository's identity, never the user's config.
@@ -929,7 +929,8 @@ const APPROVED_CALL: &str = "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD";
 const DENIED_CALL: &str = "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx";
 
 #[tokio::test]
-async fn a_claude_turn_streams_asks_and_finishes() {
+async fn a_claude_turn_streams_asks_and_finishes()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("approve", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -957,8 +958,7 @@ async fn a_claude_turn_streams_asks_and_finishes() {
         network: Network::Local,
         ..LinkOptions::new(ClientName(String::from("desk")))
     };
-    let (desk, mut at_desk) =
-        HostLink::spawn(fx.target.clone(), desk).await.unwrap();
+    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await?;
     until_live(&mut at_desk).await;
     assert_eq!(
         [
@@ -992,12 +992,14 @@ async fn a_claude_turn_streams_asks_and_finishes() {
         ]
         .concat()
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
+async fn a_denied_request_continues_and_an_interrupt_ends_the_turn()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("deny", "claude-deny-interrupt.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1068,8 +1070,9 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() {
             turn_end(TurnOutcome::Completed)
         ]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// The recording starts the turn only once `release` exists, and the fake
@@ -1109,7 +1112,8 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() {
 /// The CLI withdraws the open request when the turn is interrupted, and the
 /// tool call it asked about fails.
 #[tokio::test]
-async fn an_interrupt_withdraws_the_open_request() {
+async fn an_interrupt_withdraws_the_open_request()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("withdraw", "claude-withdraw.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1151,8 +1155,9 @@ async fn an_interrupt_withdraws_the_open_request() {
         send(&link, resolve(session, 1, Decision::Approve)).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 fn answer(session: SessionId, request: u64, words: &[&str]) -> CommandBody {
@@ -1232,7 +1237,8 @@ fn sent_to_agent(dir: &Path) -> String {
 /// in the tool's input; a second client, a decision and the wrong number of
 /// answers are refused.
 #[tokio::test]
-async fn a_claude_question_is_answered_once_by_the_first_client() {
+async fn a_claude_question_is_answered_once_by_the_first_client()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("question", "claude-question.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1262,8 +1268,7 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
         network: Network::Local,
         ..LinkOptions::new(ClientName(String::from("desk")))
     };
-    let (desk, mut at_desk) =
-        HostLink::spawn(fx.target.clone(), desk).await.unwrap();
+    let (desk, mut at_desk) = HostLink::spawn(fx.target.clone(), desk).await?;
     until_live(&mut at_desk).await;
     assert_eq!(
         [
@@ -1314,15 +1319,17 @@ async fn a_claude_question_is_answered_once_by_the_first_client() {
             .count(),
         1
     );
-    link.stop().await.unwrap();
-    desk.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    desk.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Codex asks with `requestUserInput`, answered as an RPC result keyed by
 /// the question's id, which the stand-in waits for.
 #[tokio::test]
-async fn a_codex_question_is_answered_by_its_question_id() {
+async fn a_codex_question_is_answered_by_its_question_id()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-question.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1357,14 +1364,16 @@ async fn a_codex_question_is_answered_by_its_question_id() {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Approving for the session adds the CLI's suggested rule for the session
 /// only, so the same command runs again without a request.
 #[tokio::test]
-async fn a_claude_call_approved_for_the_session_runs_again_without_asking() {
+async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("for-session", "claude-for-session.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1435,14 +1444,16 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking() {
             .count(),
         1
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Codex takes `acceptForSession` for a command, which the stand-in waits
 /// for, and runs the same command again without a request.
 #[tokio::test]
-async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
+async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-for-session.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1507,15 +1518,17 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking() {
             ]),
         )
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// An interrupt withdraws an open question, as it does an approval: Claude
 /// cancels it, Codex withdraws it after the turn ends, and either way the
 /// view shows it withdrawn and a late answer is refused.
 #[tokio::test]
-async fn an_interrupt_withdraws_an_open_question() {
+async fn an_interrupt_withdraws_an_open_question()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("question-withdraw", "claude-question-withdraw.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1574,12 +1587,14 @@ async fn an_interrupt_withdraws_an_open_question() {
         })
         .collect::<Vec<RequestState>>();
     assert_eq!(questions, [RequestState::Resolved(Resolution::Withdrawn)]);
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end() {
+async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-question-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1615,16 +1630,18 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end() {
         send(&link, answer(session, 1, &["Pear"])).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    std::fs::write(dir.join("release"), "").unwrap();
+    std::fs::write(dir.join("release"), "")?;
     assert_eq!(sent_to_agent(&dir).matches("\"answers\"").count(), 0);
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// The stand-in stops reading after `initialize`, so the message can't
 /// reach it. The turn must end, or every client shows it running forever.
 #[tokio::test]
-async fn a_message_the_agent_never_gets_fails_its_turn() {
+async fn a_message_the_agent_never_gets_fails_its_turn()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("hang-up", "claude-hang-up.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1666,12 +1683,14 @@ async fn a_message_the_agent_never_gets_fails_its_turn() {
         send(&link, message(session, "hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_missing_claude_binary_closes_the_session() {
+async fn a_missing_claude_binary_closes_the_session()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host_with(PathBuf::from("/nonexistent/claude")).await;
     let dir = scratch("missing-binary", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -1701,14 +1720,16 @@ async fn a_missing_claude_binary_closes_the_session() {
         send(&link, message(session, "hi")).await,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Two sessions' turns run at once on one app-server: each session's events
 /// are its own thread's, one approves and the other declines.
 #[tokio::test]
-async fn two_codex_sessions_share_one_server() {
+async fn two_codex_sessions_share_one_server()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-two-threads.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1782,8 +1803,9 @@ async fn two_codex_sessions_share_one_server() {
             Item::TurnCompleted(TurnOutcome::Completed),
         ]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -1793,7 +1815,8 @@ async fn a_codex_interrupt_before_the_turn_starts_is_sent_by_turn_id() {
 }
 
 #[tokio::test]
-async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
+async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-interrupt.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1826,8 +1849,9 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
             turn_end(TurnOutcome::Completed)
         ]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Codex withdraws the open request only after the interrupted turn ends,
@@ -1835,7 +1859,8 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs() {
 /// session withdraws the request at the turn's end, so an answer in between
 /// is refused and never reaches Codex.
 #[tokio::test]
-async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
+async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-withdraw.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1888,7 +1913,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
         send(&link, resolve(session, 1, Decision::Approve)).await,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    std::fs::write(dir.join("release"), "").unwrap();
+    std::fs::write(dir.join("release"), "")?;
     // Codex's withdrawal plays before the next turn and is ignored.
     let _ = send(&link, message(session, "ping")).await;
     assert_eq!(
@@ -1901,20 +1926,21 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end() {
         ]
     );
     assert_eq!(
-        std::fs::read_to_string(dir.join("stdin.jsonl"))
-            .unwrap()
+        std::fs::read_to_string(dir.join("stdin.jsonl"))?
             .matches("\"decision\"")
             .count(),
         0
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// The stand-in exits once both threads have started. Both sessions close,
 /// and the next session runs on a new app-server.
 #[tokio::test]
-async fn the_app_server_exiting_closes_every_codex_session() {
+async fn the_app_server_exiting_closes_every_codex_session()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-exit.jsonl").await;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -1955,8 +1981,9 @@ async fn the_app_server_exiting_closes_every_codex_session() {
         kinds_until(&mut updates, Until::Ready).await,
         opening(Provider::Codex, &dir)
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// The states before the link reported an error, and the error.
@@ -1976,7 +2003,8 @@ async fn until_error(
 }
 
 #[tokio::test]
-async fn a_wrong_token_is_refused_and_never_goes_live() {
+async fn a_wrong_token_is_refused_and_never_goes_live()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let target = Target {
         token: AuthToken::from_bytes([0; 16]),
@@ -1990,8 +2018,9 @@ async fn a_wrong_token_is_refused_and_never_goes_live() {
             String::from("the host refused us: wrong token")
         )
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// What iroh logs when an endpoint is dropped before anyone closed it.
@@ -2093,7 +2122,8 @@ fn loopback(endpoint: &Endpoint) -> SocketAddr {
 }
 
 #[tokio::test]
-async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
+async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly()
+-> Result<(), Box<dyn std::error::Error>> {
     let (log_path, _logging) = capture_log("stalled-dial");
     let fx = host().await;
     let hop = Hop::spawn(loopback(fx.router.endpoint())).await;
@@ -2113,9 +2143,9 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
             LinkState::CatchingUp
         ]
     );
-    link.stop().await.unwrap();
+    link.stop().await?;
     drop(updates);
-    fx.router.shutdown().await.unwrap();
+    fx.router.shutdown().await?;
 
     let logged = captured(&log_path);
     assert_eq!(
@@ -2126,6 +2156,7 @@ async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly() {
         (1, 0),
         "{logged}"
     );
+    Ok(())
 }
 
 /// Sends this thread's logs, at debug and above, to a file named after
@@ -2258,7 +2289,8 @@ async fn live(
 }
 
 #[tokio::test]
-async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
+async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
+-> Result<(), Box<dyn std::error::Error>> {
     let data = data_dir("claude-gateway");
     let (log, logging) = capture_log("claude-gateway");
     let dir = scratch("claude-gateway", "claude-approve.jsonl");
@@ -2295,8 +2327,8 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
         )
     );
     assert_eq!(count(&data.join("credentials"), CLAUDE_TOKEN), 0);
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
 
     let fx = claude_host_in(&data).await;
     let (link, _updates, welcomed) = live(&fx).await;
@@ -2315,14 +2347,14 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
         send(&link, start(Provider::Claude, &dir)).await,
         refused_for_no_credential()
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
 
     let fx = claude_host_in(&data).await;
     let (link, _updates, welcomed) = live(&fx).await;
     assert_eq!(welcomed, Some(with_claude(no_credential())));
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
     drop(logging);
     let logged = captured(&log);
     assert_eq!(
@@ -2343,6 +2375,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears() {
             }
         )
     );
+    Ok(())
 }
 
 fn with_codex(codex: Availability) -> Providers {
@@ -2412,13 +2445,14 @@ fn codex_provider(key: &str) -> CommandBody {
 }
 
 #[tokio::test]
-async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
+async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
+-> Result<(), Box<dyn std::error::Error>> {
     const FIRST_KEY: &str = "conductor-test-first-key";
     const SECOND_KEY: &str = "conductor-test-second-key";
     let data = data_dir("codex-provider");
     let (log, logging) = capture_log("codex-provider");
     let server = scratch("codex-provider", "codex-two-threads-listed.jsonl");
-    let homes = daemon::homes(&data).unwrap();
+    let homes = daemon::homes(&data)?;
     let hub = CodexHub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home: homes.codex,
@@ -2480,8 +2514,8 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
         )
     );
     assert_eq!(count(&home.join("config.toml"), FIRST_KEY), 0);
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
     drop(logging);
     let logged = captured(&log);
     assert_eq!(
@@ -2495,18 +2529,19 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it() {
         ),
         (1, 0, 0, 0)
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
+async fn a_credential_sent_before_hello_is_refused_and_not_stored()
+-> Result<(), Box<dyn std::error::Error>> {
     let data = data_dir("unauthenticated");
     let fx = claude_host_in(&data).await;
     let endpoint = endpoint().await;
     let conn = endpoint
         .connect(fx.target.addr.clone(), proto::ALPN)
-        .await
-        .unwrap();
-    let (mut send_half, mut recv_half) = conn.open_bi().await.unwrap();
+        .await?;
+    let (mut send_half, mut recv_half) = conn.open_bi().await?;
     net::wire::write(
         &mut send_half,
         &proto::Open::Command(proto::Command {
@@ -2514,12 +2549,9 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
             body: claude_gateway(),
         }),
     )
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(
-        net::wire::read::<proto::HelloReply>(&mut recv_half)
-            .await
-            .unwrap(),
+        net::wire::read::<proto::HelloReply>(&mut recv_half).await?,
         Some(proto::HelloReply::Refused {
             reason: String::from("the first stream must be a hello"),
         })
@@ -2530,17 +2562,18 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
         (welcomed, data.join("credentials").exists()),
         (Some(with_claude(no_credential())), false)
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
 async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside()
-{
+-> Result<(), Box<dyn std::error::Error>> {
     let data = data_dir("unreadable");
     // A store key of its own, then a store that doesn't open with it.
-    let _ = Store::open(&data).unwrap();
-    std::fs::write(data.join("credentials"), b"not a sealed store").unwrap();
+    let _ = Store::open(&data)?;
+    std::fs::write(data.join("credentials"), b"not a sealed store")?;
     let fx = claude_host_in(&data).await;
     let (link, _updates, welcomed) = live(&fx).await;
     let unreadable = Availability::Unavailable {
@@ -2584,12 +2617,14 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside()
         send(&link, claude_gateway()).await,
         CommandResult::Providers(with_claude(gateway(probed())))
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_base_url_that_could_hide_a_secret_is_refused() {
+async fn a_base_url_that_could_hide_a_secret_is_refused()
+-> Result<(), Box<dyn std::error::Error>> {
     let data = data_dir("base-url");
     let fx = claude_host_in(&data).await;
     let (link, _updates, _) = live(&fx).await;
@@ -2612,8 +2647,9 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() {
             false
         )
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 fn start_with(
@@ -2682,7 +2718,8 @@ fn created_with(
 /// A model the host doesn't list, or an effort its model doesn't take, is
 /// refused; a chosen one is logged and reaches the CLI.
 #[tokio::test]
-async fn start_session_takes_only_a_model_and_effort_the_host_offers() {
+async fn start_session_takes_only_a_model_and_effort_the_host_offers()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("chosen", "claude-approve.jsonl");
     let (link, mut updates) = link(fx.target.clone(), None).await;
@@ -2730,8 +2767,9 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers() {
             .collect::<Vec<(Option<String>, Option<String>)>>(),
         [(Some(String::from("small")), Some(String::from("low")))]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 const THOUGHT: &str = "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n";
@@ -2741,7 +2779,8 @@ const THOUGHT: &str = "\"All but 9 run away\" means 9 stay, so he buys double th
 /// The CLI sends this traffic only with betas on, which the owner's
 /// gateway refuses.
 #[tokio::test]
-async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
+async fn claude_reasoning_streams_live_and_is_stored_once_finished()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("reasoning", "claude-reasoning.jsonl");
     let (phone, mut updates) = link(fx.target.clone(), None).await;
@@ -2817,15 +2856,17 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() {
             state: ReplyState::Done,
         }]
     );
-    late.stop().await.unwrap();
-    phone.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    late.stop().await?;
+    phone.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// Through the owner's gateway, with betas off, the CLI streams an empty
 /// thinking block (`claude-killed.jsonl`'s first turn), which shows nothing.
 #[tokio::test]
-async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
+async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("betas-off", "claude-killed.jsonl");
     let (phone, mut updates) = link(fx.target.clone(), None).await;
@@ -2859,23 +2900,24 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure() {
             }])
         )
     );
-    phone.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    phone.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// A Claude CLI killed mid-turn closes the session; `Continue` starts it
 /// again with `--resume` on the same conversation, model and effort, and
 /// the next turn runs.
 #[tokio::test]
-async fn a_killed_claude_session_continues_its_conversation() {
+async fn a_killed_claude_session_continues_its_conversation()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("killed", "claude-killed.jsonl");
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-resumed.jsonl"),
         dir.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     assert_eq!(
@@ -2964,22 +3006,23 @@ async fn a_killed_claude_session_continues_its_conversation() {
             status: String::from("signal: 9 (SIGKILL)"),
         })]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// A `Continue` whose transcript is gone leaves the session closed, with
 /// the CLI's own reason (the recorded `result` of the pinned CLI).
 #[tokio::test]
-async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
+async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason()
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("resume-missing", "claude-killed.jsonl");
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-resume-missing.jsonl"),
         dir.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let session =
@@ -3002,8 +3045,9 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason() {
             },
         }]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 const COUNTING: &str = "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward—I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won’t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!";
@@ -3012,14 +3056,14 @@ const COUNTING: &str = "**Compiling numbers**\n\nI'm tasked with creating a list
 /// deltas streamed. The session closes with no failed turn, and `Continue`
 /// resumes the thread.
 #[tokio::test]
-async fn a_codex_server_killed_mid_turn_closes_and_continues() {
+async fn a_codex_server_killed_mid_turn_closes_and_continues()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, server) = codex_host("codex-killed-mid-turn.jsonl").await;
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/codex-resumed.jsonl"),
         server.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let session = started_session(
@@ -3088,8 +3132,9 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// A new credential that doesn't offer a Codex session's model: `Continue`
@@ -3097,14 +3142,13 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() {
 /// turn, so it starts a thread afresh; a resume takes the same choice.)
 #[tokio::test]
 async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_its_model()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, server) = codex_host("codex-resumed.jsonl").await;
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/codex-resumed-listed.jsonl"),
         server.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let session = started_session(
@@ -3148,8 +3192,9 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
             Some(serde_json::json!("low"))
         )]
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// The thread, model and effort a `thread/start` or `thread/resume` names.
@@ -3174,14 +3219,14 @@ const PRIME: &str = "**Assessing primality**\n\nI need to determine if 1,000,003
 /// starts a new server and resumes the thread on it with the session's
 /// model and effort.
 #[tokio::test]
-async fn a_killed_codex_server_continues_the_thread() {
+async fn a_killed_codex_server_continues_the_thread()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, server) = codex_host("codex-killed.jsonl").await;
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/codex-resumed.jsonl"),
         server.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let (link, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
     let session = started_session(
@@ -3274,8 +3319,9 @@ async fn a_killed_codex_server_continues_the_thread() {
             )]),
         )
     );
-    link.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// The original ticket and live link survive a real transport restart. The
@@ -3283,15 +3329,14 @@ async fn a_killed_codex_server_continues_the_thread() {
 /// conversation after withdrawing an unanswered approval.
 #[tokio::test]
 async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
-{
+-> Result<(), Box<dyn std::error::Error>> {
     let dir = scratch("transport-restart", "claude-approve.jsonl");
     let data = data_dir("transport-restart");
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-resumed.jsonl"),
         dir.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
     let address = first.address();
@@ -3302,11 +3347,11 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
         started_session(send(&phone, start(Provider::Claude, &dir)).await);
     let _ = send(&phone, message(session, "create a.txt")).await;
     let before = legacy_events_until(&mut updates, Until::Request).await;
-    let cursor = before.last().unwrap().seq;
+    let cursor = before.last().ok_or("expected a value")?.seq;
     let conversation = argv(&dir)
         .first()
         .and_then(|run| flag(run, "--session-id"))
-        .unwrap();
+        .ok_or("expected a value")?;
     first.shutdown().await;
 
     let second = durable_host(&data, address).await;
@@ -3331,11 +3376,11 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
     assert_eq!(
         seqs(&cleanup),
         Vec::from([
-            HostSeq(cursor.0.checked_add(1).unwrap()),
-            HostSeq(cursor.0.checked_add(2).unwrap()),
-            HostSeq(cursor.0.checked_add(3).unwrap()),
-            HostSeq(cursor.0.checked_add(4).unwrap()),
-            HostSeq(cursor.0.checked_add(5).unwrap()),
+            HostSeq(cursor.0.checked_add(1).ok_or("expected a value")?),
+            HostSeq(cursor.0.checked_add(2).ok_or("expected a value")?),
+            HostSeq(cursor.0.checked_add(3).ok_or("expected a value")?),
+            HostSeq(cursor.0.checked_add(4).ok_or("expected a value")?),
+            HostSeq(cursor.0.checked_add(5).ok_or("expected a value")?),
         ])
     );
     assert_eq!(
@@ -3392,8 +3437,9 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
             .find(|argument| argument.starts_with("--resume="))),
         Some(&format!("--resume={conversation}"))
     );
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     second.shutdown().await;
+    Ok(())
 }
 
 /// A raw connection permits an explicit retry ID, including from a fresh
@@ -3546,16 +3592,18 @@ fn refresh_claude(home: Home) -> Launcher {
 
 #[tokio::test]
 async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_results()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let data = data_dir("refresh-claude");
     let source = scratch("refresh-claude", "claude-approve.jsonl");
     let probe = data.join("probe");
-    std::fs::create_dir_all(&probe).unwrap();
-    std::fs::write(probe.join("stdout.jsonl"), "{\"fake\":\"files\",\"write\":{\"held\":\"ready\"}}\n{\"fake\":\"release\",\"file\":\"go\"}\n{\"fake\":\"fail\",\"stderr\":\"superseded probe failed\",\"status\":1}\n").unwrap();
-    std::fs::write(probe.join("stdout.2.jsonl"), format!("{PROBED}\n"))
-        .unwrap();
+    std::fs::create_dir_all(&probe)?;
+    std::fs::write(
+        probe.join("stdout.jsonl"),
+        "{\"fake\":\"files\",\"write\":{\"held\":\"ready\"}}\n{\"fake\":\"release\",\"file\":\"go\"}\n{\"fake\":\"fail\",\"stderr\":\"superseded probe failed\",\"status\":1}\n",
+    )?;
+    std::fs::write(probe.join("stdout.2.jsonl"), format!("{PROBED}\n"))?;
     let launchers = Launchers {
-        claude: refresh_claude(daemon::homes(&data).unwrap().claude),
+        claude: refresh_claude(daemon::homes(&data)?.claude),
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     };
     let fx = refresh_host(&data, &source, launchers.clone()).await;
@@ -3567,7 +3615,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let first = queued_command(&conn, 2301, first_body.clone());
     marker(&probe.join("held")).await;
     let (phone, _updates, offered) =
-        tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
+        tokio::time::timeout(RESPONSIVE, live(&fx)).await?;
     assert_eq!(
         offered,
         Some(with_claude(Availability::Unavailable {
@@ -3583,8 +3631,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
             RESPONSIVE,
             send(&phone, start(Provider::Claude, &source))
         )
-        .await
-        .unwrap(),
+        .await?,
         refused
     );
     assert_eq!(
@@ -3597,8 +3644,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
                 }
             )
         )
-        .await
-        .unwrap(),
+        .await?,
         refused
     );
     assert_eq!(
@@ -3606,11 +3652,10 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
             RESPONSIVE,
             send(&phone, message(SessionId(999), "lookup"))
         )
-        .await
-        .unwrap(),
+        .await?,
         CommandResult::Rejected(Rejection::UnknownSession)
     );
-    let mut live = fx.log.subscribe(HostSeq(0)).await.unwrap().live;
+    let mut live = fx.log.subscribe(HostSeq(0)).await?.live;
     fx.log
         .append(
             REFRESH_SESSION,
@@ -3618,14 +3663,9 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
                 message: String::from("still live"),
             },
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
-        tokio::time::timeout(RESPONSIVE, live.recv())
-            .await
-            .unwrap()
-            .unwrap()
-            .kind,
+        tokio::time::timeout(RESPONSIVE, live.recv()).await??.kind,
         EventKind::Error {
             message: String::from("still live")
         }
@@ -3641,7 +3681,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let newest = queued_command(&conn, 2303, newest_body.clone());
     saved(&data, newest_body).await;
     assert_eq!(read(&probe.join("runs.txt")), "1");
-    std::fs::write(probe.join("go"), "").unwrap();
+    std::fs::write(probe.join("go"), "")?;
     let result = CommandResult::Providers(with_claude(gateway(probed())));
     assert_eq!(finished_command(first).await, result);
     assert_eq!(finished_command(duplicate).await, result);
@@ -3655,8 +3695,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     std::fs::write(
         probe.join("stdout.3.jsonl"),
         "{\"fake\":\"fail\",\"stderr\":\"current probe failed\",\"status\":1}\n",
-    )
-    .unwrap();
+    )?;
     let failed = send(
         &phone,
         CommandBody::SetCredential {
@@ -3671,11 +3710,10 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
         }) => Some(reason),
         _ => None,
     }
-    .unwrap();
+    .ok_or("expected a value")?;
     assert_ne!(reason, REFRESHING);
     assert_ne!(reason, "");
-    std::fs::write(probe.join("stdout.4.jsonl"), format!("{PROBED}\n"))
-        .unwrap();
+    std::fs::write(probe.join("stdout.4.jsonl"), format!("{PROBED}\n"))?;
     assert_eq!(
         send(
             &phone,
@@ -3689,12 +3727,11 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
             models: probed()
         }))
     );
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     desktop.close().await;
     fx.shutdown().await;
     let log =
-        Log::open(String::from("refresh-host"), &data.join("conductor.redb"))
-            .unwrap();
+        Log::open(String::from("refresh-host"), &data.join("conductor.redb"))?;
     let reopened = serve_log(endpoint().await, launchers, &data, log).await;
     let client = endpoint().await;
     let conn = authenticated(&client, &reopened.target).await;
@@ -3712,21 +3749,26 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     assert_eq!(read(&probe.join("runs.txt")), "4");
     client.close().await;
     reopened.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
+async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
+-> Result<(), Box<dyn std::error::Error>> {
     let data = data_dir("refresh-codex");
     let source = scratch("refresh-codex-claude", "claude-approve.jsonl");
     let server = scratch("refresh-codex", "codex-two-threads-listed.jsonl");
     let recording = read(&server.join("stdout.jsonl"));
-    std::fs::write(server.join("stdout.2.jsonl"), &recording).unwrap();
-    std::fs::write(server.join("stdout.jsonl"), format!(
-        "{}\n{{\"fake\":\"files\",\"write\":{{\"held\":\"ready\"}}}}\n{{\"fake\":\"release\",\"file\":\"go\"}}\n{}\n",
-        recording.lines().take(2).collect::<Vec<_>>().join("\n"),
-        recording.lines().skip(2).collect::<Vec<_>>().join("\n"),
-    )).unwrap();
-    let homes = daemon::homes(&data).unwrap();
+    std::fs::write(server.join("stdout.2.jsonl"), &recording)?;
+    std::fs::write(
+        server.join("stdout.jsonl"),
+        format!(
+            "{}\n{{\"fake\":\"files\",\"write\":{{\"held\":\"ready\"}}}}\n{{\"fake\":\"release\",\"file\":\"go\"}}\n{}\n",
+            recording.lines().take(2).collect::<Vec<_>>().join("\n"),
+            recording.lines().skip(2).collect::<Vec<_>>().join("\n"),
+        ),
+    )?;
+    let homes = daemon::homes(&data)?;
     let hub = CodexHub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home: homes.codex,
@@ -3754,9 +3796,9 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
         queued_command(&conn, 2311, codex_provider("conductor-test-old"));
     marker(&server.join("held")).await;
     let (phone, mut updates, offered) =
-        tokio::time::timeout(RESPONSIVE, live(&fx)).await.unwrap();
+        tokio::time::timeout(RESPONSIVE, live(&fx)).await?;
     assert_eq!(
-        offered.unwrap().codex,
+        offered.ok_or("expected a value")?.codex,
         Availability::Unavailable {
             reason: String::from(REFRESHING)
         }
@@ -3771,8 +3813,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
                 }
             )
         )
-        .await
-        .unwrap(),
+        .await?,
         CommandResult::Accepted
     );
     events_until(&mut updates, Until::Ready).await;
@@ -3780,8 +3821,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
         RESPONSIVE,
         send(&phone, start(Provider::Claude, &source)),
     )
-    .await
-    .unwrap();
+    .await?;
     let _ = started_session(started);
     events_until(&mut updates, Until::Ready).await;
     let middle_body = codex_provider("conductor-test-middle");
@@ -3791,7 +3831,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
     let newest = queued_command(&conn, 2313, newest_body.clone());
     saved(&data, newest_body).await;
     assert_eq!(read(&server.join("runs.txt")), "1");
-    std::fs::write(server.join("go"), "").unwrap();
+    std::fs::write(server.join("go"), "")?;
     assert_eq!(codex_offer(finished_command(first).await), codex_gateway());
     assert_eq!(codex_offer(finished_command(middle).await), codex_gateway());
     assert_eq!(codex_offer(finished_command(newest).await), codex_gateway());
@@ -3824,14 +3864,15 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude() {
         }])
     );
     assert_eq!(read(&server.join("runs.txt")), "2");
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     desktop.close().await;
     fx.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
 async fn one_command_receipt_survives_new_transport_identities_and_a_host_restart()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let dir = scratch("receipt-transport", "claude-approve.jsonl");
     let data = data_dir("receipt-transport");
     let first =
@@ -3860,7 +3901,7 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     assert_ne!(restarted_phone.id(), phone.id());
     let conn = authenticated(&restarted_phone, &ticket).await;
     assert_eq!(retry_command(&conn, &command).await, receipt);
-    let history = second.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let history = second.log.subscribe(HostSeq(0)).await?.replay;
     assert_eq!(
         history
             .iter()
@@ -3874,6 +3915,7 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     assert_eq!(history.iter().find(|event| event.session != session), None);
     restarted_phone.close().await;
     second.shutdown().await;
+    Ok(())
 }
 
 fn checkpoint(events: &[Event], id: proto::CheckpointId) -> proto::Checkpoint {
@@ -3914,22 +3956,22 @@ fn diff_result(result: CommandResult) -> proto::CheckpointDiff {
 /// staging/checkpoint operations stay out of the source repository's index.
 #[tokio::test]
 async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_restart()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let source = scratch("workspace-undo", "claude-worktrees.jsonl");
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-worktrees-fork.jsonl"),
         source.join("stdout.2.jsonl"),
-    )
-    .unwrap();
-    std::fs::copy(source.join("stdout.2.jsonl"), source.join("stdout.3.jsonl"))
-        .unwrap();
-    std::fs::write(source.join("baseline.txt"), "source staged\n").unwrap();
+    )?;
+    std::fs::copy(
+        source.join("stdout.2.jsonl"),
+        source.join("stdout.3.jsonl"),
+    )?;
+    std::fs::write(source.join("baseline.txt"), "source staged\n")?;
     git(&source, &["add", "baseline.txt"]);
-    std::fs::write(source.join("baseline.txt"), "source unstaged\n").unwrap();
-    std::fs::write(source.join("source-only.txt"), "never enter a session\n")
-        .unwrap();
-    let index = std::fs::read(source.join(".git/index")).unwrap();
+    std::fs::write(source.join("baseline.txt"), "source unstaged\n")?;
+    std::fs::write(source.join("source-only.txt"), "never enter a session\n")?;
+    let index = std::fs::read(source.join(".git/index"))?;
     let staged = git(&source, &["diff", "--cached"]);
     let unstaged = git(&source, &["diff"]);
     let data = data_dir("workspace-undo");
@@ -3952,7 +3994,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     let worktree = PathBuf::from(&managed.worktree.0);
     assert_ne!(worktree, source);
     assert_eq!(
-        std::fs::read_to_string(worktree.join("baseline.txt")).unwrap(),
+        std::fs::read_to_string(worktree.join("baseline.txt"))?,
         "committed baseline\n"
     );
     assert_eq!(
@@ -4033,7 +4075,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     let _ = send(&phone, message(session, "turn three")).await;
     let third_turn = events_until(&mut updates, Until::TurnEnd).await;
     checkpoint(&third_turn, proto::CheckpointId(3));
-    assert_eq!(std::fs::read(source.join(".git/index")).unwrap(), index);
+    assert_eq!(std::fs::read(source.join(".git/index"))?, index);
     assert_eq!(git(&source, &["diff", "--cached"]), staged);
     assert_eq!(git(&source, &["diff"]), unstaged);
     assert_eq!(
@@ -4046,7 +4088,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     let other_turn = events_until(&mut updates, Until::TurnEnd).await;
     checkpoint(&other_turn, proto::CheckpointId(1));
     assert_eq!(
-        std::fs::read_to_string(other_path.join("after-undo.txt")).unwrap(),
+        std::fs::read_to_string(other_path.join("after-undo.txt"))?,
         "continued from retained prefix\n"
     );
     assert_eq!(
@@ -4113,7 +4155,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
         [reply("Retained turn one.")]
     );
     let runs = argv(&source);
-    let resumed = runs.last().unwrap();
+    let resumed = runs.last().ok_or("expected a value")?;
     assert_eq!(
         resumed
             .iter()
@@ -4130,51 +4172,52 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
             .cloned(),
         Some(String::from("--fork-session"))
     );
-    assert_eq!(std::fs::read(source.join(".git/index")).unwrap(), index);
+    assert_eq!(std::fs::read(source.join(".git/index"))?, index);
     restarted_retry_endpoint.close().await;
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     second.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn new_sessions_require_an_existing_repository_with_a_commit() {
+async fn new_sessions_require_an_existing_repository_with_a_commit()
+-> Result<(), Box<dyn std::error::Error>> {
     let host = host().await;
     let (phone, mut updates) = link(host.target.clone(), None).await;
     until_live(&mut updates).await;
     let plain = data_dir("not-a-repository");
     // Stop Git discovery at this fixture instead of finding the enclosing checkout.
-    std::fs::write(plain.join(".git"), "gitdir: no-such-git-directory\n")
-        .unwrap();
+    std::fs::write(plain.join(".git"), "gitdir: no-such-git-directory\n")?;
     assert_eq!(
         send(&phone, start(Provider::Claude, &plain)).await,
         CommandResult::Rejected(Rejection::NotGitRepository)
     );
-    std::fs::remove_file(plain.join(".git")).unwrap();
+    std::fs::remove_file(plain.join(".git"))?;
     git(&plain, &["init", "--quiet"]);
     assert_eq!(
         send(&phone, start(Provider::Claude, &plain)).await,
         CommandResult::Rejected(Rejection::NotGitRepository)
     );
-    phone.stop().await.unwrap();
-    host.router.shutdown().await.unwrap();
+    phone.stop().await?;
+    host.router.shutdown().await?;
+    Ok(())
 }
 
 /// Old persisted sessions have no workspace metadata. Continue still starts
 /// their CLI in the original directory, even when it is not a Git repository.
 #[tokio::test]
-async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
+async fn a_legacy_session_continues_in_its_original_directory_without_undo()
+-> Result<(), Box<dyn std::error::Error>> {
     let source = data_dir("legacy-session-source");
-    std::fs::write(source.join(".git"), "gitdir: no-such-git-directory\n")
-        .unwrap();
+    std::fs::write(source.join(".git"), "gitdir: no-such-git-directory\n")?;
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-worktrees-fork.jsonl"),
         source.join("stdout.jsonl"),
-    )
-    .unwrap();
+    )?;
     let data = data_dir("legacy-session-host");
     let path = data.join("conductor.redb");
-    let log = Log::open(String::from("test-host"), &path).unwrap();
+    let log = Log::open(String::from("test-host"), &path)?;
     let session = SessionId(1310);
     log.append(
         session,
@@ -4186,8 +4229,7 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
             effort: None,
         },
     )
-    .await
-    .unwrap();
+    .await?;
     log.append(
         session,
         EventKind::SessionClosed {
@@ -4196,9 +4238,8 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
             },
         },
     )
-    .await
-    .unwrap();
-    log.shutdown().await.unwrap();
+    .await?;
+    log.shutdown().await?;
     let host =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
     let (phone, mut updates) = link(host.target.clone(), None).await;
@@ -4229,18 +4270,19 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo() {
     let _ = send(&phone, message(session, "legacy directory")).await;
     events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
-        std::fs::read_to_string(source.join("after-undo.txt")).unwrap(),
+        std::fs::read_to_string(source.join("after-undo.txt"))?,
         "continued from retained prefix\n"
     );
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     host.shutdown().await;
+    Ok(())
 }
 
 /// A crash after durable undo intent/failure retains the original transcript
 /// and blocks normal commands until the same undo completes on retry.
 #[tokio::test]
 async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_retry()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let source = scratch("pending-undo", "claude-worktrees.jsonl");
     let data = data_dir("pending-undo");
     let first =
@@ -4273,7 +4315,7 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
         }),
         _ => None,
     }
-    .expect("a verified retained Claude transcript boundary");
+    .ok_or("expected a value")?;
     first
         .log
         .append(
@@ -4284,8 +4326,7 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
                 history,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     first
         .log
         .append(
@@ -4297,13 +4338,12 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
                 ),
             },
         )
-        .await
-        .unwrap();
+        .await?;
     first.shutdown().await;
     let second = durable_host(&data, address).await;
     phone.reconnect().await;
     until_live(&mut updates).await;
-    let replay = second.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let replay = second.log.subscribe(HostSeq(0)).await?.replay;
     let view = fold(replay);
     assert_eq!(
         view.sessions
@@ -4341,7 +4381,7 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
         CommandResult::Accepted
     );
     events_until(&mut updates, Until::Undone).await;
-    let after = fold(second.log.subscribe(HostSeq(0)).await.unwrap().replay);
+    let after = fold(second.log.subscribe(HostSeq(0)).await?.replay);
     assert_eq!(
         items(&after, session)
             .iter()
@@ -4356,8 +4396,9 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
             .map(|session| session.undo.clone()),
         Some(client::host_view::UndoState::Undone)
     );
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     second.shutdown().await;
+    Ok(())
 }
 
 fn undo_failure(result: CommandResult) -> String {
@@ -4372,7 +4413,7 @@ fn undo_failure(result: CommandResult) -> String {
 
 #[tokio::test]
 async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let source = scratch("actual-undo-failures", "claude-worktrees.jsonl");
     let data = data_dir("actual-undo-failures");
     let first =
@@ -4399,8 +4440,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-worktrees-fork-refused.jsonl"),
         source.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     let undo = CommandBody::UndoTurn {
         session,
         checkpoint: selected.id,
@@ -4419,9 +4459,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         None
     );
     assert_ne!(
-        std::fs::read_to_string(worktree.join("changed.txt"))
-            .unwrap()
-            .find("turn two"),
+        std::fs::read_to_string(worktree.join("changed.txt"))?.find("turn two"),
         None
     );
     assert_eq!(
@@ -4432,7 +4470,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         git(&worktree, &["rev-parse", "--absolute-git-dir"]).trim(),
     );
     let lock = git_dir.join("index.lock");
-    std::fs::write(&lock, "owned test lock\n").unwrap();
+    std::fs::write(&lock, "owned test lock\n")?;
     assert_ne!(
         undo_failure(send(&phone, undo.clone()).await).find("index.lock"),
         None
@@ -4466,7 +4504,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         send(&phone, message(session, "blocked after restart")).await,
         CommandResult::Rejected(Rejection::UndoInProgress)
     );
-    std::fs::remove_file(&lock).unwrap();
+    std::fs::remove_file(&lock)?;
     assert_eq!(send(&phone, undo).await, CommandResult::Accepted);
     let recovered = events_until(&mut updates, Until::Undone).await;
     assert_eq!(
@@ -4477,7 +4515,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         None
     );
     assert_restored_files(&worktree);
-    let restored = fold(second.log.subscribe(HostSeq(0)).await.unwrap().replay);
+    let restored = fold(second.log.subscribe(HostSeq(0)).await?.replay);
     assert_eq!(
         items(&restored, session)
             .iter()
@@ -4499,8 +4537,9 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
             .collect::<Vec<EventKind>>(),
         [reply("Retained turn one.")]
     );
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     second.shutdown().await;
+    Ok(())
 }
 
 async fn drive_materialization(path: &Path) -> std::io::Result<()> {
@@ -4522,7 +4561,7 @@ async fn drive_materialization(path: &Path) -> std::io::Result<()> {
 /// older prefix again and silently discarding the newly persisted input.
 #[tokio::test]
 async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
-{
+-> Result<(), Box<dyn std::error::Error>> {
     let source = scratch("materialized-fork-crash", "claude-worktrees.jsonl");
     let data = data_dir("materialized-fork-crash");
     let first =
@@ -4543,8 +4582,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-worktrees-fork-held.jsonl"),
         source.join("stdout.2.jsonl"),
-    )
-    .unwrap();
+    )?;
     assert_eq!(
         send(
             &phone,
@@ -4557,7 +4595,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
         CommandResult::Accepted
     );
     let undone = events_until(&mut updates, Until::Undone).await;
-    let after_undo = undone.last().unwrap().seq;
+    let after_undo = undone.last().ok_or("expected a value")?.seq;
     let target = undone
         .iter()
         .find_map(|event| match &event.kind {
@@ -4567,7 +4605,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
             } => Some(target.clone()),
             _ => None,
         })
-        .expect("the durable lazy fork target");
+        .ok_or("expected a value")?;
     assert_eq!(
         send(&phone, message(session, "first post undo input")).await,
         CommandResult::Accepted
@@ -4576,14 +4614,11 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
         STEP,
         drive_materialization(&source.join("fork-materialized")),
     )
-    .await
-    .unwrap()
-    .unwrap();
+    .await??;
     let native_transcript =
-        std::fs::read_to_string(source.join(".fake-sessions").join(&target))
-            .unwrap();
+        std::fs::read_to_string(source.join(".fake-sessions").join(&target))?;
     assert_ne!(native_transcript.find("first post undo input"), None);
-    let unnotified = first.log.subscribe(after_undo).await.unwrap().replay;
+    let unnotified = first.log.subscribe(after_undo).await?.replay;
     assert_eq!(
         unnotified.iter().find(|event| matches!(
             event.kind,
@@ -4597,7 +4632,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
     let second = durable_host(&data, address).await;
     phone.reconnect().await;
     until_live(&mut updates).await;
-    let recovery = second.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let recovery = second.log.subscribe(HostSeq(0)).await?.replay;
     let unknown = checkpoint(&recovery, proto::CheckpointId(3));
     assert_eq!(unknown.history, proto::HistoryAnchor::Unknown);
     assert_ne!(
@@ -4631,8 +4666,11 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
     );
     events_until(&mut updates, Until::Ready).await;
     let runs = argv(&source);
-    assert_eq!(runs.len(), before_runs.checked_add(1).unwrap());
-    let resumed = runs.last().unwrap();
+    assert_eq!(
+        runs.len(),
+        before_runs.checked_add(1).ok_or("expected a value")?
+    );
+    let resumed = runs.last().ok_or("expected a value")?;
     assert_eq!(
         resumed
             .iter()
@@ -4644,7 +4682,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
         resumed.iter().find(|arg| arg.as_str() == "--fork-session"),
         None
     );
-    std::fs::write(source.join("fork-release"), "").unwrap();
+    std::fs::write(source.join("fork-release"), "")?;
     let _ = send(&phone, message(session, "continue existing target")).await;
     let after = events_until(&mut updates, Until::TurnEnd).await;
     assert_eq!(
@@ -4654,12 +4692,14 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
             message: Some(String::from("00000000-0000-4000-8000-000000000204"))
         }
     );
-    phone.stop().await.unwrap();
+    phone.stop().await?;
     second.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
+async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
+-> Result<(), Box<dyn std::error::Error>> {
     let source = scratch("snapshot-retry", "claude-worktrees.jsonl");
     let host = host().await;
     let (phone, mut updates) = link(host.target.clone(), None).await;
@@ -4690,7 +4730,7 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
             .count(),
         1
     );
-    let before = host.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let before = host.log.subscribe(HostSeq(0)).await?.replay;
     let users = before
         .iter()
         .filter(|event| matches!(event.kind, EventKind::UserMessage { .. }))
@@ -4704,7 +4744,7 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
         )),
         None
     );
-    let still = host.log.subscribe(HostSeq(0)).await.unwrap().replay;
+    let still = host.log.subscribe(HostSeq(0)).await?.replay;
     assert_eq!(
         still
             .iter()
@@ -4735,8 +4775,8 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
         })
         .collect::<Vec<proto::Checkpoint>>();
     assert_eq!(checkpoints.len(), 2);
-    let recovered = checkpoints.first().unwrap();
-    let latest = checkpoints.last().unwrap();
+    let recovered = checkpoints.first().ok_or("expected a value")?;
+    let latest = checkpoints.last().ok_or("expected a value")?;
     assert_eq!(recovered.parent, Some(retained.id));
     assert_eq!(latest.parent, Some(recovered.id));
     assert_eq!(recovered.id.cmp(&proto::CheckpointId(2)), Ordering::Greater);
@@ -4757,8 +4797,9 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message() {
             .collect::<Vec<String>>(),
         ["changed.txt", "later.txt"]
     );
-    phone.stop().await.unwrap();
-    host.router.shutdown().await.unwrap();
+    phone.stop().await?;
+    host.router.shutdown().await?;
+    Ok(())
 }
 
 fn assert_restored_files(worktree: &Path) {
@@ -4890,7 +4931,7 @@ fn hold_first_turn(dir: &Path) {
 /// message (`apply_flag_settings`, then the message), not during the turn.
 #[tokio::test]
 async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_turn()
- {
+-> Result<(), Box<dyn std::error::Error>> {
     let fx = host().await;
     let dir = scratch("checklist", "claude-checklist-effort.jsonl");
     hold_first_turn(&dir);
@@ -4906,7 +4947,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
         send(&phone, set_effort(session, Effort::Low)).await,
     ];
     let before = written_to_claude(&dir);
-    std::fs::write(dir.join("release"), "").unwrap();
+    std::fs::write(dir.join("release"), "")?;
     let turn = legacy_events_until(&mut updates, Until::TurnEnd).await;
     let lists = task_lists(&turn);
     assert_eq!(
@@ -4970,14 +5011,16 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             .map(|view| (view.effort, view.tasks.clone())),
         Some((Some(Effort::Low), lists.last().cloned().unwrap_or_default()))
     );
-    phone.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    phone.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// A Codex turn's plan updates become the session's tasks as Claude's
 /// checklist does, and a new effort rides on the next `turn/start`.
 #[tokio::test]
-async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn() {
+async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
+-> Result<(), Box<dyn std::error::Error>> {
     let (fx, dir) = codex_host("codex-plan-effort.jsonl").await;
     let (phone, mut updates) = link(fx.target.clone(), None).await;
     until_live(&mut updates).await;
@@ -5024,19 +5067,20 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn() {
             Vec::from([None, Some(serde_json::Value::from("high"))]),
         )
     );
-    phone.stop().await.unwrap();
-    fx.router.shutdown().await.unwrap();
+    phone.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
 }
 
 /// A host restart keeps the session's tasks and its effort: `Continue`
 /// starts the CLI at that effort, and the agent's next checklist keeps the
 /// tasks' ids.
 #[tokio::test]
-async fn tasks_and_effort_survive_a_host_restart() {
+async fn tasks_and_effort_survive_a_host_restart()
+-> Result<(), Box<dyn std::error::Error>> {
     let dir = scratch("tasks-restart", "claude-checklist-effort.jsonl");
     let data = data_dir("tasks-restart");
-    std::fs::copy(dir.join("stdout.jsonl"), dir.join("stdout.2.jsonl"))
-        .unwrap();
+    std::fs::copy(dir.join("stdout.jsonl"), dir.join("stdout.2.jsonl"))?;
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await;
     let address = first.address();
@@ -5095,7 +5139,8 @@ async fn tasks_and_effort_survive_a_host_restart() {
             )),
         )
     );
-    late.stop().await.unwrap();
-    phone.stop().await.unwrap();
+    late.stop().await?;
+    phone.stop().await?;
     second.shutdown().await;
+    Ok(())
 }

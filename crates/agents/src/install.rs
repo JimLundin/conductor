@@ -29,6 +29,7 @@ pub enum Cli {
 }
 
 impl Cli {
+    #[must_use]
     pub const fn name(&self) -> &str {
         match self {
             Self::Claude => "claude",
@@ -425,14 +426,14 @@ mod tests {
     }
 
     #[test]
-    fn claude_pin_is_recorded_and_supported() {
+    fn claude_pin_is_recorded_and_supported()
+    -> Result<(), Box<dyn std::error::Error>> {
         let version = String::from(pins::CLAUDE_VERSION);
         let versions =
             recorded("claude", "/response/response/claude_code_version");
         let initialize = serde_json::from_str(&format!(
             "{{\"claude_code_version\": \"{version}\"}}"
-        ))
-        .unwrap();
+        ))?;
         assert_eq!(
             versions.get(&version),
             Some(&version),
@@ -443,6 +444,7 @@ mod tests {
             Ok(()),
             "the pinned claude is outside SUPPORTED_VERSIONS"
         );
+        Ok(())
     }
 
     #[test]
@@ -514,13 +516,14 @@ mod tests {
     /// Two processes starting on one data dir: the second waits for the
     /// first's install and finds it, and an older version is removed.
     #[tokio::test]
-    async fn two_installs_at_once_both_end_with_the_verified_binary() {
+    async fn two_installs_at_once_both_end_with_the_verified_binary()
+    -> Result<(), Box<dyn std::error::Error>> {
         let parent = std::env::temp_dir()
             .join(format!("conductor-install-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&parent);
-        std::fs::create_dir_all(parent.join("0.9.0")).unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/tool", listener.local_addr().unwrap());
+        std::fs::create_dir_all(parent.join("0.9.0"))?;
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}/tool", listener.local_addr()?);
         tokio::spawn(serve(listener));
         let (first, second) = n0_future::future::zip(
             put("tool", test_pin(&url), &parent),
@@ -528,10 +531,15 @@ mod tests {
         )
         .await;
         let binary = parent.join("1.0.0/tool");
-        let left = std::fs::read_dir(&parent)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect::<BTreeSet<String>>();
+        let left = std::fs::read_dir(&parent)?
+            .map(|entry| {
+                Ok(entry?
+                    .file_name()
+                    .into_string()
+                    .map_err(|name| format!("{name:?}"))?)
+            })
+            .collect::<Result<BTreeSet<String>, Box<dyn std::error::Error>>>(
+            )?;
         assert_eq!(
             (
                 first.map_err(|error| error.to_string()),
@@ -548,5 +556,6 @@ mod tests {
             BTreeSet::from([String::from("1.0.0"), String::from("lock")])
         );
         let _ = std::fs::remove_dir_all(&parent);
+        Ok(())
     }
 }

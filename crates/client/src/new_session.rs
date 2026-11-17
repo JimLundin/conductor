@@ -6,6 +6,7 @@ use proto::{
 
 pub const PROVIDERS: &[Provider] = &[Provider::Claude, Provider::Codex];
 
+#[must_use]
 pub fn label(provider: Provider) -> String {
     String::from(match provider {
         Provider::Claude => "Claude Code",
@@ -25,6 +26,7 @@ pub enum ProviderNote {
 }
 
 /// `availability` is `None` until the host has said.
+#[must_use]
 pub fn note(
     provider: Provider,
     availability: Option<&Availability>,
@@ -44,6 +46,7 @@ pub fn note(
 
 /// What the host offers for a provider. Nothing until it has said, or
 /// when it can't run the provider.
+#[must_use]
 pub fn models(availability: Option<&Availability>) -> Models {
     match availability {
         Some(Availability::Available { models, .. }) => models.clone(),
@@ -52,6 +55,7 @@ pub fn models(availability: Option<&Availability>) -> Models {
 }
 
 /// The label of the model picker's first entry, which sends no model.
+#[must_use]
 pub fn default_label(models: &Models) -> String {
     match &models.default {
         Some(id) => format!("Default ({})", model_name(models, id)),
@@ -60,6 +64,7 @@ pub fn default_label(models: &Models) -> String {
 }
 
 /// The efforts `model` takes (`None`: the default model), lowest first.
+#[must_use]
 pub fn efforts(models: &Models, model: Option<&ModelId>) -> Vec<Effort> {
     model
         .or(models.default.as_ref())
@@ -69,6 +74,7 @@ pub fn efforts(models: &Models, model: Option<&ModelId>) -> Vec<Effort> {
 
 /// The effort to keep when the model changes to `model`: `effort` if the
 /// model takes it, else the model's default.
+#[must_use]
 pub fn kept_effort(
     models: &Models,
     model: Option<&ModelId>,
@@ -102,6 +108,7 @@ pub enum Refusal {
 
 impl Attempt {
     /// The host's answer to `StartSession`, or the reason it never arrived.
+    #[must_use]
     pub fn answered(answer: Result<CommandResult, String>) -> Self {
         match answer {
             Ok(

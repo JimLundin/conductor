@@ -379,11 +379,12 @@ async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
 }
 
 #[tokio::test]
-async fn approve_decline_interrupt_and_two_threads() {
+async fn approve_decline_interrupt_and_two_threads()
+-> Result<(), Box<dyn std::error::Error>> {
     let rec = spawn("server1.jsonl").await;
     let server = rec.server.clone();
     assert_eq!(server.codex_version(), Some("0.166.0"));
-    let models = server.list_models().await.unwrap();
+    let models = server.list_models().await?;
     assert_eq!(
         models.choices.iter().find_map(|m| match m.id.0.as_str() {
             "gpt-6-luna" => Some(m.id.0.as_str()),
@@ -392,7 +393,7 @@ async fn approve_decline_interrupt_and_two_threads() {
         Some("gpt-6-luna")
     );
 
-    let a = server.start_thread(opts()).await.unwrap();
+    let a = server.start_thread(opts()).await?;
     let rec = turn(rec, &a, "a.txt", Decision::Accept, Interrupt::Never).await;
     let rec = turn(rec, &a, "b.txt", Decision::Decline, Interrupt::Never).await;
     let rec = turn(
@@ -405,14 +406,13 @@ async fn approve_decline_interrupt_and_two_threads() {
     .await;
     let rec = turn(rec, &a, "pong", Decision::Decline, Interrupt::Never).await;
 
-    let b = server.start_thread(opts()).await.unwrap();
-    let c = server.start_thread(opts()).await.unwrap();
+    let b = server.start_thread(opts()).await?;
+    let c = server.start_thread(opts()).await?;
     let (tb, tc) = n0_future::future::try_zip(
         b.send_turn(String::from("alpha"), None),
         c.send_turn(String::from("bravo"), None),
     )
-    .await
-    .unwrap();
+    .await?;
     let rec = Recorder {
         open: HashMap::from([(b.id.clone(), tb), (c.id.clone(), tc)]),
         ..rec
@@ -424,10 +424,7 @@ async fn approve_decline_interrupt_and_two_threads() {
         .then(|id| answer_again(&server, id))
         .collect::<Vec<String>>()
         .await;
-    assert_eq!(
-        server.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
 
     assert_eq!(
@@ -504,17 +501,17 @@ async fn approve_decline_interrupt_and_two_threads() {
             ("thread/tokenUsage/updated".to_owned(), 9),
         ])
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn resume_in_a_new_process() {
+async fn resume_in_a_new_process() -> Result<(), Box<dyn std::error::Error>> {
     let rec = spawn("server2-resume.jsonl").await;
     let server = rec.server.clone();
     let a = ThreadId(
-        first_thread_id(&fixture("server1.jsonl"))
-            .expect("server1 started a thread"),
+        first_thread_id(&fixture("server1.jsonl")).ok_or("expected a value")?,
     );
-    let resumed = server.resume_thread(a.clone(), opts()).await.unwrap();
+    let resumed = server.resume_thread(a.clone(), opts()).await?;
     assert_eq!(resumed.id, a);
     let rec = turn(
         rec,
@@ -528,10 +525,7 @@ async fn resume_in_a_new_process() {
         .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
         .await
         .map_err(|e| e.to_string());
-    assert_eq!(
-        server.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
 
     assert_eq!(
@@ -546,16 +540,18 @@ async fn resume_in_a_new_process() {
         ]
     );
     assert_eq!(bogus, Err("no open approval with id never-sent".to_owned()));
+    Ok(())
 }
 
 /// `s2` steps 10 and 11: a thread started with a chosen effort, which Codex
 /// reports back, and a turn that reasons. The recording goes on to the turn
 /// `s2` killed, which waits here for a `turn/start` nobody sends.
 #[tokio::test]
-async fn chosen_effort_and_reasoning() {
+async fn chosen_effort_and_reasoning() -> Result<(), Box<dyn std::error::Error>>
+{
     let rec = spawn("server4-chosen-killed.jsonl").await;
     let server = rec.server.clone();
-    let a = server.start_thread(opts()).await.unwrap();
+    let a = server.start_thread(opts()).await?;
     let rec = turn(
         rec,
         &a,
@@ -564,10 +560,7 @@ async fn chosen_effort_and_reasoning() {
         Interrupt::Never,
     )
     .await;
-    assert_eq!(
-        server.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
     let deltas = rec
         .seen
@@ -601,20 +594,21 @@ async fn chosen_effort_and_reasoning() {
             ])
         )
     );
+    Ok(())
 }
 
 /// `s2` steps 14 and 15: three plan updates, each the whole plan, and a
 /// turn started at `high`, which Codex reports as the thread's effort.
 #[tokio::test]
-async fn plan_and_effort_changed_with_the_turn() {
+async fn plan_and_effort_changed_with_the_turn()
+-> Result<(), Box<dyn std::error::Error>> {
     let rec = spawn("server8-plan-effort.jsonl").await;
     let server = rec.server.clone();
-    let a = server.start_thread(opts()).await.unwrap();
+    let a = server.start_thread(opts()).await?;
     let rec = turn(rec, &a, "plan", Decision::Decline, Interrupt::Never).await;
     let high = a
         .send_turn(String::from("pong"), Some(Effort::High))
-        .await
-        .unwrap();
+        .await?;
     let rec = rec
         .until(
             Goal::Turn {
@@ -625,10 +619,7 @@ async fn plan_and_effort_changed_with_the_turn() {
             Interrupt::Never,
         )
         .await;
-    assert_eq!(
-        server.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
     let plan = |first| {
         format!(
@@ -638,10 +629,11 @@ async fn plan_and_effort_changed_with_the_turn() {
     let started = std::fs::read_to_string(
         fake_codex_dir(&fixture("server8-plan-effort.jsonl"))
             .join("stdin.jsonl"),
-    )
-    .unwrap()
+    )?
     .lines()
-    .map(|line| serde_json::from_str::<Value>(line).unwrap())
+    .map(serde_json::from_str::<Value>)
+    .collect::<Result<Vec<Value>, _>>()?
+    .into_iter()
     .filter(|request| request.get("method") == Some(&Value::from("turn/start")))
     .map(|request| request.pointer("/params/effort").cloned())
     .collect::<Vec<Option<Value>>>();
@@ -670,16 +662,18 @@ async fn plan_and_effort_changed_with_the_turn() {
             ])
         )
     );
+    Ok(())
 }
 
 /// `s2` steps 7 to 9. The recording holds the question's
 /// `serverRequest/resolved` until our answer, so a change to the question's
 /// shape in a later pin fails here, as does a lost feature `warning`.
 #[tokio::test]
-async fn questions_and_accept_for_session() {
+async fn questions_and_accept_for_session()
+-> Result<(), Box<dyn std::error::Error>> {
     let rec = spawn("server3-questions.jsonl").await;
     let server = rec.server.clone();
-    let a = server.start_thread(opts()).await.unwrap();
+    let a = server.start_thread(opts()).await?;
     let blue =
         Decision::Answer(Vec::from([Answer(Vec::from([String::from(
             "Blue",
@@ -702,10 +696,7 @@ async fn questions_and_accept_for_session() {
         Interrupt::OnRequest,
     )
     .await;
-    assert_eq!(
-        server.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
+    assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
     let rec = rec.until(Goal::Exit, Interrupt::Never).await;
     assert_eq!(
         rec.seen,
@@ -737,6 +728,7 @@ async fn questions_and_accept_for_session() {
         ]
     );
     assert_eq!(rec.unknown.get("warning"), Some(&1));
+    Ok(())
 }
 
 fn first_thread_id(fixture: &Path) -> Option<String> {
@@ -772,45 +764,60 @@ fn refusal_options(name: &str, recording: &str) -> ServerOptions {
 }
 
 #[tokio::test]
-async fn initialize_exit_reports_last_nonempty_stderr_line() {
+async fn initialize_exit_reports_last_nonempty_stderr_line()
+-> Result<(), Box<dyn std::error::Error>> {
     let options = refusal_options(
         "initialize-stderr",
         r#"{"fake":"fail","stderr":"loading config\ninvalid provider configuration\n\n","status":1}"#,
     );
     let cwd = options.cwd.clone();
-    let error = CodexServer::spawn(options).await.err().unwrap();
+    let error = CodexServer::spawn(options)
+        .await
+        .err()
+        .ok_or("expected a value")?;
     assert_eq!(
         error.to_string(),
         "the codex app-server has exited: invalid provider configuration"
     );
-    std::fs::remove_dir_all(cwd).unwrap();
+    std::fs::remove_dir_all(cwd)?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn initialize_exit_without_stderr_keeps_exit_error() {
+async fn initialize_exit_without_stderr_keeps_exit_error()
+-> Result<(), Box<dyn std::error::Error>> {
     let options = refusal_options(
         "initialize-empty",
         r#"{"fake":"fail","stderr":"","status":1}"#,
     );
     let cwd = options.cwd.clone();
-    let error = CodexServer::spawn(options).await.err().unwrap();
+    let error = CodexServer::spawn(options)
+        .await
+        .err()
+        .ok_or("expected a value")?;
     assert_eq!(error.to_string(), "the codex app-server has exited");
-    std::fs::remove_dir_all(cwd).unwrap();
+    std::fs::remove_dir_all(cwd)?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn initialize_rejection_reports_json_rpc_message() {
+async fn initialize_rejection_reports_json_rpc_message()
+-> Result<(), Box<dyn std::error::Error>> {
     let options = refusal_options(
         "initialize-rpc",
         r#"{"id":1,"error":{"code":-32600,"message":"unsupported initialize request"}}"#,
     );
     let cwd = options.cwd.clone();
-    let error = CodexServer::spawn(options).await.err().unwrap();
+    let error = CodexServer::spawn(options)
+        .await
+        .err()
+        .ok_or("expected a value")?;
     assert_eq!(
         error.to_string(),
         "codex rejected initialize: unsupported initialize request"
     );
-    std::fs::remove_dir_all(cwd).unwrap();
+    std::fs::remove_dir_all(cwd)?;
+    Ok(())
 }
 
 async fn thread_refusal(method: &str, failure: &str, expected: &str) {
@@ -910,7 +917,8 @@ async fn revert_fixture(name: &str, outcome: &str) -> RevertFixture {
 }
 
 #[tokio::test]
-async fn revert_targets_native_turn_and_keeps_thread_usable() {
+async fn revert_targets_native_turn_and_keeps_thread_usable()
+-> Result<(), Box<dyn std::error::Error>> {
     let live = revert_fixture(
         "revert-ok",
         r#"{"id":5,"result":{"thread":{"id":"th_undo","turns":[]}}}"#,
@@ -918,38 +926,36 @@ async fn revert_targets_native_turn_and_keeps_thread_usable() {
     .await;
     live.thread
         .revert(TurnId(String::from("tu_discard")))
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         live.thread
             .send_turn(String::from("after undo"), None)
-            .await
-            .unwrap(),
+            .await?,
         TurnId(String::from("tu_after"))
     );
-    let _ = live.server.shutdown().await.unwrap();
-    let sent = std::fs::read_to_string(live.cwd.join("stdin.jsonl"))
-        .unwrap()
+    let _ = live.server.shutdown().await?;
+    let sent = std::fs::read_to_string(live.cwd.join("stdin.jsonl"))?
         .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<Value>, _>>()?
+        .into_iter()
         .find(|line| {
             line.get("method").and_then(Value::as_str) == Some("thread/revert")
         })
-        .unwrap();
+        .ok_or("expected a value")?;
     assert_eq!(
         sent.get("params"),
-        Some(
-            &serde_json::from_str::<Value>(
-                r#"{"threadId":"th_undo","beforeTurnId":"tu_discard"}"#
-            )
-            .unwrap()
-        )
+        Some(&serde_json::from_str::<Value>(
+            r#"{"threadId":"th_undo","beforeTurnId":"tu_discard"}"#
+        )?)
     );
-    std::fs::remove_dir_all(live.cwd).unwrap();
+    std::fs::remove_dir_all(live.cwd)?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn revert_refusal_preserves_reason_and_does_not_close_thread() {
+async fn revert_refusal_preserves_reason_and_does_not_close_thread()
+-> Result<(), Box<dyn std::error::Error>> {
     let live = revert_fixture(
         "revert-refused",
         r#"{"id":5,"error":{"code":-32600,"message":"cannot revert an active turn"}}"#,
@@ -967,12 +973,12 @@ async fn revert_refusal_preserves_reason_and_does_not_close_thread() {
     assert_eq!(
         live.thread
             .send_turn(String::from("after refusal"), None)
-            .await
-            .unwrap(),
+            .await?,
         TurnId(String::from("tu_after"))
     );
-    let _ = live.server.shutdown().await.unwrap();
-    std::fs::remove_dir_all(live.cwd).unwrap();
+    let _ = live.server.shutdown().await?;
+    std::fs::remove_dir_all(live.cwd)?;
+    Ok(())
 }
 
 async fn history_fixture(name: &str, pages: &str) -> RevertFixture {
@@ -992,7 +998,8 @@ async fn history_fixture(name: &str, pages: &str) -> RevertFixture {
 }
 
 #[tokio::test]
-async fn history_reads_every_page_in_chronological_order() {
+async fn history_reads_every_page_in_chronological_order()
+-> Result<(), Box<dyn std::error::Error>> {
     let live = history_fixture(
         "history-pages",
         r#"{"id":3,"result":{"data":[{"id":"first"},{"id":"second"}],"nextCursor":"after-second"}}
@@ -1000,33 +1007,43 @@ async fn history_reads_every_page_in_chronological_order() {
     )
     .await;
     assert_eq!(
-        live.thread.history_turns().await.unwrap(),
+        live.thread.history_turns().await?,
         Vec::from([
             TurnId(String::from("first")),
             TurnId(String::from("second")),
             TurnId(String::from("third"))
         ])
     );
-    let _ = live.server.shutdown().await.unwrap();
-    let requests = std::fs::read_to_string(live.cwd.join("stdin.jsonl"))
-        .unwrap()
+    let _ = live.server.shutdown().await?;
+    let requests = std::fs::read_to_string(live.cwd.join("stdin.jsonl"))?
         .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<Value>, _>>()?
+        .into_iter()
         .filter(|line| {
             line.get("method").and_then(Value::as_str)
                 == Some("thread/turns/list")
         })
-        .map(|line| line.get("params").cloned().unwrap())
+        .filter_map(|line| line.get("params").cloned())
         .collect::<Vec<Value>>();
-    assert_eq!(requests, Vec::from([
-        serde_json::from_str::<Value>(r#"{"threadId":"th_history","limit":100,"sortDirection":"asc"}"#).unwrap(),
-        serde_json::from_str::<Value>(r#"{"threadId":"th_history","cursor":"after-second","limit":100,"sortDirection":"asc"}"#).unwrap(),
-    ]));
-    std::fs::remove_dir_all(live.cwd).unwrap();
+    assert_eq!(
+        requests,
+        Vec::from([
+            serde_json::from_str::<Value>(
+                r#"{"threadId":"th_history","limit":100,"sortDirection":"asc"}"#
+            )?,
+            serde_json::from_str::<Value>(
+                r#"{"threadId":"th_history","cursor":"after-second","limit":100,"sortDirection":"asc"}"#
+            )?,
+        ])
+    );
+    std::fs::remove_dir_all(live.cwd)?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn endless_history_cursor_fails_instead_of_returning_partial_prefix() {
+async fn endless_history_cursor_fails_instead_of_returning_partial_prefix()
+-> Result<(), Box<dyn std::error::Error>> {
     let pages = std::ops::RangeInclusive::new(3,102).map(|id|format!("{{\"id\":{id},\"result\":{{\"data\":[{{\"id\":\"partial\"}}],\"nextCursor\":\"endless\"}}}}"))
         .collect::<Vec<String>>().join("\n");
     let live = history_fixture("history-bound", &pages).await;
@@ -1034,13 +1051,13 @@ async fn endless_history_cursor_fails_instead_of_returning_partial_prefix() {
         Duration::from_secs(20),
         live.thread.history_turns(),
     )
-    .await
-    .unwrap()
+    .await?
     .unwrap_err();
     assert_eq!(
         error.to_string(),
         "codex history exceeded 100 pages; refusing an incomplete undo check"
     );
-    let _ = live.server.shutdown().await.unwrap();
-    std::fs::remove_dir_all(live.cwd).unwrap();
+    let _ = live.server.shutdown().await?;
+    std::fs::remove_dir_all(live.cwd)?;
+    Ok(())
 }

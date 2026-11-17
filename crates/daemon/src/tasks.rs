@@ -9,7 +9,7 @@ use proto::{SessionId, Task, TaskId};
 /// step took; failing that, when the list kept its length, of the task at
 /// its position, unless a step took that one by its text; otherwise it is
 /// a new task. A task no step keeps is dropped.
-pub(crate) fn synced(
+pub fn synced(
     held: &[Task],
     steps: Vec<PlanStep>,
     holder: SessionId,
