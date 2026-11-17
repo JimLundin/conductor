@@ -1,5 +1,22 @@
 //! One session: its header, transcript and composer.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "rsx! caches each template in a OnceLock static"
+)]
+#![expect(
+    clippy::empty_enums,
+    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
+)]
+#![expect(
+    clippy::shadow_reuse,
+    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
+)]
+#![expect(
+    clippy::useless_format,
+    reason = "rsx! expands each \"{text}\" node to format!"
+)]
+
 use client::answers::Draft;
 use client::host_view::{
     self, Approval, Interrupt, Item, ReplyState, RequestState, Resume,
@@ -42,11 +59,7 @@ pub(crate) fn SessionPane(
         .as_ref()
         .map_or_else(|| String::from("default model"), |model| model.0.clone());
     let offered = efforts(
-        &models(
-            providers
-                .as_ref()
-                .map(|providers| providers.of(session.provider)),
-        ),
+        &models(providers.as_ref().map(|known| known.of(session.provider))),
         session.model.as_ref(),
     );
     let checkpoints = session.checkpoints.clone();
@@ -80,8 +93,9 @@ pub(crate) fn SessionPane(
                     Interrupt::Hidden => rsx! {},
                 }
             }
-            match session.workspace.as_ref() {
-                Some(workspace) => rsx! {
+            {session.workspace.as_ref().map_or_else(
+                || rsx! { p { class: "workspace-context", "This session has no worktree checkpoints." } },
+                |workspace| rsx! {
                     div { class: "workspace-context",
                         span { class: "workspace-branch", "Branch: {workspace.branch}" }
                         details { class: "workspace-directory",
@@ -90,8 +104,7 @@ pub(crate) fn SessionPane(
                         }
                     }
                 },
-                None => rsx! { p { class: "workspace-context", "This session has no worktree checkpoints." } },
-            }
+            )}
             match undo.clone() {
                 UndoState::Undoing(_) => rsx! { p { class: "undo-status", role: "status", "Undoing this turn and all later file and conversation changes…" } },
                 UndoState::Failed { checkpoint, reason } => rsx! {
@@ -106,10 +119,7 @@ pub(crate) fn SessionPane(
             Tasks { tasks: session.tasks.clone() }
             div { class: "transcript",
                 div { class: "items", role: "log",
-                    match empty {
-                        Some(text) => rsx! { p { class: "transcript-empty", "{text}" } },
-                        None => rsx! {},
-                    }
+                    {empty.map_or_else(|| rsx! {}, |text| rsx! { p { class: "transcript-empty", "{text}" } })}
                     for (i, item) in session.items.into_iter().enumerate() {
                         TranscriptItem { key: "{i}", item,
                             on_decide: move |(request, decision)| {
@@ -130,12 +140,9 @@ pub(crate) fn SessionPane(
                 }
             }
             div { class: "notices", role: "alert",
-                match notice() {
-                    Some(text) => rsx! {
-                        button { class: "notice", onclick: move |_| notice.set(None), "{text}" }
-                    },
-                    None => rsx! {},
-                }
+                {notice().map_or_else(|| rsx! {}, |text| rsx! {
+                    button { class: "notice", onclick: move |_| notice.set(None), "{text}" }
+                })}
             }
             match session.status {
                 SessionStatus::Closed(reason) => rsx! {
@@ -180,8 +187,8 @@ fn EffortPicker(
     notice: Signal<Option<String>>,
 ) -> Element {
     match (efforts.first(), effort) {
-        (None, Some(effort)) => rsx! {
-            span { class: "runs-with", "{effort.wire()} effort" }
+        (None, Some(current)) => rsx! {
+            span { class: "runs-with", "{current.wire()} effort" }
         },
         (None, None) => rsx! {},
         (Some(_), _) => rsx! {
@@ -234,9 +241,8 @@ fn set_effort(
             notice.set(Some(reason));
             document::eval(&format!(
                 "document.querySelector('select.effort-pick').value = '{}'",
-                shown.map_or_else(String::new, |shown| String::from(
-                    shown.wire()
-                ))
+                shown
+                    .map_or_else(String::new, |kept| String::from(kept.wire()))
             ));
         }
     });
@@ -288,8 +294,8 @@ fn status_label(status: TaskStatus) -> String {
     })
 }
 
-fn closed(reason: &CloseReason) -> String {
-    match reason {
+fn closed(close: &CloseReason) -> String {
+    match close {
         CloseReason::FailedToStart { message } => {
             format!("The agent did not start: {message}")
         }
@@ -341,11 +347,11 @@ fn TranscriptItem(
         },
         Item::Tool {
             tool,
-            state,
+            state: tool_state,
             approval,
             ..
         } => {
-            let state = match state {
+            let state = match tool_state {
                 ToolState::Running => "running",
                 ToolState::Finished(ToolOutcome::Succeeded) => "succeeded",
                 ToolState::Finished(ToolOutcome::Failed) => "failed",
@@ -377,15 +383,12 @@ fn TranscriptItem(
                                         button { class: "deny", onclick: move |_| decide_and_focus(on_decide, request, Decision::Deny), "Deny" }
                                         button { class: "approve", onclick: move |_| decide_and_focus(on_decide, request, Decision::Approve), "Approve" }
                                     }
-                                    match for_session {
-                                        Some(allows) => rsx! {
-                                            button { class: "for-session", onclick: move |_| decide_and_focus(on_decide, request, Decision::ApproveForSession),
-                                                span { class: "for-session-title", "Allow for this session" }
-                                                span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
-                                            }
-                                        },
-                                        None => rsx! {},
-                                    }
+                                    {for_session.map_or_else(|| rsx! {}, |allows| rsx! {
+                                        button { class: "for-session", onclick: move |_| decide_and_focus(on_decide, request, Decision::ApproveForSession),
+                                            span { class: "for-session-title", "Allow for this session" }
+                                            span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
+                                        }
+                                    })}
                                 },
                                 RequestState::Resolved(resolution) => rsx! {
                                     ToolLine { tool, state }
@@ -487,16 +490,13 @@ fn Answered(questions: Vec<Question>, resolution: Resolution) -> Element {
         .into_iter()
         .zip(answers.into_iter().map(Some).chain(std::iter::repeat(None)))
         .map(|(question, answer)| {
-            (question.text, answer.map(|answer| answer.0.join(", ")))
+            (question.text, answer.map(|given| given.0.join(", ")))
         })
         .collect::<Vec<(String, Option<String>)>>();
     rsx! {
         for (text, answer) in answered {
             p { class: "question-text", "{text}" }
-            match answer {
-                Some(answer) => rsx! { p { class: "question-answer", "{answer}" } },
-                None => rsx! {},
-            }
+            {answer.map_or_else(|| rsx! {}, |given| rsx! { p { class: "question-answer", "{given}" } })}
         }
         p { class: "resolved", role: "status", "{resolved(&resolution)}" }
     }
@@ -511,7 +511,7 @@ fn QuestionForm(
     on_answer: EventHandler<(RequestId, Vec<Answer>)>,
 ) -> Element {
     let draft = use_signal(|| Draft::new(&questions));
-    let answers = draft.read().answers();
+    let complete = draft.read().answers();
     rsx! {
         p { class: "request-title", "A question for you" }
         for (index, question) in questions.into_iter().enumerate() {
@@ -519,7 +519,7 @@ fn QuestionForm(
         }
         button {
             class: "approve send-answer",
-            disabled: answers.is_none(),
+            disabled: complete.is_none(),
             onclick: move |_| {
                 if let Some(answers) = draft.read().answers() {
                     on_answer((request, answers));
@@ -637,10 +637,10 @@ fn verb(change: Change) -> String {
 /// Why the agent asks, in its own words.
 #[component]
 fn Reason(reason: Option<String>) -> Element {
-    match reason {
-        Some(reason) => rsx! { p { class: "request-reason", "{reason}" } },
-        None => rsx! {},
-    }
+    reason.map_or_else(
+        || rsx! {},
+        |why| rsx! { p { class: "request-reason", "{why}" } },
+    )
 }
 
 #[component]
@@ -671,7 +671,7 @@ fn Composer(
                 enterkeyhint: "send",
                 value: "{draft}",
                 oninput: move |event| draft.set(event.value()),
-                onkeydown: move |event| send_on_enter(event, draft, composer, on_send),
+                onkeydown: move |event| send_on_enter(&event, draft, composer, on_send),
                 onmounted: move |event| take_focus(event, focus),
             }
             button {
@@ -685,7 +685,7 @@ fn Composer(
 }
 
 fn take_focus(event: MountedEvent, mut focus: Signal<bool>) {
-    if let Some(event) = focus().then_some(event) {
+    if focus() {
         focus.set(false);
         spawn(async move {
             let _ = event.set_focus(true).await;
@@ -696,16 +696,15 @@ fn take_focus(event: MountedEvent, mut focus: Signal<bool>) {
 /// Return sends and Shift-Return starts a new line, except while an input
 /// method is composing a character.
 fn send_on_enter(
-    event: KeyboardEvent,
+    event: &KeyboardEvent,
     draft: Signal<String>,
     composer: host_view::Composer,
     on_send: EventHandler<String>,
 ) {
-    if let Some(event) = Some(event).filter(|event| {
-        event.key() == Key::Enter
-            && !event.modifiers().shift()
-            && !event.is_composing()
-    }) {
+    if event.key() == Key::Enter
+        && !event.modifiers().shift()
+        && !event.is_composing()
+    {
         event.prevent_default();
         submit(draft, composer, on_send);
     }

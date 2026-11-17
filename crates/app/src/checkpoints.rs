@@ -1,5 +1,22 @@
 //! Per-turn changes and undo. The host's durable events own undo state.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "rsx! caches each template in a OnceLock static"
+)]
+#![expect(
+    clippy::empty_enums,
+    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
+)]
+#![expect(
+    clippy::shadow_reuse,
+    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
+)]
+#![expect(
+    clippy::useless_format,
+    reason = "rsx! expands each \"{text}\" node to format!"
+)]
+
 use client::host_view::{Composer, UndoState};
 use dioxus::prelude::*;
 use proto::{
@@ -29,13 +46,12 @@ pub(crate) fn TurnChanges(
 ) -> Element {
     let diff = use_signal(|| DiffState::Hidden);
     let generation = use_signal(|| 0u64);
-    let loading = std::iter::once(diff())
-        .any(|state| matches!(state, DiffState::Loading(_)));
-    let busy = std::iter::once(&undo)
-        .any(|undo| matches!(undo, UndoState::Undoing(_)));
-    let allowed = std::iter::once((&composer, &availability)).any(|pair| {
-        matches!(pair, (Composer::Open, UndoAvailability::Available))
-    });
+    let loading = matches!(diff(), DiffState::Loading(_));
+    let busy = matches!(undo, UndoState::Undoing(_));
+    let allowed = matches!(
+        (&composer, &availability),
+        (Composer::Open, UndoAvailability::Available)
+    );
     rsx! {
         section { class: "turn-changes",
             button {
@@ -125,11 +141,8 @@ fn begin_diff(
             )),
             Err(reason) => DiffState::Failed(reason),
         };
-        match (diff(), request) {
-            (DiffState::Loading(active), request) if active == request => {
-                diff.set(answer);
-            }
-            (_, _) => {}
+        if diff() == DiffState::Loading(request) {
+            diff.set(answer);
         }
     });
 }

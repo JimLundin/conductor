@@ -11,10 +11,10 @@ pub enum Opening {
 
 /// Accepts what a person pastes: the whole join link, or the bare ticket.
 pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
-    let text = text.trim();
-    let ticket = text
+    let trimmed = text.trim();
+    let ticket = trimmed
         .rsplit_once("#join=")
-        .map_or(text, |(_, ticket)| ticket);
+        .map_or(trimmed, |(_, ticket)| ticket);
     net::parse(ticket)
 }
 
@@ -59,7 +59,9 @@ pub fn forget() {
 }
 
 pub fn initial() -> Result<Opening, TicketError> {
-    let window = web_sys::window().expect("running in a browser window");
+    let Some(window) = web_sys::window() else {
+        return Ok(Opening::Unpaired);
+    };
     let hash = window.location().hash().unwrap_or_default();
     match hash.strip_prefix("#join=") {
         Some(text) => {
@@ -80,10 +82,9 @@ pub fn initial() -> Result<Opening, TicketError> {
 }
 
 fn opening(saved: Option<String>) -> Result<Opening, TicketError> {
-    match saved {
-        Some(text) => net::parse(&text).map(Opening::Host),
-        None => Ok(Opening::Unpaired),
-    }
+    saved.map_or(Ok(Opening::Unpaired), |text| {
+        net::parse(&text).map(Opening::Host)
+    })
 }
 
 #[cfg(test)]

@@ -3,8 +3,22 @@
 //! time; on a wide window the list is a sidebar. `dx serve --platform web`
 //! runs it in a browser.
 
-// rsx! expands each "{text}" node to format!, which clippy flags.
-#![allow(clippy::useless_format)]
+#![expect(
+    clippy::disallowed_types,
+    reason = "rsx! caches each template in a OnceLock static"
+)]
+#![expect(
+    clippy::empty_enums,
+    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
+)]
+#![expect(
+    clippy::shadow_reuse,
+    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
+)]
+#![expect(
+    clippy::useless_format,
+    reason = "rsx! expands each \"{text}\" node to format!"
+)]
 
 mod checkpoints;
 mod credentials;
@@ -24,6 +38,10 @@ use proto::{CommandBody, CommandResult, SessionId, Ticket};
 use ticket::Opening;
 use tokio::sync::mpsc;
 
+#[expect(
+    clippy::volatile_composites,
+    reason = "asset! reads its link section with read_volatile"
+)]
 const CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
@@ -85,7 +103,7 @@ fn App() -> Element {
 #[component]
 fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
     let mut text = use_signal(String::new);
-    let mut error = use_signal(move || error);
+    let mut shown_error = use_signal(move || error);
     rsx! {
         main { class: "empty",
             h1 { "Connect to a host" }
@@ -96,7 +114,7 @@ fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
                     event.prevent_default();
                     match ticket::parse_join(&text()) {
                         Ok(ticket) => on_pair.call(ticket),
-                        Err(err) => error.set(Some(format!("That join link is not valid: {err}"))),
+                        Err(err) => shown_error.set(Some(format!("That join link is not valid: {err}"))),
                     }
                 },
                 input {
@@ -108,10 +126,7 @@ fn Pair(error: Option<String>, on_pair: EventHandler<Ticket>) -> Element {
                 }
                 button { r#type: "submit", disabled: text().trim().is_empty(), "Connect" }
             }
-            match error() {
-                Some(message) => rsx! { p { class: "error", "{message}" } },
-                None => rsx! {},
-            }
+            {shown_error().map_or_else(|| rsx! {}, |message| rsx! { p { class: "error", "{message}" } })}
         }
     }
 }
@@ -125,13 +140,13 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
     use_future(move || run_link(ticket.clone(), status, view, link));
     let mut screen = use_signal(|| Screen::Sessions);
     let notice = use_signal(|| None::<String>);
-    let session = match screen() {
+    let selected = match screen() {
         Screen::Session(id) => view.read().sessions.get(&id).cloned(),
         Screen::Sessions | Screen::NewSession | Screen::Credentials => None,
     };
     // A session the host no longer reports (after a reset) falls back to the
     // list, which on a phone is the only way out of the detail pane.
-    let shown = match (screen(), &session) {
+    let shown = match (screen(), &selected) {
         (Screen::NewSession | Screen::Credentials, _)
         | (Screen::Session(_), Some(_)) => "detail",
         (Screen::Sessions, _) | (Screen::Session(_), None) => "list",
@@ -146,11 +161,11 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
             div { class: "panes",
                 sessions::SessionList { view, screen: screen(), on_select: move |next| screen.set(next) }
                 main { class: "detail",
-                    match (screen(), session) {
+                    match (screen(), selected) {
                         (Screen::NewSession, _) => rsx! {
                             sessions::NewSession {
                                 view,
-                                providers: status().and_then(|status| status.providers),
+                                providers: status().and_then(|current| current.providers),
                                 link,
                                 on_back: move |()| screen.set(Screen::Sessions),
                                 on_started: move |id| screen.set(Screen::Session(id)),
@@ -158,8 +173,8 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
                         },
                         (Screen::Credentials, _) => rsx! {
                             credentials::CredentialsPane {
-                                host: status().and_then(|status| status.host).unwrap_or_else(|| String::from("the host")),
-                                providers: status().and_then(|status| status.providers),
+                                host: status().and_then(|current| current.host).unwrap_or_else(|| String::from("the host")),
+                                providers: status().and_then(|current| current.providers),
                                 link,
                                 on_back: move |()| screen.set(Screen::Sessions),
                             }
@@ -169,7 +184,7 @@ fn Host(ticket: Ticket, on_change_host: EventHandler<()>) -> Element {
                                 key: "{id.0}",
                                 id,
                                 session,
-                                providers: status().and_then(|status| status.providers),
+                                providers: status().and_then(|current| current.providers),
                                 link,
                                 notice,
                                 on_back: move |()| screen.set(Screen::Sessions),
@@ -209,6 +224,10 @@ pub(crate) fn PaneHeader(
     }
 }
 
+#[expect(
+    clippy::future_not_send,
+    reason = "runs on the single-threaded UI executor and holds signals and an Rc'd link"
+)]
 async fn run_link(
     ticket: Ticket,
     status: Signal<Option<Status>>,
@@ -230,6 +249,10 @@ async fn run_link(
     }
 }
 
+#[expect(
+    clippy::future_not_send,
+    reason = "runs on the single-threaded UI executor and holds signals"
+)]
 async fn follow(
     mut updates: mpsc::Receiver<Update>,
     mut status: Signal<Option<Status>>,
@@ -251,13 +274,17 @@ async fn follow(
     }
 }
 
+#[expect(
+    clippy::future_not_send,
+    reason = "runs on the single-threaded UI executor and holds the Rc'd link"
+)]
 pub(crate) async fn send(
     link: Link,
     body: CommandBody,
 ) -> Result<CommandResult, String> {
     match link {
-        Link::Live(link) => {
-            link.send(body).await.map_err(|err| err.to_string())
+        Link::Live(host) => {
+            host.send(body).await.map_err(|err| err.to_string())
         }
         Link::Waiting => Err(String::from("Not connected to the host yet.")),
     }
@@ -289,14 +316,14 @@ fn StatusLine(
     on_credentials: EventHandler<()>,
     on_change_host: EventHandler<()>,
 ) -> Element {
-    let status = status.unwrap_or(Status {
+    let shown = status.unwrap_or(Status {
         state: LinkState::Disconnected,
         host: None,
         providers: None,
         error: None,
     });
-    let state = format!("{:?}", status.state);
-    let host = status.host.unwrap_or_else(|| "host".into());
+    let state = format!("{:?}", shown.state);
+    let host = shown.host.unwrap_or_else(|| "host".into());
     rsx! {
         header { class: "status", "data-state": "{state}",
             span { class: "dot" }
@@ -304,10 +331,7 @@ fn StatusLine(
             span { class: "state", "{state}" }
             button { class: "credentials", onclick: move |_| on_credentials.call(()), "Credentials" }
             button { class: "change-host", onclick: move |_| on_change_host.call(()), "Change host" }
-            match status.error {
-                Some(error) => rsx! { span { class: "error", "{error}" } },
-                None => rsx! {},
-            }
+            {shown.error.map_or_else(|| rsx! {}, |error| rsx! { span { class: "error", "{error}" } })}
         }
     }
 }
