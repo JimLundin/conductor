@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[package.metadata.standards]
+layer = "shell"
+
 [dependencies]
 client = { path = "../client" }
 getrandom.workspace = true

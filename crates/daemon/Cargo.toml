@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[package.metadata.standards]
+layer = "shell"
+
 [[bin]]
 name = "conductord"
 path = "src/main.rs"

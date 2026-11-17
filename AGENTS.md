@@ -11,9 +11,11 @@ Home Screen. The design is in
 - **The shared Rust standard.** Code follows the Rust standard in
   `C:\Users\Jim.Lundin\Projects\standards` (`README.md` there): pedantic
   clippy with no suppressions, libraries as a pure `no_std` core with a
-  data-only API, and binaries as a thin shell. Relax a check only with a
-  reasoned entry in `exceptions.toml`; never with an `#[allow]` or a weaker
-  config.
+  data-only API, and binaries and shell crates as a thin shell. A crate that
+  does I/O declares `layer = "shell"` under `[package.metadata.standards]`
+  in its `Cargo.toml`; its decisions belong in a core crate. Relax a check
+  only with a reasoned entry in `exceptions.toml`; never with an `#[allow]`
+  or a weaker config.
 - **Gate.** `tools/check.sh` (the standard's `rust/check.sh`, the run-record
   IP scrub, and clippy for the wasm crates) passes on every commit. Set
   `STANDARDS` when the standards checkout is elsewhere. `tools/check.sh

@@ -6,31 +6,6 @@ rule = "drift:lints.clippy.multiple_crate_versions"
 reason = "iroh and dioxus pin different majors of windows-sys, netlink, thiserror, syn and others; only upstream can unify them"
 
 [[exception]]
-path = "crates/net/Cargo.toml"
-rule = "std"
-reason = "net is proto's I/O on iroh: frame streams, and the client's link to a host with its reconnect loop"
-
-[[exception]]
-path = "crates/claude-cli/Cargo.toml"
-rule = "std"
-reason = "claude-cli spawns and drives the claude process over tokio"
-
-[[exception]]
-path = "crates/codex-cli/Cargo.toml"
-rule = "std"
-reason = "codex-cli spawns and drives the codex app-server over tokio, and edits its home's config.toml"
-
-[[exception]]
-path = "crates/install/Cargo.toml"
-rule = "std"
-reason = "install downloads and verifies the pinned CLIs onto disk, and starts and stops their processes"
-
-[[exception]]
-path = "crates/daemon/Cargo.toml"
-rule = "std"
-reason = "daemon serves iroh connections and stores the event log in redb"
-
-[[exception]]
 path = "crates/proto/src/frame.rs"
 rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
@@ -64,3 +39,91 @@ reason = "asset! reads its link section with read_volatile"
 path = "crates/app/src/ui.rs"
 rule = "clippy::future_not_send"
 reason = "the link tasks run on the single-threaded UI executor and hold Dioxus signals and an Rc'd link"
+
+# Debt: shell code that still makes decisions. Each entry goes as its
+# decisions move into a core crate.
+
+[[exception]]
+path = "Cargo.toml"
+rule = "shell"
+reason = "the shell makes most of the decisions until the session, registry, serve and provider actors move into host, claude and codex"
+
+[[exception]]
+path = "crates/daemon/src/session.rs"
+rule = "shell"
+reason = "the session actor still decides turns, requests, effort and undo inline; it moves into host as a state machine"
+
+[[exception]]
+path = "crates/daemon/src/registry.rs"
+rule = "shell"
+reason = "StartSession and Continue checks and model choice still run in the registry actor; they move into host"
+
+[[exception]]
+path = "crates/daemon/src/serve.rs"
+rule = "shell"
+reason = "the handshake rules still run on the iroh streams; they move into host"
+
+[[exception]]
+path = "crates/daemon/src/log.rs"
+rule = "shell"
+reason = "sequence, epoch and barrier rules still run in the log actor; they move into host"
+
+[[exception]]
+path = "crates/daemon/src/codex_hub.rs"
+rule = "shell"
+reason = "thread routing and server restarts are still decided in the hub actor; they move into host"
+
+[[exception]]
+path = "crates/daemon/src/workspace.rs"
+rule = "shell"
+reason = "git output is still parsed and checked beside the git commands; the parsing moves into host"
+
+[[exception]]
+path = "crates/daemon/src/start.rs"
+rule = "shell"
+reason = "choosing each CLI, its sign-in and its models is still decided during startup; it moves into host"
+
+[[exception]]
+path = "crates/daemon/src/lib.rs"
+rule = "shell"
+reason = "loading or creating the key and token still decides inline; the decision moves into host"
+
+[[exception]]
+path = "crates/net/src/link.rs"
+rule = "shell"
+reason = "the hedged dial still races and settles its attempts in net; the rest of the link is client's state machine"
+
+[[exception]]
+path = "crates/net/src/wire.rs"
+rule = "shell"
+reason = "reading a frame still decides between a finished stream and an error beside the read"
+
+[[exception]]
+path = "crates/net/src/platform/mod.rs"
+rule = "shell"
+reason = "the endpoint setup still picks relays per network inline"
+
+[[exception]]
+path = "crates/claude-cli/src/session.rs"
+rule = "shell"
+reason = "the claude driver still decides control replies and lifecycle inline; they move into claude"
+
+[[exception]]
+path = "crates/codex-cli/src/server.rs"
+rule = "shell"
+reason = "the codex driver still decides JSON-RPC routing and lifecycle inline; they move into codex"
+
+[[exception]]
+path = "crates/codex-cli/src/config.rs"
+rule = "shell"
+reason = "which config.toml keys to keep or write is still decided beside the file edit; it moves into codex"
+
+[[exception]]
+path = "crates/install/src/install.rs"
+rule = "shell"
+reason = "verifying and placing a pinned download is still decided beside the I/O"
+
+[[exception]]
+path = "crates/install/src/process.rs"
+rule = "shell"
+reason = "stopping a process still decides between a clean exit and a kill inline"

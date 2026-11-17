@@ -5,11 +5,14 @@ What is built and what comes next. Update it in the commit that changes it.
 ## Built
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
-  runs the standard's checks. `proto` is the `no_std` core, and its iroh
-  I/O lives in `net`. `exceptions.toml` lets `net`, `claude-cli`,
-  `codex-cli`, `install` and `daemon` use std and records each lint that macro output can't meet. Next:
-  move decisions out of those libraries into pure cores, retiring their
-  `std` exceptions one by one.
+  runs the standard's checks. The core crates are `proto`, `client`,
+  `agents`, `claude`, `codex` and `host`; `net`, `daemon`, `claude-cli`,
+  `codex-cli` and `install` declare themselves the shell. `client` holds
+  the host link's state machine, and `host` holds checkpoints and tasks.
+  Next: the shell still makes most decisions, and `exceptions.toml` lists
+  each shell file that does as debt. Move the session, registry, serve and
+  log actors into `host`, and the drivers' decisions into `claude` and
+  `codex`, retiring an entry with each.
 
 - **Managed CLIs** (#1) (§6.2). `conductord` installs the pinned Claude
   Code and Codex into its data dir, checks their hashes and runs only those,
