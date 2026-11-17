@@ -1,52 +1,27 @@
 //! Daemon-owned Git worktrees and immutable checkpoints. The project's HEAD
-//! and index are never used as checkpoint storage.
+//! and index are never used as checkpoint storage. What Git's output means
+//! and which names, refs and limits apply are [`host::workspace`]; this runs
+//! `git` and touches the filesystem.
 
-use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
+use host::workspace::{
+    Entry, Output, checked, failure, oversized, owned, probed, same,
+};
 use n0_future::StreamExt;
 use proto::{
-    Change, Checkpoint, CheckpointDiff, CheckpointFile, CheckpointId,
-    DiffExtent, FilePatch, HostPath, SessionId, Workspace,
+    Checkpoint, CheckpointDiff, CheckpointFile, CheckpointId, HostPath,
+    SessionId, Workspace,
 };
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 
+pub use host::workspace::GitError;
+
+/// Reads one byte past the limit, so an oversized output shows.
 const CAPTURE: u64 = 65537;
-const PATCH_LIMIT: usize = 65536;
-const TOTAL_LIMIT: usize = 262_144;
-const FILE_LIMIT: usize = 100;
-
-#[derive(Debug, thiserror::Error)]
-pub enum GitError {
-    #[error(
-        "the selected directory is not a Git repository with a committed HEAD"
-    )]
-    NotRepository,
-    #[error("{0}")]
-    Failed(String),
-}
-
-struct Capture {
-    status: ExitStatus,
-    bytes: Vec<u8>,
-    error: String,
-}
-
-fn failure(context: &str, error: &str) -> GitError {
-    GitError::Failed(format!("{context}: {error}"))
-}
-
-fn same(actual: &str, expected: &str, context: &str) -> Result<(), GitError> {
-    match actual.cmp(expected) {
-        Ordering::Equal => Ok(()),
-        Ordering::Less | Ordering::Greater => {
-            Err(failure(context, "metadata differs"))
-        }
-    }
-}
 
 fn git(path: &Path, args: &[&str]) -> tokio::process::Command {
     let mut command = tokio::process::Command::new("git");
@@ -73,7 +48,7 @@ fn git(path: &Path, args: &[&str]) -> tokio::process::Command {
     command
 }
 
-async fn capture(mut child: Child) -> Result<Capture, GitError> {
+async fn capture(mut child: Child) -> Result<Output, GitError> {
     let stdout = child
         .stdout
         .take()
@@ -96,7 +71,7 @@ async fn capture(mut child: Child) -> Result<Capture, GitError> {
         .read_to_end(&mut bytes)
         .await
         .map_err(|error| failure("reading git stdout", &error.to_string()))?;
-    if bytes.len().cmp(&PATCH_LIMIT) == Ordering::Greater {
+    if oversized(bytes.len()) {
         child.kill().await.map_err(|error| {
             failure("stopping oversized git output", &error.to_string())
         })?;
@@ -109,16 +84,16 @@ async fn capture(mut child: Child) -> Result<Capture, GitError> {
         .await
         .map_err(|error| failure("reading git stderr", &error.to_string()))?
         .map_err(|error| failure("reading git stderr", &error.to_string()))?;
-    Ok(Capture {
-        status,
+    Ok(Output {
         bytes,
+        success: status.success(),
         error,
     })
 }
 
 async fn execute(
     command: &mut tokio::process::Command,
-) -> Result<Capture, GitError> {
+) -> Result<Output, GitError> {
     let child = command
         .spawn()
         .map_err(|error| failure("starting git", &error.to_string()))?;
@@ -127,27 +102,9 @@ async fn execute(
         .map_err(|error| failure("git timeout", &error.to_string()))?
 }
 
-fn checked(output: Capture, context: &str) -> Result<Vec<u8>, GitError> {
-    match output.bytes.len().cmp(&PATCH_LIMIT) {
-        Ordering::Greater => {
-            Err(failure(context, "Git output exceeded the capture limit"))
-        }
-        Ordering::Less | Ordering::Equal => {
-            match output.status.success().then_some(()) {
-                Some(()) => Ok(output.bytes),
-                None => Err(failure(context, &output.error)),
-            }
-        }
-    }
-}
-
 async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
     let output = execute(&mut git(path, args)).await?;
-    String::from_utf8(checked(output, args.first().copied().unwrap_or("git"))?)
-        .map(|text| text.trim_end_matches('\n').to_owned())
-        .map_err(|error| {
-            failure("Git path or metadata is not UTF-8", &error.to_string())
-        })
+    host::workspace::text(output, args.first().copied().unwrap_or("git"))
 }
 
 fn canonical(path: &Path) -> Result<PathBuf, GitError> {
@@ -160,32 +117,7 @@ fn canonical(path: &Path) -> Result<PathBuf, GitError> {
 }
 
 fn host(path: &Path) -> Result<HostPath, GitError> {
-    path.to_str().map_or_else(
-        || {
-            Err(failure(
-                "Git workspace path",
-                "non-UTF-8 paths are unsupported",
-            ))
-        },
-        |text| match text.contains('\n').then_some(()) {
-            Some(()) => Err(failure(
-                "Git workspace path",
-                "newline paths are unsupported",
-            )),
-            None => Ok(HostPath(String::from(text))),
-        },
-    )
-}
-
-fn marker(workspace: &Workspace) -> String {
-    format!(
-        "{}\n{}\n{}\n{}\n{}\n",
-        workspace.repository.0,
-        workspace.original.0,
-        workspace.worktree.0,
-        workspace.directory.0,
-        workspace.branch
-    )
+    host::workspace::host_path(path.to_str())
 }
 
 async fn git_dir(path: &Path) -> Result<PathBuf, GitError> {
@@ -202,13 +134,7 @@ async fn validate(workspace: &Workspace) -> Result<PathBuf, GitError> {
     let relative = original.strip_prefix(&repository).map_err(|error| {
         failure("original directory outside repository", &error.to_string())
     })?;
-    let session = workspace
-        .branch
-        .strip_prefix("conductor/")
-        .ok_or_else(|| failure("workspace branch", "not owned by Conductor"))?;
-    let _ = session
-        .parse::<ulid::Ulid>()
-        .map_err(|error| failure("workspace branch", &error.to_string()))?;
+    let session = host::workspace::owner(workspace)?;
     let expected_worktree = root
         .parent()
         .ok_or_else(|| failure("workspace", "missing parent"))?
@@ -256,13 +182,18 @@ async fn validate(workspace: &Workspace) -> Result<PathBuf, GitError> {
         &host(&source_common)?.0,
         "common repository",
     )?;
-    same(&recorded, &marker(workspace), "ownership metadata")?;
-    match dir.starts_with(common.join("worktrees")).then_some(()) {
-        Some(()) => Ok(dir),
-        None => Err(failure(
+    same(
+        &recorded,
+        &host::workspace::marker(workspace),
+        "ownership metadata",
+    )?;
+    if dir.starts_with(common.join("worktrees")) {
+        Ok(dir)
+    } else {
+        Err(failure(
             "workspace",
             "Git directory is outside repository worktrees",
-        )),
+        ))
     }
 }
 
@@ -283,14 +214,13 @@ pub async fn create(
     std::fs::create_dir_all(&parent).map_err(|error| {
         failure("creating worktree parent", &error.to_string())
     })?;
-    let path =
-        canonical(&parent)?.join(ulid::Ulid::from(session.0).to_string());
+    let path = canonical(&parent)?.join(host::workspace::worktree(session));
     let workspace = Workspace {
         repository: host(&repository)?,
         original: host(&original_path)?,
         worktree: host(&path)?,
         directory: host(&path.join(relative))?,
-        branch: format!("conductor/{}", ulid::Ulid::from(session.0)),
+        branch: host::workspace::branch(session),
     };
     match std::fs::symlink_metadata(&path) {
         Ok(_) => {}
@@ -309,11 +239,7 @@ pub async fn create(
 async fn repository_root(original: &Path) -> Result<PathBuf, GitError> {
     let probe =
         execute(&mut git(original, &["rev-parse", "--show-toplevel"])).await?;
-    if probe.status.success().then_some(()).is_none() {
-        return Err(GitError::NotRepository);
-    }
-    let root = String::from_utf8(checked(probe, "repository root")?)
-        .map_err(|error| failure("repository root", &error.to_string()))?;
+    let root = probed(probe, "repository root")?;
     canonical(Path::new(root.trim_end_matches('\n')))
 }
 
@@ -323,11 +249,7 @@ async fn committed_head(repository: &Path) -> Result<String, GitError> {
         &["rev-parse", "--verify", "HEAD^{commit}"],
     ))
     .await?;
-    if head.status.success().then_some(()).is_none() {
-        return Err(GitError::NotRepository);
-    }
-    String::from_utf8(checked(head, "committed HEAD")?)
-        .map_err(|error| failure("committed HEAD", &error.to_string()))
+    probed(head, "committed HEAD")
 }
 
 async fn check_subdirectory(
@@ -335,14 +257,10 @@ async fn check_subdirectory(
     head: &str,
     relative: &Path,
 ) -> Result<(), GitError> {
-    match host(relative)?.0.as_str() {
-        "" => Ok(()),
-        subdirectory => {
-            let kind = text(
-                repository,
-                &["cat-file", "-t", &format!("{head}:{subdirectory}")],
-            )
-            .await?;
+    match host::workspace::subtree(head, &host(relative)?) {
+        None => Ok(()),
+        Some(object) => {
+            let kind = text(repository, &["cat-file", "-t", &object]).await?;
             same(
                 &kind,
                 "tree",
@@ -378,31 +296,19 @@ async fn add_worktree(
         .map_err(|error| {
             failure("recording worktree ownership", &error.to_string())
         })?;
-    std::io::Write::write_all(&mut ownership, marker(workspace).as_bytes())
-        .map_err(|error| {
-            failure("recording worktree ownership", &error.to_string())
-        })
-}
-
-fn reference(
-    workspace: &Workspace,
-    checkpoint: CheckpointId,
-) -> Result<String, GitError> {
-    let session = workspace
-        .branch
-        .strip_prefix("conductor/")
-        .ok_or_else(|| failure("checkpoint", "not an owned branch"))?;
-    Ok(format!("refs/conductor/{session}/{}", checkpoint.0))
+    std::io::Write::write_all(
+        &mut ownership,
+        host::workspace::marker(workspace).as_bytes(),
+    )
+    .map_err(|error| {
+        failure("recording worktree ownership", &error.to_string())
+    })
 }
 
 async fn owned_commit(
     workspace: &Workspace,
     commit: &str,
 ) -> Result<(), GitError> {
-    let session = workspace
-        .branch
-        .strip_prefix("conductor/")
-        .ok_or_else(|| failure("checkpoint", "not an owned branch"))?;
     let refs = text(
         Path::new(&workspace.worktree.0),
         &[
@@ -410,17 +316,11 @@ async fn owned_commit(
             "--format=%(objectname)",
             "--count=1",
             &format!("--points-at={commit}"),
-            &format!("refs/conductor/{session}/"),
+            &host::workspace::checkpoints(workspace)?,
         ],
     )
     .await?;
-    match refs.lines().any(|oid| oid == commit).then_some(()) {
-        Some(()) => Ok(()),
-        None => Err(failure(
-            "checkpoint",
-            "commit is not an immutable checkpoint of this workspace",
-        )),
-    }
+    owned(&refs, commit)
 }
 
 async fn snapshot_index(
@@ -451,36 +351,26 @@ async fn snapshot_index(
         .await?,
         "staging checkpoint",
     )?;
-    let tree = String::from_utf8(checked(
-        execute(git(path, &["write-tree"]).env("GIT_INDEX_FILE", index))
-            .await?,
+    let tree = host::workspace::utf8(
+        checked(
+            execute(git(path, &["write-tree"]).env("GIT_INDEX_FILE", index))
+                .await?,
+            "checkpoint tree",
+        )?,
         "checkpoint tree",
-    )?)
-    .map_err(|error| failure("checkpoint tree", &error.to_string()))?;
-    let reference = reference(workspace, checkpoint)?;
+    )?;
+    let reference = host::workspace::reference(workspace, checkpoint)?;
     let existing =
         execute(&mut git(path, &["rev-parse", "--verify", &reference])).await?;
-    if existing.status.success().then_some(()) == Some(()) {
-        let commit =
-            String::from_utf8(checked(existing, "existing checkpoint")?)
-                .map_err(|error| {
-                    failure("existing checkpoint", &error.to_string())
-                })?
-                .trim()
-                .to_owned();
-        let actual_tree =
+    if let Some(commit) = host::workspace::existing(existing)? {
+        let recorded_tree =
             text(path, &["rev-parse", &format!("{commit}^{{tree}}")]).await?;
-        let actual_parent =
+        let recorded_parent =
             text(path, &["rev-parse", &format!("{commit}^")]).await?;
-        same(
-            &actual_tree,
+        host::workspace::reuse(
+            (&recorded_tree, &recorded_parent),
             tree.trim(),
-            "checkpoint id already records a different tree",
-        )?;
-        same(
-            &actual_parent,
             &parent,
-            "checkpoint id already records a different parent",
         )?;
         Ok(commit)
     } else {
@@ -506,7 +396,7 @@ async fn text_commit(
                 "-p",
                 parent,
                 "-m",
-                &format!("Conductor checkpoint {}", checkpoint.0),
+                &host::workspace::message(checkpoint),
             ],
         )
         .env("GIT_AUTHOR_NAME", "Conductor")
@@ -515,9 +405,11 @@ async fn text_commit(
         .env("GIT_COMMITTER_EMAIL", "conductor@localhost"),
     )
     .await?;
-    String::from_utf8(checked(output, "creating checkpoint commit")?)
-        .map(|text| text.trim().to_owned())
-        .map_err(|error| failure("checkpoint commit", &error.to_string()))
+    host::workspace::utf8(
+        checked(output, "creating checkpoint commit")?,
+        "checkpoint commit",
+    )
+    .map(|text| text.trim().to_owned())
 }
 
 struct Scratch {
@@ -557,7 +449,7 @@ pub async fn snapshot(
     let dir = validate(workspace).await?;
     same(
         &workspace.branch,
-        &format!("conductor/{}", ulid::Ulid::from(session.0)),
+        &host::workspace::branch(session),
         "session owning workspace",
     )?;
     let scratch = Scratch::create(&dir)?;
@@ -595,31 +487,6 @@ pub async fn restore(
     Ok(())
 }
 
-struct Entry {
-    path: String,
-    change: Change,
-}
-
-fn entry(parts: &[&str]) -> Result<Entry, GitError> {
-    let status = parts
-        .first()
-        .copied()
-        .ok_or_else(|| failure("diff metadata", "missing status"))?;
-    let path = parts
-        .get(1)
-        .copied()
-        .ok_or_else(|| failure("diff metadata", "missing path"))?;
-    let change = match status {
-        "A" => Change::Write,
-        "D" => Change::Delete,
-        _ => Change::Edit,
-    };
-    Ok(Entry {
-        path: String::from(path),
-        change,
-    })
-}
-
 async fn patch(
     workspace: &Workspace,
     checkpoint: &Checkpoint,
@@ -641,27 +508,7 @@ async fn patch(
         ],
     ))
     .await?;
-    let patch = match output.bytes.len().cmp(&PATCH_LIMIT) {
-        Ordering::Greater => FilePatch::TooLarge,
-        Ordering::Less | Ordering::Equal => {
-            match String::from_utf8(checked(output, "checkpoint patch")?) {
-                Ok(text) => {
-                    match text.contains("\nBinary files ").then_some(()) {
-                        Some(()) => FilePatch::Binary,
-                        None => FilePatch::Text(text),
-                    }
-                }
-                Err(error) => FilePatch::Unsupported {
-                    reason: format!("patch is not UTF-8: {error}"),
-                },
-            }
-        }
-    };
-    Ok(CheckpointFile {
-        path: entry.path,
-        change: entry.change,
-        patch,
-    })
+    host::workspace::patch(output, entry)
 }
 
 pub async fn diff(
@@ -671,8 +518,8 @@ pub async fn diff(
 ) -> Result<CheckpointDiff, GitError> {
     let _ = validate(workspace).await?;
     let path = Path::new(&workspace.worktree.0);
-    let checkpoint_ref = reference(workspace, checkpoint.id)?;
-    let parent_ref = reference(workspace, parent.id)?;
+    let checkpoint_ref = host::workspace::reference(workspace, checkpoint.id)?;
+    let parent_ref = host::workspace::reference(workspace, parent.id)?;
     let actual =
         text(path, &["rev-parse", "--verify", &checkpoint_ref]).await?;
     let actual_parent =
@@ -694,75 +541,22 @@ pub async fn diff(
         ],
     ))
     .await?;
-    match output.bytes.len().cmp(&PATCH_LIMIT) {
-        Ordering::Greater => Ok(CheckpointDiff {
-            checkpoint: checkpoint.id,
-            parent: parent.id,
-            files: Vec::new(),
-            extent: DiffExtent::Truncated,
-        }),
-        Ordering::Less | Ordering::Equal => {
-            let metadata =
-                String::from_utf8(checked(output, "checkpoint file list")?)
-                    .map_err(|error| {
-                        failure(
-                            "diff contains non-UTF-8 paths",
-                            &error.to_string(),
-                        )
-                    })?;
-            let parts = metadata
-                .trim_end_matches('\0')
-                .split('\0')
-                .collect::<Vec<&str>>();
-            let entries = match metadata.as_str() {
-                "" => Vec::new(),
-                _ => parts
-                    .chunks(2)
-                    .map(entry)
-                    .collect::<Result<Vec<Entry>, GitError>>()?,
-            };
-            let counted = match entries.len().cmp(&FILE_LIMIT) {
-                Ordering::Greater => DiffExtent::Truncated,
-                Ordering::Less | Ordering::Equal => DiffExtent::Complete,
-            };
-            let patched =
-                n0_future::stream::iter(entries.into_iter().take(FILE_LIMIT))
-                    .then(|entry| async move {
-                        patch(workspace, checkpoint, parent, entry).await
-                    })
-                    .collect::<Vec<Result<CheckpointFile, GitError>>>()
-                    .await
-                    .into_iter()
-                    .collect::<Result<Vec<CheckpointFile>, GitError>>()?;
-            let (files, _, extent) = patched.into_iter().fold(
-                (Vec::new(), TOTAL_LIMIT, counted),
-                |(mut kept, budget, so_far), file| {
-                    let size = match &file.patch {
-                        FilePatch::Text(text) => text.len(),
-                        FilePatch::Binary
-                        | FilePatch::TooLarge
-                        | FilePatch::Unsupported { .. } => 0,
-                    };
-                    if let Some(remaining) = budget.checked_sub(size) {
-                        kept.push(file);
-                        (kept, remaining, so_far)
-                    } else {
-                        kept.push(CheckpointFile {
-                            patch: FilePatch::TooLarge,
-                            ..file
-                        });
-                        (kept, budget, DiffExtent::Truncated)
-                    }
-                },
-            );
-            Ok(CheckpointDiff {
-                checkpoint: checkpoint.id,
-                parent: parent.id,
-                files,
-                extent,
-            })
-        }
-    }
+    let (entries, counted) = host::workspace::listing(output)?;
+    let patched = n0_future::stream::iter(entries)
+        .then(|entry| async move {
+            patch(workspace, checkpoint, parent, entry).await
+        })
+        .collect::<Vec<Result<CheckpointFile, GitError>>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<CheckpointFile>, GitError>>()?;
+    let (files, extent) = host::workspace::budget(patched, counted);
+    Ok(CheckpointDiff {
+        checkpoint: checkpoint.id,
+        parent: parent.id,
+        files,
+        extent,
+    })
 }
 
 #[cfg(test)]

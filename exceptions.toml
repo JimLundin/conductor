@@ -46,27 +46,12 @@ reason = "the link tasks run on the single-threaded UI executor and hold Dioxus 
 [[exception]]
 path = "Cargo.toml"
 rule = "shell"
-reason = "the shell makes most of the decisions until the registry, serve, log and workspace actors move into host"
+reason = "the shell makes most of the decisions until the registry actor and the key and token loading move into host"
 
 [[exception]]
 path = "crates/daemon/src/registry.rs"
 rule = "shell"
 reason = "StartSession and Continue checks and model choice still run in the registry actor; they move into host"
-
-[[exception]]
-path = "crates/daemon/src/serve.rs"
-rule = "shell"
-reason = "the handshake rules still run on the iroh streams; they move into host"
-
-[[exception]]
-path = "crates/daemon/src/log.rs"
-rule = "shell"
-reason = "sequence, epoch and barrier rules still run in the log actor; they move into host"
-
-[[exception]]
-path = "crates/daemon/src/workspace.rs"
-rule = "shell"
-reason = "git output is still parsed and checked beside the git commands; the parsing moves into host"
 
 [[exception]]
 path = "crates/daemon/src/lib.rs"

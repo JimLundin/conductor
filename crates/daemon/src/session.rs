@@ -10,12 +10,12 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::fmt::Display;
 
+use agents::Step;
 use agents::runtime::{Command, Event, Outcome};
-use agents::{Reply, Step};
+pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    CheckpointId, ClientName, CommandResult, Effort, HostPath, Models,
-    RequestId, SessionId, TaskId, Workspace,
+    CheckpointId, CommandResult, HostPath, Models, SessionId, TaskId, Workspace,
 };
 use runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
@@ -31,51 +31,6 @@ type Performed = Result<Option<Input>, Stopped>;
 #[derive(Debug, Clone)]
 pub struct Session {
     inbox: mpsc::Sender<SessionMsg>,
-}
-
-/// A command for one session, already routed to it.
-#[derive(Debug)]
-pub enum Order {
-    Send {
-        text: String,
-        by: ClientName,
-    },
-    Interrupt,
-    Diff(CheckpointId),
-    Undo(CheckpointId),
-    Reply {
-        request: RequestId,
-        reply: Reply,
-        by: ClientName,
-    },
-    /// Starts the agent, resuming the conversation if the session has one:
-    /// when the session starts, and on `Continue`. The models are what the
-    /// provider offers now.
-    Start(Models),
-    /// Sets the effort of later turns, if the session's model in these
-    /// models takes it. The agent gets it when the next turn starts.
-    Effort(Effort, Models),
-}
-
-impl Order {
-    /// The order as data. A conversation an undo forks gets a fresh id.
-    fn core(self) -> host::session::Order {
-        use host::session::Order as Core;
-        match self {
-            Self::Send { text, by } => Core::Send { text, by },
-            Self::Interrupt => Core::Interrupt,
-            Self::Diff(checkpoint) => Core::Diff(checkpoint),
-            Self::Undo(checkpoint) => Core::Undo {
-                checkpoint,
-                fork: uuid::Uuid::new_v4().to_string(),
-            },
-            Self::Reply { request, reply, by } => {
-                Core::Reply { request, reply, by }
-            }
-            Self::Start(offered) => Core::Start { offered },
-            Self::Effort(effort, offered) => Core::Effort(effort, offered),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -203,7 +158,8 @@ impl Actor {
 
     fn take(&mut self, msg: SessionMsg) -> Input {
         self.reply = Some(msg.reply);
-        Input::Order(msg.order.core())
+        // A conversation an undo forks gets a fresh id.
+        Input::Order(msg.order.session(uuid::Uuid::new_v4().to_string()))
     }
 
     /// Steps the session with `input`, and again with each call's outcome,

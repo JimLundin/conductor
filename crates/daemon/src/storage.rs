@@ -147,6 +147,20 @@ pub fn receipt(
     Ok(())
 }
 
+/// Performs one of the log's writes in `write`.
+pub fn write(
+    write: &WriteTransaction,
+    what: &host::log::Write,
+) -> anyhow::Result<()> {
+    match what {
+        host::log::Write::Event(logged) => event(write, logged),
+        host::log::Write::Receipt(key, result) => receipt(write, *key, result),
+        host::log::Write::Conversation(session, id) => {
+            conversation(write, *session, id)
+        }
+    }
+}
+
 fn encode<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     Ok(postcard::to_stdvec(value)?)
 }
