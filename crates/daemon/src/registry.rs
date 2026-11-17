@@ -11,12 +11,12 @@ use std::path::Path;
 
 use agents::runtime::Command;
 use host::registry::{Job, Launch, Listing, Refreshed};
-use host::restore::{Created, Interrupted, Recovery, events_of};
+use host::restore::{Created, Recovery, Step, events_of};
 use proto::{
     Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
     Credentials, Effort, Event, EventKind, HistoryAnchor, HostPath, ModelId,
-    Models, Provider, Providers, Rejection, RequestId, Resolution, SessionId,
-    TurnOutcome, UndoAvailability, Workspace,
+    Models, Provider, Providers, Rejection, SessionId, UndoAvailability,
+    Workspace,
 };
 use runtime::{Runtime, Starter};
 use tokio::sync::{mpsc, oneshot};
@@ -335,10 +335,7 @@ impl RegistryActor {
         } = created;
         let recovery = Recovery::of(choice, &events_of(id, history));
         let conversation = self.conversation(id, recovery.talked).await?;
-        withdraw(&self.log, id, recovery.withdrawn).await?;
-        interrupt(&self.log, id, recovery.interrupted, recovery.checkpoint)
-            .await?;
-        close(&self.log, id, recovery.closed).await?;
+        recover(&self.log, id, recovery.steps()).await?;
         let recovered = events_of(id, &self.log.history().await?);
         let runtime = self
             .core
@@ -491,79 +488,30 @@ fn initial_checkpoint(commit: String) -> Checkpoint {
     }
 }
 
-async fn withdraw(
+/// Performs what a restart does to the session.
+async fn recover(
     log: &Log,
     id: SessionId,
-    open: Vec<RequestId>,
+    steps: Vec<Step>,
 ) -> Result<(), Stopped> {
-    for request in open {
-        let withdrawn = EventKind::RequestResolved {
-            request,
-            resolution: Resolution::Withdrawn,
-        };
-        log.append(id, withdrawn).await?;
-    }
-    Ok(())
-}
-
-async fn interrupt(
-    log: &Log,
-    id: SessionId,
-    interrupted: bool,
-    turn: Option<Interrupted>,
-) -> Result<(), Stopped> {
-    if interrupted {
-        checkpoint(log, id, turn).await?;
-        let outcome = TurnOutcome::Interrupted;
-        log.append(id, EventKind::TurnCompleted { outcome }).await?;
-    }
-    Ok(())
-}
-
-async fn close(log: &Log, id: SessionId, closed: bool) -> Result<(), Stopped> {
-    if closed {
-        let reason = host::restore::restarted();
-        log.append(id, EventKind::SessionClosed { reason }).await?;
-    }
-    Ok(())
-}
-
-/// Snapshots an interrupted turn's files, when it has a workspace.
-async fn checkpoint(
-    log: &Log,
-    id: SessionId,
-    interrupted: Option<Interrupted>,
-) -> Result<(), Stopped> {
-    let Some(turn) = interrupted else {
-        return Ok(());
-    };
-    let reserved = turn.reserved;
-    log.append(
-        id,
-        EventKind::CheckpointReserved {
-            checkpoint: reserved,
-        },
-    )
-    .await?;
-    log.barrier().await?;
-    let snapshot = crate::workspace::snapshot(
-        &turn.workspace,
-        id,
-        reserved,
-        turn.base.as_deref(),
-    )
-    .await;
-    match snapshot {
-        Ok(commit) => {
-            let checkpoint = turn.checkpoint(commit);
-            log.append(id, EventKind::CheckpointCreated { checkpoint })
+    for step in steps {
+        match step {
+            Step::Append(kind) => log.append(id, kind).await?,
+            Step::Barrier => log.barrier().await?,
+            Step::Snapshot(turn) => {
+                let snapshot = crate::workspace::snapshot(
+                    &turn.workspace,
+                    id,
+                    turn.reserved,
+                    turn.base.as_deref(),
+                )
                 .await
-        }
-        Err(err) => {
-            let message = format!("interrupted turn checkpoint failed: {err}");
-            log.append(id, EventKind::Error { message }).await
+                .map_err(|err| err.to_string());
+                log.append(id, turn.snapshotted(snapshot)).await?;
+            }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

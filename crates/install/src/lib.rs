@@ -3,7 +3,6 @@
 
 mod home;
 mod install;
-mod pins;
 pub mod process;
 
 pub use home::Home;

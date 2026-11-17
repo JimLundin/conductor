@@ -5,12 +5,15 @@
 //! its files when it has a workspace, and an agent that was running is
 //! closed.
 //!
-//! `daemon` appends the events and takes the snapshot.
+//! `daemon` performs each [`Step`]: it appends the events and takes the
+//! snapshot.
+
+use alloc::format;
 
 use proto::{
     Checkpoint, CheckpointId, CloseReason, Event, EventKind, HistoryAnchor,
-    HostPath, HostSeq, Provider, RequestId, SessionId, UndoAvailability,
-    Workspace,
+    HostPath, HostSeq, Provider, RequestId, Resolution, SessionId, TurnOutcome,
+    UndoAvailability, Workspace,
 };
 
 use crate::checkpoints::Book;
@@ -89,6 +92,31 @@ impl Interrupted {
             undo: self.undo,
         }
     }
+
+    /// What the session records once the snapshot made a commit, or why
+    /// it did not.
+    #[must_use]
+    pub fn snapshotted(self, commit: Result<String, String>) -> EventKind {
+        match commit {
+            Ok(made) => EventKind::CheckpointCreated {
+                checkpoint: self.checkpoint(made),
+            },
+            Err(err) => EventKind::Error {
+                message: format!("interrupted turn checkpoint failed: {err}"),
+            },
+        }
+    }
+}
+
+/// One thing a restart does to a session, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    Append(EventKind),
+    /// Commit what the log has staged before the snapshot runs.
+    Barrier,
+    /// Snapshot the turn's files, then append what
+    /// [`Interrupted::snapshotted`] says of it.
+    Snapshot(Interrupted),
 }
 
 /// What a restart does to a session.
@@ -132,6 +160,42 @@ impl Recovery {
             checkpoint: interrupted.then(|| checkpoint(events)).flatten(),
             closed: agent_running(events),
         }
+    }
+
+    /// What the restart does, in order: withdraw the open requests,
+    /// checkpoint and interrupt the running turn, and close the agent.
+    #[must_use]
+    pub fn steps(&self) -> Vec<Step> {
+        let mut steps = self
+            .withdrawn
+            .iter()
+            .map(|request| {
+                Step::Append(EventKind::RequestResolved {
+                    request: *request,
+                    resolution: Resolution::Withdrawn,
+                })
+            })
+            .collect::<Vec<Step>>();
+        if self.interrupted {
+            if let Some(turn) = &self.checkpoint {
+                steps.extend([
+                    Step::Append(EventKind::CheckpointReserved {
+                        checkpoint: turn.reserved,
+                    }),
+                    Step::Barrier,
+                    Step::Snapshot(turn.clone()),
+                ]);
+            }
+            steps.push(Step::Append(EventKind::TurnCompleted {
+                outcome: TurnOutcome::Interrupted,
+            }));
+        }
+        if self.closed {
+            steps.push(Step::Append(EventKind::SessionClosed {
+                reason: restarted(),
+            }));
+        }
+        steps
     }
 }
 
@@ -221,11 +285,12 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 #[cfg(test)]
 mod tests {
     use proto::{
-        ClientName, Event, EventKind, HostPath, HostSeq, Provider, RequestId,
-        Resolution, SessionId, ToolCallId, ToolKind,
+        Checkpoint, CheckpointId, ClientName, Event, EventKind, HistoryAnchor,
+        HostPath, HostSeq, Provider, RequestId, Resolution, SessionId,
+        ToolCallId, ToolKind, TurnOutcome, UndoAvailability, Workspace,
     };
 
-    use super::{Created, Recovery, created, events_of};
+    use super::{Created, Interrupted, Recovery, Step, created, events_of};
     use crate::session::Choice;
 
     fn event(seq: u64, session: u128, kind: EventKind) -> Event {
@@ -328,6 +393,103 @@ mod tests {
         );
     }
 
+    fn turn() -> Interrupted {
+        let path = HostPath(String::from("/work"));
+        Interrupted {
+            workspace: Workspace {
+                repository: path.clone(),
+                original: path.clone(),
+                worktree: path.clone(),
+                directory: path,
+                branch: String::from("conductor/1"),
+            },
+            reserved: CheckpointId(3),
+            base: Some(String::from("base")),
+            parent: Some(CheckpointId(2)),
+            turn_start: Some(HostSeq(9)),
+            history: HistoryAnchor::Fresh,
+            undo: UndoAvailability::Unavailable {
+                reason: String::from("test"),
+            },
+        }
+    }
+
+    fn withdrawn(request: u64) -> Step {
+        Step::Append(EventKind::RequestResolved {
+            request: RequestId(request),
+            resolution: Resolution::Withdrawn,
+        })
+    }
+
+    #[test]
+    fn a_restart_withdraws_checkpoints_interrupts_and_closes_in_order() {
+        let recovery = |checkpoint, closed| Recovery {
+            choice: Choice {
+                model: None,
+                effort: None,
+            },
+            talked: true,
+            withdrawn: Vec::from([RequestId(2), RequestId(3)]),
+            interrupted: true,
+            checkpoint,
+            closed,
+        };
+        let interrupted = Step::Append(EventKind::TurnCompleted {
+            outcome: TurnOutcome::Interrupted,
+        });
+        assert_eq!(
+            [
+                recovery(Some(turn()), true).steps(),
+                recovery(None, false).steps()
+            ],
+            [
+                Vec::from([
+                    withdrawn(2),
+                    withdrawn(3),
+                    Step::Append(EventKind::CheckpointReserved {
+                        checkpoint: CheckpointId(3),
+                    }),
+                    Step::Barrier,
+                    Step::Snapshot(turn()),
+                    interrupted.clone(),
+                    Step::Append(EventKind::SessionClosed {
+                        reason: super::restarted(),
+                    }),
+                ]),
+                Vec::from([withdrawn(2), withdrawn(3), interrupted]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_snapshot_records_its_checkpoint_or_why_it_failed() {
+        assert_eq!(
+            [
+                turn().snapshotted(Ok(String::from("made"))),
+                turn().snapshotted(Err(String::from("git broke"))),
+            ],
+            [
+                EventKind::CheckpointCreated {
+                    checkpoint: Checkpoint {
+                        id: CheckpointId(3),
+                        parent: Some(CheckpointId(2)),
+                        turn_start: Some(HostSeq(9)),
+                        commit: String::from("made"),
+                        history: HistoryAnchor::Fresh,
+                        undo: UndoAvailability::Unavailable {
+                            reason: String::from("test"),
+                        },
+                    },
+                },
+                EventKind::Error {
+                    message: String::from(
+                        "interrupted turn checkpoint failed: git broke"
+                    ),
+                },
+            ]
+        );
+    }
+
     #[test]
     fn a_closed_idle_session_needs_nothing() {
         let events = Vec::from([
@@ -347,7 +509,7 @@ mod tests {
         assert_eq!(
             Recovery::of(choice.clone(), &events),
             Recovery {
-                choice,
+                choice: choice.clone(),
                 talked: false,
                 withdrawn: Vec::new(),
                 interrupted: false,
@@ -355,5 +517,6 @@ mod tests {
                 closed: false,
             }
         );
+        assert_eq!(Recovery::of(choice, &events).steps(), Vec::new());
     }
 }

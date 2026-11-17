@@ -5,18 +5,19 @@ use std::path::{Path, PathBuf};
 
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::registry::{Launcher, Launchers, Offer, OwnSignIn, Registry};
+use crate::registry::{Launcher, Launchers, Registry};
 use crate::serve::Conductor;
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use claude_cli::ClaudeLaunch;
 use codex_cli::{Hub, ServerOptions};
+use host::start::{Defaults, Next, Output};
 use install::Home;
 use install::{Cli, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{ModelId, Models, Provider, Ticket};
+use proto::{Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::Starter;
@@ -108,20 +109,16 @@ async fn serve_host(args: HostArgs) -> anyhow::Result<()> {
     let data_dir = data_dir_or_default(given_dir)?;
     let homes = crate::homes(&data_dir)?;
     let (store, stored) = Store::open(&data_dir)?;
-    let claude = claude_launcher(
+    let claude = launcher(
+        claude_kit(claude_model, &data_dir, homes.claude, &stored),
         claude_path,
-        claude_model,
         &data_dir,
-        &homes.claude,
-        &stored,
     )
     .await;
-    let codex = codex_launcher(
+    let codex = launcher(
+        codex_kit(codex_model, &data_dir, homes.codex, &stored),
         codex_path,
-        codex_model,
         &data_dir,
-        homes.codex,
-        &stored,
     )
     .await;
     let launchers =
@@ -138,67 +135,111 @@ async fn serve_host(args: HostArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn claude_launcher(
-    given: Option<PathBuf>,
-    model: Option<String>,
-    data_dir: &Path,
-    home: &Home,
-    stored: &Stored,
-) -> Launcher {
-    let (claude_path, origin) =
-        match cli_path(Cli::Claude, given, data_dir).await {
-            Ok(found) => found,
-            Err(reason) => return unavailable(reason),
-        };
-    let status = claude_cli::auth_status(&claude_path, home);
-    let start = claude_cli::starter(ClaudeLaunch {
-        claude_path: claude_path.clone(),
-        home: home.clone(),
-        credential: claude::runtime::credential(&stored.credentials()),
-        probe: data_dir.join("probe"),
-    });
-    match runs(claude_cli::cli(&claude_path, home)).await {
-        Ok(cli) => {
-            let own = own_sign_in(origin, status).await;
-            let listed = start.models().await;
-            ready(cli, start, own, listed, (None, model))
-        }
-        Err(reason) => unavailable(reason),
-    }
+/// What starting one provider's CLI takes: its install, its probes and its
+/// starter.
+struct Kit {
+    cli: Cli,
+    home: Home,
+    version: fn(&Path, &Home) -> tokio::process::Command,
+    status: fn(&Path, &Home) -> tokio::process::Command,
+    starter: Box<dyn Fn(&Path) -> Starter + Send + Sync>,
+    defaults: Defaults,
 }
 
-async fn codex_launcher(
-    given: Option<PathBuf>,
+fn claude_kit(
     model: Option<String>,
     data_dir: &Path,
     home: Home,
     stored: &Stored,
-) -> Launcher {
-    let (codex_path, origin) = match cli_path(Cli::Codex, given, data_dir).await
-    {
-        Ok(found) => found,
-        Err(reason) => return unavailable(reason),
-    };
-    let version = codex_cli::cli(&codex_path, &home);
-    let status = codex_cli::login_status(&codex_path, &home);
+) -> Kit {
+    let credential = claude::runtime::credential(&stored.credentials());
+    let probe = data_dir.join("probe");
+    let launched = home.clone();
+    Kit {
+        cli: Cli::Claude,
+        home,
+        version: claude_cli::cli,
+        status: claude_cli::auth_status,
+        starter: Box::new(move |path| {
+            claude_cli::starter(ClaudeLaunch {
+                claude_path: path.to_path_buf(),
+                home: launched.clone(),
+                credential: credential.clone(),
+                probe: probe.clone(),
+            })
+        }),
+        defaults: Defaults {
+            named: None,
+            chosen: model,
+        },
+    }
+}
+
+fn codex_kit(
+    model: Option<String>,
+    data_dir: &Path,
+    home: Home,
+    stored: &Stored,
+) -> Kit {
     let credential = codex::runtime::credential(&stored.credentials());
     let named = credential.as_ref().map(codex::runtime::default_model);
-    // The app-server's own working directory is the data dir;
-    // each thread runs in its session's directory.
-    let start = codex_cli::starter(Hub::spawn(ServerOptions {
-        codex_path,
+    let cwd = data_dir.to_path_buf();
+    let launched = home.clone();
+    Kit {
+        cli: Cli::Codex,
         home,
-        credential,
-        cwd: data_dir.to_path_buf(),
-        stdout_log: None,
-    }));
-    match runs(version).await {
-        Ok(cli) => {
-            let own = own_sign_in(origin, status).await;
-            let listed = start.models().await;
-            ready(cli, start, own, listed, (named, model))
+        version: codex_cli::cli,
+        status: codex_cli::login_status,
+        // The app-server's own working directory is the data dir;
+        // each thread runs in its session's directory.
+        starter: Box::new(move |path| {
+            codex_cli::starter(Hub::spawn(ServerOptions {
+                codex_path: path.to_path_buf(),
+                home: launched.clone(),
+                credential: credential.clone(),
+                cwd: cwd.clone(),
+                stdout_log: None,
+            }))
+        }),
+        defaults: Defaults {
+            named,
+            chosen: model,
+        },
+    }
+}
+
+/// Runs each step of `host::start` for the CLI `kit` starts, the `given`
+/// one or else the pinned one installed into the data dir.
+async fn launcher(
+    kit: Kit,
+    given: Option<PathBuf>,
+    data_dir: &Path,
+) -> Launcher {
+    let mut next = host::start::start(kit.cli.name(), given, kit.defaults);
+    loop {
+        next = match next {
+            Next::Install(installing) => installing.installed(
+                install(kit.cli, data_dir)
+                    .await
+                    .map_err(|err| err.to_string()),
+            ),
+            Next::Probe(path, probing) => {
+                let start = (kit.starter)(&path);
+                let program = path.display().to_string();
+                let ran = version((kit.version)(&path, &kit.home)).await;
+                probing.probed(path, start, program, ran)
+            }
+            Next::CheckSignIn(path, checking) => checking
+                .checked(&sign_in_check((kit.status)(&path, &kit.home)).await),
+            Next::ListModels(listing) => {
+                let listed = listing.start().models().await;
+                listing.listed(listed)
+            }
+            Next::Done(launcher, notes) => {
+                notes.iter().for_each(runtime::log);
+                break launcher;
+            }
         }
-        Err(reason) => unavailable(reason),
     }
 }
 
@@ -216,12 +257,8 @@ async fn login(args: LoginArgs) -> anyhow::Result<()> {
         ),
     };
     let status = sign_in.status().await?;
-    match status.code() {
-        Some(0) => Ok(()),
-        _ => Err(anyhow::Error::msg(format!(
-            "the sign-in exited with {status}"
-        ))),
-    }
+    host::start::signed_in(status.code(), &status.to_string())
+        .map_err(anyhow::Error::msg)
 }
 
 fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
@@ -234,54 +271,21 @@ fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     }
 }
 
-/// Where the CLI the host runs came from.
-enum Origin {
-    Given,
-    Pinned,
-}
-
-/// The CLI to run: the one given, or else the pinned one, installed into the
-/// data dir if it isn't there yet.
-async fn cli_path(
-    cli: Cli,
-    given: Option<PathBuf>,
-    data_dir: &Path,
-) -> Result<(PathBuf, Origin), String> {
-    match given {
-        Some(path) => Ok((path, Origin::Given)),
-        None => install(cli, data_dir)
-            .await
-            .map(|path| (path, Origin::Pinned))
-            .map_err(|err| {
-                format!("installing the pinned {}: {err}", cli.name())
-            }),
-    }
-}
-
 /// How long the sign-in check may take before the host counts the home
 /// as signed out.
 const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// A given CLI signs in however it does. A pinned one is signed in when
-/// `status`, its own sign-in check against the private home, succeeds
-/// within `SIGN_IN_CHECK`. It runs once, at start.
-async fn own_sign_in(
-    origin: Origin,
+/// How the CLI's own sign-in check against its private home exited, if it
+/// ran to the end within `SIGN_IN_CHECK`.
+async fn sign_in_check(
     mut status: tokio::process::Command,
-) -> OwnSignIn {
+) -> Result<Option<i32>, String> {
     status.kill_on_drop(true);
-    match origin {
-        Origin::Given => OwnSignIn::Unmanaged,
-        Origin::Pinned => {
-            match tokio::time::timeout(SIGN_IN_CHECK, status.output())
-                .await
-                .map(|run| run.map(|output| output.status.code()))
-            {
-                Ok(Ok(Some(0))) => OwnSignIn::SignedIn,
-                Ok(Ok(_) | Err(_)) | Err(_) => OwnSignIn::Missing,
-            }
-        }
-    }
+    tokio::time::timeout(SIGN_IN_CHECK, status.output())
+        .await
+        .map_err(|elapsed| elapsed.to_string())?
+        .map(|output| output.status.code())
+        .map_err(|err| err.to_string())
 }
 
 struct Hosted {
@@ -328,56 +332,16 @@ async fn host(
     Ok(Hosted { router, log })
 }
 
-/// The CLI's path and version, when `<cli> --version` runs and succeeds.
-async fn runs(
-    mut cli: tokio::process::Command,
-) -> Result<(String, String), String> {
-    let path = cli.as_std().get_program().display().to_string();
-    match cli.arg("--version").output().await {
-        Ok(output) => match output.status.code() {
-            Some(0) => Ok((
-                path,
-                String::from(String::from_utf8_lossy(&output.stdout).trim()),
-            )),
-            status => Err(format!("{path} --version exited with {status:?}")),
-        },
-        Err(err) => Err(format!("{path} does not run: {err}")),
-    }
-}
-
-/// A CLI that runs offers the models it `listed`, with the model the
-/// stored credential `named`, then `chosen` (`--claude-model`,
-/// `--codex-model`), as the one a session gets when it names none. A CLI
-/// that could not list them, for instance because it is not signed in
-/// yet, offers only the default.
-fn ready(
-    cli: (String, String),
-    start: Starter,
-    own: OwnSignIn,
-    listed: Result<Models, String>,
-    defaults: (Option<ModelId>, Option<String>),
-) -> Launcher {
-    let (named, chosen) = defaults;
-    let models = listed.unwrap_or_else(|reason| {
-        tracing::warn!(%reason, "the CLI listed no models");
-        Models::none()
-    });
-    let (path, version) = cli;
-    tracing::info!(%path, %version, ?own, models = models.choices.len(), "ready");
-    Launcher::Ready {
-        start,
-        own,
-        offer: Offer {
-            listed: models,
-            named,
-            chosen: chosen.map(ModelId),
-        },
-    }
-}
-
-fn unavailable(reason: String) -> Launcher {
-    tracing::warn!("unavailable: {reason}");
-    Launcher::Unavailable(reason)
+/// How `<cli> --version` exited.
+async fn version(mut cli: tokio::process::Command) -> Result<Output, String> {
+    cli.arg("--version")
+        .output()
+        .await
+        .map(|output| Output {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        })
+        .map_err(|err| err.to_string())
 }
 
 /// Prints the ticket, the join link and its QR code, and writes the code as

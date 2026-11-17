@@ -1,9 +1,12 @@
 //! The pinned CLIs, written by `tools/pin`. Run it again to change a pin.
 
+use crate::prelude::*;
+
 /// Verified: manifest.json.sig is a good signature by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE; every binary matches the manifest
 pub const CLAUDE_VERSION: &str = "2.1.316";
 
 /// The SHA-256 of the `claude` binary for a platform named as in Claude's manifest.
+#[must_use]
 pub fn claude_sha256(platform: &str) -> Option<String> {
     match platform {
         "darwin-arm64" => Some(String::from(
@@ -38,6 +41,7 @@ pub fn claude_sha256(platform: &str) -> Option<String> {
 pub const CODEX_VERSION: &str = "0.166.0";
 
 /// The SHA-256 of the `codex-package-<triple>.tar.gz` release asset for a target triple.
+#[must_use]
 pub fn codex_sha256(platform: &str) -> Option<String> {
     match platform {
         "x86_64-unknown-linux-musl" => Some(String::from(
