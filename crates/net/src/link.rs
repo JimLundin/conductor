@@ -1,14 +1,11 @@
 //! [`HostLink`]: one client's connection to one host (architecture §9).
 //!
-//! A single task owns the connection and walks
-//! `Disconnected → Connecting → Authenticating → CatchingUp → Live`, falling
-//! back to `Disconnected` and retrying with jittered backoff whenever the
-//! connection drops. It keeps the cursor (epoch and last applied seq), so
-//! every reconnect resubscribes with `after_seq` and the event stream it hands
-//! out has no duplicates and no gaps.
+//! The link's decisions are the state machine in [`client::link`]. A single
+//! task owns the endpoint, the connection and its streams: it turns what
+//! they do into an [`Input`], asks the core, and performs each [`Effect`].
 
-use std::cmp::Ordering;
 use std::convert::Infallible;
+use std::future::{pending, ready};
 use std::time::Duration;
 
 use crate::wire::{self, WireError};
@@ -16,28 +13,22 @@ use iroh::endpoint::{
     BindError, ConnectError, Connection, RecvStream, SendStream,
 };
 use iroh::{Endpoint, EndpointAddr};
-use n0_future::boxed::{BoxFuture, BoxStream};
+use n0_future::boxed::BoxFuture;
 use n0_future::time::{Instant, sleep, timeout};
-use n0_future::{StreamExt, join_all, task};
+use n0_future::{join_all, task};
 
 use client::host_view::HostView;
+pub use client::link::{Cursor, LinkState, Status, Update};
+use client::link::{Effect, Input, Link as Core, Lost, Operation};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
-    Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers,
-    Subscribe, Ticket, TicketError, Welcome,
+    Event, Hello, HelloReply, Open, Providers, Subscribe, Ticket, TicketError,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::platform::{self, Network};
 
 const UPDATE_BUFFER: usize = 1024;
-const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
-const BACKOFF_CEILING: Duration = Duration::from_secs(10);
-/// How long a dial may run before a second one starts on a fresh endpoint.
-/// A relay connection can stall at the network level for seconds while a
-/// fresh one is up in well under a second.
-const HEDGE_AFTER: Duration = Duration::from_millis(1500);
-const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where a host is and the secret it expects in `Hello`.
 #[derive(Debug, Clone)]
@@ -56,26 +47,6 @@ impl Target {
             token: ticket.token,
         })
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkState {
-    Disconnected,
-    Connecting,
-    Authenticating,
-    CatchingUp,
-    Live,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Status {
-    pub state: LinkState,
-    /// The host's name from its last `Welcome`.
-    pub host: Option<String>,
-    /// What the host can run, from its last `Welcome`.
-    pub providers: Option<Providers>,
-    /// Why the last connection ended, until the next one is live.
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,21 +70,6 @@ impl LinkOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cursor {
-    pub epoch: Epoch,
-    pub seq: HostSeq,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Update {
-    Status(Status),
-    /// The events that follow belong to this epoch, starting after seq 0.
-    /// Anything folded from an earlier epoch is stale.
-    Reset(Epoch),
-    Event(Event),
-}
-
 /// What the app shows, its link status and host view, once `update`
 /// arrives.
 #[must_use]
@@ -122,14 +78,10 @@ pub fn shown_after(
     view: HostView,
     update: Update,
 ) -> (Option<Status>, HostView) {
-    match update {
-        Update::Status(next) => {
-            tracing::info!(state = ?next.state, error = ?next.error, "link status");
-            (Some(next), view)
-        }
-        Update::Reset(_) => (status, HostView::empty()),
-        Update::Event(event) => (status, view.apply(event)),
+    if let Update::Status(next) = &update {
+        tracing::info!(state = ?next.state, error = ?next.error, "link status");
     }
+    client::link::shown_after(status, view, update)
 }
 
 /// Why a link to a ticket's host did not start.
@@ -165,9 +117,9 @@ pub struct HostLink {
 
 #[derive(Debug)]
 enum Request {
-    Send {
-        body: CommandBody,
-        reply: oneshot::Sender<Result<CommandResult, SendError>>,
+    /// The connection to run a command on, while the link is connected.
+    Connection {
+        reply: oneshot::Sender<Option<Connection>>,
     },
     /// What the host runs now, from a command's answer.
     Adopt {
@@ -216,29 +168,26 @@ impl HostLink {
         let endpoint = platform::bind_endpoint(options.network).await?;
         let (requests_tx, requests_rx) = mpsc::channel(16);
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
-        let initial = Status {
-            state: LinkState::Disconnected,
-            host: None,
-            providers: None,
-            error: None,
+        let (status_tx, status_rx) = watch::channel(Status::default());
+        let hello = Hello {
+            client: options.client,
+            token: target.token,
         };
-        let (status_tx, status_rx) = watch::channel(initial);
+        let (core, first) = Core::start(hello, options.resume);
         let link = Link {
             endpoint,
             retiring: Vec::new(),
             network: options.network,
-            target,
-            client: options.client,
-            cursor: options.resume,
-            failures: 0,
+            addr: target.addr,
+            conn: None,
+            pending: idle(),
             requests: requests_rx,
             outbox: Outbox {
                 status: status_tx,
                 updates: updates_tx,
             },
-            phase: Phase::Dialing,
         };
-        task::spawn(link.run());
+        task::spawn(link.run(core, first));
         let handle = Self {
             requests: requests_tx,
             status: status_rx,
@@ -263,7 +212,15 @@ impl HostLink {
         &self,
         body: CommandBody,
     ) -> Result<CommandResult, SendError> {
-        let result = self.ask(|reply| Request::Send { body, reply }).await??;
+        let conn = self
+            .ask(|reply| Request::Connection { reply })
+            .await?
+            .ok_or(SendError::NotConnected)?;
+        let (reply, answer) = oneshot::channel();
+        task::spawn(async move {
+            let _ = reply.send(rpc(conn, body).await);
+        });
+        let result = answer.await.map_err(|_| SendError::Stopped)??;
         if let CommandResult::Providers(listed) = &result {
             let providers = listed.clone();
             self.ask(|reply| Request::Adopt { providers, reply })
@@ -300,30 +257,25 @@ impl HostLink {
     }
 }
 
-/// Every [`HostLink`] was dropped: nobody can reach the link any more.
-#[derive(Debug, thiserror::Error)]
-#[error("the link was dropped")]
-struct Stopped {}
+/// The link's task ends: asked to stop, or every [`HostLink`] was dropped.
+#[derive(Default)]
+struct Stopped {
+    reply: Option<oneshot::Sender<()>>,
+}
 
-/// Why a connection ended.
-#[derive(Debug, thiserror::Error)]
-enum Lost {
-    #[error("{0}")]
-    Stopped(#[from] Stopped),
-    #[error("reconnect requested")]
-    Reconnect,
-    #[error("connect failed: {0}")]
-    Connect(#[from] iroh::endpoint::ConnectError),
-    #[error("{0}")]
-    Wire(#[from] WireError),
-    #[error("the host refused us: {0}")]
-    Refused(String),
-    #[error("the host closed the {0} stream")]
-    HostClosed(String),
-    #[error("the host did not complete the hello handshake within 10 seconds")]
-    HelloTimeout,
-    #[error("event {got} arrived after {after}: the feed has a gap")]
-    Gap { after: u64, got: u64 },
+type Halves = (SendStream, RecvStream);
+
+/// How the operation in flight ended.
+enum Done {
+    Input(Input),
+    Dialed(Dialed),
+    /// The feed's next frame is due on `Halves`.
+    Read(Input, Halves),
+}
+
+enum Happening {
+    Done(Done),
+    Request(Option<Request>),
 }
 
 struct Link {
@@ -331,13 +283,13 @@ struct Link {
     /// Endpoints a hedge left behind, still closing.
     retiring: Vec<Endpoint>,
     network: Network,
-    target: Target,
-    client: ClientName,
-    cursor: Option<Cursor>,
-    failures: u32,
+    addr: EndpointAddr,
+    conn: Option<Connection>,
+    /// The one dial, hello, subscription read, draw or sleep in flight. It
+    /// lives across `select!`s, so a read in progress loses no bytes.
+    pending: BoxFuture<Done>,
     requests: mpsc::Receiver<Request>,
     outbox: Outbox,
-    phase: Phase,
 }
 
 /// What the handles see: the status, and the updates that report it.
@@ -346,386 +298,302 @@ struct Outbox {
     updates: mpsc::Sender<Update>,
 }
 
-enum Phase {
-    /// Connect at once: at the start, and when asked to reconnect.
-    Dialing,
-    /// Sleeping out the backoff while refusing commands.
-    Waiting(BoxFuture<()>),
-    Connected(Connected),
-}
-
-/// One iroh connection, authenticated and subscribed.
-struct Connected {
-    conn: Connection,
-    epoch: Epoch,
-    live_at: HostSeq,
-    /// The subscription. Its read in progress lives inside the stream, so a
-    /// `select!` that picks another branch doesn't lose bytes. It owns both
-    /// halves, so dropping it ends the subscription.
-    feed: BoxStream<Result<Option<Event>, WireError>>,
-}
-
-enum Input {
-    Dial,
-    Request(Option<Request>),
-    Frame(Result<Option<Event>, WireError>),
-}
-
 impl Link {
-    async fn run(mut self) -> Result<Infallible, Stopped> {
+    async fn run(mut self, core: Core, first: Vec<Effect>) {
+        let Err(stopped) = self.drive(core, first).await;
+        self.close().await;
+        if let Some(reply) = stopped.reply {
+            let _ = reply.send(());
+        }
+    }
+
+    async fn drive(
+        &mut self,
+        core: Core,
+        first: Vec<Effect>,
+    ) -> Result<Infallible, Stopped> {
+        self.perform_all(first).await?;
+        let mut now = core;
         loop {
-            let input = self.next_input().await;
-            self.on(input).await?;
+            let happening = self.next(now.takes_requests()).await;
+            now = self.handle(now, happening).await?;
         }
     }
 
-    async fn next_input(&mut self) -> Input {
-        match &mut self.phase {
-            Phase::Dialing => Input::Dial,
-            Phase::Waiting(timer) => tokio::select! {
-                () = timer => Input::Dial,
-                request = self.requests.recv() => Input::Request(request),
-            },
-            Phase::Connected(connected) => tokio::select! {
-                frame = connected.feed.next() => Input::Frame(frame.unwrap_or(Ok(None))),
-                request = self.requests.recv() => Input::Request(request),
-            },
+    async fn next(&mut self, takes_requests: bool) -> Happening {
+        if takes_requests {
+            tokio::select! {
+                done = &mut self.pending => Happening::Done(done),
+                request = self.requests.recv() => Happening::Request(request),
+            }
+        } else {
+            Happening::Done((&mut self.pending).await)
         }
     }
 
-    async fn on(&mut self, input: Input) -> Result<(), Stopped> {
-        let current = std::mem::replace(&mut self.phase, Phase::Dialing);
-        match self.step(current, input).await {
-            Ok(next) => {
-                self.phase = next;
-                Ok(())
+    async fn handle(
+        &mut self,
+        core: Core,
+        happening: Happening,
+    ) -> Result<Core, Stopped> {
+        match happening {
+            Happening::Done(done) => {
+                let input = self.absorb(done);
+                self.step(core, input).await
             }
-            Err(stopped) => {
-                // Also when every handle was dropped without a stop.
-                close(&self.endpoint, &self.retiring).await;
-                Err(stopped)
+            Happening::Request(Some(request)) => {
+                self.request(core, request).await
             }
+            Happening::Request(None) => Err(Stopped::default()),
+        }
+    }
+
+    async fn request(
+        &mut self,
+        core: Core,
+        request: Request,
+    ) -> Result<Core, Stopped> {
+        match request {
+            Request::Connection { reply } => {
+                let _ = reply.send(self.conn.clone());
+                Ok(core)
+            }
+            Request::Adopt { providers, reply } => self
+                .step(core, Input::Providers(providers))
+                .await
+                .inspect(|_| {
+                    let _ = reply.send(());
+                }),
+            Request::Reconnect => self.step(core, Input::Reconnect).await,
+            Request::Stop { reply } => Err(Stopped { reply: Some(reply) }),
         }
     }
 
     async fn step(
         &mut self,
-        phase: Phase,
+        core: Core,
         input: Input,
-    ) -> Result<Phase, Stopped> {
-        match (phase, input) {
-            (Phase::Connected(connected), connected_input) => {
-                self.carry_on(connected, connected_input).await
-            }
-            (
-                Phase::Dialing | Phase::Waiting(_),
-                Input::Dial | Input::Request(Some(Request::Reconnect)),
-            ) => self.dial().await,
-            (idle, Input::Request(Some(Request::Send { reply, .. }))) => {
-                let _ = reply.send(Err(SendError::NotConnected));
-                Ok(idle)
-            }
-            (
-                idle,
-                Input::Request(Some(Request::Adopt { providers, reply })),
-            ) => {
-                self.outbox.providers(providers).await?;
-                let _ = reply.send(());
-                Ok(idle)
-            }
-            (_, Input::Request(Some(Request::Stop { reply }))) => {
-                Err(stop(&self.endpoint, &self.retiring, reply).await)
-            }
-            (_, Input::Request(None)) => Err(Stopped {}),
-            (idle, Input::Frame(_)) => Ok(idle),
-        }
+    ) -> Result<Core, Stopped> {
+        let (next, effects) = core.step(input);
+        self.perform_all(effects).await?;
+        Ok(next)
     }
 
-    async fn dial(&mut self) -> Result<Phase, Stopped> {
-        match self.connect().await {
-            Ok(connected) => Ok(Phase::Connected(connected)),
-            Err(lost) => self.down(lost).await,
-        }
-    }
-
-    async fn carry_on(
+    async fn perform_all(
         &mut self,
-        connected: Connected,
-        input: Input,
-    ) -> Result<Phase, Stopped> {
-        let conn = connected.conn.clone();
-        match self.carry(connected, input).await {
-            Ok(still) => Ok(Phase::Connected(still)),
-            Err(lost) => {
-                conn.close(0u32.into(), b"bye");
-                self.down(lost).await
-            }
-        }
-    }
-
-    /// After a connection ended: report it, then reconnect at once or after
-    /// the backoff.
-    async fn down(&mut self, lost: Lost) -> Result<Phase, Stopped> {
-        tracing::debug!(%lost, "host link down");
-        match lost {
-            Lost::Stopped(stopped) => Err(stopped),
-            Lost::Reconnect => {
-                self.outbox.disconnected(None).await?;
-                Ok(Phase::Dialing)
-            }
-            other => {
-                self.outbox.disconnected(Some(other.to_string())).await?;
-                let random = getrandom::u64().unwrap_or_else(|err| {
-                    tracing::warn!(%err, "no random source; backing off without jitter");
-                    0
-                });
-                let delay = backoff(
-                    self.failures,
-                    random,
-                    BACKOFF_FLOOR,
-                    BACKOFF_CEILING,
-                );
-                self.failures = self.failures.saturating_add(1);
-                Ok(Phase::Waiting(Box::pin(sleep(delay))))
-            }
-        }
-    }
-
-    async fn connect(&mut self) -> Result<Connected, Lost> {
-        self.outbox.set_state(LinkState::Connecting).await?;
-        let dialed = dial_hedged(
-            self.network,
-            self.endpoint.clone(),
-            self.target.addr.clone(),
-        )
-        .await;
-        self.endpoint = dialed.endpoint;
-        self.retiring.retain(|endpoint| !endpoint.is_closed());
-        self.retiring.extend(dialed.retired);
-        let conn = dialed.conn?;
-        match self.start(&conn).await {
-            Ok(connected) => Ok(connected),
-            Err(lost) => {
-                conn.close(0u32.into(), b"bye");
-                Err(lost)
-            }
-        }
-    }
-
-    async fn start(&mut self, conn: &Connection) -> Result<Connected, Lost> {
-        self.outbox.set_state(LinkState::Authenticating).await?;
-        let welcome = timeout(
-            HELLO_TIMEOUT,
-            hello(
-                conn,
-                Hello {
-                    client: self.client.clone(),
-                    token: self.target.token,
-                },
-            ),
-        )
-        .await
-        .map_err(|_| {
-            tracing::warn!(peer = %conn.remote_id(), connection = conn.stable_id(), timeout_ms = HELLO_TIMEOUT.as_millis(), "hello timed out");
-            Lost::HelloTimeout
-        })??;
-        self.adopt(&welcome).await?;
-        let live_at = welcome.head_seq;
-        let current = self.outbox.current();
-        self.outbox
-            .publish(Status {
-                host: Some(welcome.host.clone()),
-                providers: Some(welcome.providers.clone()),
-                state: LinkState::CatchingUp,
-                ..current
-            })
-            .await?;
-        self.catch_up(self.cursor_seq(), live_at).await?;
-        let feed =
-            frames(subscribe(conn, welcome.epoch, self.cursor_seq()).await?);
-        Ok(Connected {
-            conn: conn.clone(),
-            epoch: welcome.epoch,
-            live_at,
-            feed,
-        })
-    }
-
-    /// Handles one input while connected. An error ends the connection.
-    async fn carry(
-        &mut self,
-        connected: Connected,
-        input: Input,
-    ) -> Result<Connected, Lost> {
-        match input {
-            Input::Request(None) => Err(Lost::Stopped(Stopped {})),
-            Input::Request(Some(Request::Reconnect)) => Err(Lost::Reconnect),
-            Input::Request(Some(Request::Adopt { providers, reply })) => {
-                self.outbox.providers(providers).await?;
-                let _ = reply.send(());
-                Ok(connected)
-            }
-            Input::Request(Some(Request::Stop { reply })) => {
-                Err(stop(&self.endpoint, &self.retiring, reply).await.into())
-            }
-            Input::Request(Some(Request::Send { body, reply })) => {
-                match random_command_id() {
-                    Ok(id) => {
-                        let command = Command { id, body };
-                        task::spawn(answer(
-                            connected.conn.clone(),
-                            command,
-                            reply,
-                        ));
-                    }
-                    Err(err) => {
-                        let _ = reply.send(Err(err.into()));
-                    }
-                }
-                Ok(connected)
-            }
-            Input::Frame(Ok(Some(event))) => {
-                self.apply(event, connected.epoch, connected.live_at)
-                    .await?;
-                Ok(connected)
-            }
-            Input::Frame(Ok(None)) => {
-                Err(Lost::HostClosed(String::from("subscription")))
-            }
-            Input::Frame(Err(err)) => Err(err.into()),
-            Input::Dial => Ok(connected),
-        }
-    }
-
-    fn cursor_seq(&self) -> HostSeq {
-        self.cursor.map_or(HostSeq(0), |cursor| cursor.seq)
-    }
-
-    /// Keeps the cursor if the host's log is the one it points into;
-    /// otherwise starts over from the beginning of the new epoch.
-    async fn adopt(&mut self, welcome: &Welcome) -> Result<(), Stopped> {
-        match self.cursor {
-            Some(Cursor { epoch, .. }) if epoch == welcome.epoch => Ok(()),
-            Some(_) | None => {
-                self.cursor = Some(Cursor {
-                    epoch: welcome.epoch,
-                    seq: HostSeq(0),
-                });
-                self.outbox.emit(Update::Reset(welcome.epoch)).await
-            }
-        }
-    }
-
-    async fn apply(
-        &mut self,
-        event: Event,
-        epoch: Epoch,
-        live_at: HostSeq,
-    ) -> Result<(), Lost> {
-        let after = self.cursor_seq();
-        let order = after.0.checked_add(1).map(|next| event.seq.0.cmp(&next));
-        match (order, &event.kind) {
-            // A delta repeats the seq of the stored event before it, which
-            // the stream delivered first (`EventKind::AssistantDelta`).
-            (
-                Some(Ordering::Less),
-                EventKind::AssistantDelta { .. }
-                | EventKind::ReasoningDelta { .. },
-            ) => Ok(self.outbox.emit(Update::Event(event)).await?),
-            (Some(Ordering::Less), _) => Ok(()),
-            (
-                Some(Ordering::Equal),
-                EventKind::AssistantDelta { .. }
-                | EventKind::ReasoningDelta { .. },
-            )
-            | (Some(Ordering::Greater) | None, _) => Err(Lost::Gap {
-                after: after.0,
-                got: event.seq.0,
-            }),
-            (Some(Ordering::Equal), _) => {
-                let seq = event.seq;
-                self.cursor = Some(Cursor { epoch, seq });
-                self.outbox.emit(Update::Event(event)).await?;
-                Ok(self.catch_up(seq, live_at).await?)
-            }
-        }
-    }
-
-    /// Goes live once the link has applied the host's head as of `Welcome`.
-    async fn catch_up(
-        &mut self,
-        seq: HostSeq,
-        live_at: HostSeq,
+        effects: Vec<Effect>,
     ) -> Result<(), Stopped> {
-        let state = self.outbox.state();
-        if let (Ordering::Greater | Ordering::Equal, LinkState::CatchingUp) =
-            (seq.cmp(&live_at), state)
-        {
-            self.go_live().await?;
+        for effect in effects {
+            self.perform(effect).await?;
         }
         Ok(())
     }
 
-    async fn go_live(&mut self) -> Result<(), Stopped> {
-        self.failures = 0;
-        let current = self.outbox.current();
-        self.outbox
-            .publish(Status {
-                state: LinkState::Live,
-                error: None,
-                ..current
-            })
-            .await
+    async fn perform(&mut self, effect: Effect) -> Result<(), Stopped> {
+        match effect {
+            Effect::Start(operation) => {
+                self.pending = self.start(operation);
+                Ok(())
+            }
+            Effect::Close => {
+                self.hang_up();
+                Ok(())
+            }
+            Effect::Show(status) => self.outbox.show(status).await,
+            Effect::Forward(update) => self.outbox.emit(update).await,
+        }
+    }
+
+    fn start(&self, operation: Operation) -> BoxFuture<Done> {
+        match operation {
+            Operation::Dial { hedge_after } => Box::pin(dial_hedged(
+                self.network,
+                self.endpoint.clone(),
+                self.addr.clone(),
+                hedge_after,
+            )),
+            Operation::Hello { hello, within } => {
+                self.on_connection(|conn| Box::pin(greet(conn, hello, within)))
+            }
+            Operation::Subscribe(subscribe) => {
+                self.on_connection(|conn| Box::pin(subscribed(conn, subscribe)))
+            }
+            Operation::Draw => now(Input::Drawn(jitter())),
+            Operation::Sleep(delay) => Box::pin(elapse(delay)),
+        }
+    }
+
+    fn on_connection(
+        &self,
+        start: impl FnOnce(Connection) -> BoxFuture<Done>,
+    ) -> BoxFuture<Done> {
+        self.conn.clone().map_or_else(
+            || now(Input::Lost(Lost::Wire(String::from("not connected")))),
+            start,
+        )
+    }
+
+    /// Takes what the operation in flight left behind, and what it means.
+    fn absorb(&mut self, done: Done) -> Input {
+        self.pending = idle();
+        match done {
+            Done::Input(input) => input,
+            Done::Dialed(dialed) => self.dialed(dialed),
+            Done::Read(input, halves) => {
+                self.pending = Box::pin(read(halves));
+                input
+            }
+        }
+    }
+
+    fn dialed(&mut self, dialed: Dialed) -> Input {
+        self.endpoint = dialed.endpoint;
+        self.retiring.retain(|endpoint| !endpoint.is_closed());
+        self.retiring.extend(dialed.retired);
+        self.conn = dialed.conn.as_ref().ok().cloned();
+        dialed.conn.map_or_else(
+            |err| Input::Lost(Lost::Connect(err.to_string())),
+            |_| Input::Connected,
+        )
+    }
+
+    fn hang_up(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            conn.close(0u32.into(), b"bye");
+        }
+    }
+
+    /// Closes the connection and the endpoint the link runs on, and waits
+    /// out the retired ones.
+    async fn close(&mut self) {
+        self.hang_up();
+        self.endpoint.close().await;
+        let _ = join_all(self.retiring.iter().map(Endpoint::closed)).await;
     }
 }
 
 impl Outbox {
-    async fn disconnected(&self, error: Option<String>) -> Result<(), Stopped> {
-        let current = self.current();
-        self.publish(Status {
-            state: LinkState::Disconnected,
-            error,
-            ..current
-        })
-        .await
-    }
-
-    async fn providers(&self, providers: Providers) -> Result<(), Stopped> {
-        let current = self.current();
-        self.publish(Status {
-            providers: Some(providers),
-            ..current
-        })
-        .await
-    }
-
-    async fn set_state(&self, state: LinkState) -> Result<(), Stopped> {
-        let current = self.current();
-        self.publish(Status { state, ..current }).await
-    }
-
-    fn state(&self) -> LinkState {
-        self.status.borrow().state
-    }
-
-    fn current(&self) -> Status {
-        self.status.borrow().clone()
-    }
-
-    /// Shows `next` to every handle, and sends it as an update if it changed.
-    async fn publish(&self, next: Status) -> Result<(), Stopped> {
-        match self.current() {
-            current if current != next => {
-                self.status.send_replace(next.clone());
-                self.emit(Update::Status(next)).await
-            }
-            _ => Ok(()),
-        }
+    /// Shows `status` to every handle, and sends it as an update.
+    async fn show(&self, status: Status) -> Result<(), Stopped> {
+        self.status.send_replace(status.clone());
+        self.emit(Update::Status(status)).await
     }
 
     async fn emit(&self, update: Update) -> Result<(), Stopped> {
-        self.updates.send(update).await.map_err(|_| Stopped {})
+        self.updates
+            .send(update)
+            .await
+            .map_err(|_| Stopped::default())
     }
+}
+
+fn now(input: Input) -> BoxFuture<Done> {
+    Box::pin(ready(Done::Input(input)))
+}
+
+fn idle() -> BoxFuture<Done> {
+    Box::pin(pending())
+}
+
+fn jitter() -> u64 {
+    getrandom::u64().unwrap_or_else(|err| {
+        tracing::warn!(%err, "no random source; backing off without jitter");
+        0
+    })
+}
+
+async fn elapse(delay: Duration) -> Done {
+    sleep(delay).await;
+    Done::Input(Input::Elapsed)
+}
+
+fn broken(err: &WireError) -> Input {
+    Input::Lost(Lost::Wire(err.to_string()))
+}
+
+async fn greet(conn: Connection, hello: Hello, within: Duration) -> Done {
+    let answered = timeout(within, hello_reply(&conn, hello)).await;
+    Done::Input(answered.map_or_else(
+        |_| {
+            tracing::warn!(
+                peer = %conn.remote_id(),
+                connection = conn.stable_id(),
+                timeout_ms = within.as_millis(),
+                "hello timed out"
+            );
+            Input::Lost(Lost::HelloTimeout)
+        },
+        |reply| reply.map_or_else(|err| broken(&err), Input::from),
+    ))
+}
+
+async fn hello_reply(
+    conn: &Connection,
+    hello: Hello,
+) -> Result<Option<HelloReply>, WireError> {
+    let started = Instant::now();
+    let peer = conn.remote_id();
+    let connection = conn.stable_id();
+    tracing::debug!(%peer, connection, "hello opening");
+    let (mut send, mut recv) = conn.open_bi().await?;
+    wire::write(&mut send, &Open::Hello(hello)).await?;
+    let elapsed_ms = || started.elapsed().as_millis();
+    tracing::debug!(%peer, connection, elapsed_ms = elapsed_ms(), "hello sent");
+    let reply = wire::read::<HelloReply>(&mut recv).await?;
+    tracing::debug!(
+        %peer,
+        connection,
+        elapsed_ms = elapsed_ms(),
+        "hello reply received"
+    );
+    Ok(reply)
+}
+
+/// Opens the subscription; its frames follow as [`Done::Read`].
+async fn subscribed(conn: Connection, subscribe: Subscribe) -> Done {
+    open_subscription(&conn, subscribe).await.map_or_else(
+        |err| Done::Input(broken(&err)),
+        |halves| Done::Read(Input::Subscribed, halves),
+    )
+}
+
+async fn open_subscription(
+    conn: &Connection,
+    subscribe: Subscribe,
+) -> Result<Halves, WireError> {
+    let (mut send, recv) = conn.open_bi().await?;
+    wire::write(&mut send, &Open::Subscribe(subscribe)).await?;
+    Ok((send, recv))
+}
+
+/// Reads one frame and hands the halves back for the next. Holding both
+/// keeps the subscription open.
+async fn read((send, mut recv): Halves) -> Done {
+    let frame = wire::read::<Event>(&mut recv).await;
+    Done::Read(
+        frame.map_or_else(|err| broken(&err), Input::from),
+        (send, recv),
+    )
+}
+
+async fn rpc(
+    conn: Connection,
+    body: CommandBody,
+) -> Result<CommandResult, SendError> {
+    let command = Command {
+        id: random_command_id()?,
+        body,
+    };
+    let (mut send, mut recv) = conn.open_bi().await.map_err(WireError::from)?;
+    wire::write(&mut send, &Open::Command(command)).await?;
+    send.finish().map_err(WireError::from)?;
+    wire::read(&mut recv).await?.ok_or(SendError::NoResult)
+}
+
+fn random_command_id() -> Result<CommandId, getrandom::Error> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)?;
+    Ok(CommandId(u128::from_le_bytes(bytes)))
 }
 
 /// A dial in flight and the endpoint it runs on.
@@ -758,37 +626,26 @@ async fn dial(
     endpoint.connect(addr, proto::ALPN).await
 }
 
-async fn stop(
-    endpoint: &Endpoint,
-    retiring: &[Endpoint],
-    reply: oneshot::Sender<()>,
-) -> Stopped {
-    close(endpoint, retiring).await;
-    let _ = reply.send(());
-    Stopped {}
-}
-
-/// Closes the endpoint the link runs on and waits out the retired ones.
-async fn close(endpoint: &Endpoint, retiring: &[Endpoint]) {
-    endpoint.close().await;
-    let _ = join_all(retiring.iter().map(Endpoint::closed)).await;
-}
-
 /// Dials from `endpoint`, and from a fresh endpoint too if the first dial
-/// hasn't returned after [`HEDGE_AFTER`].
+/// hasn't returned after `hedge_after`.
 async fn dial_hedged(
     network: Network,
     bound: Endpoint,
     addr: EndpointAddr,
-) -> Dialed {
+    hedge_after: Duration,
+) -> Done {
     let Attempt {
         endpoint,
         mut connecting,
     } = Attempt::start(bound, addr.clone());
-    tokio::select! {
+    let dialed = tokio::select! {
         conn = &mut connecting => Dialed { endpoint, conn, retired: None },
-        () = sleep(HEDGE_AFTER) => hedge(network, Attempt { endpoint, connecting }, addr).await,
-    }
+        () = sleep(hedge_after) => {
+            let first = Attempt { endpoint, connecting };
+            hedge(network, first, addr).await
+        }
+    };
+    Done::Dialed(dialed)
 }
 
 async fn hedge(network: Network, first: Attempt, addr: EndpointAddr) -> Dialed {
@@ -814,11 +671,17 @@ async fn race(first: Attempt, second: Attempt) -> Dialed {
     } = second;
     tokio::select! {
         conn = &mut first_connecting => {
-            let second = Attempt { endpoint: second_endpoint, connecting: second_connecting };
+            let second = Attempt {
+                endpoint: second_endpoint,
+                connecting: second_connecting,
+            };
             settle(first_endpoint, conn, second).await
         }
         conn = &mut second_connecting => {
-            let first = Attempt { endpoint: first_endpoint, connecting: first_connecting };
+            let first = Attempt {
+                endpoint: first_endpoint,
+                connecting: first_connecting,
+            };
             settle(second_endpoint, conn, first).await
         }
     }
@@ -834,7 +697,10 @@ async fn settle(
 ) -> Dialed {
     match outcome {
         Ok(conn) => {
-            tracing::info!(endpoint = %endpoint.id().fmt_short(), "hedged dial connected");
+            tracing::info!(
+                endpoint = %endpoint.id().fmt_short(),
+                "hedged dial connected"
+            );
             Dialed {
                 endpoint,
                 conn: Ok(conn),
@@ -862,114 +728,4 @@ fn retire(endpoint: Endpoint) -> Endpoint {
     let closing = endpoint.clone();
     task::spawn(async move { closing.close().await });
     endpoint
-}
-
-/// Opens a subscription after `after_seq`.
-async fn subscribe(
-    conn: &Connection,
-    epoch: Epoch,
-    after_seq: HostSeq,
-) -> Result<(SendStream, RecvStream), Lost> {
-    let (mut send, recv) = conn.open_bi().await.map_err(WireError::from)?;
-    wire::write(&mut send, &Open::Subscribe(Subscribe { epoch, after_seq }))
-        .await?;
-    Ok((send, recv))
-}
-
-async fn hello(conn: &Connection, hello: Hello) -> Result<Welcome, Lost> {
-    let started = Instant::now();
-    let peer = conn.remote_id();
-    let connection = conn.stable_id();
-    tracing::debug!(%peer, connection, "hello opening");
-    let (mut send, mut recv) = conn.open_bi().await.map_err(WireError::from)?;
-    wire::write(&mut send, &Open::Hello(hello)).await?;
-    tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello sent");
-    let reply = wire::read::<HelloReply>(&mut recv).await?;
-    tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello reply received");
-    match reply {
-        Some(HelloReply::Welcome(welcome)) => Ok(welcome),
-        Some(HelloReply::Refused { reason }) => Err(Lost::Refused(reason)),
-        None => Err(Lost::HostClosed(String::from("hello"))),
-    }
-}
-
-fn frames(
-    halves: (SendStream, RecvStream),
-) -> BoxStream<Result<Option<Event>, WireError>> {
-    Box::pin(n0_future::stream::unfold(
-        halves,
-        |(send, mut recv)| async move {
-            let frame = wire::read::<Event>(&mut recv).await;
-            Some((frame, (send, recv)))
-        },
-    ))
-}
-
-async fn answer(
-    conn: Connection,
-    command: Command,
-    reply: oneshot::Sender<Result<CommandResult, SendError>>,
-) {
-    let _ = reply.send(rpc(conn, command).await);
-}
-
-async fn rpc(
-    conn: Connection,
-    command: Command,
-) -> Result<CommandResult, SendError> {
-    let (mut send, mut recv) = conn.open_bi().await.map_err(WireError::from)?;
-    wire::write(&mut send, &Open::Command(command)).await?;
-    send.finish().map_err(WireError::from)?;
-    wire::read(&mut recv).await?.ok_or(SendError::NoResult)
-}
-
-/// Exponential from `floor` to `ceiling`, with the upper half jittered so
-/// many clients don't retry in step.
-fn backoff(
-    failures: u32,
-    random: u64,
-    floor: Duration,
-    ceiling: Duration,
-) -> Duration {
-    let capped = floor
-        .saturating_mul(1u32.checked_shl(failures).unwrap_or(u32::MAX))
-        .min(ceiling);
-    let half = capped.checked_div(2).unwrap_or(capped);
-    let span = u64::try_from(half.as_millis())
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    let jitter = Duration::from_millis(random.checked_rem(span).unwrap_or(0));
-    half.saturating_add(jitter)
-}
-
-fn random_command_id() -> Result<CommandId, getrandom::Error> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes)?;
-    Ok(CommandId(u128::from_le_bytes(bytes)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BACKOFF_CEILING, BACKOFF_FLOOR, backoff};
-
-    fn ms(failures: u32, random: u64) -> u128 {
-        backoff(failures, random, BACKOFF_FLOOR, BACKOFF_CEILING).as_millis()
-    }
-
-    #[test]
-    fn backoff_doubles_to_ten_seconds_with_jitter_in_the_upper_half() {
-        assert_eq!(
-            Vec::from([
-                ms(0, 0),
-                ms(0, 125),
-                ms(1, 0),
-                ms(1, 250),
-                ms(3, 0),
-                ms(6, 0),
-                ms(6, 5000),
-                ms(40, 0),
-            ]),
-            Vec::from([125, 250, 250, 500, 1000, 5000, 10_000, 5000])
-        );
-    }
 }
