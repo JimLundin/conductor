@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use claude::{
     AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionMode,
-    PermissionRequestId, Role,
+    PermissionRequestId, Role, SettingSource, VersionPolicy,
 };
-use claude_cli::{ClaudeOptions, ClaudeSession, SettingSource, VersionPolicy};
+use claude_cli::{ClaudeOptions, ClaudeSession};
 use install::Home;
 use n0_future::StreamExt;
 use proto::{Effort, ModelId, TaskStatus};
@@ -70,7 +70,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: claude_cli::Resume::Fresh,
+        resume: claude::Resume::Fresh,
         project_name: None,
         setting_sources: Some(Vec::from([SettingSource::Project])),
         stdout_log: None,
@@ -810,7 +810,7 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error()
     )?;
     let claude = fake_claude("typed-resume-missing", &stdout)?;
     let opts = ClaudeOptions {
-        resume: claude_cli::Resume::Session(id.clone()),
+        resume: claude::Resume::Session(id.clone()),
         ..options(&claude)
     };
     let error = ClaudeSession::spawn(opts)

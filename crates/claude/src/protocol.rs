@@ -22,7 +22,7 @@ pub struct SessionId(pub String);
 pub struct MessageId(pub String);
 
 /// The CLI's `request_id` for a `can_use_tool` request.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PermissionRequestId(pub String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

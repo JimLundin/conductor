@@ -1,17 +1,18 @@
 //! One tokio task owns the `codex app-server` child process for the whole host.
 //! [`CodexServer`] and [`CodexThread`] are handles that talk to it over a
-//! command channel. The task alone owns stdin, the JSON-RPC id counter, our
-//! pending requests and Codex's open requests, so no state is shared behind a
-//! lock.
+//! command channel. The task alone owns stdin and the server's state machine
+//! ([`codex::Server`]), so no state is shared behind a lock. The task turns
+//! what happens into the machine's inputs and performs its effects.
 
-use std::collections::HashMap;
 use std::convert::Infallible;
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 
-use n0_future::StreamExt;
+use n0_future::{MaybeFuture, StreamExt, future};
 use proto::{CodexCredential, Effort};
 use serde_json::Value;
 
@@ -23,10 +24,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::config;
 use codex::{
-    AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision,
-    INITIALIZE, Inbound, Outbound, RequestId, ThreadEvent, ThreadId,
-    ThreadOptions, ThreadSettings, TurnId, answer, encode, history_page,
-    models, parse_line, thread_started, turn_id, user_agent,
+    After, ApprovalId, Call, CodexEvent, Decision, Failure, History, Paging,
+    Server, Then, ThreadId, ThreadOptions, ThreadSettings, TurnId,
+    history_page, models, thread_started, turn_id, user_agent,
 };
 
 const STDERR_TIMEOUT: Duration = Duration::from_secs(5);
@@ -73,20 +73,32 @@ pub enum Error {
     DecisionNotApplicable(ApprovalId),
 }
 
-enum CommandMsg {
-    Request {
-        call: Call,
-        reply: oneshot::Sender<Result<Value, Error>>,
-    },
-    Respond {
-        id: ApprovalId,
-        decision: Decision,
-        reply: oneshot::Sender<Result<(), Error>>,
-    },
-    Shutdown {
-        reply: oneshot::Sender<Exit>,
-    },
+impl From<Failure<std::io::Error>> for Error {
+    fn from(failure: Failure<std::io::Error>) -> Self {
+        match failure {
+            Failure::Exited => Self::Exited,
+            Failure::Refused(reason) => Self::Refused(reason),
+            Failure::Io(error) => Self::Io(error),
+            Failure::Json(error) => Self::Json(error),
+            Failure::Rpc { method, message } => Self::Rpc { method, message },
+            Failure::UnknownApproval(id) => Self::UnknownApproval(id),
+            Failure::DecisionNotApplicable(id) => {
+                Self::DecisionNotApplicable(id)
+            }
+        }
+    }
 }
+
+/// Who waits for a command's answer.
+type Reply = oneshot::Sender<Result<Value, Error>>;
+/// Who waits for a shutdown's exit.
+type Waiter = oneshot::Sender<Exit>;
+type Input = codex::Input<Reply, Waiter, std::io::Error>;
+type Effect = codex::Effect<Reply, Waiter, std::io::Error>;
+type CommandMsg = codex::Command<Reply, Waiter>;
+/// An effect being performed, and the effects it leads to.
+type Performing<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<Effect>, Stopped>> + Send + 'a>>;
 
 /// The host's app-server. Cloning yields another handle to the same process.
 #[derive(Clone)]
@@ -114,65 +126,27 @@ impl CodexServer {
     pub async fn spawn(
         opts: ServerOptions,
     ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
-        let stdout_log = opts
-            .stdout_log
-            .as_ref()
-            .map(|path| {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-            })
-            .transpose()?;
-        if let Home::Private(dir) = &opts.home {
-            config::write(dir, opts.credential.as_ref())?;
-        }
-        let mut child = command(&opts).spawn()?;
-        let pid = child.id();
-        let ((stdin, stdout), stderr) = child
-            .stdin
-            .take()
-            .zip(child.stdout.take())
-            .zip(child.stderr.take())
-            .ok_or_else(|| {
-                Error::Command(String::from("codex stdio was not piped"))
-            })?;
-        let last_stderr = tokio::spawn(log_stderr(stderr));
-
-        let (events_tx, events_rx) = mpsc::channel(4096);
-        let (commands_tx, commands_rx) = mpsc::channel(64);
-        let actor = Actor {
-            process: Process::Running(Box::new(Running {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout).lines(),
-                last_stderr,
-            })),
-            events: events_tx,
-            stdout_log,
-            pending: HashMap::new(),
-            open: HashMap::new(),
-            next_id: 0,
-            refusal: None,
-        };
-        tokio::spawn(actor.run(commands_rx));
-
-        let initialize = request(&commands_tx, Call::Initialize).await?;
+        let Started {
+            commands,
+            events,
+            pid,
+        } = start(&opts)?;
+        let initialize = request(&commands, Call::Initialize).await?;
         let server = Self {
-            commands: commands_tx,
+            commands,
             user_agent: user_agent(initialize)?,
             pid,
         };
-        Ok((server, events_rx))
+        Ok((server, events))
     }
 
-    /// `userAgent` from the handshake. Its first segment carries the Codex
-    /// version, as in `conductor/0.166.0 (...)`.
     #[must_use]
     pub const fn pid(&self) -> Option<u32> {
         self.pid
     }
 
+    /// `userAgent` from the handshake. Its first segment carries the Codex
+    /// version, as in `conductor/0.166.0 (...)`.
     #[must_use]
     pub fn user_agent(&self) -> &str {
         &self.user_agent
@@ -180,8 +154,7 @@ impl CodexServer {
 
     #[must_use]
     pub fn codex_version(&self) -> Option<&str> {
-        let first = self.user_agent.split_whitespace().next()?;
-        first.split_once('/').map(|(_, version)| version)
+        codex::version(&self.user_agent)
     }
 
     /// # Errors
@@ -230,12 +203,13 @@ impl CodexServer {
         id: ApprovalId,
         decision: Decision,
     ) -> Result<(), Error> {
-        ask(&self.commands, |reply| CommandMsg::Respond {
+        let _ = ask(&self.commands, |reply| CommandMsg::Respond {
             id,
             decision,
             reply,
         })
-        .await?
+        .await??;
+        Ok(())
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
@@ -243,7 +217,7 @@ impl CodexServer {
     /// # Errors
     /// Fails when the server's actor has already stopped.
     pub async fn shutdown(&self) -> Result<Exit, Error> {
-        ask(&self.commands, |reply| CommandMsg::Shutdown { reply }).await
+        ask(&self.commands, CommandMsg::Shutdown).await
     }
 
     fn thread(&self, id: ThreadId, settings: ThreadSettings) -> CodexThread {
@@ -297,14 +271,24 @@ impl CodexThread {
     /// Fails when a page request fails or the history runs past the page
     /// limit.
     pub async fn history_turns(&self) -> Result<Vec<TurnId>, Error> {
-        History {
-            thread: self.clone(),
-            cursor: None,
-            pages: 0,
-            turns: Vec::new(),
+        let mut paging = History::start();
+        loop {
+            paging = match paging {
+                Paging::Fetch(history) => self.next_page(history).await?,
+                Paging::Done(turns) => break Ok(turns),
+                Paging::Limit => break Err(Error::HistoryLimit),
+            };
         }
-        .run()
-        .await
+    }
+
+    async fn next_page(&self, history: History) -> Result<Paging, Error> {
+        let call = Call::ThreadTurns {
+            thread: self.id.clone(),
+            cursor: history.cursor(),
+        };
+        let (turns, cursor) =
+            history_page(request(&self.server.commands, call).await?)?;
+        Ok(history.add(turns, cursor))
     }
 
     /// Resolves once Codex accepts; `TurnCompleted` follows as an event.
@@ -332,60 +316,6 @@ impl CodexThread {
         decision: Decision,
     ) -> Result<(), Error> {
         self.server.respond(id, decision).await
-    }
-}
-
-struct History {
-    thread: CodexThread,
-    cursor: Option<String>,
-    pages: usize,
-    turns: Vec<TurnId>,
-}
-
-enum HistoryProgress {
-    More,
-    Complete,
-}
-
-impl History {
-    async fn run(mut self) -> Result<Vec<TurnId>, Error> {
-        loop {
-            let page = self.next().await?;
-            match self.on_page(page) {
-                HistoryProgress::More => {}
-                HistoryProgress::Complete => break Ok(self.turns),
-            }
-        }
-    }
-
-    async fn next(&self) -> Result<(Vec<TurnId>, Option<String>), Error> {
-        match self.pages {
-            100 => Err(Error::HistoryLimit),
-            _ => Ok(history_page(
-                request(
-                    &self.thread.server.commands,
-                    Call::ThreadTurns {
-                        thread: self.thread.id.clone(),
-                        cursor: self.cursor.clone(),
-                    },
-                )
-                .await?,
-            )?),
-        }
-    }
-
-    fn on_page(
-        &mut self,
-        page: (Vec<TurnId>, Option<String>),
-    ) -> HistoryProgress {
-        let (turns, cursor) = page;
-        self.turns.extend(turns);
-        self.pages = self.pages.saturating_add(1);
-        self.cursor = cursor;
-        match &self.cursor {
-            Some(_) => HistoryProgress::More,
-            None => HistoryProgress::Complete,
-        }
     }
 }
 
@@ -418,47 +348,100 @@ async fn ask<T>(
 /// `codex` with its home.
 #[must_use]
 pub fn cli(codex_path: &Path, home: &Home) -> Command {
-    let mut cmd = Command::new(codex_path);
-    if let Home::Private(dir) = home {
-        cmd.env_remove("CODEX_HOME");
-        cmd.env_remove(config::KEY_VAR);
-        cmd.env("CODEX_HOME", dir);
-    }
-    cmd
+    install::process::command(codex_path, home, codex::cli(home.kind()))
 }
 
 /// `codex login status`, which succeeds when `home` is signed in.
 #[must_use]
 pub fn login_status(codex_path: &Path, home: &Home) -> Command {
-    let mut cmd = cli(codex_path, home);
-    cmd.args(["login", "status"]);
-    cmd
+    install::process::command(
+        codex_path,
+        home,
+        codex::login_status(home.kind()),
+    )
 }
 
 /// The `ChatGPT` sign-in by device code, `codex login --device-auth`, into
 /// `home`. It stores the credential there itself.
 #[must_use]
 pub fn login(codex_path: &Path, home: &Home) -> Command {
-    let mut cmd = cli(codex_path, home);
-    cmd.args(["login", "--device-auth"]);
-    cmd
+    install::process::command(codex_path, home, codex::login(home.kind()))
 }
 
-pub fn command(opts: &ServerOptions) -> Command {
-    let mut cmd = cli(&opts.codex_path, &opts.home);
-    match &opts.credential {
-        Some(CodexCredential::Provider { key, .. }) => {
-            cmd.env(config::KEY_VAR, key);
-        }
-        None => {}
-    }
-    cmd.args(["app-server", "--listen", "stdio://"])
-        .current_dir(&opts.cwd)
+fn command(opts: &ServerOptions) -> Command {
+    let mut cmd = install::process::command(
+        &opts.codex_path,
+        &opts.home,
+        codex::app_server(opts.home.kind(), opts.credential.as_ref()),
+    );
+    cmd.current_dir(&opts.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     install::process::no_window(cmd)
+}
+
+/// A private home gets the provider in its `config.toml`.
+fn configure(
+    home: &Home,
+    credential: Option<&CodexCredential>,
+) -> Result<(), Error> {
+    match home {
+        Home::Private(dir) => config::write(dir, credential),
+        Home::User => Ok(()),
+    }
+}
+
+/// A server whose process runs, before it has answered `initialize`.
+struct Started {
+    commands: mpsc::Sender<CommandMsg>,
+    events: mpsc::Receiver<CodexEvent>,
+    pid: Option<u32>,
+}
+
+/// Configures the home, then starts the process and its actor.
+fn start(opts: &ServerOptions) -> Result<Started, Error> {
+    let stdout_log = opts
+        .stdout_log
+        .as_ref()
+        .map(|path| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+        })
+        .transpose()?;
+    configure(&opts.home, opts.credential.as_ref())?;
+    let mut child = command(opts).spawn()?;
+    let pid = child.id();
+    let ((stdin, stdout), stderr) = child
+        .stdin
+        .take()
+        .zip(child.stdout.take())
+        .zip(child.stderr.take())
+        .ok_or_else(|| {
+            Error::Command(String::from("codex stdio was not piped"))
+        })?;
+    let (events_tx, events) = mpsc::channel(4096);
+    let (commands_tx, commands) = mpsc::channel(64);
+    let actor = Actor {
+        server: Server::running(),
+        process: Some(Running {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout).lines(),
+            stdout_log,
+            last_stderr: tokio::spawn(log_stderr(stderr)),
+        }),
+        events: events_tx,
+    };
+    tokio::spawn(actor.run(commands));
+    Ok(Started {
+        commands: commands_tx,
+        events,
+        pid,
+    })
 }
 
 /// Logs stderr while the server runs, retaining its last nonempty line.
@@ -474,33 +457,32 @@ async fn log_stderr(stderr: ChildStderr) -> Option<String> {
                 .map(|line| (line, lines))
         },
     )
-    .inspect(|line| tracing::debug!(target: "codex::stderr", "{line}"))
+    .inspect(|line| codex::log_stderr(line))
     .filter(|line| !line.trim().is_empty())
     .last()
     .await
-}
-
-fn exited(refusal: Option<&str>) -> Error {
-    refusal.map_or(Error::Exited, |reason| Error::Refused(reason.to_owned()))
 }
 
 struct Running {
     child: Child,
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
+    /// Gets every raw stdout line.
+    stdout_log: Option<std::fs::File>,
     last_stderr: tokio::task::JoinHandle<Option<String>>,
 }
 
 impl Running {
+    async fn read(&mut self) -> Input {
+        let read = self.stdout.next_line().await;
+        record(self.stdout_log.as_mut(), &read);
+        Input::Read(read.map_err(|error| error.to_string()))
+    }
+
+    /// How the process ended, and its last stderr line, which says why.
     async fn stop(self) -> (Exit, Option<String>) {
-        let Self {
-            child,
-            stdin,
-            stdout: _,
-            last_stderr,
-        } = self;
-        let status = install::process::stop(child, stdin).await;
-        let refusal = tokio::time::timeout(STDERR_TIMEOUT, last_stderr)
+        let status = install::process::stop(self.child, self.stdin).await;
+        let refusal = tokio::time::timeout(STDERR_TIMEOUT, self.last_stderr)
             .await
             .ok()
             .and_then(Result::ok)
@@ -509,44 +491,25 @@ impl Running {
     }
 }
 
-enum Process {
-    Running(Box<Running>),
-    Exited(Exit),
-}
-
-/// One thing the actor reacts to.
-enum Input {
-    Line(std::io::Result<Option<String>>),
-    Command(CommandMsg),
-    /// Every handle is gone.
-    Closed,
+fn record(
+    stdout_log: Option<&mut std::fs::File>,
+    read: &std::io::Result<Option<String>>,
+) {
+    if let (Some(log), Ok(Some(line))) = (stdout_log, read)
+        && let Err(error) = writeln!(log, "{line}")
+    {
+        codex::log_unrecorded(&error.to_string());
+    }
 }
 
 /// Every handle is gone, so the actor has stopped the process and ended.
 struct Stopped {}
 
-/// A Codex request we have not answered yet.
-struct Open {
-    rpc_id: RequestId,
-    thread: ThreadId,
-    shape: AnswerShape,
-}
-
-/// A request we sent, waiting for its response.
-struct Pending {
-    method: String,
-    reply: oneshot::Sender<Result<Value, Error>>,
-}
-
 struct Actor {
-    process: Process,
+    server: Server<Reply>,
+    /// The process, until it is stopped.
+    process: Option<Running>,
     events: mpsc::Sender<CodexEvent>,
-    stdout_log: Option<std::fs::File>,
-    /// Our requests awaiting a response, by JSON-RPC id.
-    pending: HashMap<i64, Pending>,
-    open: HashMap<ApprovalId, Open>,
-    next_id: i64,
-    refusal: Option<String>,
 }
 
 impl Actor {
@@ -556,333 +519,111 @@ impl Actor {
     ) -> Result<Infallible, Stopped> {
         loop {
             let input = self.next_input(&mut commands).await;
-            self.on_input(input).await?;
+            self.feed(input).await?;
         }
     }
 
+    /// The next stdout line or command, and only commands once the process
+    /// has stopped.
     async fn next_input(
         &mut self,
         commands: &mut mpsc::Receiver<CommandMsg>,
     ) -> Input {
-        match &mut self.process {
-            Process::Running(running) => tokio::select! {
-                line = running.stdout.next_line() => Input::Line(line),
-                cmd = commands.recv() => cmd.map_or(Input::Closed, Input::Command),
-            },
-            Process::Exited(_) => {
-                commands.recv().await.map_or(Input::Closed, Input::Command)
+        let line = self.process.as_mut().map_or(MaybeFuture::None, |running| {
+            MaybeFuture::Some(running.read())
+        });
+        future::race(line, receive(commands)).await
+    }
+
+    /// Steps the server and performs its effects in order, each effect's
+    /// own effects before the next.
+    async fn feed(&mut self, input: Input) -> Result<(), Stopped> {
+        let mut effects = self.server.step(input);
+        effects.reverse();
+        while let Some(effect) = effects.pop() {
+            let more = self.perform(effect).await?;
+            effects.extend(more.into_iter().rev());
+        }
+        Ok(())
+    }
+
+    fn perform(&mut self, effect: Effect) -> Performing<'_> {
+        match effect {
+            Effect::Write { line, then } => Box::pin(self.write(line, then)),
+            Effect::Emit(event) => Box::pin(self.emit(event)),
+            Effect::Reply(reply, answer) => Box::pin(future::ready(Ok(
+                deliver(reply, answer.map_err(Error::from)),
+            ))),
+            Effect::Report(waiter, exit) => {
+                Box::pin(future::ready(Ok(deliver(waiter, exit))))
             }
+            Effect::Stop(then) => Box::pin(self.stop(then)),
+            Effect::End => Box::pin(future::ready(Err(Stopped {}))),
         }
     }
 
-    async fn on_input(&mut self, input: Input) -> Result<(), Stopped> {
-        match input {
-            Input::Line(Ok(Some(line))) => {
-                self.on_line(&line).await;
-                Ok(())
-            }
-            Input::Line(Ok(None)) => {
-                self.stop().await;
-                Ok(())
-            }
-            Input::Line(Err(e)) => {
-                tracing::error!("reading codex stdout: {e}");
-                self.stop().await;
-                Ok(())
-            }
-            Input::Command(cmd) => {
-                self.on_command(cmd).await;
-                Ok(())
-            }
-            Input::Closed => {
-                self.stop().await;
-                Err(Stopped {})
-            }
-        }
-    }
-
-    async fn on_line(&mut self, line: &str) {
-        if let Some(Err(e)) =
-            self.stdout_log.as_mut().map(|log| writeln!(log, "{line}"))
-        {
-            tracing::warn!("writing stdout log: {e}");
-        }
-        let inbound = match parse_line(line) {
-            Ok(inbound) => inbound,
-            Err(e) => {
-                tracing::warn!("codex printed a non-JSON line ({e}): {line}");
-                Inbound::Event(CodexEvent::Unknown(Value::String(
-                    line.to_owned(),
-                )))
-            }
-        };
-        match inbound {
-            Inbound::Event(event) => self.emit(event).await,
-            Inbound::Response { id, outcome } => {
-                self.on_response(id, outcome).await;
-            }
-            Inbound::Approval {
-                rpc_id,
-                thread,
-                shape,
-                event,
-            } => {
-                self.open.insert(
-                    ApprovalId::of(&rpc_id),
-                    Open {
-                        rpc_id,
-                        thread: thread.clone(),
-                        shape,
-                    },
-                );
-                self.emit(CodexEvent::Thread { thread, event }).await;
-            }
-            Inbound::Resolved { thread, rpc_id } => {
-                let id = ApprovalId::of(&rpc_id);
-                // Codex also resolves requests we answered; only an unanswered
-                // one means Codex withdrew it.
-                if let Some(Open { .. }) = self.open.remove(&id) {
-                    self.emit(CodexEvent::Thread {
-                        thread,
-                        event: ThreadEvent::ApprovalCancelled { id },
-                    })
-                    .await;
-                }
-            }
-            Inbound::Unsupported {
-                rpc_id,
-                method,
-                event,
-            } => {
-                let message = format!("conductor does not handle {method}");
-                tracing::warn!("{message}");
-                if let Err(e) =
-                    self.write(Outbound::Reject { rpc_id, message }).await
-                {
-                    tracing::error!("rejecting {method}: {e}");
-                }
-                self.emit(event).await;
-            }
-            Inbound::Declined { rpc_id, event } => {
-                tracing::info!(
-                    "declined a question that asks for a secret answer"
-                );
-                let message =
-                    String::from("conductor does not take secret answers");
-                if let Err(e) =
-                    self.write(Outbound::Reject { rpc_id, message }).await
-                {
-                    tracing::error!("declining a secret question: {e}");
-                }
-                self.emit(event).await;
-            }
-        }
-    }
-
-    async fn on_response(
+    async fn write(
         &mut self,
-        id: RequestId,
-        outcome: Result<Value, String>,
-    ) {
-        let pending = match &id {
-            RequestId::Integer(n) => self.pending.remove(n),
-            RequestId::String(_) => None,
-        };
-        if let Some(Pending { method, reply }) = pending {
-            if let (INITIALIZE, Ok(_)) = (method.as_str(), &outcome) {
-                self.initialized().await;
-            }
-            let _ = reply.send(
-                outcome.map_err(|message| Error::Rpc { method, message }),
-            );
-        } else {
-            tracing::warn!("response for unknown request {id:?}");
-        }
+        line: String,
+        then: Then<Reply>,
+    ) -> Result<Vec<Effect>, Stopped> {
+        let outcome = put_line(self.process.as_mut(), &line).await;
+        Ok(self.server.step(Input::Wrote { then, outcome }))
     }
 
-    async fn initialized(&mut self) {
-        if let Err(e) = self.write(Outbound::Initialized).await {
-            tracing::error!("sending initialized: {e}");
-        }
-    }
-
-    async fn on_command(&mut self, cmd: CommandMsg) {
-        match cmd {
-            CommandMsg::Request { call, reply } => {
-                self.next_id = self.next_id.saturating_add(1);
-                let id = self.next_id;
-                let method = String::from(call.method());
-                match self.write(Outbound::Request { id, call }).await {
-                    Ok(()) => {
-                        self.pending.insert(id, Pending { method, reply });
-                    }
-                    Err(e @ Error::Io(_)) => {
-                        self.stop().await;
-                        let error = self
-                            .refusal
-                            .as_deref()
-                            .map_or(e, |reason| exited(Some(reason)));
-                        let _ = reply.send(Err(error));
-                    }
-                    Err(e) => {
-                        let _ = reply.send(Err(e));
-                    }
-                }
-            }
-            CommandMsg::Respond {
-                id,
-                decision,
-                reply,
-            } => {
-                let _ = reply.send(self.respond(id, decision).await);
-            }
-            CommandMsg::Shutdown { reply } => {
-                let _ = reply.send(self.stop().await);
-            }
-        }
-    }
-
-    async fn respond(
+    async fn stop(
         &mut self,
-        id: ApprovalId,
-        decision: Decision,
-    ) -> Result<(), Error> {
-        let open = self
-            .open
-            .remove(&id)
-            .ok_or_else(|| Error::UnknownApproval(id.clone()))?;
-        let answered = answer(&open.shape, decision);
-        self.settle(id, open, answered).await
+        then: After<Reply, Waiter, std::io::Error>,
+    ) -> Result<Vec<Effect>, Stopped> {
+        let (exit, refusal) = stop_process(self.process.take()).await;
+        Ok(self.server.step(Input::Stopped {
+            exit,
+            refusal,
+            then,
+        }))
     }
 
-    /// Sends the answer, or puts the approval back when the decision didn't fit.
-    async fn settle(
-        &mut self,
-        id: ApprovalId,
-        open: Open,
-        answered: Result<Value, AnswerError>,
-    ) -> Result<(), Error> {
-        match answered {
-            Ok(result) => {
-                tracing::debug!(
-                    "answering {} on thread {}",
-                    id.0,
-                    open.thread.0
-                );
-                self.write(Outbound::Answer {
-                    rpc_id: open.rpc_id,
-                    result,
-                })
-                .await
-            }
-            Err(AnswerError::NotApplicable) => {
-                self.open.insert(id.clone(), open);
-                Err(Error::DecisionNotApplicable(id))
-            }
-            Err(AnswerError::Encode(e)) => Err(Error::Json(e)),
-        }
-    }
-
-    async fn write(&mut self, msg: Outbound) -> Result<(), Error> {
-        match &mut self.process {
-            Process::Running(running) => {
-                let line = format!("{}\n", encode(msg)?);
-                running.stdin.write_all(line.as_bytes()).await?;
-                running.stdin.flush().await?;
-                Ok(())
-            }
-            Process::Exited(_) => Err(exited(self.refusal.as_deref())),
-        }
-    }
-
-    /// Moves to `Exited`, failing everything still waiting on the process.
-    async fn stop(&mut self) -> Exit {
-        // Both arms put the real state back.
-        let placeholder =
-            Process::Exited(Exit::Unknown(String::from("stopping")));
-        match std::mem::replace(&mut self.process, placeholder) {
-            Process::Running(running) => {
-                let (status, refusal) = running.stop().await;
-                self.refusal = refusal;
-                self.process = Process::Exited(status.clone());
-                for (_, Pending { reply, .. }) in self.pending.drain() {
-                    let _ = reply.send(Err(exited(self.refusal.as_deref())));
-                }
-                self.open.clear();
-                self.emit(CodexEvent::Exited {
-                    status: status.clone(),
-                })
-                .await;
-                status
-            }
-            Process::Exited(status) => {
-                self.process = Process::Exited(status.clone());
-                status
-            }
-        }
-    }
-
-    async fn emit(&self, event: CodexEvent) {
+    async fn emit(&self, event: CodexEvent) -> Result<Vec<Effect>, Stopped> {
         // A dropped receiver only means nobody is listening any more.
         let _ = self.events.send(event).await;
+        Ok(Vec::new())
+    }
+}
+
+async fn receive(commands: &mut mpsc::Receiver<CommandMsg>) -> Input {
+    commands.recv().await.map_or(Input::Closed, Input::Command)
+}
+
+/// A dropped receiver only means nobody waits any more.
+fn deliver<T>(reply: oneshot::Sender<T>, answer: T) -> Vec<Effect> {
+    let _ = reply.send(answer);
+    Vec::new()
+}
+
+async fn put_line(
+    running: Option<&mut Running>,
+    line: &str,
+) -> std::io::Result<()> {
+    let stdin = &mut running
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?
+        .stdin;
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.flush().await
+}
+
+/// The server only stops a running process.
+async fn stop_process(running: Option<Running>) -> (Exit, Option<String>) {
+    match running {
+        Some(process) => process.stop().await,
+        None => (Exit::Unknown(String::from("already stopped")), None),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
     use std::path::Path;
 
-    use tokio::sync::mpsc;
-
-    use super::{
-        Actor, AnswerError, AnswerShape, ApprovalId, Decision, Exit, Home,
-        Open, Process, RequestId, ServerOptions, ThreadId, command,
-    };
-
-    #[tokio::test]
-    async fn an_answer_that_does_not_encode_fails_and_closes_the_approval()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (events, _listening) = mpsc::channel(1);
-        let mut actor = Actor {
-            process: Process::Exited(Exit::Unknown(String::from(
-                "never started",
-            ))),
-            events,
-            stdout_log: None,
-            pending: HashMap::new(),
-            open: HashMap::new(),
-            next_id: 0,
-            refusal: None,
-        };
-        let id = ApprovalId(String::from("ap_1"));
-        let open = Open {
-            rpc_id: RequestId::Integer(3),
-            thread: ThreadId(String::from("th_1")),
-            shape: AnswerShape::Command,
-        };
-        let Err(failure) = serde_json::to_value(BTreeMap::from([((1, 2), 0)]))
-        else {
-            return Err("a map with tuple keys encoded".into());
-        };
-        let first = actor
-            .settle(id.clone(), open, Err(AnswerError::Encode(failure)))
-            .await;
-        let again = actor.respond(id, Decision::Accept).await;
-        assert_eq!(
-            (
-                first.map_err(|e| e.to_string()),
-                again.map_err(|e| e.to_string())
-            ),
-            (
-                Err(String::from(
-                    "could not encode or decode a codex message: key must be a string"
-                )),
-                Err(String::from("no open approval with id ap_1"))
-            )
-        );
-        Ok(())
-    }
+    use super::{Home, ServerOptions, command};
 
     #[test]
     fn app_server_argv() -> Result<(), Box<dyn std::error::Error>> {

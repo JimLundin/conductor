@@ -14,7 +14,8 @@ use std::pin::Pin;
 
 use agents::{Reply, Step};
 use claude::{ClaudeEvent, PermissionMode, PermissionRequestId, claude_answer};
-use claude_cli::{ClaudeOptions, ClaudeSession, SettingSource, VersionPolicy};
+use claude::{SettingSource, VersionPolicy};
+use claude_cli::{ClaudeOptions, ClaudeSession};
 use codex::{
     ApprovalId, ApprovalPolicy, Sandbox, ThreadId, ThreadOptions, TurnId,
     codex_answer,
@@ -280,7 +281,7 @@ async fn claude_models(
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: claude_cli::Resume::Fresh,
+        resume: claude::Resume::Fresh,
         project_name: None,
         setting_sources: None,
         stdout_log: None,
@@ -599,17 +600,17 @@ fn claude_options(
     }
 }
 
-fn claude_resume(resume: ClaudeResume) -> claude_cli::Resume {
+fn claude_resume(resume: ClaudeResume) -> claude::Resume {
     match resume {
-        ClaudeResume::Fresh => claude_cli::Resume::Fresh,
+        ClaudeResume::Fresh => claude::Resume::Fresh,
         ClaudeResume::Session(session) => {
-            claude_cli::Resume::Session(claude::SessionId(session))
+            claude::Resume::Session(claude::SessionId(session))
         }
         ClaudeResume::Fork {
             source,
             through,
             target,
-        } => claude_cli::Resume::Fork {
+        } => claude::Resume::Fork {
             session: claude::SessionId(source),
             through: claude::MessageId(through),
             target: claude::SessionId(target),

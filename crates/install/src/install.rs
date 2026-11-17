@@ -3,12 +3,15 @@
 //! Each one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
 //! file, a SHA-256 check of that file against the pin and a rename, so a
 //! crash leaves either nothing or a verified install. `<data>/cli/<cli>/lock`
-//! keeps two processes from installing into one data dir at once.
+//! keeps two processes from installing into one data dir at once. Which
+//! build a platform takes and whether a download is it are decided in
+//! `agents::pin`.
 
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::pin::{Mismatch, Platform};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -56,44 +59,6 @@ pub enum InstallError {
     Unpack { archive: String, status: String },
 }
 
-/// What each vendor calls this platform.
-struct Names {
-    /// The platform in Claude's `manifest.json`. Linux means glibc.
-    claude: String,
-    /// Codex's target triple.
-    codex: String,
-}
-
-/// The platforms both CLIs publish builds for.
-fn platform() -> Result<Names, InstallError> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => {
-            Ok(names("linux-x64", "x86_64-unknown-linux-musl"))
-        }
-        ("linux", "aarch64") => {
-            Ok(names("linux-arm64", "aarch64-unknown-linux-musl"))
-        }
-        ("macos", "x86_64") => Ok(names("darwin-x64", "x86_64-apple-darwin")),
-        ("macos", "aarch64") => {
-            Ok(names("darwin-arm64", "aarch64-apple-darwin"))
-        }
-        ("windows", "x86_64") => {
-            Ok(names("win32-x64", "x86_64-pc-windows-msvc"))
-        }
-        ("windows", "aarch64") => {
-            Ok(names("win32-arm64", "aarch64-pc-windows-msvc"))
-        }
-        _ => Err(unpinned()),
-    }
-}
-
-fn names(claude: &str, codex: &str) -> Names {
-    Names {
-        claude: String::from(claude),
-        codex: String::from(codex),
-    }
-}
-
 fn unpinned() -> InstallError {
     InstallError::Platform {
         os: String::from(std::env::consts::OS),
@@ -120,7 +85,9 @@ struct Pin {
 }
 
 fn pin(cli: Cli) -> Result<Pin, InstallError> {
-    let Names { claude, codex } = platform()?;
+    let Platform { claude, codex } =
+        agents::pin::platform(std::env::consts::OS, std::env::consts::ARCH)
+            .ok_or_else(unpinned)?;
     let exe = std::env::consts::EXE_SUFFIX;
     match cli {
         Cli::Claude => Ok(Pin {
@@ -129,7 +96,7 @@ fn pin(cli: Cli) -> Result<Pin, InstallError> {
                 "https://downloads.claude.ai/claude-code-releases/{}/{claude}/claude{exe}",
                 pins::CLAUDE_VERSION
             ),
-            sha256: pins::claude_sha256(&claude).ok_or_else(unpinned)?,
+            sha256: pins::claude_sha256(claude).ok_or_else(unpinned)?,
             package: Package::Binary,
             binary: format!("claude{exe}"),
         }),
@@ -139,7 +106,7 @@ fn pin(cli: Cli) -> Result<Pin, InstallError> {
                 "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-{codex}.tar.gz",
                 pins::CODEX_VERSION
             ),
-            sha256: pins::codex_sha256(&codex).ok_or_else(unpinned)?,
+            sha256: pins::codex_sha256(codex).ok_or_else(unpinned)?,
             package: Package::Archive,
             binary: format!("bin/codex{exe}"),
         }),
@@ -172,40 +139,78 @@ async fn put(
     pin: Pin,
     parent: &Path,
 ) -> Result<PathBuf, InstallError> {
+    let _lock = lock(parent).await?;
+    remove_others(parent, &pin.version)?;
+    ensure(name, pin, parent).await
+}
+
+/// Takes `parent`'s lock, which is held until the file is dropped.
+async fn lock(parent: &Path) -> Result<File, InstallError> {
     std::fs::create_dir_all(parent).map_err(|error| io(parent, error))?;
     let lock_path = parent.join("lock");
     let lock =
         File::create(&lock_path).map_err(|error| io(&lock_path, error))?;
     hold(&lock, &lock_path).await?;
-    remove_others(parent, &pin.version)?;
-    let dir = parent.join(&pin.version);
-    let binary = dir.join(&pin.binary);
+    Ok(lock)
+}
+
+/// Where the binary is, installing it first if it isn't there.
+async fn ensure(
+    name: &str,
+    pin: Pin,
+    parent: &Path,
+) -> Result<PathBuf, InstallError> {
+    let binary = parent.join(&pin.version).join(&pin.binary);
     match presence(&binary) {
         Presence::Present => {
-            tracing::info!(path = %binary.display(), "pinned {name} {} is installed", pin.version);
+            agents::pin::log_present(
+                name,
+                &pin.version,
+                &binary.display().to_string(),
+            );
             Ok(binary)
         }
-        Presence::Missing => {
-            tracing::info!(url = %pin.url, "installing pinned {name} {}", pin.version);
-            let download = parent.join(format!("{}.download", pin.version));
-            fetch(&pin.url, &download).await?;
-            match sha256(&download).await? {
-                found if found == pin.sha256 => {
-                    unpack(&pin.package, &download, &dir, &binary).await?;
-                    tracing::info!(path = %binary.display(), sha256 = %pin.sha256, "installed pinned {name} {}", pin.version);
-                    Ok(binary)
-                }
-                found => {
-                    let _ = std::fs::remove_file(&download);
-                    Err(InstallError::Mismatch {
-                        url: pin.url,
-                        found,
-                        expected: pin.sha256,
-                    })
-                }
-            }
-        }
+        Presence::Missing => download(name, pin, parent, binary).await,
     }
+}
+
+/// Downloads `pin`, verifies it and puts it in place.
+async fn download(
+    name: &str,
+    pin: Pin,
+    parent: &Path,
+    binary: PathBuf,
+) -> Result<PathBuf, InstallError> {
+    agents::pin::log_installing(name, &pin.version, &pin.url);
+    let download = parent.join(format!("{}.download", pin.version));
+    fetch_verified(&pin, &download).await?;
+    unpack(&pin.package, &download, &parent.join(&pin.version), &binary)
+        .await?;
+    agents::pin::log_installed(
+        name,
+        &pin.version,
+        &binary.display().to_string(),
+        &pin.sha256,
+    );
+    Ok(binary)
+}
+
+/// Downloads `pin` to `download`, and removes it again unless it is the
+/// pinned build.
+async fn fetch_verified(
+    pin: &Pin,
+    download: &Path,
+) -> Result<(), InstallError> {
+    fetch(&pin.url, download).await?;
+    agents::pin::verify(sha256(download).await?, &pin.sha256)
+        .map_err(|Mismatch { found, expected }| InstallError::Mismatch {
+            url: pin.url.clone(),
+            found,
+            expected,
+        })
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(download);
+        })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -262,7 +267,7 @@ fn remove_others(parent: &Path, keep: &str) -> Result<(), InstallError> {
 }
 
 fn remove(path: &Path) -> Result<(), InstallError> {
-    tracing::info!(path = %path.display(), "removing an older pinned CLI");
+    agents::pin::log_removing(&path.display().to_string());
     std::fs::remove_dir_all(path)
         .or_else(|_| std::fs::remove_file(path))
         .map_err(|error| io(path, error))
@@ -276,45 +281,65 @@ async fn unpack(
     dir: &Path,
     binary: &Path,
 ) -> Result<(), InstallError> {
-    let download_error = |error| io(download, error);
-    let dir_error = |error| io(dir, error);
     match package {
         Package::Binary => {
-            std::fs::create_dir_all(dir).map_err(dir_error)?;
-            make_executable(download).map_err(download_error)?;
+            std::fs::create_dir_all(dir).map_err(|error| io(dir, error))?;
+            make_executable(download).map_err(|error| io(download, error))?;
             std::fs::rename(download, binary).map_err(|error| io(binary, error))
         }
-        Package::Archive => {
-            let staging = download.with_extension("unpack");
-            let _ = std::fs::remove_dir_all(&staging);
-            std::fs::create_dir_all(&staging)
-                .map_err(|error| io(&staging, error))?;
-            let status = tokio::process::Command::new("tar")
-                .arg("-xzf")
-                .arg(download)
-                .arg("-C")
-                .arg(&staging)
-                .status()
-                .await
-                .map_err(download_error)?;
-            match status.code() {
-                Some(0) => {
-                    // An earlier run may have left the directory without its binary.
-                    let _ = std::fs::remove_dir_all(dir);
-                    std::fs::rename(&staging, dir).map_err(dir_error)?;
-                    std::fs::remove_file(download).map_err(download_error)
-                }
-                _ => Err(InstallError::Unpack {
-                    archive: download.display().to_string(),
-                    status: status.to_string(),
-                }),
-            }
-        }
+        Package::Archive => unpack_archive(download, dir).await,
     }
+}
+
+/// Unpacks the archive at `download` into `dir`, through a staging
+/// directory so `dir` appears whole.
+async fn unpack_archive(
+    download: &Path,
+    dir: &Path,
+) -> Result<(), InstallError> {
+    let staging = download.with_extension("unpack");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|error| io(&staging, error))?;
+    let status = tokio::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(download)
+        .arg("-C")
+        .arg(&staging)
+        .status()
+        .await
+        .map_err(|error| io(download, error))?;
+    match status.code() {
+        Some(0) => place(&staging, download, dir),
+        _ => Err(InstallError::Unpack {
+            archive: download.display().to_string(),
+            status: status.to_string(),
+        }),
+    }
+}
+
+/// Renames the unpacked `staging` to `dir` and drops the download.
+fn place(
+    staging: &Path,
+    download: &Path,
+    dir: &Path,
+) -> Result<(), InstallError> {
+    // An earlier run may have left the directory without its binary.
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::rename(staging, dir).map_err(|error| io(dir, error))?;
+    std::fs::remove_file(download).map_err(|error| io(download, error))
 }
 
 /// Streams `url` into the file at `to`.
 async fn fetch(url: &str, to: &Path) -> Result<(), InstallError> {
+    let (response, file) = open(url, to).await?;
+    drain(response, file, to).await
+}
+
+/// The response to a GET of `url`, and the file at `to` it goes into.
+async fn open(
+    url: &str,
+    to: &Path,
+) -> Result<(reqwest::Response, tokio::fs::File), InstallError> {
     // reqwest is built without a crypto provider, as iroh builds it; this
     // is the same ring provider iroh uses.
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -329,7 +354,7 @@ async fn fetch(url: &str, to: &Path) -> Result<(), InstallError> {
     let file = tokio::fs::File::create(to)
         .await
         .map_err(|error| io(to, error))?;
-    drain(response, file, to).await
+    Ok((response, file))
 }
 
 /// Writes each chunk of the body to the file, then syncs it.
@@ -338,15 +363,31 @@ async fn drain(
     mut file: tokio::fs::File,
     to: &Path,
 ) -> Result<(), InstallError> {
-    loop {
-        match response.chunk().await? {
-            Some(chunk) => file
-                .write_all(&chunk)
-                .await
-                .map_err(|error| io(to, error))?,
-            None => break file.sync_all().await.map_err(|error| io(to, error)),
-        }
-    }
+    write_body(&mut response, &mut file, to).await?;
+    file.sync_all().await.map_err(|error| io(to, error))
+}
+
+async fn write_body(
+    response: &mut reqwest::Response,
+    file: &mut tokio::fs::File,
+    to: &Path,
+) -> Result<(), InstallError> {
+    while copy_chunk(response, file, to).await? {}
+    Ok(())
+}
+
+/// Writes the body's next chunk to the file, and says whether there was
+/// one.
+async fn copy_chunk(
+    response: &mut reqwest::Response,
+    file: &mut tokio::fs::File,
+    to: &Path,
+) -> Result<bool, InstallError> {
+    let chunk = response.chunk().await?;
+    file.write_all(chunk.as_deref().unwrap_or_default())
+        .await
+        .map_err(|error| io(to, error))?;
+    Ok(chunk.is_some())
 }
 
 /// The SHA-256 of the file at `path` as it is on disk, in hex.

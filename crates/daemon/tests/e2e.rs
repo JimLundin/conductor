@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use claude_cli::Sandbox;
+use claude::Sandbox;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
     ToolState,

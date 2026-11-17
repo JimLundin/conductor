@@ -1,8 +1,9 @@
 //! One tokio task owns the `claude` child process. The handle talks to it over a
-//! command channel; the task alone owns stdin, the pending control requests and
-//! the open permission requests, so no state is shared behind a lock.
+//! command channel; the task alone owns stdin and the session's state
+//! machine ([`claude::Session`]), so no state is shared behind a lock. The
+//! task turns what happens into the machine's inputs and performs its
+//! effects.
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,59 +15,21 @@ use serde_json::Value;
 
 use agents::Exit;
 use install::Home;
-use n0_future::StreamExt;
+use n0_future::{MaybeFuture, StreamExt, future};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use claude::{
-    Applied, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
-    PermissionDecision, PermissionMode, PermissionRequestId, SessionId,
-    UnsupportedVersion, applied, check_version, encode, models, parse_line,
+    After, Applied, ClaudeEvent, ControlCall, Failure, Launch,
+    PermissionDecision, PermissionMode, PermissionRequestId, Resume, Sandbox,
+    Session, SessionId, SettingSource, Then, UnsupportedVersion, VersionPolicy,
+    applied, models,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingSource {
-    User,
-    Project,
-    Local,
-}
-
-impl SettingSource {
-    const fn wire(&self) -> &str {
-        match self {
-            Self::User => "user",
-            Self::Project => "project",
-            Self::Local => "local",
-        }
-    }
-}
-
-/// Which CLI versions a session agrees to run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VersionPolicy {
-    /// Refuse a CLI outside the supported range.
-    SupportedOnly,
-    /// Run it anyway, with a warning.
-    AllowUntested,
-}
-
-/// Native conversation history to load. A fork is inclusive of `through`.
-///
-/// Its target transcript is created lazily on the first real user turn, so
-/// persist this recipe until then; `id()` alone does not prove persistence.
-#[derive(Debug, Clone)]
-pub enum Resume {
-    Fresh,
-    Session(SessionId),
-    Fork {
-        session: SessionId,
-        through: MessageId,
-        target: SessionId,
-    },
-}
 
 #[derive(Debug, Clone)]
 pub struct ClaudeOptions {
@@ -121,24 +84,43 @@ pub enum Error {
     UnknownPermissionRequest(PermissionRequestId),
 }
 
-enum CommandMsg {
-    SendUser {
-        text: String,
-        reply: oneshot::Sender<Result<(), Error>>,
-    },
-    Control {
-        call: ControlCall,
-        reply: oneshot::Sender<Result<Value, Error>>,
-    },
-    Respond {
-        id: PermissionRequestId,
-        decision: PermissionDecision,
-        reply: oneshot::Sender<Result<(), Error>>,
-    },
-    Shutdown {
-        reply: oneshot::Sender<Exit>,
-    },
+impl From<Failure<std::io::Error>> for Error {
+    fn from(failure: Failure<std::io::Error>) -> Self {
+        match failure {
+            Failure::Exited => Self::Exited,
+            Failure::Io(error) => Self::Io(error),
+            Failure::Encode(error) => Self::Encode(error),
+            Failure::Control { subtype, message } => {
+                Self::Control { subtype, message }
+            }
+            Failure::UnknownPermissionRequest(id) => {
+                Self::UnknownPermissionRequest(id)
+            }
+        }
+    }
 }
+
+impl From<UnsupportedVersion> for Error {
+    fn from(unsupported: UnsupportedVersion) -> Self {
+        match unsupported {
+            UnsupportedVersion::Outside { found, supported } => {
+                Self::UnsupportedVersion { found, supported }
+            }
+            UnsupportedVersion::Unreported => Self::UnreportedVersion,
+        }
+    }
+}
+
+/// Who waits for a command's answer.
+type Reply = oneshot::Sender<Result<Value, Error>>;
+/// Who waits for a shutdown's exit.
+type Waiter = oneshot::Sender<Exit>;
+type Input = claude::Input<Reply, Waiter, std::io::Error>;
+type Effect = claude::Effect<Reply, Waiter, std::io::Error>;
+type CommandMsg = claude::Command<Reply, Waiter>;
+/// An effect being performed, and the effects it leads to.
+type Performing<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<Effect>, Stopped>> + Send + 'a>>;
 
 pub struct ClaudeSession {
     commands: mpsc::Sender<CommandMsg>,
@@ -146,6 +128,13 @@ pub struct ClaudeSession {
     /// What the `initialize` response lists.
     models: Models,
     pid: Option<u32>,
+}
+
+/// A session whose process runs, before it has answered `initialize`.
+struct Starting {
+    session: ClaudeSession,
+    events: mpsc::Receiver<ClaudeEvent>,
+    last_stderr: tokio::task::JoinHandle<Option<String>>,
 }
 
 impl ClaudeSession {
@@ -158,101 +147,14 @@ impl ClaudeSession {
     pub async fn spawn(
         opts: ClaudeOptions,
     ) -> Result<(Self, mpsc::Receiver<ClaudeEvent>), Error> {
-        let stdout_log = opts
-            .stdout_log
-            .as_ref()
-            .map(|path| {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-            })
-            .transpose()?;
-        let id = match &opts.resume {
-            Resume::Fresh => SessionId(uuid::Uuid::new_v4().to_string()),
-            Resume::Session(id) | Resume::Fork { target: id, .. } => id.clone(),
-        };
-        let mut child = command(&opts, &id).kill_on_drop(true).spawn()?;
-        let pid = child.id();
-        let ((stdin, stdout), stderr) = child
-            .stdin
-            .take()
-            .zip(child.stdout.take())
-            .zip(child.stderr.take())
-            .ok_or_else(|| {
-                Error::Command(String::from("claude stdio was not piped"))
-            })?;
-        let last_stderr = tokio::spawn(log_stderr(stderr));
-
-        let (events_tx, mut events_rx) = mpsc::channel(1024);
-        let (commands_tx, commands_rx) = mpsc::channel(32);
-        let actor = Actor {
-            process: Process::Running(Box::new(Running {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout).lines(),
-            })),
-            events: events_tx,
-            stdout_log,
-            pending: HashMap::new(),
-            open_permissions: HashMap::new(),
-            next_request: 0,
-            last_message: None,
-        };
-        tokio::spawn(actor.run(commands_rx));
-
-        let starting = Self {
-            commands: commands_tx,
-            id,
-            models: Models::none(),
-            pid,
-        };
-        let initialize = match starting.control(ControlCall::Initialize).await {
-            Err(Error::Exited) => Err(refused(
-                &opts.resume,
-                refusal(&mut events_rx, last_stderr).await,
-            )),
-            answer => answer,
-        }?;
-        let session = Self {
-            models: models(&initialize),
-            ..starting
-        };
-        match (check_version(initialize), opts.versions) {
-            (Ok(()), _) => Ok((session, events_rx)),
-            (
-                Err(UnsupportedVersion::Outside { found, supported }),
-                VersionPolicy::AllowUntested,
-            ) => {
-                tracing::warn!(
-                    "running untested claude {found} (supported: {supported})"
-                );
-                Ok((session, events_rx))
-            }
-            (
-                Err(UnsupportedVersion::Unreported),
-                VersionPolicy::AllowUntested,
-            ) => {
-                tracing::warn!(
-                    "running a claude that did not report its version"
-                );
-                Ok((session, events_rx))
-            }
-            (
-                Err(UnsupportedVersion::Outside { found, supported }),
-                VersionPolicy::SupportedOnly,
-            ) => {
-                session.shutdown().await?;
-                Err(Error::UnsupportedVersion { found, supported })
-            }
-            (
-                Err(UnsupportedVersion::Unreported),
-                VersionPolicy::SupportedOnly,
-            ) => {
-                session.shutdown().await?;
-                Err(Error::UnreportedVersion)
-            }
-        }
+        let id = opts
+            .resume
+            .target()
+            .cloned()
+            .unwrap_or_else(|| SessionId(uuid::Uuid::new_v4().to_string()));
+        let mut starting = start(&opts, id)?;
+        let initialize = starting.initialize(&opts.resume).await?;
+        starting.admit(initialize, opts.versions).await
     }
 
     /// The models and efforts this CLI offers.
@@ -296,8 +198,10 @@ impl ClaudeSession {
     /// # Errors
     /// Fails when the CLI has exited or the message cannot be written.
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
-        self.ask(|reply| CommandMsg::SendUser { text, reply })
-            .await?
+        let _ = self
+            .ask(|reply| CommandMsg::SendUser { text, reply })
+            .await??;
+        Ok(())
     }
 
     /// Resolves once the CLI acknowledges; the turn's `result` follows as an event.
@@ -329,12 +233,14 @@ impl ClaudeSession {
         id: PermissionRequestId,
         decision: PermissionDecision,
     ) -> Result<(), Error> {
-        self.ask(|reply| CommandMsg::Respond {
-            id,
-            decision,
-            reply,
-        })
-        .await?
+        let _ = self
+            .ask(|reply| CommandMsg::Respond {
+                id,
+                decision,
+                reply,
+            })
+            .await??;
+        Ok(())
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
@@ -342,7 +248,7 @@ impl ClaudeSession {
     /// # Errors
     /// Fails when the session's actor has already stopped.
     pub async fn shutdown(self) -> Result<Exit, Error> {
-        self.ask(|reply| CommandMsg::Shutdown { reply }).await
+        self.ask(CommandMsg::Shutdown).await
     }
 
     async fn control(&self, call: ControlCall) -> Result<Value, Error> {
@@ -367,181 +273,182 @@ impl ClaudeSession {
     }
 }
 
-/// The variables a parent Claude Code session sets. They are removed so the CLI
-/// starts as its own session even when Conductor runs inside one.
-const PARENT_SESSION_VARS: &[&str] = &[
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_PROJECT_DIR_NAME",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_PID",
-    "CLAUDE_EFFORT",
-];
+/// Starts the process and its actor.
+fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
+    let stdout_log = opts
+        .stdout_log
+        .as_ref()
+        .map(|path| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+        })
+        .transpose()?;
+    let mut child = command(opts, &id).spawn()?;
+    let pid = child.id();
+    let ((stdin, stdout), stderr) = child
+        .stdin
+        .take()
+        .zip(child.stdout.take())
+        .zip(child.stderr.take())
+        .ok_or_else(|| {
+            Error::Command(String::from("claude stdio was not piped"))
+        })?;
+    let (events_tx, events) = mpsc::channel(1024);
+    let (commands_tx, commands) = mpsc::channel(32);
+    let actor = Actor {
+        session: Session::running(),
+        process: Some(Running {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout).lines(),
+            stdout_log,
+        }),
+        events: events_tx,
+    };
+    tokio::spawn(actor.run(commands));
+    Ok(Starting {
+        session: ClaudeSession {
+            commands: commands_tx,
+            id,
+            models: Models::none(),
+            pid,
+        },
+        events,
+        last_stderr: tokio::spawn(log_stderr(stderr)),
+    })
+}
 
-/// What the host's own environment may carry that would take a private home
-/// off its own sign-in: credentials, which take precedence over it, the
-/// cloud providers and another endpoint, and another home.
-const INHERITED_LOGIN: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "ANTHROPIC_BASE_URL",
-    "CLAUDE_CONFIG_DIR",
-];
+impl Starting {
+    /// The `initialize` answer, or why the CLI exited before it gave one.
+    async fn initialize(&mut self, resume: &Resume) -> Result<Value, Error> {
+        let answer = self.session.control(ControlCall::Initialize).await;
+        self.unless_exited(answer, resume).await
+    }
 
-/// `claude` with what every run of it gets: its home, and its own updates
-/// off, since the host installs the version it runs.
+    async fn unless_exited(
+        &mut self,
+        answer: Result<Value, Error>,
+        resume: &Resume,
+    ) -> Result<Value, Error> {
+        match answer {
+            Err(Error::Exited) => Err(self.refusal(resume).await),
+            received => received,
+        }
+    }
+
+    /// Why a CLI exited before it answered `initialize`: the `errors` of the
+    /// `result` it printed, else its last stderr line.
+    async fn refusal(&mut self, resume: &Resume) -> Error {
+        let events = std::iter::from_fn(|| self.events.try_recv().ok())
+            .collect::<Vec<ClaudeEvent>>();
+        let reason =
+            reason(claude::reported_refusal(events), &mut self.last_stderr)
+                .await;
+        resume
+            .missing(&reason)
+            .map_or(Error::Refused(reason), Error::MissingSession)
+    }
+
+    async fn admit(
+        self,
+        initialize: Value,
+        policy: VersionPolicy,
+    ) -> Result<(ClaudeSession, mpsc::Receiver<ClaudeEvent>), Error> {
+        let session = ClaudeSession {
+            models: models(&initialize),
+            ..self.session
+        };
+        match claude::admit(initialize, policy) {
+            Ok(()) => Ok((session, self.events)),
+            Err(unsupported) => Err(session.refuse(unsupported).await),
+        }
+    }
+}
+
+impl ClaudeSession {
+    async fn refuse(self, unsupported: UnsupportedVersion) -> Error {
+        self.shutdown()
+            .await
+            .err()
+            .unwrap_or_else(|| Error::from(unsupported))
+    }
+}
+
+async fn reason(
+    reported: Option<String>,
+    last_stderr: &mut tokio::task::JoinHandle<Option<String>>,
+) -> String {
+    match reported {
+        Some(reason) => reason,
+        None => stderr_reason(last_stderr).await,
+    }
+}
+
+async fn stderr_reason(
+    last_stderr: &mut tokio::task::JoinHandle<Option<String>>,
+) -> String {
+    tokio::time::timeout(CONTROL_TIMEOUT, last_stderr)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+        .unwrap_or_else(|| String::from("it printed no reason"))
+}
+
+/// `claude` with what every run of it gets (`claude::cli`).
 #[must_use]
 pub fn cli(claude_path: &Path, home: &Home) -> Command {
-    let mut cmd = Command::new(claude_path);
-    cmd.env("DISABLE_UPDATES", "1");
-    if let Home::Private(dir) = home {
-        for var in INHERITED_LOGIN {
-            cmd.env_remove(var);
-        }
-        cmd.env("CLAUDE_CONFIG_DIR", dir);
-    }
-    for var in PARENT_SESSION_VARS {
-        cmd.env_remove(var);
-    }
-    cmd
+    install::process::command(claude_path, home, claude::cli(home.kind()))
 }
 
-/// Whether Claude's command sandbox can run on this host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sandbox {
-    Available,
-    Missing,
-}
-
-/// What Claude's sandbox needs on Linux and WSL2.
-const SANDBOX_TOOLS: &[&str] = &["bwrap", "socat"];
-
-/// Whether Claude's command sandbox can run here.
-///
-/// See [sandboxing] in docs/architecture.md: Seatbelt on macOS always, on Linux and WSL2 with
-/// `bwrap` and `socat` on `PATH`, and never on native Windows, where Claude
-/// runs commands unsandboxed.
+/// Whether Claude's command sandbox can run here (`claude::sandbox`).
 #[must_use]
 pub fn sandbox() -> Sandbox {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let dirs = std::env::split_paths(&path).collect::<Vec<PathBuf>>();
-    let missing = SANDBOX_TOOLS
+    let tools = claude::SANDBOX_TOOLS
         .iter()
-        .find(|tool| !dirs.iter().any(|dir| dir.join(tool).is_file()));
-    match (std::env::consts::OS, missing) {
-        ("macos", _) | ("linux", None) => Sandbox::Available,
-        (_, _) => Sandbox::Missing,
-    }
+        .all(|tool| dirs.iter().any(|dir| dir.join(tool).is_file()));
+    claude::sandbox(std::env::consts::OS, tools)
 }
 
 /// `claude auth status`, which succeeds when `home` is signed in.
 #[must_use]
 pub fn auth_status(claude_path: &Path, home: &Home) -> Command {
-    let mut cmd = cli(claude_path, home);
-    cmd.args(["auth", "status"]);
-    cmd
+    install::process::command(
+        claude_path,
+        home,
+        claude::auth_status(home.kind()),
+    )
 }
 
 /// The subscription sign-in, `claude auth login --claudeai`, into `home`. It
 /// stores the credential there itself.
 #[must_use]
 pub fn login(claude_path: &Path, home: &Home) -> Command {
-    let mut cmd = cli(claude_path, home);
-    cmd.args(["auth", "login", "--claudeai"]);
-    cmd
+    install::process::command(claude_path, home, claude::login(home.kind()))
 }
 
-pub fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
-    let mut cmd = cli(&opts.claude_path, &opts.home);
-    if let Some(name) = &opts.project_name {
-        cmd.env("CLAUDE_CODE_PROJECT_DIR_NAME", name);
-    }
-    match &opts.credential {
-        Some(ClaudeCredential::Gateway { base_url, token }) => {
-            cmd.env("ANTHROPIC_BASE_URL", base_url)
-                .env("ANTHROPIC_AUTH_TOKEN", token);
-        }
-        None => {}
-    }
-    // `TodoWrite`, the checklist the host keeps as tasks, rather than the
-    // task tools that would take its place (PROTOCOL.md).
-    cmd.env("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")
-        .env("CLAUDE_CODE_ENABLE_TASKS", "0");
-    cmd.args([
-        "--print",
-        "--verbose",
-        "--output-format",
-        "stream-json",
-        "--input-format",
-        "stream-json",
-        "--permission-mode",
-        opts.permission_mode.wire(),
-    ]);
-    // The scrub keeps credentials out of the commands, hooks and MCP servers
-    // Claude starts, and Claude itself still uses them. On Linux it runs
-    // every command in Claude's sandbox, so it is set only where that runs.
-    match (&opts.credential, sandbox()) {
-        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Available) => {
-            cmd.env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1");
-        }
-        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing)
-        | (None, _) => {}
-    }
-    // One argument, so an id that starts with `-` is not read as a flag.
-    match &opts.resume {
-        Resume::Fresh => {
-            cmd.args(["--session-id", &id.0]);
-        }
-        Resume::Session(session) => {
-            cmd.arg(format!("--resume={}", session.0));
-        }
-        Resume::Fork {
-            session,
-            through,
-            target,
-        } => {
-            cmd.arg(format!("--resume={}", session.0))
-                .arg(format!("--resume-session-at={}", through.0))
-                .arg("--fork-session")
-                .args(["--session-id", &target.0]);
-        }
-    }
-    if let Some(model) = &opts.model {
-        cmd.args(["--model", model]);
-    }
-    if let Some(effort) = &opts.effort {
-        cmd.args(["--effort", effort.wire()]);
-    }
-    if let Some(sources) = &opts.setting_sources {
-        cmd.args([
-            "--setting-sources",
-            &sources
-                .iter()
-                .map(SettingSource::wire)
-                .collect::<Vec<&str>>()
-                .join(","),
-        ]);
-    }
-    // A hidden flag. The text arrives only where the CLI also sends
-    // experimental betas, which `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`
-    // turns off (PROTOCOL.md).
-    cmd.args([
-        "--replay-user-messages",
-        "--include-partial-messages",
-        "--thinking-display",
-        "summarized",
-        "--permission-prompt-tool",
-        "stdio",
-    ]);
+fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
+    let launch = Launch {
+        home: opts.home.kind(),
+        credential: opts.credential.clone(),
+        project_name: opts.project_name.clone(),
+        permission_mode: opts.permission_mode,
+        resume: opts.resume.clone(),
+        id: id.clone(),
+        model: opts.model.clone(),
+        effort: opts.effort,
+        setting_sources: opts.setting_sources.clone(),
+        sandbox: sandbox(),
+    };
+    let mut cmd = install::process::command(
+        &opts.claude_path,
+        &opts.home,
+        claude::session(&launch),
+    );
     cmd.current_dir(&opts.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -563,109 +470,46 @@ async fn log_stderr(stderr: ChildStderr) -> Option<String> {
                 .map(|line| (line, lines))
         },
     )
-    .inspect(|line| tracing::warn!(target: "claude::stderr", "{line}"))
+    .inspect(|line| claude::log_stderr(line))
     .last()
     .await
-}
-
-/// Distinguishes an absent target from other resume failures. Recovery may
-/// replay a persisted fork recipe only for that exact missing-target reason.
-fn refused(resume: &Resume, reason: String) -> Error {
-    match (resume, reason) {
-        (Resume::Session(id), message)
-            if message
-                == format!(
-                    "No conversation found with session ID: {}",
-                    id.0
-                ) =>
-        {
-            Error::MissingSession(id.clone())
-        }
-        (_, message) => Error::Refused(message),
-    }
-}
-
-/// Why a CLI exited before it answered `initialize`: the `errors` of the
-/// `result` it printed, else its last stderr line.
-async fn refusal(
-    events: &mut mpsc::Receiver<ClaudeEvent>,
-    last_stderr: tokio::task::JoinHandle<Option<String>>,
-) -> String {
-    let reported =
-        std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| {
-            match event {
-                ClaudeEvent::TurnFinished { errors, .. } => {
-                    errors.first().map(|_| errors.join("; "))
-                }
-                _ => None,
-            }
-        });
-    match reported {
-        Some(reason) => reason,
-        None => stderr_reason(last_stderr).await,
-    }
-}
-
-async fn stderr_reason(
-    last_stderr: tokio::task::JoinHandle<Option<String>>,
-) -> String {
-    tokio::time::timeout(CONTROL_TIMEOUT, last_stderr)
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .flatten()
-        .unwrap_or_else(|| String::from("it printed no reason"))
 }
 
 struct Running {
     child: Child,
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
+    /// Gets every raw stdout line.
+    stdout_log: Option<std::fs::File>,
 }
 
 impl Running {
-    async fn stop(self) -> Exit {
-        let Self {
-            child,
-            stdin,
-            stdout: _,
-        } = self;
-        install::process::stop(child, stdin).await
+    async fn read(&mut self) -> Input {
+        let read = self.stdout.next_line().await;
+        record(self.stdout_log.as_mut(), &read);
+        Input::Read(read.map_err(|error| error.to_string()))
     }
 }
 
-enum Process {
-    Running(Box<Running>),
-    Exited(Exit),
-}
-
-/// One thing the actor reacts to.
-enum Input {
-    Line(std::io::Result<Option<String>>),
-    Command(CommandMsg),
-    /// Every handle is gone.
-    Closed,
+fn record(
+    stdout_log: Option<&mut std::fs::File>,
+    read: &std::io::Result<Option<String>>,
+) {
+    if let (Some(log), Ok(Some(line))) = (stdout_log, read)
+        && let Err(error) = writeln!(log, "{line}")
+    {
+        claude::log_unrecorded(&error.to_string());
+    }
 }
 
 /// Every handle is gone, so the actor has stopped the process and ended.
 struct Stopped {}
 
-/// A control request we sent, waiting for its `control_response`.
-struct Pending {
-    call: ControlCall,
-    reply: oneshot::Sender<Result<Value, Error>>,
-}
-
 struct Actor {
-    process: Process,
+    session: Session<Reply>,
+    /// The process, until it is stopped.
+    process: Option<Running>,
     events: mpsc::Sender<ClaudeEvent>,
-    stdout_log: Option<std::fs::File>,
-    /// Our control requests awaiting a `control_response`, by `request_id`.
-    pending: HashMap<String, Pending>,
-    /// `can_use_tool` requests not yet answered, with what an answer needs.
-    open_permissions: HashMap<PermissionRequestId, Open>,
-    next_request: u64,
-    last_message: Option<MessageId>,
 }
 
 impl Actor {
@@ -675,225 +519,101 @@ impl Actor {
     ) -> Result<Infallible, Stopped> {
         loop {
             let input = self.next_input(&mut commands).await;
-            self.on_input(input).await?;
+            self.feed(input).await?;
         }
     }
 
+    /// The next stdout line or command, and only commands once the process
+    /// has stopped.
     async fn next_input(
         &mut self,
         commands: &mut mpsc::Receiver<CommandMsg>,
     ) -> Input {
-        match &mut self.process {
-            Process::Running(running) => tokio::select! {
-                line = running.stdout.next_line() => Input::Line(line),
-                cmd = commands.recv() => cmd.map_or(Input::Closed, Input::Command),
-            },
-            Process::Exited(_) => {
-                commands.recv().await.map_or(Input::Closed, Input::Command)
+        let line = self.process.as_mut().map_or(MaybeFuture::None, |running| {
+            MaybeFuture::Some(running.read())
+        });
+        future::race(line, receive(commands)).await
+    }
+
+    /// Steps the session and performs its effects in order, each effect's
+    /// own effects before the next.
+    async fn feed(&mut self, input: Input) -> Result<(), Stopped> {
+        let mut effects = self.session.step(input);
+        effects.reverse();
+        while let Some(effect) = effects.pop() {
+            let more = self.perform(effect).await?;
+            effects.extend(more.into_iter().rev());
+        }
+        Ok(())
+    }
+
+    fn perform(&mut self, effect: Effect) -> Performing<'_> {
+        match effect {
+            Effect::Write { line, then } => Box::pin(self.write(line, then)),
+            Effect::Emit(event) => Box::pin(self.emit(event)),
+            Effect::Reply(reply, answer) => Box::pin(future::ready(Ok(
+                deliver(reply, answer.map_err(Error::from)),
+            ))),
+            Effect::Report(waiter, exit) => {
+                Box::pin(future::ready(Ok(deliver(waiter, exit))))
             }
+            Effect::Stop(then) => Box::pin(self.stop(then)),
+            Effect::End => Box::pin(future::ready(Err(Stopped {}))),
         }
     }
 
-    async fn on_input(&mut self, input: Input) -> Result<(), Stopped> {
-        match input {
-            Input::Line(Ok(Some(line))) => {
-                self.on_line(&line).await;
-                Ok(())
-            }
-            Input::Line(Ok(None)) => {
-                self.stop().await;
-                Ok(())
-            }
-            Input::Line(Err(e)) => {
-                tracing::error!("reading claude stdout: {e}");
-                self.stop().await;
-                Ok(())
-            }
-            Input::Command(cmd) => {
-                self.on_command(cmd).await;
-                Ok(())
-            }
-            Input::Closed => {
-                self.stop().await;
-                Err(Stopped {})
-            }
-        }
+    async fn write(
+        &mut self,
+        line: String,
+        then: Then<Reply>,
+    ) -> Result<Vec<Effect>, Stopped> {
+        let outcome = put_line(self.process.as_mut(), &line).await;
+        Ok(self.session.step(Input::Wrote { then, outcome }))
     }
 
-    async fn on_line(&mut self, line: &str) {
-        if let Some(Err(e)) =
-            self.stdout_log.as_mut().map(|log| writeln!(log, "{line}"))
-        {
-            tracing::warn!("writing stdout log: {e}");
-        }
-        let inbound = match parse_line(line) {
-            Ok(inbound) => inbound,
-            Err(e) => {
-                tracing::warn!("claude printed a non-JSON line ({e}): {line}");
-                Inbound::Event(ClaudeEvent::Unknown(Value::String(
-                    line.to_owned(),
-                )))
-            }
-        };
-        match inbound {
-            Inbound::Event(received) => {
-                if let ClaudeEvent::Message { uuid, .. } = &received {
-                    self.last_message = uuid.clone();
-                }
-                let event = match received {
-                    ClaudeEvent::TurnFinished {
-                        subtype,
-                        outcome,
-                        terminal_reason,
-                        session_id,
-                        errors,
-                        last_message: _,
-                    } => ClaudeEvent::TurnFinished {
-                        subtype,
-                        outcome,
-                        terminal_reason,
-                        session_id,
-                        errors,
-                        last_message: self.last_message.clone(),
-                    },
-                    other => other,
-                };
-                if let ClaudeEvent::PermissionCancelled { id } = &event {
-                    self.open_permissions.remove(id);
-                }
-                self.emit(event).await;
-            }
-            Inbound::Permission { id, open, event } => {
-                self.open_permissions.insert(id, open);
-                self.emit(event).await;
-            }
-            Inbound::ControlResponse {
-                request_id,
-                outcome,
-            } => {
-                if let Some(Pending { call, reply }) =
-                    self.pending.remove(&request_id)
-                {
-                    let _ =
-                        reply.send(outcome.map_err(|message| Error::Control {
-                            subtype: String::from(call.subtype()),
-                            message,
-                        }));
-                } else {
-                    tracing::warn!(
-                        "control_response for unknown request {request_id}"
-                    );
-                }
-            }
-            Inbound::UnsupportedControlRequest {
-                request_id,
-                subtype,
-            } => {
-                let message =
-                    format!("unsupported control request subtype: {subtype}");
-                tracing::warn!("{message}");
-                if let Err(e) = self
-                    .write(Outbound::ControlError {
-                        request_id,
-                        message,
-                    })
-                    .await
-                {
-                    tracing::error!("replying to {subtype}: {e}");
-                }
-            }
-        }
+    async fn stop(
+        &mut self,
+        then: After<Waiter>,
+    ) -> Result<Vec<Effect>, Stopped> {
+        let exit = stop_process(self.process.take()).await;
+        Ok(self.session.step(Input::Stopped { exit, then }))
     }
 
-    async fn on_command(&mut self, cmd: CommandMsg) {
-        match cmd {
-            CommandMsg::SendUser { text, reply } => {
-                let result = self.write(Outbound::User(text)).await;
-                if matches!(&result, Ok(())) {
-                    self.last_message = None;
-                }
-                let _ = reply.send(result);
-            }
-            CommandMsg::Control { call, reply } => {
-                self.next_request = self.next_request.saturating_add(1);
-                let request_id = format!("req_{}", self.next_request);
-                match self
-                    .write(Outbound::Control {
-                        request_id: request_id.clone(),
-                        call,
-                    })
-                    .await
-                {
-                    Ok(()) => {
-                        self.pending
-                            .insert(request_id, Pending { call, reply });
-                    }
-                    Err(e) => {
-                        let _ = reply.send(Err(e));
-                    }
-                }
-            }
-            CommandMsg::Respond {
-                id,
-                decision,
-                reply,
-            } => {
-                let result = match self.open_permissions.remove(&id) {
-                    None => Err(Error::UnknownPermissionRequest(id)),
-                    Some(open) => {
-                        self.write(Outbound::Permission { id, decision, open })
-                            .await
-                    }
-                };
-                let _ = reply.send(result);
-            }
-            CommandMsg::Shutdown { reply } => {
-                let _ = reply.send(self.stop().await);
-            }
-        }
-    }
-
-    async fn write(&mut self, msg: Outbound) -> Result<(), Error> {
-        match &mut self.process {
-            Process::Running(running) => {
-                let line = format!("{}\n", encode(msg)?);
-                running.stdin.write_all(line.as_bytes()).await?;
-                running.stdin.flush().await?;
-                Ok(())
-            }
-            Process::Exited(_) => Err(Error::Exited),
-        }
-    }
-
-    /// Moves to `Exited`, failing everything still waiting on the process.
-    async fn stop(&mut self) -> Exit {
-        // Both arms put the real state back.
-        let placeholder =
-            Process::Exited(Exit::Unknown(String::from("stopping")));
-        match std::mem::replace(&mut self.process, placeholder) {
-            Process::Running(running) => {
-                let status = running.stop().await;
-                self.process = Process::Exited(status.clone());
-                for (_, Pending { reply, .. }) in self.pending.drain() {
-                    let _ = reply.send(Err(Error::Exited));
-                }
-                self.open_permissions.clear();
-                self.emit(ClaudeEvent::Exited {
-                    status: status.clone(),
-                })
-                .await;
-                status
-            }
-            Process::Exited(status) => {
-                self.process = Process::Exited(status.clone());
-                status
-            }
-        }
-    }
-
-    async fn emit(&self, event: ClaudeEvent) {
+    async fn emit(&self, event: ClaudeEvent) -> Result<Vec<Effect>, Stopped> {
         // A dropped receiver only means nobody is listening any more.
         let _ = self.events.send(event).await;
+        Ok(Vec::new())
+    }
+}
+
+async fn receive(commands: &mut mpsc::Receiver<CommandMsg>) -> Input {
+    commands.recv().await.map_or(Input::Closed, Input::Command)
+}
+
+/// A dropped receiver only means nobody waits any more.
+fn deliver<T>(reply: oneshot::Sender<T>, answer: T) -> Vec<Effect> {
+    let _ = reply.send(answer);
+    Vec::new()
+}
+
+async fn put_line(
+    running: Option<&mut Running>,
+    line: &str,
+) -> std::io::Result<()> {
+    let stdin = &mut running
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?
+        .stdin;
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.flush().await
+}
+
+/// The session only stops a running process.
+async fn stop_process(running: Option<Running>) -> Exit {
+    match running {
+        Some(Running { child, stdin, .. }) => {
+            install::process::stop(child, stdin).await
+        }
+        None => Exit::Unknown(String::from("already stopped")),
     }
 }
 
@@ -910,23 +630,6 @@ mod tests {
     use install::Home;
 
     #[test]
-    fn missing_a_different_session_is_not_a_safe_fork_fallback() {
-        let error = super::refused(
-            &Resume::Session(SessionId(String::from("target"))),
-            String::from(
-                "No conversation found with session ID: another-session",
-            ),
-        );
-        assert_eq!(
-            match error {
-                super::Error::MissingSession(id) => Some(id),
-                _ => None,
-            },
-            None
-        );
-    }
-
-    #[test]
     fn prefix_fork_uses_inclusive_uuid_and_chosen_new_session()
     -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
@@ -940,7 +643,7 @@ mod tests {
                 permission_mode: PermissionMode::Default,
                 resume: Resume::Fork {
                     session: SessionId(String::from("source")),
-                    through: super::MessageId(String::from("assistant-uuid")),
+                    through: claude::MessageId(String::from("assistant-uuid")),
                     target: SessionId(String::from("new-session")),
                 },
                 project_name: None,

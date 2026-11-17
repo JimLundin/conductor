@@ -27,7 +27,7 @@ pub struct TurnId(pub String);
 ///
 /// Codex numbers its own requests, so the id is unique per app-server process,
 /// not per thread.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ApprovalId(pub String);
 
 impl ApprovalId {
