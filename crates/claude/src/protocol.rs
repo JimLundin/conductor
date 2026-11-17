@@ -732,9 +732,9 @@ fn block(raw: Value) -> Block {
     }
 }
 
-/// The CLI versions we have checked: from the version `s1` last passed against
-/// to the newest one these types were checked against. Widen it only after
-/// running `s1` against the new CLI.
+/// The CLI versions we have checked: from the version the fixtures were
+/// recorded at to the newest one these types were checked against. Widen it
+/// only after checking these types against the new CLI.
 const SUPPORTED_VERSIONS: &str = "2.1.316 to 2.1.322";
 
 /// Why the CLI's version is not one we support.
@@ -1125,7 +1125,7 @@ mod tests {
         Ok((event, response))
     }
 
-    /// Recorded from Claude Code 2.1.316 (`s1`, 2026-11-12).
+    /// Recorded from Claude Code 2.1.316 on 2026-11-12.
     const BASH: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"touch t1.txt","description":"Create empty file t1.txt"},"description":"Create empty file t1.txt","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch t1.txt"}],"behavior":"allow","destination":"localSettings"},{"type":"addDirectories","directories":["/tmp/s1-scratch"],"destination":"session"},{"type":"setMode","mode":"acceptEdits","destination":"session"}],"blocked_path":"/tmp/s1-scratch/t1.txt","tool_use_id":"toolu_1"}}"#;
 
     const WRITE: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/a.txt","content":"hi"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_2"}}"#;

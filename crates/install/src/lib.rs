@@ -3,7 +3,6 @@
 
 mod home;
 mod install;
-pub mod live;
 mod pins;
 pub mod process;
 

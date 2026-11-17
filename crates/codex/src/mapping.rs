@@ -99,8 +99,8 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
 
 /// A server request: a question, or an approval with the tool it asks
 /// about, Codex's reason, and what `acceptForSession` allows. Codex takes
-/// `acceptForSession` for a command, though `availableDecisions` omits it;
-/// `s2` step 8 checks that it still does (PROTOCOL.md).
+/// `acceptForSession` for a command, though `availableDecisions` omits it,
+/// as a recorded run on 2026-11-12 showed (PROTOCOL.md).
 fn approval_step(
     native: NativeRequest,
     call: ToolCallId,

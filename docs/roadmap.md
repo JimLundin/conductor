@@ -45,8 +45,7 @@ What is built and what comes next. Update it in the commit that changes it.
   approval wording.
 - **Agents.** `claude-cli` drives the `claude` CLI (stream-json control
   protocol) and `codex-cli` the `codex app-server` (JSON-RPC): messages,
-  streaming deltas, tool calls, approvals, interrupts. `s1` and `s2` are the
-  live checks.
+  streaming deltas, tool calls, approvals, interrupts.
 - **Agent core.** Sessions speak the provider-agnostic `agents` API. The
   `claude` and `codex` wire crates map into it and, like `agents`, are pure
   `no_std` cores; process I/O lives in `claude-cli`, `codex-cli` and

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Home {
-    /// The user's own (`~/.claude`, `~/.codex`), for the live checks.
+    /// The user's own (`~/.claude`, `~/.codex`).
     User,
     /// A directory of the host's own, passed as `CLAUDE_CONFIG_DIR` or
     /// `CODEX_HOME`, so the user's homes stay untouched.

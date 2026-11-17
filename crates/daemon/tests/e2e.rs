@@ -1179,7 +1179,7 @@ fn answer(session: SessionId, request: u64, words: &[&str]) -> CommandBody {
     }
 }
 
-/// A question with the options `s1` and `s2` asked for, as the model
+/// A question with the options the recorded runs asked for, as the model
 /// described them.
 fn asked(header: &str, text: &str, options: &[(&str, &str)]) -> EventKind {
     EventKind::QuestionAsked {
@@ -4978,8 +4978,8 @@ fn steps(tasks: &[Task]) -> Vec<(&str, TaskStatus)> {
         .collect()
 }
 
-/// The three lists `s1` step 15 and `s2` step 14 wrote: three steps, the
-/// first pending, then in progress, then done.
+/// The three lists the recorded Claude and Codex runs wrote: three steps,
+/// the first pending, then in progress, then done.
 fn written(a: &str, b: &str, c: &str) -> Vec<Vec<(String, TaskStatus)>> {
     [
         TaskStatus::Pending,

@@ -17,9 +17,6 @@ tokio = { workspace = true, features = ["fs"] }
 # Edits the private Codex home's config.toml, keeping what Codex wrote there.
 toml_edit = { version = "0.25.19", default-features = false, features = ["parse", "display"] }
 tracing = { workspace = true, features = ["std"] }
-# For the s2 live check.
-anyhow.workspace = true
-tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

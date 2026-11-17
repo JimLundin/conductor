@@ -36,8 +36,6 @@ Home Screen. The design is in
   `Unknown`, and each crate maps its events into the provider-agnostic
   `crates/agents`. The processes run in `crates/{claude,codex}-cli`. What
   the CLIs send is in each wire crate's `PROTOCOL.md`.
-- **Live checks.** `cargo run --bin s1` (Claude) and `cargo run --bin s2`
-  (Codex) drive the real CLIs. Run them after changing an adapter.
 - **Commits.** End each commit message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Open no pull
   requests on anyone's repository.

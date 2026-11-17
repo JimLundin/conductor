@@ -1,15 +1,17 @@
 # Claude Code stream-json: observed behaviour
 
-These facts come from `s1` runs against Claude Code 2.1.316 with model `haiku`, on
-2026-11-10 and 2026-11-11. Steps refer to the `s1` checklist. The committed
-recordings in `fixtures/claude/` are one 2026-11-11 run with
+These facts come from scripted runs against Claude Code 2.1.316 with model
+`haiku`, on 2026-11-10 and 2026-11-11. Steps refer to the numbered steps those
+runs followed; the script that drove them is no longer in the repo but is in
+git history. The committed recordings in `fixtures/claude/` are one
+2026-11-11 run with
 `--include-partial-messages`, steps 1 to 6 including 3c and 3d,
 `session3-questions.jsonl` from a 2026-11-12 run, steps 7 to 9, and
 `session4-chosen-killed.jsonl` and `session5-resumed.jsonl` from a later
 2026-11-12 run, steps 11 to 13, and `session9-checklist-effort.jsonl` from
 a 2026-11-16 run through the owner's gateway, steps 15 and 16.
 `probe-thinking.jsonl` (see Reasoning) and `probe-subagent-todo.jsonl` (see
-Subagents) are probes, not `s1` runs. The 2026-11-10
+Subagents) are probes, not scripted runs. The 2026-11-10
 recordings they replaced are in git history. Where this file disagrees with the
 Python SDK source, trust this file and re-check it when the CLI version changes.
 
@@ -30,7 +32,7 @@ Python SDK source, trust this file and re-check it when the CLI version changes.
 
 ## Partial messages
 
-From the 2026-11-11 `s1` runs with `--include-partial-messages`.
+From the 2026-11-11 runs with `--include-partial-messages`.
 
 - Each API response streams as `stream_event` frames: `message_start`,
   `content_block_start`, `content_block_delta`s, `content_block_stop`,
@@ -56,8 +58,8 @@ From the 2026-11-11 `s1` runs with `--include-partial-messages`.
 - Conductor relies on `tool_use_id`, because the app shows a request on its
   tool call. `agents` answers a `can_use_tool` without it with a control
   error, as it does an unknown subtype, and logs a warning that names the
-  missing id. The tool is then refused, so `s1` fails at its first approval
-  step if the CLI ever stops sending the id.
+  missing id. So if the CLI ever stops sending the id, every tool that
+  needs approval is refused.
 - `permission_suggestions` for Write in `default` mode was
   `[{"type":"setMode","mode":"acceptEdits","destination":"session"}]`.
   (Steps 1, 2, 3b.)
@@ -71,7 +73,7 @@ From the 2026-11-11 `s1` runs with `--include-partial-messages`.
 
 ## Questions and approval for the session
 
-From the 2026-11-12 `s1` run, steps 7 to 9, recorded in
+From a recorded run on 2026-11-12, in
 `fixtures/claude/session3-questions.jsonl`, and hand probes the same day.
 
 - `AskUserQuestion` reaches us as a `can_use_tool` request like any tool,
@@ -114,7 +116,7 @@ From the 2026-11-12 `s1` run, steps 7 to 9, recorded in
 
 ## Model and effort
 
-From the 2026-11-12 `s1` run, steps 11 to 13, and probes the same day.
+From a run on 2026-11-12 and probes the same day.
 
 - `--help` lists `--model <model>` and `--effort <level>` with `low`,
   `medium`, `high`, `xhigh` and `max`.
@@ -145,7 +147,7 @@ From the 2026-11-12 `s1` run, steps 11 to 13, and probes the same day.
 
 ## Checklist
 
-From the 2026-11-16 `s1` run, step 15, in
+From a recorded run on 2026-11-16, in
 `fixtures/claude/session9-checklist-effort.jsonl`, and probes the same day.
 
 - 2.1.316 gives a 5.x model no checklist tool by default: `init` lists
@@ -234,7 +236,7 @@ stdout.
   anything: the CLI acknowledges it, prints no assistant message and no
   stream events, then the user message `[Request interrupted by user]` and
   `result` with `subtype: "error_during_execution"` and `terminal_reason:
-  "aborted_streaming"`. The model's reply never reaches stdout, so `s1` step 3
+  "aborted_streaming"`. The model's reply never reaches stdout, so step 3
   does not depend on what the model would have said. (Step 3, 2026-11-11:
   eleven recorded runs, each printing `text=""`.)
 - Interrupt during streaming, sent on the first `text_delta`: the CLI
@@ -259,7 +261,7 @@ stdout.
   `[Request interrupted by user for tool use]`, and `result` with
   `subtype: "error_during_execution"`, `is_error: true` and
   `terminal_reason: "aborted_tools"` (13 of 15 runs) or `"aborted_streaming"`
-  (2 of 15, `s1-run3.log` and `s1-run4.log`). (Step 3b.)
+  (2 of 15). (Step 3b.)
 - `result.subtype` alone cannot tell an interrupt from a failure.
   `terminal_reason` can. (Steps 3, 3b, 3c.)
 - The session accepts the next user message normally after an interrupt.
@@ -297,7 +299,7 @@ stdout.
 
 ## Native conversation undo
 
-Verified against 2.1.316 on 2026-11-13; `s1` step 14 drives the adapter.
+Verified against 2.1.316 on 2026-11-13.
 
 - `--resume=<source> --resume-session-at=<entry UUID> --fork-session`
   loads a prefix **including** that entry into a new conversation. The
@@ -314,7 +316,8 @@ Verified against 2.1.316 on 2026-11-13; `s1` step 14 drives the adapter.
 - The first actual turn reports the chosen target in `system/init` and
   `result`. After that turn, `--resume=<target>` keeps the prefix. A two-turn
   codeword probe retained the first word and forgot the second, including
-  after ordinary Continue. `s1` also restarts the unmaterialized fork recipe.
+  after ordinary Continue. The 2026-11-13 run also restarted the
+  unmaterialized fork recipe.
 - We always pass `--replay-user-messages`. Top-level assistant and user
   entries expose transcript UUIDs; subagent entries with
   `parent_tool_use_id` stay `Unknown`. The actor resets its boundary on each

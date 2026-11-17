@@ -12,7 +12,6 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::live::{Presence, presence};
 use crate::pins;
 
 /// A connection that takes longer than this is to a dead network.
@@ -206,6 +205,19 @@ async fn put(
                 }
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Presence {
+    Present,
+    Missing,
+}
+
+fn presence(path: &Path) -> Presence {
+    match std::fs::metadata(path) {
+        Ok(_) => Presence::Present,
+        Err(_) => Presence::Missing,
     }
 }
 
@@ -445,7 +457,7 @@ mod tests {
         assert_eq!(
             versions.get(&version),
             Some(&version),
-            "no fixture in fixtures/claude was recorded at the pinned claude; run s1"
+            "no fixture in fixtures/claude was recorded at the pinned claude"
         );
         assert_eq!(
             check_version(initialize),
@@ -467,7 +479,7 @@ mod tests {
         assert_eq!(
             versions.get(&version),
             Some(&version),
-            "no fixture in fixtures/codex was recorded at the pinned codex; run s2"
+            "no fixture in fixtures/codex was recorded at the pinned codex"
         );
         Ok(())
     }

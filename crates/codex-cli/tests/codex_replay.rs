@@ -5,7 +5,7 @@
 //! response until our request with that id arrives and each
 //! `serverRequest/resolved` until we answer that request, as Codex does. The
 //! actor, the boundary mapping and the exactly-once approval bookkeeping all
-//! run against Codex's real bytes, driven by the same calls `s2` made.
+//! run against Codex's real bytes, driven by the calls the recorded run made.
 #![cfg(unix)]
 
 use std::collections::{BTreeMap, HashMap};
@@ -528,9 +528,9 @@ async fn resume_in_a_new_process() -> TestResult<()> {
     Ok(())
 }
 
-/// `s2` steps 10 and 11: a thread started with a chosen effort, which Codex
-/// reports back, and a turn that reasons. The recording goes on to the turn
-/// `s2` killed, which waits here for a `turn/start` nobody sends.
+/// A thread started with a chosen effort, which Codex reports back, and a
+/// turn that reasons. The recording goes on to a turn killed mid-run, which
+/// waits here for a `turn/start` nobody sends.
 #[tokio::test]
 async fn chosen_effort_and_reasoning() -> TestResult<()> {
     let mut rec = spawn("server4-chosen-killed.jsonl").await?;
@@ -581,8 +581,8 @@ async fn chosen_effort_and_reasoning() -> TestResult<()> {
     Ok(())
 }
 
-/// `s2` steps 14 and 15: three plan updates, each the whole plan, and a
-/// turn started at `high`, which Codex reports as the thread's effort.
+/// Three plan updates, each the whole plan, and a turn started at `high`,
+/// which Codex reports as the thread's effort.
 #[tokio::test]
 async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
     let mut rec = spawn("server8-plan-effort.jsonl").await?;
@@ -647,9 +647,9 @@ async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
     Ok(())
 }
 
-/// `s2` steps 7 to 9. The recording holds the question's
-/// `serverRequest/resolved` until our answer, so a change to the question's
-/// shape in a later pin fails here, as does a lost feature `warning`.
+/// The recording holds the question's `serverRequest/resolved` until our
+/// answer, so a change to the question's shape in a later pin fails here, as
+/// does a lost feature `warning`.
 #[tokio::test]
 async fn questions_and_accept_for_session() -> TestResult<()> {
     let mut rec = spawn("server3-questions.jsonl").await?;

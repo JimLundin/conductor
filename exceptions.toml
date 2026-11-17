@@ -36,11 +36,6 @@ rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
 
 [[exception]]
-path = "crates/*-cli/src/bin/s*.rs"
-rule = "shell"
-reason = "s1 and s2 are live checks that script the real CLIs step by step; their branches check what each CLI answered"
-
-[[exception]]
 path = "crates/app/src/*.rs"
 rule = "clippy::disallowed_types"
 reason = "rsx! caches each template in a OnceLock static"

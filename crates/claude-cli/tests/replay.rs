@@ -506,9 +506,9 @@ async fn summarized_thinking_recording() -> TestResult<()> {
     Ok(())
 }
 
-/// `s1` step 15: three `TodoWrite` calls, each the whole checklist, and no
-/// permission request for any; step 16's turn after the effort changed.
-/// The recording's answers to step 16's control requests play unasked here.
+/// Three `TodoWrite` calls, each the whole checklist, and no permission
+/// request for any; then a turn after the effort changed. The recording's
+/// answers to that turn's control requests play unasked here.
 #[tokio::test]
 async fn checklist_and_effort_recording() -> TestResult<()> {
     let replayed =
@@ -549,7 +549,7 @@ async fn checklist_and_effort_recording() -> TestResult<()> {
     Ok(())
 }
 
-/// `s1` step 16: `apply_flag_settings` with `effortLevel`, then
+/// `apply_flag_settings` with `effortLevel`, then
 /// `get_settings`, answered as the pinned CLI answered them.
 #[tokio::test]
 async fn the_effort_is_set_in_the_running_process() -> TestResult<()> {

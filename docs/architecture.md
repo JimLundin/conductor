@@ -167,14 +167,14 @@ What both providers have belongs in the model. What only one has goes in
 typed per-provider options instead of being forced into it: Claude's
 permission modes, Codex's sandbox. Raw provider JSON never reaches the UI.
 
-How each agent carries these, from the `s1` and `s2` recordings:
+How each agent carries these, from the recordings of the real CLIs:
 
 | | Claude Code 2.1.316 | Codex 0.166 |
 |---|---|---|
 | Question | `can_use_tool` for `AskUserQuestion`; the questions are in `input` | `item/tool/requestUserInput`, with question ids; needs the `default_mode_request_user_input` feature outside plan mode |
 | Answer | `allow` with `updatedInput` = the input plus `answers`, question text to answer, labels joined with ", " | RPC result `{answers: {<id>: {answers: [...]}}}` |
 | Withdrawn | `control_cancel_request` | `serverRequest/resolved` after the interrupted turn ends |
-| For the session | `allow` with `updatedPermissions`: the suggested allow `addRules`, destination `session`; with none suggested, not offered | `acceptForSession` on a command or a permissions request, taken though `availableDecisions` omits it (`s2` step 8 checks it); not offered on a file change, which no run has recorded |
+| For the session | `allow` with `updatedPermissions`: the suggested allow `addRules`, destination `session`; with none suggested, not offered | `acceptForSession` on a command or a permissions request, taken though `availableDecisions` omits it (a recorded Codex run on 2026-11-12); not offered on a file change, which no run has recorded |
 | Refused | Duplicate question texts, by the CLI before it asks | A question with `isSecret`, by the host, which logs and replays every answer |
 | Models | The `initialize` response's `models`, with `supportedEffortLevels`; a `default` row | `model/list`, with `supportedReasoningEfforts` and `isDefault` |
 | Effort | `--effort`; `get_settings` reports it back | `model_reasoning_effort` in the thread's `config`; `thread/start` reports it back |
@@ -262,7 +262,7 @@ Every piece of state has one owner task; handles talk to it over channels.
 - `claude` and `codex`: each provider's wire (stream-json, JSON-RPC) and its
   mapping into `agents`. Pure `no_std`.
 - `claude-cli` and `codex-cli`: run and drive each CLI's process over tokio,
-  with their replay tests and the `s1` and `s2` live checks.
+  with their replay tests.
 - `install`: what both CLIs share: the pinned installs, each CLI's home and
   process start and stop.
 
@@ -293,7 +293,7 @@ which 2.1.316 gives a 5.x model no checklist tool.
   `terminal_reason` (`aborted_streaming`, `aborted_tools`) says it was an
   interrupt.
 - The `initialize` response's `claude_code_version` is checked against the
-  tested range; new CLI versions are re-recorded with `s1`.
+  tested range.
 
 **Codex:** one `codex app-server` per host serves every thread.
 
@@ -323,9 +323,9 @@ which 2.1.316 gives a 5.x model no checklist tool.
   on (`tools.update_plan.enabled`), which 0.166 leaves off.
 
 **Verification:** replay tests feed recorded stdio from `fixtures/` through
-the parsers and assert the exact events. `cargo run --bin s1` and `s2` drive
-the real CLIs and re-record the fixtures; run them after changing an adapter
-or upgrading a CLI.
+the parsers and assert the exact events. The fixtures are recordings of
+the real CLIs. No tool in the repo re-records them, so they stay as recorded
+until someone re-records them by hand (§6.2).
 
 ### 5.3 Durability, worktrees and checkpoints
 
@@ -472,7 +472,7 @@ manager.
 |---|---|---|
 | Official channels | Native installer (`install.sh`, `install.ps1`, `install.cmd`), npm `@anthropic-ai/claude-code`, Homebrew, WinGet, apt, dnf, apk ([setup], verified) | npm `@openai/codex`, a Homebrew cask, GitHub release binaries ([install.md], [releases], verified) |
 | Pinning | The installer takes a version (`bash -s 2.1.89`, [setup], verified), but `install.sh` always downloads the newest build first and has it install the requested one (verified, read in the script). npm pins with `@<version>`. | Release tags `rust-vX.Y.Z` pin exactly; npm pins with `@<version>` ([releases], [npm-codex], verified). The cask can't install an older version (inferred). |
-| What Conductor fetches | `https://downloads.claude.ai/claude-code-releases/<version>/<platform>/claude`, the URL `install.sh` uses, with `manifest.json` and `manifest.json.sig` from the same directory (verified, read in the script and fetched) | The release asset `codex-package-<triple>.tar.gz`, on Windows too, from `github.com/openai/codex/releases/tag/rust-v<version>`: the package Codex's own `install.sh` installs, with `bin/codex`, `bin/codex-exec-server`, `bin/codex-code-mode-host`, `codex-resources/bwrap` and `codex-path/rg`. The bare `codex-<triple>.tar.gz` holds only `codex`, and without the rest every command an agent runs fails to start (`install.sh` read, both archives listed, and `s2` failing 5 of 9 steps on the bare binary, verified) |
+| What Conductor fetches | `https://downloads.claude.ai/claude-code-releases/<version>/<platform>/claude`, the URL `install.sh` uses, with `manifest.json` and `manifest.json.sig` from the same directory (verified, read in the script and fetched) | The release asset `codex-package-<triple>.tar.gz`, on Windows too, from `github.com/openai/codex/releases/tag/rust-v<version>`: the package Codex's own `install.sh` installs, with `bin/codex`, `bin/codex-exec-server`, `bin/codex-code-mode-host`, `codex-resources/bwrap` and `codex-path/rg`. The bare `codex-<triple>.tar.gz` holds only `codex`, and without the rest every command an agent runs fails to start (`install.sh` read, both archives listed, and a scripted run of the real Codex failing 5 of 9 steps on the bare binary, verified) |
 | Platforms | `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, their `-musl` variants, `win32-x64`, `win32-arm64` (the 2.1.316 manifest, verified) | `x86_64`/`aarch64` for `unknown-linux-musl`, `apple-darwin` and `pc-windows-msvc` ([releases], verified) |
 | Upstream integrity | The manifest lists a SHA-256 per platform and is signed with Anthropic's GPG key, fingerprint `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`, for releases from 2.1.89 on. macOS binaries are signed and notarized, Windows binaries are Authenticode-signed, Linux binaries are not individually signed ([setup], verified). | GitHub publishes a SHA-256 digest per asset ([releases], verified). Linux binaries are cosign-signed through Sigstore (`.sigstore` bundles), macOS binaries are codesigned, Windows binaries are signed with Azure Trusted Signing (the release workflows in [codex-src], verified). `codex-package_SHA256SUMS` lists each `codex-package-*` tarball, and each Linux package has a `.tar.gz.sigstore` bundle over the tarball itself. GitHub artifact attestations return 404 for the CLI assets (verified). |
 | Updates | Native installs update themselves in the background. `DISABLE_AUTOUPDATER=1` stops the check; `DISABLE_UPDATES=1` also blocks `claude update` and `claude install`, and is meant for distributing Claude Code "through your own channels" ([setup], [env-vars], verified). | The TUI checks GitHub for a newer release and suggests an upgrade command; it doesn't update itself. `check_for_update_on_startup = false` turns the check off. No update check was found in the app-server (`codex-rs/tui/src/updates.rs`, `config_toml.rs` in [codex-src], verified; the app-server part inferred from a search). |
@@ -527,23 +527,24 @@ Conductor build that carries the hashes.
 `--claude-path` and `--codex-path` stay, for the fake CLIs in tests and for
 development. Without them the daemon runs only the pinned copies.
 
-#### The pin, the fixtures and the live checks
+#### The pin and the fixtures
 
 The pin and the protocol code move together. Bumping a pin is one commit
 that:
 
 1. runs `tools/pin` for the new version;
-2. runs `s1` or `s2` against the pinned binary, which installs it into
-   `target/conductor-live` with the same installer and runs it with the
-   user's own homes and logins, and re-records `fixtures/claude` or
-   `fixtures/codex`;
-3. widens `SUPPORTED_VERSIONS` and `check_version`
+2. widens `SUPPORTED_VERSIONS` and `check_version`
    (`crates/claude/src/protocol.rs`) to include it.
+
+`fixtures/claude` and `fixtures/codex` are recordings of the real CLIs, and
+the replay tests run against them. No tool in the repo re-records them, so a
+new pin keeps the existing recordings until they are re-recorded by hand.
 
 A test compares the compiled pin with the version recorded in each fixture
 and fails when a pinned version has no fixture recorded at that version, or
 falls outside the supported range. The rule lives in that test rather than in
-this paragraph.
+this paragraph. So a new pin fails that test until a fixture is re-recorded
+by hand at the new version.
 
 #### Bundling is out
 
@@ -592,8 +593,7 @@ Two consequences for how sessions start (§5.2):
 `conductord` writes `<data>/home/claude/settings.json` (`cleanupPeriodDays`
 36500) and `<data>/home/codex/config.toml` (`check_for_update_on_startup =
 false`) on first run only, because the CLIs edit their own config too. Every
-`claude` it starts gets `DISABLE_UPDATES=1`, `s1` included, so a live check
-can't update the user's own install either. In a private home it also loses
+`claude` it starts gets `DISABLE_UPDATES=1`. In a private home it also loses
 these variables from the host's environment, each of which takes it off the
 home's own sign-in: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
 `CLAUDE_CODE_OAUTH_TOKEN` take precedence over it,

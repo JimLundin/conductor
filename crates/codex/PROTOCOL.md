@@ -1,14 +1,15 @@
 # Codex app-server: observed behaviour
 
-These facts come from `s2` runs against codex-cli 0.166.0 with model
+These facts come from scripted runs against codex-cli 0.166.0 with model
 `gpt-6-luna` and reasoning effort `low`, on 2026-11-10, steps 7 to 9 on
-2026-11-12, and steps 10 to 12 later that day with effort `high`. Steps refer to the
-`s2` checklist; steps 14 and 15 come from a 2026-11-16 run, recorded in
-`fixtures/codex/server8-plan-effort.jsonl`. The committed recordings are in
-`fixtures/codex/`. "Probe"
-means a hand-written JSON-RPC session run before `s2` existed; its output is
-not committed. Where this file disagrees with the JSON Schema or architecture
-§7.2, trust this file and re-check it when the CLI version changes.
+2026-11-12, and steps 10 to 12 later that day with effort `high`. Steps refer
+to the numbered steps those runs followed; the script that drove them is no
+longer in the repo but is in git history. Steps 14 and 15 come from a
+2026-11-16 run, recorded in `fixtures/codex/server8-plan-effort.jsonl`. The
+committed recordings are in `fixtures/codex/`. "Probe" means a hand-written
+JSON-RPC session run before the scripted runs; its output is not committed.
+Where this file disagrees with the JSON Schema or architecture §7.2, trust
+this file and re-check it when the CLI version changes.
 
 ## Startup
 
@@ -54,14 +55,14 @@ not committed. Where this file disagrees with the JSON Schema or architecture
   the sandbox keeps `.git` read-only. (Live check through `conductord`,
   2026-11-12, `gpt-6-luna`.)
 - `untrusted` with `workspace-write` asks before every command, including
-  `pwd && ls -la`, whatever the model thinks of the sandbox. `s2` uses it.
-  Steps 1 and 2 passed in 15 of 15 runs, each write asking once. (Probe, and
-  steps 1 and 2.)
+  `pwd && ls -la`, whatever the model thinks of the sandbox. The scripted
+  runs used it. Steps 1 and 2 passed in 15 of 15 runs, each write asking
+  once. (Probe, and steps 1 and 2.)
 - `on-request` with `read-only` asks only when the model decides to escalate.
   The model may first run the write in the sandbox, which fails
   (`commandExecution` completes with status `failed`) before the retry asks.
   In 1 of 5 runs it never asked and said the directory was read-only. That is
-  why `s2` stopped using this pair. (Step 1.)
+  why the scripted runs stopped using this pair. (Step 1.)
 - Every approval was `item/commandExecution/requestApproval`. The model wrote
   files with shell commands (`printf ... > a.txt`, `python3 -c ...`), never
   with a patch, so no `item/fileChange/requestApproval` arrived. (Steps 1
@@ -89,7 +90,7 @@ not committed. Where this file disagrees with the JSON Schema or architecture
 
 ## Questions and approval for the session
 
-From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
+From a recorded run on 2026-11-12, in
 `fixtures/codex/server3-questions.jsonl`, the pinned source
 (`rust-v0.166.0`) and probes the same day.
 
@@ -116,8 +117,8 @@ From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
   `availableDecisions` lists only `accept`, `acceptWithExecpolicyAmendment`
   and `cancel`. The same command (`touch t1.txt`) then ran in the next turn
   with no request, and a different one still asked. (Step 8 and probe.)
-  Nothing in the code checks that it is listed: `s2` step 8 is the guard,
-  and fails if a later pin asks again. A file change approval offers no
+  Nothing in the code checks that it is listed, and nothing in the repo
+  notices if a later pin asks again. A file change approval offers no
   session approval, since no run has recorded one.
 - A question with `"isSecret": true` is refused with a JSON-RPC error
   ("conductor does not take secret answers"), logged at info without its
@@ -128,7 +129,7 @@ From the 2026-11-12 `s2` run, steps 7 to 9, recorded in
 
 ## Model, effort and reasoning
 
-From the 2026-11-12 `s2` run, steps 10 to 12, in
+From a recorded run on 2026-11-12, in
 `fixtures/codex/server4-chosen-killed.jsonl` and `server5-resumed.jsonl`,
 and probes the same day in a private `CODEX_HOME` with the owner's model
 provider.
@@ -166,7 +167,7 @@ provider.
 
 ## Plans
 
-From the 2026-11-16 `s2` run, step 14, and probes the same day.
+From a run on 2026-11-16 and probes the same day.
 
 - The plan tool (`update_plan`) is off in 0.166 unless the thread's config
   sets `tools.update_plan` to `{"enabled": true}` (`UpdatePlanToolConfig`
@@ -186,7 +187,7 @@ From the 2026-11-16 `s2` run, step 14, and probes the same day.
 ## Subagents
 
 No run started a Codex subagent (the `collab` and spawn-agent items): no
-`s2` step or probe asked for one, so their frames are not recorded.
+scripted step or probe asked for one, so their frames are not recorded.
 
 ## Interrupt
 
@@ -196,7 +197,7 @@ No run started a Codex subagent (the `collab` and spawn-agent items): no
 - `turn/interrupt` sent as soon as `turn/started` arrives, before any model
   output, is accepted the same way. The turn completes with
   `status: "interrupted"`, `items: []` and no reasoning or agent message
-  item, so `s2` step 3 does not depend on what the model would have said.
+  item, so step 3 does not depend on what the model would have said.
   (Step 3, 2026-11-11, five runs.) Earlier runs interrupted after the first
   agent message or item. One of three failed with no output before
   `turn/completed`, so there was nothing to interrupt.
@@ -250,7 +251,7 @@ No run started a Codex subagent (the `collab` and spawn-agent items): no
 
 ## Native conversation undo
 
-Verified against 0.166.0 on 2026-11-13; `s2` step 13 drives the adapter.
+Verified against 0.166.0 on 2026-11-13.
 
 - We request `historyMode: "paginated"` at `thread/start`. `thread/revert`
   requires persisted paginated history; removed `thread/rollback` is not used.

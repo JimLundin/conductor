@@ -558,7 +558,6 @@ name = "claude-cli"
 version = "0.1.0"
 dependencies = [
  "agents",
- "anyhow",
  "claude",
  "install",
  "n0-future",
@@ -567,7 +566,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -609,7 +607,6 @@ name = "codex-cli"
 version = "0.1.0"
 dependencies = [
  "agents",
- "anyhow",
  "codex",
  "install",
  "n0-future",
@@ -619,7 +616,6 @@ dependencies = [
  "tokio",
  "toml_edit",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2287,7 +2283,6 @@ name = "install"
 version = "0.1.0"
 dependencies = [
  "agents",
- "anyhow",
  "claude",
  "data-encoding",
  "n0-future",
