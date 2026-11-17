@@ -34,3 +34,113 @@ reason = "encode and decode are generic over serde's Serialize and DeserializeOw
 path = "crates/agents/src/bin/s*.rs"
 rule = "shell"
 reason = "s1 and s2 are live checks that script the real CLIs step by step; their branches check what each CLI answered"
+
+[[exception]]
+path = "crates/app/src/checkpoints.rs"
+rule = "clippy::disallowed_types"
+reason = "rsx! caches each template in a OnceLock static"
+
+[[exception]]
+path = "crates/app/src/checkpoints.rs"
+rule = "clippy::empty_enums"
+reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
+
+[[exception]]
+path = "crates/app/src/checkpoints.rs"
+rule = "clippy::shadow_reuse"
+reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
+
+[[exception]]
+path = "crates/app/src/checkpoints.rs"
+rule = "clippy::useless_format"
+reason = "rsx! expands each \"{text}\" node to format!"
+
+[[exception]]
+path = "crates/app/src/credentials.rs"
+rule = "clippy::disallowed_types"
+reason = "rsx! caches each template in a OnceLock static"
+
+[[exception]]
+path = "crates/app/src/credentials.rs"
+rule = "clippy::empty_enums"
+reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
+
+[[exception]]
+path = "crates/app/src/credentials.rs"
+rule = "clippy::shadow_reuse"
+reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
+
+[[exception]]
+path = "crates/app/src/credentials.rs"
+rule = "clippy::useless_format"
+reason = "rsx! expands each \"{text}\" node to format!"
+
+[[exception]]
+path = "crates/app/src/main.rs"
+rule = "clippy::disallowed_types"
+reason = "rsx! caches each template in a OnceLock static"
+
+[[exception]]
+path = "crates/app/src/main.rs"
+rule = "clippy::empty_enums"
+reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
+
+[[exception]]
+path = "crates/app/src/main.rs"
+rule = "clippy::shadow_reuse"
+reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
+
+[[exception]]
+path = "crates/app/src/main.rs"
+rule = "clippy::useless_format"
+reason = "rsx! expands each \"{text}\" node to format!"
+
+[[exception]]
+path = "crates/app/src/session.rs"
+rule = "clippy::disallowed_types"
+reason = "rsx! caches each template in a OnceLock static"
+
+[[exception]]
+path = "crates/app/src/session.rs"
+rule = "clippy::empty_enums"
+reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
+
+[[exception]]
+path = "crates/app/src/session.rs"
+rule = "clippy::shadow_reuse"
+reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
+
+[[exception]]
+path = "crates/app/src/session.rs"
+rule = "clippy::useless_format"
+reason = "rsx! expands each \"{text}\" node to format!"
+
+[[exception]]
+path = "crates/app/src/sessions.rs"
+rule = "clippy::disallowed_types"
+reason = "rsx! caches each template in a OnceLock static"
+
+[[exception]]
+path = "crates/app/src/sessions.rs"
+rule = "clippy::empty_enums"
+reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
+
+[[exception]]
+path = "crates/app/src/sessions.rs"
+rule = "clippy::shadow_reuse"
+reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
+
+[[exception]]
+path = "crates/app/src/sessions.rs"
+rule = "clippy::useless_format"
+reason = "rsx! expands each \"{text}\" node to format!"
+
+[[exception]]
+path = "crates/app/src/main.rs"
+rule = "clippy::volatile_composites"
+reason = "asset! reads its link section with read_volatile"
+
+[[exception]]
+path = "crates/app/src/main.rs"
+rule = "clippy::future_not_send"
+reason = "the link tasks run on the single-threaded UI executor and hold Dioxus signals and an Rc'd link"

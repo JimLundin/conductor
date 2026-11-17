@@ -2,6 +2,23 @@
 //! a gateway for it, and a button to clear it. A secret only passes through:
 //! the field is cleared once it is sent, and nothing keeps it (§6.3).
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "rsx! caches each template in a OnceLock static"
+)]
+#![expect(
+    clippy::empty_enums,
+    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
+)]
+#![expect(
+    clippy::shadow_reuse,
+    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
+)]
+#![expect(
+    clippy::useless_format,
+    reason = "rsx! expands each \"{text}\" node to format!"
+)]
+
 use client::new_session::label;
 use dioxus::prelude::*;
 use proto::{
@@ -34,8 +51,8 @@ pub(crate) fn CredentialsPane(
     link: Signal<Link>,
     on_back: EventHandler<()>,
 ) -> Element {
-    let claude = providers.as_ref().map(|providers| providers.claude.clone());
-    let codex = providers.as_ref().map(|providers| providers.codex.clone());
+    let claude = providers.as_ref().map(|known| known.claude.clone());
+    let codex = providers.as_ref().map(|known| known.codex.clone());
     rsx! {
         section { class: "pane new-pane",
             PaneHeader { title: "Credentials", subtitle: "How {host} reaches each agent's model.", on_back }

@@ -1,5 +1,22 @@
 //! The session list and the form that starts a session.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "rsx! caches each template in a OnceLock static"
+)]
+#![expect(
+    clippy::empty_enums,
+    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
+)]
+#![expect(
+    clippy::shadow_reuse,
+    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
+)]
+#![expect(
+    clippy::useless_format,
+    reason = "rsx! expands each \"{text}\" node to format!"
+)]
+
 use client::host_view::{Attention, HostView, SessionView, UndoState};
 use client::new_session::{
     Attempt, PROVIDERS, ProviderNote, Refusal, default_label, efforts,
@@ -147,10 +164,9 @@ pub(crate) fn NewSession(
     };
     let provider_note = note(
         provider(),
-        providers.as_ref().map(|providers| providers.of(provider())),
+        providers.as_ref().map(|known| known.of(provider())),
     );
-    let offered =
-        models(providers.as_ref().map(|providers| providers.of(provider())));
+    let offered = models(providers.as_ref().map(|known| known.of(provider())));
     let effort_options = efforts(&offered, model().as_ref());
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
@@ -164,13 +180,13 @@ pub(crate) fn NewSession(
                 class: "new-session",
                 onsubmit: move |event: FormEvent| {
                     event.prevent_default();
-                    let directory = HostPath(directory().trim().to_string());
-                    begin(link, attempt, (provider(), model(), effort()), directory, on_started);
+                    let path = HostPath(directory().trim().to_string());
+                    begin(link, attempt, (provider(), model(), effort()), path, on_started);
                 },
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",
-                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, word(providers.as_ref().map(|providers| providers.of(*choice))))) {
+                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, word(providers.as_ref().map(|known| known.of(*choice))))) {
                             label { class: "segment", "data-available": "{state}",
                                 input {
                                     r#type: "radio",
@@ -299,12 +315,10 @@ enum Start {
 
 #[component]
 fn Hint(error: Option<String>) -> Element {
-    match error {
-        Some(error) => {
-            rsx! { p { class: "hint error", role: "alert", "{error}" } }
-        }
-        None => rsx! {},
-    }
+    error.map_or_else(
+        || rsx! {},
+        |message| rsx! { p { class: "hint error", role: "alert", "{message}" } },
+    )
 }
 
 fn begin(
