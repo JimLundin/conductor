@@ -172,16 +172,16 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
 /// alone, a Codex item with no summary) there is nothing to show.
 fn reasoning(text: String) -> Option<Step> {
     Some(text)
-        .filter(|text| !text.is_empty())
-        .map(|text| Step::Emit(EventKind::Reasoning { text }))
+        .filter(|piece| !piece.is_empty())
+        .map(|piece| Step::Emit(EventKind::Reasoning { text: piece }))
 }
 
 /// A piece of reasoning as it streams. Claude streams one empty piece for
 /// a block with no text, which would show reasoning that never comes.
 fn reasoning_delta(text: String) -> Option<Step> {
     Some(text)
-        .filter(|text| !text.is_empty())
-        .map(|text| Step::Emit(EventKind::ReasoningDelta { text }))
+        .filter(|piece| !piece.is_empty())
+        .map(|piece| Step::Emit(EventKind::ReasoningDelta { text: piece }))
 }
 
 pub fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
@@ -204,7 +204,10 @@ const SECRET_DECLINED: &str = "Codex asked for an answer it would keep secret. C
 
 pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
     match event {
-        CodexEvent::Thread { event, .. } => codex_thread_steps(event),
+        CodexEvent::Thread {
+            event: thread_event,
+            ..
+        } => codex_thread_steps(thread_event),
         CodexEvent::Exited { status } => {
             Vec::from([Step::Closed(CloseReason::Exited {
                 status: status.describe(),
@@ -291,9 +294,11 @@ fn approval_step(
 ) -> Step {
     match kind {
         ApprovalKind::Command {
-            command, reason, ..
+            command: asked,
+            reason,
+            ..
         } => {
-            let command = command.unwrap_or_default();
+            let command = asked.unwrap_or_default();
             Step::Open {
                 native,
                 call,
@@ -462,8 +467,8 @@ mod tests {
     }
 
     #[test]
-    fn each_provider_event_maps_to_its_steps() {
-        let cases = [
+    fn reasoning_maps_to_its_steps() {
+        assert_cases([
             Case {
                 got: claude_steps(ClaudeEvent::ThinkingDelta {
                     text: String::from("hm"),
@@ -516,22 +521,12 @@ mod tests {
                     text: String::from("hmm"),
                 })]),
             },
-            Case {
-                got: claude_steps(ClaudeEvent::PermissionCancelled {
-                    id: PermissionRequestId(String::from("p1")),
-                }),
-                want: Vec::from([Step::Withdraw(NativeRequest(String::from(
-                    "p1",
-                )))]),
-            },
-            Case {
-                got: claude_steps(ClaudeEvent::Exited {
-                    status: Exit::Unknown(String::from("gone")),
-                }),
-                want: Vec::from([Step::Closed(CloseReason::Exited {
-                    status: String::from("unknown exit (gone)"),
-                })]),
-            },
+        ]);
+    }
+
+    #[test]
+    fn codex_requests_map_to_their_steps() {
+        assert_cases([
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {
                     id: ApprovalId(String::from("1")),
@@ -606,6 +601,38 @@ mod tests {
                 }]),
             },
             Case {
+                got: on_thread(ThreadEvent::SecretQuestionDeclined {
+                    turn: turn(),
+                }),
+                want: Vec::from([Step::Emit(EventKind::Error {
+                    message: String::from(
+                        "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.",
+                    ),
+                })]),
+            },
+        ]);
+    }
+
+    #[test]
+    fn claude_events_and_plans_map_to_their_steps() {
+        assert_cases([
+            Case {
+                got: claude_steps(ClaudeEvent::PermissionCancelled {
+                    id: PermissionRequestId(String::from("p1")),
+                }),
+                want: Vec::from([Step::Withdraw(NativeRequest(String::from(
+                    "p1",
+                )))]),
+            },
+            Case {
+                got: claude_steps(ClaudeEvent::Exited {
+                    status: Exit::Unknown(String::from("gone")),
+                }),
+                want: Vec::from([Step::Closed(CloseReason::Exited {
+                    status: String::from("unknown exit (gone)"),
+                })]),
+            },
+            Case {
                 got: claude_steps(ClaudeEvent::Message {
                     uuid: None,
                     role: Role::Assistant,
@@ -665,17 +692,10 @@ mod tests {
                     for_session: Some(String::from("Bash(touch t1.txt)")),
                 }]),
             },
-            Case {
-                got: on_thread(ThreadEvent::SecretQuestionDeclined {
-                    turn: turn(),
-                }),
-                want: Vec::from([Step::Emit(EventKind::Error {
-                    message: String::from(
-                        "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.",
-                    ),
-                })]),
-            },
-        ];
+        ]);
+    }
+
+    fn assert_cases<const N: usize>(cases: [Case; N]) {
         let (got, want) = cases
             .into_iter()
             .map(|case| (case.got, case.want))

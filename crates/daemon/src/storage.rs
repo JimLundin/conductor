@@ -35,7 +35,7 @@ impl Storage {
             let stored = meta.get("epoch")?.map(|value| value.value());
             if stored.is_some() {
             } else {
-                let encoded = encode(&crate::random_epoch())?;
+                let encoded = encode(&crate::random_epoch()?)?;
                 let _ = meta.insert("epoch", &encoded)?;
             }
         }

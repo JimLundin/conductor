@@ -126,6 +126,11 @@ impl CodexHub {
 
     /// What `model/list` offers, from the app-server, which starts first if
     /// none runs.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the hub has stopped, or if the app-server cannot start or
+    /// answer.
     pub async fn models(&self) -> Result<Models, HubError> {
         Ok(self.ask(|reply| HubMsg::Models { reply }).await??)
     }
@@ -293,13 +298,13 @@ impl HubActor {
     /// A thread whose session ended has no route any more, and its events
     /// are dropped.
     async fn route(&mut self, thread: ThreadId, event: ThreadEvent) {
-        let event = Routed::Codex(CodexEvent::Thread {
+        let routed = Routed::Codex(CodexEvent::Thread {
             thread: thread.clone(),
             event,
         });
         match self.routes.get(&thread) {
             Some(route) => {
-                if let Err(mpsc::error::SendError(_)) = route.send(event).await
+                if let Err(mpsc::error::SendError(_)) = route.send(routed).await
                 {
                     self.routes.remove(&thread);
                 }

@@ -306,6 +306,10 @@ impl Registry {
     /// Checks the directory and the provider, logs `SessionCreated` and
     /// answers `Started` at once. The agent starts inside the session's own
     /// task, so a slow start never blocks the registry.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
     pub async fn start(
         &self,
         provider: Provider,
@@ -330,6 +334,10 @@ impl Registry {
     /// provider offers: `Continue`, `UndoTurn` and `SetEffort`. The
     /// session starts its agent itself, so a slow start never blocks the
     /// registry.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
     pub async fn relaunch(
         &self,
         session: SessionId,
@@ -338,6 +346,11 @@ impl Registry {
             .await
     }
 
+    /// The session with this id, if the registry has it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
     pub async fn find(
         &self,
         session: SessionId,
@@ -346,12 +359,20 @@ impl Registry {
     }
 
     /// What `Welcome` tells a client the host can run.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
     pub async fn providers(&self) -> Result<Providers, Stopped> {
         self.ask(|reply| RegistryMsg::Providers { reply }).await
     }
 
     /// Stores the credential and answers with the providers it changes. A
     /// new Codex credential restarts the shared app-server.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
     pub async fn set_credential(
         &self,
         credential: Credential,
@@ -360,6 +381,12 @@ impl Registry {
             .await
     }
 
+    /// Clears the provider's stored credential and answers with the
+    /// providers it changes.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
     pub async fn clear_credential(
         &self,
         provider: Provider,
@@ -416,8 +443,8 @@ impl RegistryActor {
             RegistryMsg::Continue { session, reply } => {
                 let relaunch = match self.sessions.get(&session) {
                     None => Err(Rejection::UnknownSession),
-                    Some((provider, handle)) => {
-                        let &provider = provider;
+                    Some((known, handle)) => {
+                        let provider = *known;
                         self.ready(provider)
                             .map(|(launch, _)| {
                                 (handle.clone(), launch, self.models(provider))
@@ -515,102 +542,16 @@ impl RegistryActor {
                 .filter(|event| event.session == id)
                 .cloned()
                 .collect::<Vec<Event>>();
-            let choice = events.iter().fold(
-                Choice { model, effort },
-                |choice, event| match &event.kind {
-                    EventKind::ModelChanged { model, effort, .. } => Choice {
-                        model: model.clone(),
-                        effort: effort.to_owned(),
-                    },
-                    EventKind::EffortChanged { effort } => Choice {
-                        effort: Some(effort.to_owned()),
-                        ..choice
-                    },
-                    _ => choice,
-                },
-            );
+            let choice = replay_choice(Choice { model, effort }, &events);
             let conversation = match events.iter().find(|event| {
                 matches!(event.kind, EventKind::UserMessage { .. })
             }) {
                 Some(_) => self.log.saved_conversation(id).await?,
                 None => None,
             };
-            let open = events
-                .iter()
-                .filter_map(|event| match &event.kind {
-                    EventKind::RequestOpened { request, .. }
-                    | EventKind::QuestionAsked { request, .. } => {
-                        Some(request.to_owned())
-                    }
-                    _ => None,
-                })
-                .filter(|request| {
-                    !events
-                        .iter()
-                        .filter_map(|event| match &event.kind {
-                            EventKind::RequestResolved { request, .. } => {
-                                Some(request)
-                            }
-                            _ => None,
-                        })
-                        .any(|resolved| resolved == request)
-                })
-                .collect::<Vec<proto::RequestId>>();
-            for request in open {
-                self.log
-                    .append(
-                        id,
-                        EventKind::RequestResolved {
-                            request,
-                            resolution: proto::Resolution::Withdrawn,
-                        },
-                    )
-                    .await?;
-            }
-            let running =
-                events.iter().rev().find_map(|event| match &event.kind {
-                    EventKind::UserMessage { .. }
-                    | EventKind::NativeTurnStarted { .. } => {
-                        Some(RecoverTurn::Running)
-                    }
-                    EventKind::TurnCompleted { .. }
-                    | EventKind::SessionClosed { .. } => {
-                        Some(RecoverTurn::Idle)
-                    }
-                    _ => None,
-                });
-            if matches!(running, Some(RecoverTurn::Running)) {
-                self.recover_checkpoint(id, &events).await?;
-                self.log
-                    .append(
-                        id,
-                        EventKind::TurnCompleted {
-                            outcome: TurnOutcome::Interrupted,
-                        },
-                    )
-                    .await?;
-            }
-            let closed =
-                events.iter().rev().find_map(|event| match &event.kind {
-                    EventKind::SessionClosed { .. } => {
-                        Some(RecoverAgent::Closed)
-                    }
-                    EventKind::SessionCreated { .. }
-                    | EventKind::SessionReady => Some(RecoverAgent::Running),
-                    _ => None,
-                });
-            if matches!(closed, Some(RecoverAgent::Running)) {
-                self.log
-                    .append(
-                        id,
-                        EventKind::SessionClosed {
-                            reason: CloseReason::Stopped {
-                                reason: String::from("the host restarted"),
-                            },
-                        },
-                    )
-                    .await?;
-            }
+            withdraw_open_requests(&self.log, id, &events).await?;
+            interrupt_running_turn(&self.log, id, &events).await?;
+            close_running_agent(&self.log, id, &events).await?;
             let recovered = self
                 .log
                 .history()
@@ -629,71 +570,6 @@ impl RegistryActor {
             self.sessions.insert(id, (provider, session));
         }
         Ok(())
-    }
-
-    async fn recover_checkpoint(
-        &mut self,
-        id: SessionId,
-        events: &[Event],
-    ) -> Result<(), Stopped> {
-        let book = crate::checkpoints::Book::replay(events);
-        let started = book
-            .snapshot
-            .as_ref()
-            .map(|snapshot| (snapshot.history.clone(), snapshot.turn_start));
-        match (started, book.workspace.as_ref(), book.recovery.as_ref()) {
-            (Some((history, turn_start)), Some(workspace), None) => {
-                let next = book.highwater.next();
-                self.log
-                    .append(
-                        id,
-                        EventKind::CheckpointReserved { checkpoint: next },
-                    )
-                    .await?;
-                self.log.barrier().await?;
-                match crate::workspace::snapshot(
-                    workspace,
-                    id,
-                    next,
-                    book.last().map(|checkpoint| checkpoint.commit.as_str()),
-                )
-                .await
-                {
-                    Ok(commit) => {
-                        let undo = book.availability(&history);
-                        self.log
-                            .append(
-                                id,
-                                EventKind::CheckpointCreated {
-                                    checkpoint: proto::Checkpoint {
-                                        id: next,
-                                        parent: book
-                                            .last()
-                                            .map(|checkpoint| checkpoint.id),
-                                        turn_start,
-                                        commit,
-                                        history,
-                                        undo,
-                                    },
-                                },
-                            )
-                            .await
-                    }
-                    Err(err) => self
-                        .log
-                        .append(
-                            id,
-                            EventKind::Error {
-                                message: format!(
-                                    "interrupted turn checkpoint failed: {err}"
-                                ),
-                            },
-                        )
-                        .await,
-                }
-            }
-            _ => Ok(()),
-        }
     }
 
     /// The stored credentials. A store that doesn't open is moved aside
@@ -751,8 +627,12 @@ impl RegistryActor {
             Provider::Claude => self.claude_refresh.finish(result),
             Provider::Codex => self.codex_refresh.finish(result),
         };
-        if let Some(RefreshCompletion { models, replies }) = completed {
-            match (models, self.launchers.of(provider)) {
+        if let Some(RefreshCompletion {
+            models: listed,
+            replies,
+        }) = completed
+        {
+            match (listed, self.launchers.of(provider)) {
                 (
                     Ok(models),
                     Launcher::Ready {
@@ -945,6 +825,171 @@ impl RegistryActor {
     }
 }
 
+async fn withdraw_open_requests(
+    log: &Log,
+    id: SessionId,
+    events: &[Event],
+) -> Result<(), Stopped> {
+    let open = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::RequestOpened { request, .. }
+            | EventKind::QuestionAsked { request, .. } => {
+                Some(request.to_owned())
+            }
+            _ => None,
+        })
+        .filter(|request| {
+            !events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::RequestResolved { request, .. } => Some(request),
+                    _ => None,
+                })
+                .any(|resolved| resolved == request)
+        })
+        .collect::<Vec<proto::RequestId>>();
+    for request in open {
+        log.append(
+            id,
+            EventKind::RequestResolved {
+                request,
+                resolution: proto::Resolution::Withdrawn,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn interrupt_running_turn(
+    log: &Log,
+    id: SessionId,
+    events: &[Event],
+) -> Result<(), Stopped> {
+    let running =
+        events.iter().rev().find_map(|event| match &event.kind {
+            EventKind::UserMessage { .. }
+            | EventKind::NativeTurnStarted { .. } => Some(RecoverTurn::Running),
+            EventKind::TurnCompleted { .. }
+            | EventKind::SessionClosed { .. } => Some(RecoverTurn::Idle),
+            _ => None,
+        });
+    if matches!(running, Some(RecoverTurn::Running)) {
+        recover_checkpoint(log, id, events).await?;
+        log.append(
+            id,
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Interrupted,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn close_running_agent(
+    log: &Log,
+    id: SessionId,
+    events: &[Event],
+) -> Result<(), Stopped> {
+    let closed = events.iter().rev().find_map(|event| match &event.kind {
+        EventKind::SessionClosed { .. } => Some(RecoverAgent::Closed),
+        EventKind::SessionCreated { .. } | EventKind::SessionReady => {
+            Some(RecoverAgent::Running)
+        }
+        _ => None,
+    });
+    if matches!(closed, Some(RecoverAgent::Running)) {
+        log.append(
+            id,
+            EventKind::SessionClosed {
+                reason: CloseReason::Stopped {
+                    reason: String::from("the host restarted"),
+                },
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn recover_checkpoint(
+    log: &Log,
+    id: SessionId,
+    events: &[Event],
+) -> Result<(), Stopped> {
+    let book = crate::checkpoints::Book::replay(events);
+    let started = book
+        .snapshot
+        .as_ref()
+        .map(|snapshot| (snapshot.history.clone(), snapshot.turn_start));
+    match (started, book.workspace.as_ref(), book.recovery.as_ref()) {
+        (Some((history, turn_start)), Some(workspace), None) => {
+            let next = book.highwater.next();
+            log.append(id, EventKind::CheckpointReserved { checkpoint: next })
+                .await?;
+            log.barrier().await?;
+            match crate::workspace::snapshot(
+                workspace,
+                id,
+                next,
+                book.last().map(|checkpoint| checkpoint.commit.as_str()),
+            )
+            .await
+            {
+                Ok(commit) => {
+                    let undo = book.availability(&history);
+                    log.append(
+                        id,
+                        EventKind::CheckpointCreated {
+                            checkpoint: proto::Checkpoint {
+                                id: next,
+                                parent: book
+                                    .last()
+                                    .map(|checkpoint| checkpoint.id),
+                                turn_start,
+                                commit,
+                                history,
+                                undo,
+                            },
+                        },
+                    )
+                    .await
+                }
+                Err(err) => {
+                    log.append(
+                        id,
+                        EventKind::Error {
+                            message: format!(
+                                "interrupted turn checkpoint failed: {err}"
+                            ),
+                        },
+                    )
+                    .await
+                }
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+fn replay_choice(created: Choice, events: &[Event]) -> Choice {
+    events
+        .iter()
+        .fold(created, |current, event| match &event.kind {
+            EventKind::ModelChanged { model, effort, .. } => Choice {
+                model: model.clone(),
+                effort: effort.to_owned(),
+            },
+            EventKind::EffortChanged { effort } => Choice {
+                effort: Some(effort.to_owned()),
+                ..current
+            },
+            _ => current,
+        })
+}
+
 fn configured(
     launcher: &Launcher,
     provider: Provider,
@@ -956,7 +1001,7 @@ fn configured(
             Err(reason.clone())
         }
         (Launcher::Ready { launch, own, .. }, Stored::Opened(credentials)) => {
-            let launch = match launch.clone() {
+            let credentialed = match launch.clone() {
                 Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
                     credential: credentials.claude.clone(),
                     ..claude
@@ -964,8 +1009,8 @@ fn configured(
                 Launch::Codex(codex) => Launch::Codex(codex),
             };
             match credentials.auth(provider) {
-                Some(auth) => Ok((launch, auth)),
-                None => own.auth().map(|auth| (launch, auth)),
+                Some(auth) => Ok((credentialed, auth)),
+                None => own.auth().map(|auth| (credentialed, auth)),
             }
         }
     }
@@ -989,9 +1034,9 @@ mod tests {
 
     use agents::Home;
     use proto::{
-        ClientName, CloseReason, CommandResult, EventKind, HostPath, HostSeq,
-        Models, Provider, RequestId, Resolution, SessionId, ToolCallId,
-        TurnOutcome,
+        ClientName, CloseReason, CommandResult, Event, EventKind, HostPath,
+        HostSeq, Models, Provider, RequestId, Resolution, SessionId,
+        ToolCallId, TurnOutcome,
     };
 
     use super::{Launcher, Launchers, OwnSignIn, Registry};
@@ -1013,19 +1058,18 @@ mod tests {
         }
     }
 
-    fn directory() -> PathBuf {
+    fn directory() -> std::io::Result<PathBuf> {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/tmp")
             .join(format!("conductor-test-restart-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
-        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&directory)?;
         std::fs::copy(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/e2e/claude-resumed.jsonl"),
             directory.join("stdout.jsonl"),
-        )
-        .unwrap();
-        directory
+        )?;
+        Ok(directory)
     }
 
     async fn seed(
@@ -1042,12 +1086,61 @@ mod tests {
     #[tokio::test]
     async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes()
     -> Result<(), Box<dyn std::error::Error>> {
-        let directory = directory();
+        let directory = directory()?;
         let path = directory.join("conductor.redb");
         let id = SessionId(u128::from(ulid::Ulid::new()));
         let first = Log::open(String::from("test"), &path)?;
+        let epoch = seed_before_restart(&first, id, &directory).await?;
+        first.shutdown().await?;
+        let second = Log::open(String::from("test"), &path)?;
+        let (store, stored) = Store::open(&directory)?;
+        let registry = Registry::spawn(
+            second.clone(),
+            Launchers {
+                claude: launcher(),
+                codex: Launcher::Unavailable(String::from("test")),
+            },
+            store,
+            stored,
+        );
+        let providers = registry.providers().await?;
+        assert_eq!(second.welcome(providers).await?.epoch, epoch);
+        assert_recovered(&second.subscribe(HostSeq(4)).await?.replay);
+        let (session, launch, models) = registry
+            .relaunch(id)
+            .await?
+            .map_err(|rejection| format!("{rejection:?}"))?;
+        assert_eq!(
+            session.order(Order::Start(launch, models)).await?,
+            CommandResult::Accepted
+        );
+        let arguments = std::fs::read_to_string(directory.join("argv.txt"))?;
+        assert_eq!(
+            arguments
+                .lines()
+                .find(|argument| argument.starts_with("--resume=")),
+            Some("--resume=restored-native-conversation")
+        );
+        let ready = second.subscribe(HostSeq(7)).await?.replay;
+        assert_eq!(
+            ready.iter().map(|event| &event.kind).collect::<Vec<_>>(),
+            [&EventKind::SessionReady]
+        );
+        second.shutdown().await?;
+        drop(session);
+        drop(registry);
+        Ok(())
+    }
+
+    /// A session mid-turn with an open request and a saved conversation,
+    /// and the log's epoch.
+    async fn seed_before_restart(
+        first: &Log,
+        id: SessionId,
+        directory: &Path,
+    ) -> Result<proto::Epoch, crate::Stopped> {
         seed(
-            &first,
+            first,
             id,
             Vec::from([
                 EventKind::SessionCreated {
@@ -1078,7 +1171,7 @@ mod tests {
         first
             .conversation(id, String::from("restored-native-conversation"))
             .await?;
-        let epoch = first
+        first
             .welcome(proto::Providers {
                 claude: proto::Availability::Unavailable {
                     reason: String::from("test"),
@@ -1087,23 +1180,11 @@ mod tests {
                     reason: String::from("test"),
                 },
             })
-            .await?
-            .epoch;
-        first.shutdown().await?;
-        let second = Log::open(String::from("test"), &path)?;
-        let (store, stored) = Store::open(&directory)?;
-        let registry = Registry::spawn(
-            second.clone(),
-            Launchers {
-                claude: launcher(),
-                codex: Launcher::Unavailable(String::from("test")),
-            },
-            store,
-            stored,
-        );
-        let providers = registry.providers().await?;
-        assert_eq!(second.welcome(providers).await?.epoch, epoch);
-        let replay = second.subscribe(HostSeq(4)).await?.replay;
+            .await
+            .map(|welcome| welcome.epoch)
+    }
+
+    fn assert_recovered(replay: &[Event]) {
         assert_eq!(
             replay
                 .iter()
@@ -1133,29 +1214,5 @@ mod tests {
                 ),
             ]
         );
-        let (session, launch, models) = registry
-            .relaunch(id)
-            .await?
-            .map_err(|rejection| format!("{rejection:?}"))?;
-        assert_eq!(
-            session.order(Order::Start(launch, models)).await?,
-            CommandResult::Accepted
-        );
-        let arguments = std::fs::read_to_string(directory.join("argv.txt"))?;
-        assert_eq!(
-            arguments
-                .lines()
-                .find(|argument| argument.starts_with("--resume=")),
-            Some("--resume=restored-native-conversation")
-        );
-        let ready = second.subscribe(HostSeq(7)).await?.replay;
-        assert_eq!(
-            ready.iter().map(|event| &event.kind).collect::<Vec<_>>(),
-            [&EventKind::SessionReady]
-        );
-        second.shutdown().await?;
-        drop(session);
-        drop(registry);
-        Ok(())
     }
 }

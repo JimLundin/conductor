@@ -1,4 +1,6 @@
-//! The host's credential store (§6.3): `<data>/credentials` holds the
+//! The host's credential store (§6.3).
+//!
+//! `<data>/credentials` holds the
 //! postcard of [`Credentials`], sealed with XChaCha20-Poly1305 under the
 //! 32-byte store key in `<data>/store.key`. The key sits beside the store,
 //! readable by the owner only, §6.3's variant for hosts without a platform
@@ -37,15 +39,18 @@ pub enum Stored {
 }
 
 impl Store {
-    /// Opens the store in `data_dir`, creating its key on first run, and
-    /// reads what it holds. Only a store key that can't be read or made
-    /// fails it.
     /// The data dir the store is in.
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
+    /// Opens the store in `data_dir`, creating its key on first run, and
+    /// reads what it holds.
+    ///
+    /// # Errors
+    ///
+    /// Only a store key that can't be read or made fails it.
     pub fn open(data_dir: &Path) -> anyhow::Result<(Self, Stored)> {
         let key = crate::load_or_create_secret(data_dir, "store.key")?;
         let store = Self {
@@ -73,6 +78,11 @@ impl Store {
 
     /// Replaces what the store holds. It writes and syncs a new file, then
     /// renames it over the old one, so a crash leaves either.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no random source, or writing, renaming or syncing
+    /// the file fails.
     pub fn save(&self, credentials: &Credentials) -> anyhow::Result<()> {
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).context("no random source")?;
@@ -101,6 +111,10 @@ impl Store {
 
     /// Moves a store that doesn't open to `credentials.unreadable`,
     /// replacing an older one there, and returns where it went.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the rename fails.
     pub fn move_aside(&self) -> anyhow::Result<PathBuf> {
         let aside = self.path.with_extension("unreadable");
         std::fs::rename(&self.path, &aside)

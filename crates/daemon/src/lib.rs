@@ -28,6 +28,10 @@ pub struct Stopped {}
 
 /// Loads the host's iroh key from `<data_dir>/host.key`, creating it on first
 /// run. The key's public half is the host's address, so it must persist.
+///
+/// # Errors
+///
+/// Fails if the key file can't be read, parsed or created.
 pub fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from_bytes(&load_or_create_secret(
         data_dir, "host.key",
@@ -36,6 +40,10 @@ pub fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
 
 /// Keeps the ticket's authentication token stable across host restarts.
 /// It is stored with the same private-file and sync guarantees as the host key.
+///
+/// # Errors
+///
+/// Fails if the token file can't be read, parsed or created.
 pub fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
     let secret = load_or_create_secret(data_dir, "auth.key")?;
     let (bytes, _) = secret
@@ -63,7 +71,7 @@ fn load_or_create_secret(
             }),
         Err(err) => match err.kind() {
             ErrorKind::NotFound => {
-                let key = random_key();
+                let key = random_key()?;
                 std::fs::create_dir_all(data_dir)?;
                 let next =
                     data_dir.join(format!("{name}.{}.new", std::process::id()));
@@ -110,6 +118,10 @@ pub struct Homes {
 
 /// Creates the private homes, writing each CLI's config on first run only,
 /// since the CLIs edit their own config too.
+///
+/// # Errors
+///
+/// Fails if a home or its config can't be created.
 pub fn homes(data_dir: &Path) -> anyhow::Result<Homes> {
     let claude = data_dir.join("home").join("claude");
     let codex = data_dir.join("home").join("codex");
@@ -179,22 +191,26 @@ fn sync_dir(_dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn random_key() -> [u8; 32] {
+fn random_key() -> anyhow::Result<[u8; 32]> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).expect("the OS has a random source");
-    bytes
+    getrandom::fill(&mut bytes).context("no random source")?;
+    Ok(bytes)
 }
 
-#[must_use]
-pub fn random_token() -> AuthToken {
+/// # Errors
+///
+/// Fails if the OS has no random source.
+pub fn random_token() -> anyhow::Result<AuthToken> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("the OS has a random source");
-    AuthToken::from_bytes(bytes)
+    getrandom::fill(&mut bytes).context("no random source")?;
+    Ok(AuthToken::from_bytes(bytes))
 }
 
-#[must_use]
-pub fn random_epoch() -> Epoch {
-    Epoch(getrandom::u64().expect("the OS has a random source"))
+/// # Errors
+///
+/// Fails if the OS has no random source.
+pub fn random_epoch() -> anyhow::Result<Epoch> {
+    Ok(Epoch(getrandom::u64().context("no random source")?))
 }
 
 #[cfg(test)]

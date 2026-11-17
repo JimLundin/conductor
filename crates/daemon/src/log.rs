@@ -148,6 +148,11 @@ impl Log {
         Self::start(name, epoch, Vec::new(), None)
     }
 
+    /// Opens the log stored at `path`, creating it if missing.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be opened or its events don't decode.
     pub fn open(name: String, path: &Path) -> anyhow::Result<Self> {
         let storage = Storage::open(path)?;
         let epoch = storage.epoch()?;
@@ -183,6 +188,10 @@ impl Log {
 
     /// Acknowledges after the durable write, or after staging in the active
     /// command's transaction. The command receipt commits its staged events.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the log has stopped.
     pub async fn append(
         &self,
         session: SessionId,
@@ -277,12 +286,20 @@ impl Log {
 
     /// Stops accepting writes and releases the database. Stop the transport
     /// before calling this so no command can be acknowledged afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the log has already stopped.
     pub async fn shutdown(&self) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Shutdown { reply }).await
     }
 
     /// The log's head as of now, for a client the registry says can run
     /// `providers`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the log has stopped.
     pub async fn welcome(
         &self,
         providers: Providers,
@@ -290,6 +307,11 @@ impl Log {
         self.ask(|reply| LogMsg::Welcome { providers, reply }).await
     }
 
+    /// The events after `after`, then the live feed.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the log has stopped.
     pub async fn subscribe(
         &self,
         after: HostSeq,
@@ -322,7 +344,7 @@ impl LogActor {
                     let _ = reply.send(());
                     break Err(Stopped {});
                 }
-                msg => self.on(msg).map_err(|err| {
+                other => self.on(other).map_err(|err| {
                     tracing::error!(%err, "durable log stopped");
                     Stopped {}
                 })?,
@@ -333,69 +355,19 @@ impl LogActor {
     fn on(&mut self, msg: LogMsg) -> anyhow::Result<()> {
         match msg {
             LogMsg::Barrier { reply } => {
-                self.commit()?;
-                if let Some(active) = &self.active {
-                    let _ = active;
-                    self.transaction = self
-                        .storage
-                        .as_ref()
-                        .map(Storage::begin)
-                        .transpose()?;
-                }
+                self.barrier()?;
                 let _ = reply.send(());
             }
             LogMsg::Shutdown { reply } => {
                 let _ = reply.send(());
             }
-            LogMsg::Abort(key) => {
-                match (self.credentials.get(&key), &self.active) {
-                    (Some(_), _) => {
-                        Err(Stopped {})?;
-                    }
-                    (None, Some(active)) if active == &key => {
-                        Err(Stopped {})?;
-                    }
-                    _ => {}
-                }
-            }
+            LogMsg::Abort(key) => self.abort(key)?,
             LogMsg::Begin(start) => match &self.active {
                 Some(_) => self.waiting.push_back(start),
                 None => self.begin(start)?,
             },
             LogMsg::Finish { key, result, reply } => {
-                match (self.credentials.get(&key), &self.active) {
-                    (Some(_), Some(_)) => {
-                        self.credential_finishes.push_back(CredentialFinish {
-                            key,
-                            result,
-                            reply,
-                        });
-                    }
-                    (Some(_), None) => {
-                        self.finish_credential(CredentialFinish {
-                            key,
-                            result,
-                            reply,
-                        })?;
-                    }
-                    (None, _) => {
-                        if let Some(write) = self.transaction.take() {
-                            storage::receipt(&write, key, &result)?;
-                            self.transaction = Some(write);
-                        }
-                        self.commit()?;
-                        self.active = None;
-                        let _ = reply.send(());
-                        for finish in
-                            std::mem::take(&mut self.credential_finishes)
-                        {
-                            self.finish_credential(finish)?;
-                        }
-                        if let Some(start) = self.waiting.pop_front() {
-                            self.begin(start)?;
-                        }
-                    }
-                }
+                self.finish(CredentialFinish { key, result, reply })?;
             }
             LogMsg::History { reply } => {
                 let _ = reply.send(self.events.clone());
@@ -410,17 +382,7 @@ impl LogActor {
                 let _ = reply.send(value);
             }
             LogMsg::Conversation { session, id, reply } => {
-                match (&self.storage, &self.transaction) {
-                    (_, Some(write)) => {
-                        storage::conversation(write, session, &id)?;
-                    }
-                    (Some(storage), None) => {
-                        let write = storage.begin()?;
-                        storage::conversation(&write, session, &id)?;
-                        write.commit()?;
-                    }
-                    (None, None) => {}
-                }
+                self.save_conversation(session, &id)?;
                 let _ = reply.send(());
             }
             // Live only, so it takes no seq (see `EventKind::AssistantDelta`).
@@ -431,55 +393,14 @@ impl LogActor {
                     | EventKind::ReasoningDelta { .. }),
                 reply,
             } => {
-                let event = Event {
-                    seq: self
-                        .staged
-                        .last()
-                        .map_or_else(|| self.head(), |event| event.seq),
-                    session,
-                    kind,
-                };
-                let recorded = event.clone();
-                match &self.active {
-                    Some(_) => self.staged.push(event),
-                    None => {
-                        let _ = self.live.send(event);
-                    }
-                }
-                let _ = reply.send(recorded);
+                let _ = reply.send(self.append_live(session, kind));
             }
             LogMsg::Append {
                 session,
                 kind,
                 reply,
             } => {
-                let event = Event {
-                    seq: self
-                        .staged
-                        .last()
-                        .map_or_else(|| self.head(), |event| event.seq)
-                        .next(),
-                    session,
-                    kind,
-                };
-                let recorded = event.clone();
-                match (&self.storage, &self.transaction) {
-                    (_, Some(write)) => {
-                        storage::event(write, &event)?;
-                        self.staged.push(event);
-                    }
-                    (Some(storage), None) => {
-                        let write = storage.begin()?;
-                        storage::event(&write, &event)?;
-                        write.commit()?;
-                        self.publish(event);
-                    }
-                    (None, None) => match &self.active {
-                        Some(_) => self.staged.push(event),
-                        None => self.publish(event),
-                    },
-                }
-                let _ = reply.send(recorded);
+                let _ = reply.send(self.append(session, kind)?);
             }
             LogMsg::Welcome { providers, reply } => {
                 let _ = reply.send(Welcome {
@@ -502,6 +423,121 @@ impl LogActor {
             }
         }
         Ok(())
+    }
+
+    fn barrier(&mut self) -> anyhow::Result<()> {
+        self.commit()?;
+        if self.active.is_some() {
+            self.transaction =
+                self.storage.as_ref().map(Storage::begin).transpose()?;
+        }
+        Ok(())
+    }
+
+    fn abort(&self, key: CommandId) -> anyhow::Result<()> {
+        match (self.credentials.get(&key), &self.active) {
+            (Some(_), _) => Err(Stopped {}.into()),
+            (None, Some(active)) if active == &key => Err(Stopped {}.into()),
+            _ => Ok(()),
+        }
+    }
+
+    fn finish(&mut self, finish: CredentialFinish) -> anyhow::Result<()> {
+        match (self.credentials.get(&finish.key), &self.active) {
+            (Some(_), Some(_)) => {
+                self.credential_finishes.push_back(finish);
+            }
+            (Some(_), None) => self.finish_credential(finish)?,
+            (None, _) => {
+                if let Some(write) = self.transaction.take() {
+                    storage::receipt(&write, finish.key, &finish.result)?;
+                    self.transaction = Some(write);
+                }
+                self.commit()?;
+                self.active = None;
+                let _ = finish.reply.send(());
+                for credential in std::mem::take(&mut self.credential_finishes)
+                {
+                    self.finish_credential(credential)?;
+                }
+                if let Some(start) = self.waiting.pop_front() {
+                    self.begin(start)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn save_conversation(
+        &self,
+        session: SessionId,
+        id: &str,
+    ) -> anyhow::Result<()> {
+        match (&self.storage, &self.transaction) {
+            (_, Some(write)) => {
+                storage::conversation(write, session, id)?;
+            }
+            (Some(storage), None) => {
+                let write = storage.begin()?;
+                storage::conversation(&write, session, id)?;
+                write.commit()?;
+            }
+            (None, None) => {}
+        }
+        Ok(())
+    }
+
+    fn append_live(&mut self, session: SessionId, kind: EventKind) -> Event {
+        let event = Event {
+            seq: self
+                .staged
+                .last()
+                .map_or_else(|| self.head(), |event| event.seq),
+            session,
+            kind,
+        };
+        let recorded = event.clone();
+        match &self.active {
+            Some(_) => self.staged.push(event),
+            None => {
+                let _ = self.live.send(event);
+            }
+        }
+        recorded
+    }
+
+    fn append(
+        &mut self,
+        session: SessionId,
+        kind: EventKind,
+    ) -> anyhow::Result<Event> {
+        let event = Event {
+            seq: self
+                .staged
+                .last()
+                .map_or_else(|| self.head(), |event| event.seq)
+                .next(),
+            session,
+            kind,
+        };
+        let recorded = event.clone();
+        match (&self.storage, &self.transaction) {
+            (_, Some(write)) => {
+                storage::event(write, &event)?;
+                self.staged.push(event);
+            }
+            (Some(storage), None) => {
+                let write = storage.begin()?;
+                storage::event(&write, &event)?;
+                write.commit()?;
+                self.publish(event);
+            }
+            (None, None) => match &self.active {
+                Some(_) => self.staged.push(event),
+                None => self.publish(event),
+            },
+        }
+        Ok(recorded)
     }
 
     fn begin(&mut self, start: CommandStart) -> anyhow::Result<()> {
@@ -538,11 +574,11 @@ impl LogActor {
                 let _ = start.reply.send(BeginCommand::Execute(lease));
             }
         }
-        let next = match self.active {
+        let queued = match self.active {
             None => self.waiting.pop_front(),
             Some(_) => None,
         };
-        if let Some(next) = next {
+        if let Some(next) = queued {
             self.begin(next)?;
         }
         Ok(())

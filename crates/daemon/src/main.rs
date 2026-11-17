@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use agents::Home;
 use agents::codex::ServerOptions;
 use agents::install::{Cli, install};
 use anyhow::Context;
@@ -92,126 +93,150 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     match Args::parse().command {
-        Cmd::Host(HostArgs {
-            data_dir,
-            name,
-            web_url,
-            claude_path,
-            claude_model,
-            codex_path,
-            codex_model,
-        }) => {
-            let data_dir = data_dir_or_default(data_dir)?;
-            let homes = daemon::homes(&data_dir)?;
-            let (store, stored) = Store::open(&data_dir)?;
-            let claude = match cli_path(Cli::Claude, claude_path, &data_dir)
-                .await
-            {
-                Ok((claude_path, origin)) => {
-                    let status = agents::claude::auth_status(
-                        &claude_path,
-                        &homes.claude,
-                    );
-                    let launch = ClaudeLaunch {
-                        claude_path: claude_path.clone(),
-                        home: homes.claude.clone(),
-                        credential: None,
-                    };
-                    let listed = list_models(
-                        Launch::Claude(ClaudeLaunch {
-                            credential: match &stored {
-                                Stored::Opened(credentials) => {
-                                    credentials.claude.clone()
-                                }
-                                Stored::Unreadable(_) => None,
-                            },
-                            ..launch.clone()
-                        }),
-                        &data_dir,
-                    );
-                    match runs(agents::claude::cli(&claude_path, &homes.claude))
-                        .await
-                    {
-                        Ok(cli) => ready(
-                            cli,
-                            Launch::Claude(launch),
-                            own_sign_in(origin, status).await,
-                            (listed.await, claude_model),
-                        ),
-                        Err(reason) => unavailable(reason),
-                    }
-                }
-                Err(reason) => unavailable(reason),
-            };
-            let codex = match cli_path(Cli::Codex, codex_path, &data_dir).await
-            {
-                Ok((codex_path, origin)) => {
-                    let version = agents::codex::cli(&codex_path, &homes.codex);
-                    let status =
-                        agents::codex::login_status(&codex_path, &homes.codex);
-                    // The app-server's own working directory is the data dir;
-                    // each thread runs in its session's directory.
-                    let hub = CodexHub::spawn(ServerOptions {
-                        codex_path,
-                        home: homes.codex,
-                        credential: match &stored {
-                            Stored::Opened(credentials) => {
-                                credentials.codex.clone()
-                            }
-                            Stored::Unreadable(_) => None,
-                        },
-                        cwd: data_dir.clone(),
-                        stdout_log: None,
-                    });
-                    let listed = list_models(
-                        Launch::Codex(CodexLaunch { hub: hub.clone() }),
-                        &data_dir,
-                    );
-                    match runs(version).await {
-                        Ok(cli) => ready(
-                            cli,
-                            Launch::Codex(CodexLaunch { hub }),
-                            own_sign_in(origin, status).await,
-                            (listed.await, codex_model),
-                        ),
-                        Err(reason) => unavailable(reason),
-                    }
-                }
-                Err(reason) => unavailable(reason),
-            };
-            let launchers = Launchers { claude, codex };
-            let Hosted { router, log } =
-                host(data_dir, web_url, name, launchers, store, stored).await?;
-            let ended = tokio::select! {
-                result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
-                () = log.stopped() => Err(anyhow::Error::from(daemon::Stopped {})),
-            };
-            router.shutdown().await?;
-            drop(router);
-            ended?;
-            Ok(())
-        }
-        Cmd::Login(LoginArgs { provider, data_dir }) => {
-            let data_dir = data_dir_or_default(data_dir)?;
-            let homes = daemon::homes(&data_dir)?;
-            let mut login = match provider {
-                LoginProvider::Claude => agents::claude::login(
-                    &install(Cli::Claude, &data_dir).await?,
-                    &homes.claude,
-                ),
-                LoginProvider::Codex => agents::codex::login(
-                    &install(Cli::Codex, &data_dir).await?,
-                    &homes.codex,
-                ),
-            };
-            let status = login.status().await?;
-            match status.code() {
-                Some(0) => Ok(()),
-                _ => Err(anyhow::Error::msg(format!(
-                    "the sign-in exited with {status}"
-                ))),
-            }
-        }
+        Cmd::Host(args) => serve_host(args).await,
+        Cmd::Login(args) => login(args).await,
+    }
+}
+
+async fn serve_host(args: HostArgs) -> anyhow::Result<()> {
+    let HostArgs {
+        data_dir: given_dir,
+        name,
+        web_url,
+        claude_path,
+        claude_model,
+        codex_path,
+        codex_model,
+    } = args;
+    let data_dir = data_dir_or_default(given_dir)?;
+    let homes = daemon::homes(&data_dir)?;
+    let (store, stored) = Store::open(&data_dir)?;
+    let claude = claude_launcher(
+        claude_path,
+        claude_model,
+        &data_dir,
+        &homes.claude,
+        &stored,
+    )
+    .await;
+    let codex = codex_launcher(
+        codex_path,
+        codex_model,
+        &data_dir,
+        homes.codex,
+        &stored,
+    )
+    .await;
+    let launchers = Launchers { claude, codex };
+    let Hosted { router, log } =
+        host(data_dir, web_url, name, launchers, store, stored).await?;
+    let ended = tokio::select! {
+        result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
+        () = log.stopped() => Err(anyhow::Error::from(daemon::Stopped {})),
+    };
+    router.shutdown().await?;
+    drop(router);
+    ended?;
+    Ok(())
+}
+
+async fn claude_launcher(
+    given: Option<PathBuf>,
+    model: Option<String>,
+    data_dir: &Path,
+    home: &Home,
+    stored: &Stored,
+) -> Launcher {
+    let (claude_path, origin) =
+        match cli_path(Cli::Claude, given, data_dir).await {
+            Ok(found) => found,
+            Err(reason) => return unavailable(reason),
+        };
+    let status = agents::claude::auth_status(&claude_path, home);
+    let launch = ClaudeLaunch {
+        claude_path: claude_path.clone(),
+        home: home.clone(),
+        credential: None,
+    };
+    let listed = list_models(
+        Launch::Claude(ClaudeLaunch {
+            credential: match stored {
+                Stored::Opened(credentials) => credentials.claude.clone(),
+                Stored::Unreadable(_) => None,
+            },
+            ..launch.clone()
+        }),
+        data_dir,
+    );
+    match runs(agents::claude::cli(&claude_path, home)).await {
+        Ok(cli) => ready(
+            cli,
+            Launch::Claude(launch),
+            own_sign_in(origin, status).await,
+            (listed.await, model),
+        ),
+        Err(reason) => unavailable(reason),
+    }
+}
+
+async fn codex_launcher(
+    given: Option<PathBuf>,
+    model: Option<String>,
+    data_dir: &Path,
+    home: Home,
+    stored: &Stored,
+) -> Launcher {
+    let (codex_path, origin) = match cli_path(Cli::Codex, given, data_dir).await
+    {
+        Ok(found) => found,
+        Err(reason) => return unavailable(reason),
+    };
+    let version = agents::codex::cli(&codex_path, &home);
+    let status = agents::codex::login_status(&codex_path, &home);
+    // The app-server's own working directory is the data dir;
+    // each thread runs in its session's directory.
+    let hub = CodexHub::spawn(ServerOptions {
+        codex_path,
+        home,
+        credential: match stored {
+            Stored::Opened(credentials) => credentials.codex.clone(),
+            Stored::Unreadable(_) => None,
+        },
+        cwd: data_dir.to_path_buf(),
+        stdout_log: None,
+    });
+    let listed =
+        list_models(Launch::Codex(CodexLaunch { hub: hub.clone() }), data_dir);
+    match runs(version).await {
+        Ok(cli) => ready(
+            cli,
+            Launch::Codex(CodexLaunch { hub }),
+            own_sign_in(origin, status).await,
+            (listed.await, model),
+        ),
+        Err(reason) => unavailable(reason),
+    }
+}
+
+async fn login(args: LoginArgs) -> anyhow::Result<()> {
+    let data_dir = data_dir_or_default(args.data_dir)?;
+    let homes = daemon::homes(&data_dir)?;
+    let mut sign_in = match args.provider {
+        LoginProvider::Claude => agents::claude::login(
+            &install(Cli::Claude, &data_dir).await?,
+            &homes.claude,
+        ),
+        LoginProvider::Codex => agents::codex::login(
+            &install(Cli::Codex, &data_dir).await?,
+            &homes.codex,
+        ),
+    };
+    let status = sign_in.status().await?;
+    match status.code() {
+        Some(0) => Ok(()),
+        _ => Err(anyhow::Error::msg(format!(
+            "the sign-in exited with {status}"
+        ))),
     }
 }
 
@@ -266,7 +291,7 @@ async fn own_sign_in(
         Origin::Pinned => {
             match tokio::time::timeout(SIGN_IN_CHECK, status.output())
                 .await
-                .map(|output| output.map(|output| output.status.code()))
+                .map(|run| run.map(|output| output.status.code()))
             {
                 Ok(Ok(Some(0))) => OwnSignIn::SignedIn,
                 Ok(Ok(_) | Err(_)) | Err(_) => OwnSignIn::Missing,

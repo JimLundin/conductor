@@ -49,12 +49,12 @@ fn kept(held: &[Task], steps: &[PlanStep]) -> Vec<Option<TaskId>> {
         .map(|(position, index)| {
             index
                 .or_else(|| {
-                    Some(position).filter(|&position| {
+                    Some(position).filter(|&unclaimed| {
                         steps.len() == held.len()
-                            && !by_text.contains(&Some(position))
+                            && !by_text.contains(&Some(unclaimed))
                     })
                 })
-                .and_then(|index| held.get(index))
+                .and_then(|found| held.get(found))
                 .map(|task| task.id)
         })
         .collect()
