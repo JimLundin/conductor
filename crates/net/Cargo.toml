@@ -1,0 +1,17 @@
+[package]
+name = "net"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iroh.workspace = true
+iroh-base.workspace = true
+proto = { path = "../proto" }
+serde.workspace = true
+thiserror.workspace = true
+url = "2.5.8"
+
+[lints]
+workspace = true
