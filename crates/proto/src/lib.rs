@@ -66,7 +66,18 @@ impl HostSeq {
 pub struct Epoch(pub u64);
 
 /// A client-generated, fleet-unique 128-bit random id for idempotent retries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct CommandId(pub u128);
 
 /// An approval request or a question, assigned by the host per session, in

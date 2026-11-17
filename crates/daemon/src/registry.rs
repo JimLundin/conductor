@@ -26,7 +26,6 @@ use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use crate::session::Session;
-use crate::workspace::GitError;
 
 pub use host::registry::{Offer, OwnSignIn};
 
@@ -469,7 +468,7 @@ async fn prepare(
 ) -> Result<(Workspace, String), Rejection> {
     let workspace = crate::workspace::create(data_dir, directory, id)
         .await
-        .map_err(refused)?;
+        .map_err(host::registry::unprepared)?;
     let commit =
         crate::workspace::snapshot(&workspace, id, CheckpointId(0), None)
             .await
@@ -477,13 +476,6 @@ async fn prepare(
                 reason: err.to_string(),
             })?;
     Ok((workspace, commit))
-}
-
-fn refused(err: GitError) -> Rejection {
-    match err {
-        GitError::NotRepository => Rejection::NotGitRepository,
-        GitError::Failed(reason) => Rejection::WorkspaceFailure { reason },
-    }
 }
 
 fn initial_checkpoint(commit: String) -> Checkpoint {

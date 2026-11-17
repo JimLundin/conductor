@@ -2008,6 +2008,8 @@ dependencies = [
  "agents",
  "data-encoding",
  "proto",
+ "thiserror 2.0.21",
+ "ulid",
 ]
 
 [[package]]

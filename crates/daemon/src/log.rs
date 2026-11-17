@@ -1,16 +1,20 @@
-//! The host's event log. One task owns it and assigns every stored event its
-//! seq; [`Log`] handles talk to it over a channel, so nothing is shared
-//! behind a lock.
+//! The host's event log.
+//!
+//! One task owns it; [`Log`] handles talk to it over a channel, so nothing
+//! is shared behind a lock. The log's rules are [`host::log`]; the task
+//! keeps the database, the channels and the live feed, and performs what
+//! the rules decide.
 
 use crate::storage::{self, Storage};
 use redb::WriteTransaction;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::Path;
 
+use host::log::{Begun, Effect, Kind, Log as Core, Ticket};
 use proto::{
     CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, Providers,
-    SessionId, Welcome,
+    SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -35,19 +39,8 @@ pub struct Log {
 
 struct CommandStart {
     key: CommandId,
-    kind: CommandKind,
+    kind: Kind,
     reply: oneshot::Sender<BeginCommand>,
-}
-
-enum CommandKind {
-    Session,
-    Credential,
-}
-
-struct CredentialFinish {
-    key: CommandId,
-    result: CommandResult,
-    reply: oneshot::Sender<()>,
 }
 
 pub(crate) enum BeginCommand {
@@ -124,28 +117,27 @@ enum LogMsg {
         after: HostSeq,
         reply: oneshot::Sender<Subscription>,
     },
+    Resume {
+        subscribe: Subscribe,
+        reply: oneshot::Sender<Option<Subscription>>,
+    },
 }
 
 struct LogActor {
     inbox: mpsc::WeakSender<LogMsg>,
-    active: Option<CommandId>,
+    core: Core,
     // Drop a pending transaction before its database: redb waits for transactions.
     transaction: Option<WriteTransaction>,
     storage: Option<Storage>,
-    staged: Vec<Event>,
-    waiting: VecDeque<CommandStart>,
-    credentials: HashMap<CommandId, Vec<oneshot::Sender<BeginCommand>>>,
-    credential_finishes: VecDeque<CredentialFinish>,
-    name: String,
-    epoch: Epoch,
-    events: Vec<Event>,
+    begins: HashMap<Ticket, oneshot::Sender<BeginCommand>>,
+    finishes: HashMap<Ticket, oneshot::Sender<()>>,
     live: broadcast::Sender<Event>,
 }
 
 impl Log {
     #[must_use]
     pub fn spawn(name: String, epoch: Epoch) -> Self {
-        Self::start(name, epoch, Vec::new(), None)
+        Self::start(Core::new(name, epoch, Vec::new()), None)
     }
 
     /// Opens the log stored at `path`, creating it if missing.
@@ -155,31 +147,20 @@ impl Log {
     /// Fails if the database can't be opened or its events don't decode.
     pub fn open(name: String, path: &Path) -> anyhow::Result<Self> {
         let storage = Storage::open(path)?;
-        let epoch = storage.epoch()?;
-        let events = storage.events()?;
-        Ok(Self::start(name, epoch, events, Some(storage)))
+        let core = Core::new(name, storage.epoch()?, storage.events()?);
+        Ok(Self::start(core, Some(storage)))
     }
 
-    fn start(
-        name: String,
-        epoch: Epoch,
-        events: Vec<Event>,
-        storage: Option<Storage>,
-    ) -> Self {
+    fn start(core: Core, storage: Option<Storage>) -> Self {
         let (inbox, messages) = mpsc::channel(64);
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let actor = LogActor {
             inbox: inbox.downgrade(),
-            active: None,
-            storage,
+            core,
             transaction: None,
-            staged: Vec::new(),
-            waiting: VecDeque::new(),
-            credentials: HashMap::new(),
-            credential_finishes: VecDeque::new(),
-            name,
-            epoch,
-            events,
+            storage,
+            begins: HashMap::new(),
+            finishes: HashMap::new(),
             live,
         };
         tokio::spawn(actor.run(messages));
@@ -227,7 +208,7 @@ impl Log {
         self.ask(|reply| {
             LogMsg::Begin(CommandStart {
                 key,
-                kind: CommandKind::Session,
+                kind: Kind::Session,
                 reply,
             })
         })
@@ -241,7 +222,7 @@ impl Log {
         self.ask(|reply| {
             LogMsg::Begin(CommandStart {
                 key,
-                kind: CommandKind::Credential,
+                kind: Kind::Credential,
                 reply,
             })
         })
@@ -319,6 +300,19 @@ impl Log {
         self.ask(|reply| LogMsg::Subscribe { after, reply }).await
     }
 
+    /// A client's subscription, or `None` if its cursor is from another
+    /// epoch.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the log has stopped.
+    pub async fn resume(
+        &self,
+        subscribe: Subscribe,
+    ) -> Result<Option<Subscription>, Stopped> {
+        self.ask(|reply| LogMsg::Resume { subscribe, reply }).await
+    }
+
     async fn ask<T>(
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> LogMsg,
@@ -355,22 +349,26 @@ impl LogActor {
     fn on(&mut self, msg: LogMsg) -> anyhow::Result<()> {
         match msg {
             LogMsg::Barrier { reply } => {
-                self.barrier()?;
+                let effects = self.core.barrier();
+                self.perform(effects)?;
                 let _ = reply.send(());
             }
             LogMsg::Shutdown { reply } => {
                 let _ = reply.send(());
             }
-            LogMsg::Abort(key) => self.abort(key)?,
-            LogMsg::Begin(start) => match &self.active {
-                Some(_) => self.waiting.push_back(start),
-                None => self.begin(start)?,
-            },
+            LogMsg::Abort(key) => self.perform(self.core.abort(key))?,
+            LogMsg::Begin(start) => {
+                let (ticket, effects) = self.core.begin(start.key, start.kind);
+                self.begins.insert(ticket, start.reply);
+                self.perform(effects)?;
+            }
             LogMsg::Finish { key, result, reply } => {
-                self.finish(CredentialFinish { key, result, reply })?;
+                let (ticket, effects) = self.core.finish(key, result);
+                self.finishes.insert(ticket, reply);
+                self.perform(effects)?;
             }
             LogMsg::History { reply } => {
-                let _ = reply.send(self.events.clone());
+                let _ = reply.send(self.core.history().to_vec());
             }
             LogMsg::SavedConversation { session, reply } => {
                 let value = self
@@ -382,249 +380,105 @@ impl LogActor {
                 let _ = reply.send(value);
             }
             LogMsg::Conversation { session, id, reply } => {
-                self.save_conversation(session, &id)?;
+                self.perform(self.core.conversation(session, id))?;
                 let _ = reply.send(());
-            }
-            // Live only, so it takes no seq (see `EventKind::AssistantDelta`).
-            LogMsg::Append {
-                session,
-                kind:
-                    kind @ (EventKind::AssistantDelta { .. }
-                    | EventKind::ReasoningDelta { .. }),
-                reply,
-            } => {
-                let _ = reply.send(self.append_live(session, kind));
             }
             LogMsg::Append {
                 session,
                 kind,
                 reply,
             } => {
-                let _ = reply.send(self.append(session, kind)?);
+                let (event, effects) = self.core.append(session, kind);
+                self.perform(effects)?;
+                let _ = reply.send(event);
             }
             LogMsg::Welcome { providers, reply } => {
-                let _ = reply.send(Welcome {
-                    host: self.name.clone(),
-                    epoch: self.epoch,
-                    head_seq: self.head(),
-                    providers,
-                });
+                let _ = reply.send(self.core.welcome(providers));
             }
             LogMsg::Subscribe { after, reply } => {
                 let _ = reply.send(Subscription {
                     live: self.live.subscribe(),
-                    replay: self
-                        .events
-                        .iter()
-                        .filter(|event| event.seq > after)
-                        .cloned()
-                        .collect(),
+                    replay: self.core.replay(after),
                 });
             }
-        }
-        Ok(())
-    }
-
-    fn barrier(&mut self) -> anyhow::Result<()> {
-        self.commit()?;
-        if self.active.is_some() {
-            self.transaction =
-                self.storage.as_ref().map(Storage::begin).transpose()?;
-        }
-        Ok(())
-    }
-
-    fn abort(&self, key: CommandId) -> anyhow::Result<()> {
-        match (self.credentials.get(&key), &self.active) {
-            (Some(_), _) => Err(Stopped {}.into()),
-            (None, Some(active)) if active == &key => Err(Stopped {}.into()),
-            _ => Ok(()),
-        }
-    }
-
-    fn finish(&mut self, finish: CredentialFinish) -> anyhow::Result<()> {
-        match (self.credentials.get(&finish.key), &self.active) {
-            (Some(_), Some(_)) => {
-                self.credential_finishes.push_back(finish);
-            }
-            (Some(_), None) => self.finish_credential(finish)?,
-            (None, _) => {
-                if let Some(write) = self.transaction.take() {
-                    storage::receipt(&write, finish.key, &finish.result)?;
-                    self.transaction = Some(write);
-                }
-                self.commit()?;
-                self.active = None;
-                let _ = finish.reply.send(());
-                for credential in std::mem::take(&mut self.credential_finishes)
-                {
-                    self.finish_credential(credential)?;
-                }
-                if let Some(start) = self.waiting.pop_front() {
-                    self.begin(start)?;
-                }
+            LogMsg::Resume { subscribe, reply } => {
+                let _ =
+                    reply.send(self.core.resume(&subscribe).map(|replay| {
+                        Subscription {
+                            live: self.live.subscribe(),
+                            replay,
+                        }
+                    }));
             }
         }
         Ok(())
     }
 
-    fn save_conversation(
-        &self,
-        session: SessionId,
-        id: &str,
-    ) -> anyhow::Result<()> {
-        match (&self.storage, &self.transaction) {
-            (_, Some(write)) => {
-                storage::conversation(write, session, id)?;
-            }
-            (Some(storage), None) => {
-                let write = storage.begin()?;
-                storage::conversation(&write, session, id)?;
-                write.commit()?;
-            }
-            (None, None) => {}
+    fn perform(&mut self, effects: Vec<Effect>) -> anyhow::Result<()> {
+        for effect in effects {
+            self.effect(effect)?;
         }
         Ok(())
     }
 
-    fn append_live(&mut self, session: SessionId, kind: EventKind) -> Event {
-        let event = Event {
-            seq: self
-                .staged
-                .last()
-                .map_or_else(|| self.head(), |event| event.seq),
-            session,
-            kind,
-        };
-        let recorded = event.clone();
-        match &self.active {
-            Some(_) => self.staged.push(event),
-            None => {
+    fn effect(&mut self, effect: Effect) -> anyhow::Result<()> {
+        match effect {
+            Effect::Open => {
+                self.transaction =
+                    self.storage.as_ref().map(Storage::begin).transpose()?;
+            }
+            Effect::Store(write) => {
+                let _ = self
+                    .transaction
+                    .as_ref()
+                    .map(|transaction| storage::write(transaction, &write))
+                    .transpose()?;
+            }
+            Effect::Commit => {
+                let _ = self
+                    .transaction
+                    .take()
+                    .map(WriteTransaction::commit)
+                    .transpose()?;
+            }
+            Effect::Publish(event) => {
                 let _ = self.live.send(event);
             }
-        }
-        recorded
-    }
-
-    fn append(
-        &mut self,
-        session: SessionId,
-        kind: EventKind,
-    ) -> anyhow::Result<Event> {
-        let event = Event {
-            seq: self
-                .staged
-                .last()
-                .map_or_else(|| self.head(), |event| event.seq)
-                .next(),
-            session,
-            kind,
-        };
-        let recorded = event.clone();
-        match (&self.storage, &self.transaction) {
-            (_, Some(write)) => {
-                storage::event(write, &event)?;
-                self.staged.push(event);
+            Effect::Lookup(key) => {
+                let found = self
+                    .storage
+                    .as_ref()
+                    .map(|storage| storage.receipt(key))
+                    .transpose()?
+                    .flatten();
+                let effects = self.core.receipt(found);
+                self.perform(effects)?;
             }
-            (Some(storage), None) => {
-                let write = storage.begin()?;
-                storage::event(&write, &event)?;
-                write.commit()?;
-                self.publish(event);
-            }
-            (None, None) => match &self.active {
-                Some(_) => self.staged.push(event),
-                None => self.publish(event),
-            },
-        }
-        Ok(recorded)
-    }
-
-    fn begin(&mut self, start: CommandStart) -> anyhow::Result<()> {
-        let receipt = self
-            .storage
-            .as_ref()
-            .map(|storage| storage.receipt(start.key))
-            .transpose()?
-            .flatten();
-        match (receipt, self.credentials.get_mut(&start.key)) {
-            (Some(result), _) => {
-                let _ = start.reply.send(BeginCommand::Cached(result));
-            }
-            (None, Some(waiters)) => waiters.push(start.reply),
-            (None, None) => {
-                match start.kind {
-                    CommandKind::Session => {
-                        self.transaction = self
-                            .storage
-                            .as_ref()
-                            .map(Storage::begin)
-                            .transpose()?;
-                        self.active = Some(start.key);
-                    }
-                    CommandKind::Credential => {
-                        self.credentials.insert(start.key, Vec::new());
-                    }
-                }
-                let inbox = self.inbox.upgrade().ok_or(Stopped {})?;
-                let lease = CommandLease {
-                    log: Log { inbox },
-                    key: start.key,
-                };
-                let _ = start.reply.send(BeginCommand::Execute(lease));
-            }
-        }
-        let queued = match self.active {
-            None => self.waiting.pop_front(),
-            Some(_) => None,
-        };
-        if let Some(next) = queued {
-            self.begin(next)?;
-        }
-        Ok(())
-    }
-
-    fn finish_credential(
-        &mut self,
-        finish: CredentialFinish,
-    ) -> anyhow::Result<()> {
-        if let Some(storage) = &self.storage {
-            let write = storage.begin()?;
-            storage::receipt(&write, finish.key, &finish.result)?;
-            write.commit()?;
-        }
-        if let Some(waiters) = self.credentials.remove(&finish.key) {
-            for waiter in waiters {
+            Effect::Begun(ticket, begun) => self.answer(ticket, begun)?,
+            Effect::Finished(ticket) => {
                 let _ =
-                    waiter.send(BeginCommand::Cached(finish.result.clone()));
+                    self.finishes.remove(&ticket).map(|reply| reply.send(()));
             }
-        }
-        let _ = finish.reply.send(());
-        Ok(())
-    }
-
-    fn commit(&mut self) -> anyhow::Result<()> {
-        if let Some(write) = self.transaction.take() {
-            write.commit()?;
-        }
-        let staged = std::mem::take(&mut self.staged);
-        for event in staged {
-            self.publish(event);
+            Effect::Stop => return Err(Stopped {}.into()),
         }
         Ok(())
     }
 
-    fn publish(&mut self, event: Event) {
-        match &event.kind {
-            EventKind::AssistantDelta { .. }
-            | EventKind::ReasoningDelta { .. } => {}
-            _ => self.events.push(event.clone()),
+    fn answer(&mut self, ticket: Ticket, begun: Begun) -> anyhow::Result<()> {
+        let answer = match begun {
+            Begun::Cached(result) => BeginCommand::Cached(result),
+            Begun::Execute(key) => {
+                let inbox = self.inbox.upgrade().ok_or(Stopped {})?;
+                BeginCommand::Execute(CommandLease {
+                    log: Log { inbox },
+                    key,
+                })
+            }
+        };
+        if let Some(reply) = self.begins.remove(&ticket) {
+            let _ = reply.send(answer);
         }
-        let _ = self.live.send(event);
-    }
-
-    fn head(&self) -> HostSeq {
-        self.events.last().map_or(HostSeq(0), |event| event.seq)
+        Ok(())
     }
 }
 
@@ -777,7 +631,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(23),
-                kind: super::CommandKind::Session,
+                kind: host::log::Kind::Session,
                 reply: retry_reply,
             }))
             .await?;
@@ -852,7 +706,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(1),
-                kind: super::CommandKind::Session,
+                kind: host::log::Kind::Session,
                 reply: duplicate_reply,
             }))
             .await?;
@@ -860,7 +714,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(2),
-                kind: super::CommandKind::Session,
+                kind: host::log::Kind::Session,
                 reply: next_reply,
             }))
             .await?;

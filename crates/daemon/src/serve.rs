@@ -1,6 +1,8 @@
-//! Serves the protocol (`proto::ALPN`) on accepted iroh connections.
+//! Serves the protocol (`proto::ALPN`) on accepted iroh connections. The
+//! protocol's rules are [`host::serve`]; this reads and writes the frames
+//! and calls the log and the registry.
 
-use agents::Reply;
+use host::serve::{self, Admission, Ledger, Order, Relaunch, Route, Stream};
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
@@ -8,7 +10,7 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open,
+    AuthToken, ClientName, Command, CommandResult, Event, HelloReply, Open,
     Rejection, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::broadcast;
@@ -16,7 +18,6 @@ use tokio::sync::broadcast;
 use crate::Stopped;
 use crate::log::{BeginCommand, Log};
 use crate::registry::Registry;
-use crate::session::Order;
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
@@ -78,8 +79,8 @@ impl ProtocolHandler for Conductor {
 }
 
 impl Conductor {
-    /// The first stream must be a `Hello` with the right token. Returns the
-    /// client's name, or `None` if it was refused.
+    /// Answers the connection's first stream. Returns the client's name, or
+    /// `None` if it was refused.
     async fn authenticate(
         &self,
         conn: &Connection,
@@ -89,18 +90,9 @@ impl Conductor {
         let connection = conn.stable_id();
         tracing::debug!(%peer, connection, "waiting for hello");
         let (mut send, mut recv) = conn.accept_bi().await?;
-        let admitted = match wire::read::<Open>(&mut recv).await? {
-            Some(Open::Hello(hello)) => hello
-                .token
-                .check(&self.token)
-                .map(|()| hello)
-                .map_err(|_| "wrong token"),
-            Some(Open::Subscribe(_) | Open::Command(_)) | None => {
-                Err("the first stream must be a hello")
-            }
-        };
-        match admitted {
-            Ok(hello) => {
+        let first = wire::read::<Open>(&mut recv).await?;
+        match serve::admit(first, &self.token) {
+            Admission::Admitted(client) => {
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello received");
                 wire::write(
                     &mut send,
@@ -109,13 +101,10 @@ impl Conductor {
                 .await?;
                 send.finish()?;
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome sent");
-                Ok(Some(hello.client))
+                Ok(Some(client))
             }
-            Err(reason) => {
-                let refused = HelloReply::Refused {
-                    reason: String::from(reason),
-                };
-                wire::write(&mut send, &refused).await?;
+            Admission::Refused { reason } => {
+                wire::write(&mut send, &HelloReply::Refused { reason }).await?;
                 send.finish()?;
                 // Let the refusal reach the client before the close does.
                 let _ = send.stopped().await;
@@ -167,126 +156,59 @@ impl Conductor {
         mut recv: RecvStream,
         client: ClientName,
     ) -> Result<(), StreamError> {
-        match wire::read::<Open>(&mut recv).await? {
-            Some(Open::Command(command)) => {
+        match serve::stream(wire::read::<Open>(&mut recv).await?) {
+            Stream::Command(command) => {
                 tracing::info!(client = client.0, ?command, "command");
-                let key = command.id;
-                let result = match command.body {
-                    CommandBody::GetDiff {
-                        session,
-                        checkpoint,
-                    } => self.order(session, Order::Diff(checkpoint)).await?,
-                    body => {
-                        let begun = match &body {
-                            CommandBody::SetCredential { .. }
-                            | CommandBody::ClearCredential { .. } => {
-                                self.log.begin_credential(key).await?
-                            }
-                            _ => self.log.begin(key).await?,
-                        };
-                        match begun {
-                            BeginCommand::Cached(result) => result,
-                            BeginCommand::Execute(lease) => {
-                                let result = self.command(body, client).await?;
-                                lease.finish(result.clone()).await?;
-                                result
-                            }
-                        }
-                    }
-                };
+                let result = self.run(command, client).await?;
                 wire::write(&mut send, &result).await?;
                 send.finish()?;
             }
-            Some(Open::Subscribe(subscribe)) => {
+            Stream::Subscribe(subscribe) => {
                 self.feed(&conn, send, subscribe).await?;
             }
-            Some(Open::Hello(_)) | None => send.finish()?,
+            Stream::Finish => send.finish()?,
         }
         Ok(())
     }
 
-    async fn command(
+    /// Runs the command once: a retry answers the first run's receipt.
+    async fn run(
         &self,
-        body: CommandBody,
+        command: Command,
         client: ClientName,
     ) -> Result<CommandResult, Stopped> {
-        match body {
-            CommandBody::GetDiff {
-                session,
-                checkpoint,
-            } => self.order(session, Order::Diff(checkpoint)).await,
-            CommandBody::UndoTurn {
-                session,
-                checkpoint,
-            } => match self.registry.relaunch(session).await? {
-                Ok((handle, _)) => handle.order(Order::Undo(checkpoint)).await,
-                Err(reason) => Ok(CommandResult::Rejected(reason)),
-            },
-            CommandBody::StartSession {
+        let route = serve::route(command.body, client);
+        let begun = match route.ledger() {
+            Ledger::Unrecorded => return self.command(route).await,
+            Ledger::Session => self.log.begin(command.id).await?,
+            Ledger::Credential => self.log.begin_credential(command.id).await?,
+        };
+        match begun {
+            BeginCommand::Cached(result) => Ok(result),
+            BeginCommand::Execute(lease) => {
+                let result = self.command(route).await?;
+                lease.finish(result.clone()).await?;
+                Ok(result)
+            }
+        }
+    }
+
+    async fn command(&self, route: Route) -> Result<CommandResult, Stopped> {
+        match route {
+            Route::Order(session, order) => self.order(session, order).await,
+            Route::Relaunch(session, relaunch) => {
+                self.relaunch(session, relaunch).await
+            }
+            Route::Start {
                 provider,
                 directory,
-                model,
-                effort,
-            } => {
-                self.registry
-                    .start(provider, directory, (model, effort), client)
-                    .await
-            }
-            CommandBody::Continue { session } => {
-                match self.registry.relaunch(session).await? {
-                    Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-                    Ok((handle, offered)) => {
-                        Ok(handle.order(Order::Start(offered)).await.unwrap_or(
-                            CommandResult::Rejected(Rejection::SessionClosed),
-                        ))
-                    }
-                }
-            }
-            CommandBody::SetEffort { session, effort } => {
-                match self.registry.relaunch(session).await? {
-                    Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-                    Ok((handle, offered)) => Ok(handle
-                        .order(Order::Effort(effort, offered))
-                        .await
-                        .unwrap_or(CommandResult::Rejected(
-                            Rejection::SessionClosed,
-                        ))),
-                }
-            }
-            CommandBody::SendMessage { session, text } => {
-                self.order(session, Order::Send { text, by: client }).await
-            }
-            CommandBody::Interrupt { session } => {
-                self.order(session, Order::Interrupt).await
-            }
-            CommandBody::Resolve {
-                session,
-                request,
-                decision,
-            } => {
-                let order = Order::Reply {
-                    request,
-                    reply: Reply::Decide(decision),
-                    by: client,
-                };
-                self.order(session, order).await
-            }
-            CommandBody::Answer {
-                session,
-                request,
-                answers,
-            } => {
-                let order = Order::Reply {
-                    request,
-                    reply: Reply::Answer(answers),
-                    by: client,
-                };
-                self.order(session, order).await
-            }
-            CommandBody::SetCredential { credential } => {
+                choice,
+                by,
+            } => self.registry.start(provider, directory, choice, by).await,
+            Route::SetCredential(credential) => {
                 self.registry.set_credential(credential).await
             }
-            CommandBody::ClearCredential { provider } => {
+            Route::ClearCredential(provider) => {
                 self.registry.clear_credential(provider).await
             }
         }
@@ -306,16 +228,28 @@ impl Conductor {
         }
     }
 
+    async fn relaunch(
+        &self,
+        session: SessionId,
+        relaunch: Relaunch,
+    ) -> Result<CommandResult, Stopped> {
+        match self.registry.relaunch(session).await? {
+            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+            Ok((handle, offered)) => handle
+                .order(relaunch.order(offered))
+                .await
+                .or_else(|stopped| relaunch.closed().ok_or(stopped)),
+        }
+    }
+
     async fn feed(
         &self,
         conn: &Connection,
         mut send: SendStream,
         subscribe: Subscribe,
     ) -> Result<(), StreamError> {
-        match self.welcome(conn).await? {
-            Welcome { epoch, .. } if epoch == subscribe.epoch => {
-                let subscription =
-                    self.log.subscribe(subscribe.after_seq).await?;
+        match self.log.resume(subscribe).await? {
+            Some(subscription) => {
                 tracing::info!(
                     after_seq = subscribe.after_seq.0,
                     replayed = subscription.replay.len(),
@@ -331,7 +265,7 @@ impl Conductor {
                 result
             }
             // A cursor from another epoch is refused by closing the stream.
-            Welcome { .. } => Ok(send.finish()?),
+            None => Ok(send.finish()?),
         }
     }
 }

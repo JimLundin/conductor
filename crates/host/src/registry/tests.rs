@@ -9,9 +9,10 @@ use proto::{
 
 use super::{
     Effect, Job, Launch, Launcher, Listing, Offer, OwnSignIn, Refreshed,
-    Registry, Stored,
+    Registry, Stored, unprepared,
 };
 use crate::session::Choice;
+use crate::workspace::GitError;
 
 type Test = Registry<&'static str, u8, &'static str>;
 type Seen = Vec<Effect<&'static str, &'static str>>;
@@ -483,5 +484,21 @@ fn the_default_is_the_credentials_model_then_the_chosen_then_the_clis() {
             Stored::Opened(Credentials::none().set(gateway("t"))).credentials(),
         ],
         [Credentials::none(), Credentials::none().set(gateway("t"))]
+    );
+}
+
+#[test]
+fn a_directory_outside_git_is_refused_as_such() {
+    assert_eq!(
+        [
+            unprepared(GitError::NotRepository),
+            unprepared(GitError::Failed(text("git worktree add: exit 128"))),
+        ],
+        [
+            Rejection::NotGitRepository,
+            Rejection::WorkspaceFailure {
+                reason: text("git worktree add: exit 128")
+            },
+        ]
     );
 }

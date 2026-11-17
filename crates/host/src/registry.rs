@@ -28,6 +28,7 @@ use proto::{
 
 use crate::prelude::*;
 use crate::session::{Choice, choose};
+use crate::workspace::GitError;
 
 /// What a CLI signs in with when the host stores no credential for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +520,15 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.launchers
             .get(&provider)
             .ok_or_else(|| format!("this host doesn't run {provider:?}"))
+    }
+}
+
+/// Why a session's workspace could not be made.
+#[must_use]
+pub fn unprepared(error: GitError) -> Rejection {
+    match error {
+        GitError::NotRepository => Rejection::NotGitRepository,
+        GitError::Failed(reason) => Rejection::WorkspaceFailure { reason },
     }
 }
 
