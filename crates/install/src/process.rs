@@ -4,14 +4,15 @@ use std::time::Duration;
 
 use tokio::process::{Child, ChildStdin, Command};
 
-use crate::Exit;
+use agents::Exit;
 
 const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 /// Keeps a host started without a console, such as from Task Scheduler, from
 /// opening a console window for each agent process.
 #[cfg(not(unix))]
-pub(crate) fn no_window(mut cmd: Command) -> Command {
+#[must_use]
+pub fn no_window(mut cmd: Command) -> Command {
     use std::os::windows::process::CommandExt;
     /// `CREATE_NO_WINDOW` from the Win32 process creation flags.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -20,6 +21,7 @@ pub(crate) fn no_window(mut cmd: Command) -> Command {
 }
 
 #[cfg(unix)]
+#[must_use]
 pub const fn no_window(cmd: Command) -> Command {
     cmd
 }
@@ -29,11 +31,11 @@ pub async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
     drop(stdin);
     if let Ok(Ok(status)) = tokio::time::timeout(EXIT_GRACE, child.wait()).await
     {
-        Exit::Status(status)
+        Exit::Status(status.to_string())
     } else {
         let _ = child.start_kill();
         match child.wait().await {
-            Ok(status) => Exit::Status(status),
+            Ok(status) => Exit::Status(status.to_string()),
             Err(e) => Exit::Unknown(e.to_string()),
         }
     }

@@ -13,17 +13,17 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::codex::{
-    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer,
-    CodexThread, Decision, Error, Sandbox, ServerOptions, ThreadEvent,
-    ThreadId, ThreadOptions, ThreadSettings, TurnId,
+use agents::PlanStep;
+use anyhow::{Context, Result};
+use codex::{
+    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, Decision, Sandbox,
+    ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
 };
-use agents::install::{Cli, install};
-use agents::live::{
+use codex_cli::{CodexServer, CodexThread, Error, ServerOptions};
+use install::live::{
     Cue, Presence, Verdict, fresh_scratch, log_path, presence, report,
 };
-use agents::{Home, PlanStep};
-use anyhow::{Context, Result};
+use install::{Cli, Home, install};
 use n0_future::StreamExt;
 use proto::{Answer, Effort, TaskStatus, TurnOutcome};
 use serde_json::Value;
@@ -997,7 +997,7 @@ async fn run(fixtures_dir: Option<PathBuf>) -> Result<()> {
     // model thinks of the sandbox, and workspace-write gives it no reason to
     // refuse the write.
     let thread_opts = ThreadOptions {
-        cwd: PathBuf::from(SCRATCH),
+        cwd: String::from(SCRATCH),
         model: Some(model),
         effort: Some(Effort::Low),
         approval_policy: ApprovalPolicy::Untrusted,

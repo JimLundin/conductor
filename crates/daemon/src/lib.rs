@@ -5,7 +5,6 @@ mod checkpoints;
 pub mod codex_hub;
 pub mod credentials;
 pub mod log;
-mod mapping;
 pub mod registry;
 pub mod serve;
 pub mod session;
@@ -17,8 +16,8 @@ mod workspace;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
 
-use agents::Home;
 use anyhow::Context;
+use install::Home;
 use iroh::SecretKey;
 use proto::{AuthToken, Epoch};
 
@@ -216,7 +215,7 @@ pub fn random_epoch() -> anyhow::Result<Epoch> {
 
 #[cfg(test)]
 mod tests {
-    use agents::Home;
+    use install::Home;
 
     use super::{homes, load_or_create_key, load_or_create_token};
 

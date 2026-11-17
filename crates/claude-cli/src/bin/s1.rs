@@ -11,17 +11,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::claude::{
-    AfterDeny, Applied, Block, ClaudeEvent, ClaudeOptions, ClaudeSession,
-    Error, MessageId, PermissionDecision, PermissionMode, PermissionRequestId,
-    Resume, Role, SessionId, SettingSource, VersionPolicy,
+use agents::PlanStep;
+use anyhow::{Context, Result};
+use claude::{
+    AfterDeny, Applied, Block, ClaudeEvent, MessageId, PermissionDecision,
+    PermissionMode, PermissionRequestId, Role, SessionId,
 };
-use agents::install::{Cli, install};
-use agents::live::{
+use claude_cli::{
+    ClaudeOptions, ClaudeSession, Error, Resume, SettingSource, VersionPolicy,
+};
+use install::live::{
     Cue, Presence, Verdict, fresh_scratch, log_path, presence, report,
 };
-use agents::{Home, PlanStep};
-use anyhow::{Context, Result};
+use install::{Cli, Home, install};
 use proto::{Answer, Effort, Question, TaskStatus, ToolOutcome, TurnOutcome};
 use tokio::sync::mpsc;
 

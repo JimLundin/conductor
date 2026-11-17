@@ -5,7 +5,7 @@
     tools/pin codex <version>
 
 Verifies every platform's build with upstream's own checks, then writes the
-provider's pin in crates/agents/src/pins.rs, preserving the other provider.
+provider's pin in crates/install/src/pins.rs, preserving the other provider.
 Claude: manifest.json.sig against Anthropic's release key, then each binary
 against the manifest. Codex: each
 codex-package-<triple>.tar.gz against GitHub's published digest and
@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PINS_RS = ROOT / "crates/agents/src/pins.rs"
+PINS_RS = ROOT / "crates/install/src/pins.rs"
 
 CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
 CLAUDE_KEY = "https://downloads.claude.ai/keys/claude-code.asc"

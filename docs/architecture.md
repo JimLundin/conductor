@@ -53,9 +53,9 @@ preview, cloud workers, multi-user use.
 ## 3. The model: one session shape for both agents
 
 The adapters translate provider tool calls, file changes and outcomes into
-the shared `proto` types. The daemon maps their events into session steps
-(`crates/daemon/src/mapping.rs`), assigns request ids and applies session
-state and approval wording. The app only ever sees the provider-neutral model,
+the shared `proto` types. Each provider's wire crate maps its events into
+the session steps of the provider-agnostic `crates/agents`; the daemon
+assigns request ids and applies session state and approval wording. The app only ever sees the provider-neutral model,
 so one UI and one set of commands work for both agents.
 
 - **Commands:** `StartSession { provider, directory, model, effort }`,
@@ -255,7 +255,16 @@ Every piece of state has one owner task; handles talk to it over channels.
 - **Serve** accepts connections, checks `Hello`, dispatches commands and
   feeds subscriptions.
 
-### 5.2 Agents (`crates/agents`)
+### 5.2 Agents
+
+- `agents`: the provider-agnostic API a session speaks: `Step`, `Reply`,
+  the native request and turn ids, `PlanStep` and `Exit`. Pure `no_std`.
+- `claude` and `codex`: each provider's wire (stream-json, JSON-RPC) and its
+  mapping into `agents`. Pure `no_std`.
+- `claude-cli` and `codex-cli`: run and drive each CLI's process over tokio,
+  with their replay tests and the `s1` and `s2` live checks.
+- `install`: what both CLIs share: the pinned installs, each CLI's home and
+  process start and stop.
 
 **Claude Code:** one long-lived process per session, started as
 
@@ -487,7 +496,7 @@ against the recorded hash.
    manifest. `tools/pin codex <version>` downloads every platform's package,
    checks each against GitHub's published digest and
    `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
-   `cosign` is installed. Both write only `crates/agents/src/pins.rs`,
+   `cosign` is installed. Both write only `crates/install/src/pins.rs`,
    including the verification result in doc comments. Versions, platform
    hashes and verification provenance stay together in compiled Rust values.
    Updating one provider preserves the other provider's pin.
@@ -529,7 +538,7 @@ that:
    user's own homes and logins, and re-records `fixtures/claude` or
    `fixtures/codex`;
 3. widens `SUPPORTED_VERSIONS` and `check_version`
-   (`crates/agents/src/claude/protocol.rs`) to include it.
+   (`crates/claude/src/protocol.rs`) to include it.
 
 A test compares the compiled pin with the version recorded in each fixture
 and fails when a pinned version has no fixture recorded at that version, or
@@ -1238,7 +1247,8 @@ client catches up from its cursors.
 
 ## 9. Testing
 
-- **Replay tests** (`crates/agents/tests`): recorded CLI sessions through the
+- **Replay tests** (`crates/claude-cli/tests`, `crates/codex-cli/tests`):
+  recorded CLI sessions through the
   parsers, asserting exact events.
 - **Daemon e2e** (`crates/daemon/tests/e2e.rs`): the real daemon with fake
   CLIs and native `HostLink`s on loopback: approvals, interrupts, reconnects,

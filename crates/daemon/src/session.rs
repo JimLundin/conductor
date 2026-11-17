@@ -9,21 +9,23 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 
-use agents::Home;
-use agents::claude::{
-    ClaudeEvent, ClaudeOptions, ClaudeSession, PermissionMode,
-    PermissionRequestId, SettingSource, VersionPolicy,
+use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
+use claude::{
+    ClaudeEvent, PermissionMode, PermissionRequestId, claude_answer,
+    claude_steps,
 };
-use agents::codex::{
-    ApprovalId, ApprovalPolicy, CodexEvent, CodexThread, Sandbox, ThreadId,
-    ThreadOptions, TurnId,
+use claude_cli::{ClaudeOptions, ClaudeSession, SettingSource, VersionPolicy};
+use codex::{
+    ApprovalId, ApprovalPolicy, CodexEvent, Sandbox, ThreadId, ThreadOptions,
+    TurnId, codex_answer, codex_steps,
 };
+use codex_cli::CodexThread;
+use install::Home;
 use proto::{
-    Answer, Checkpoint, CheckpointId, ClaudeCredential, ClientName,
-    CloseReason, CommandResult, Decision, Effort, EventKind, HistoryAnchor,
-    HostPath, HostSeq, ModelId, Models, Rejection, RequestId, Resolution,
-    SessionId, Task, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
-    UndoAvailability,
+    Checkpoint, CheckpointId, ClaudeCredential, ClientName, CloseReason,
+    CommandResult, Decision, Effort, EventKind, HistoryAnchor, HostPath,
+    HostSeq, ModelId, Models, Rejection, RequestId, Resolution, SessionId,
+    Task, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -31,7 +33,6 @@ use crate::Stopped;
 use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
 use crate::codex_hub::{CodexHub, HubError, Routed};
 use crate::log::Log;
-use crate::mapping::{self, NativeRequest, NativeTurn, Step};
 use crate::{tasks, workspace};
 
 /// How the host runs Claude. Built once in `main`.
@@ -163,14 +164,6 @@ pub enum Order {
     Effort(Effort, Models),
 }
 
-/// A reply to an open request: a decision for an approval, answers for a
-/// question.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reply {
-    Decide(Decision),
-    Answer(Vec<Answer>),
-}
-
 #[derive(Debug)]
 struct SessionMsg {
     order: Order,
@@ -202,9 +195,9 @@ struct Conversation(String);
 #[derive(Debug, thiserror::Error)]
 enum AgentError {
     #[error("{0}")]
-    Claude(#[from] agents::claude::Error),
+    Claude(#[from] claude_cli::Error),
     #[error("{0}")]
-    Codex(#[from] agents::codex::Error),
+    Codex(#[from] codex_cli::Error),
     #[error("{0}")]
     Hub(#[from] HubError),
     #[error("the agent is not running")]
@@ -521,7 +514,7 @@ async fn start(
             let (thread, events) = hub
                 .start_thread(
                     ThreadOptions {
-                        cwd: PathBuf::from(&directory.0),
+                        cwd: directory.0.clone(),
                         model: choice.model.clone().map(|model| model.0),
                         effort: choice.effort,
                         approval_policy: ApprovalPolicy::OnRequest,
@@ -549,26 +542,24 @@ async fn start(
 fn claude_resume(
     history: Option<HistoryAnchor>,
     conversation: Option<Conversation>,
-) -> agents::claude::Resume {
+) -> claude_cli::Resume {
     match history {
-        Some(HistoryAnchor::Fresh) => agents::claude::Resume::Fresh,
+        Some(HistoryAnchor::Fresh) => claude_cli::Resume::Fresh,
         Some(HistoryAnchor::ClaudeFork {
             source,
             through,
             target,
-        }) => agents::claude::Resume::Fork {
-            session: agents::claude::SessionId(source),
-            through: agents::claude::MessageId(through),
-            target: agents::claude::SessionId(target),
+        }) => claude_cli::Resume::Fork {
+            session: claude::SessionId(source),
+            through: claude::MessageId(through),
+            target: claude::SessionId(target),
         },
         Some(HistoryAnchor::Claude {
             conversation: native,
             ..
-        }) => {
-            agents::claude::Resume::Session(agents::claude::SessionId(native))
-        }
-        _ => conversation.map_or(agents::claude::Resume::Fresh, |saved| {
-            agents::claude::Resume::Session(agents::claude::SessionId(saved.0))
+        }) => claude_cli::Resume::Session(claude::SessionId(native)),
+        _ => conversation.map_or(claude_cli::Resume::Fresh, |saved| {
+            claude_cli::Resume::Session(claude::SessionId(saved.0))
         }),
     }
 }
@@ -578,16 +569,15 @@ fn claude_resume(
 async fn spawn_claude(
     options: ClaudeOptions,
     history: Option<&HistoryAnchor>,
-) -> Result<(ClaudeSession, mpsc::Receiver<ClaudeEvent>), agents::claude::Error>
-{
+) -> Result<(ClaudeSession, mpsc::Receiver<ClaudeEvent>), claude_cli::Error> {
     match &options.resume {
-        agents::claude::Resume::Fork { target, .. } => {
+        claude_cli::Resume::Fork { target, .. } => {
             let probe = ClaudeOptions {
-                resume: agents::claude::Resume::Session(target.clone()),
+                resume: claude_cli::Resume::Session(target.clone()),
                 ..options.clone()
             };
             match ClaudeSession::spawn(probe).await {
-                Err(agents::claude::Error::MissingSession(missing))
+                Err(claude_cli::Error::MissingSession(missing))
                     if &missing == target =>
                 {
                     ClaudeSession::spawn(options).await
@@ -595,9 +585,9 @@ async fn spawn_claude(
                 started => started,
             }
         }
-        agents::claude::Resume::Session(target) => {
+        claude_cli::Resume::Session(target) => {
             match ClaudeSession::spawn(options.clone()).await {
-                Err(agents::claude::Error::MissingSession(missing))
+                Err(claude_cli::Error::MissingSession(missing))
                     if &missing == target =>
                 {
                     match history {
@@ -605,20 +595,18 @@ async fn spawn_claude(
                             message: None, ..
                         }) => {
                             ClaudeSession::spawn(ClaudeOptions {
-                                resume: agents::claude::Resume::Fresh,
+                                resume: claude_cli::Resume::Fresh,
                                 ..options
                             })
                             .await
                         }
-                        _ => {
-                            Err(agents::claude::Error::MissingSession(missing))
-                        }
+                        _ => Err(claude_cli::Error::MissingSession(missing)),
                     }
                 }
                 started => started,
             }
         }
-        agents::claude::Resume::Fresh => ClaudeSession::spawn(options).await,
+        claude_cli::Resume::Fresh => ClaudeSession::spawn(options).await,
     }
 }
 
@@ -659,7 +647,7 @@ async fn claude_models(
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: agents::claude::Resume::Fresh,
+        resume: claude_cli::Resume::Fresh,
         project_name: None,
         setting_sources: None,
         stdout_log: None,
@@ -740,12 +728,8 @@ impl SessionActor {
                 let _ = reply.send(result);
                 Ok(())
             }
-            Input::Claude(event) => {
-                self.apply(mapping::claude_steps(event)).await
-            }
-            Input::Codex(event) => {
-                self.apply(mapping::codex_steps(event)).await
-            }
+            Input::Claude(event) => self.apply(claude_steps(event)).await,
+            Input::Codex(event) => self.apply(codex_steps(event)).await,
             Input::Stopped(why) => {
                 let reason = CloseReason::Stopped { reason: why };
                 self.apply(Vec::from([Step::Closed(reason)])).await
@@ -1072,11 +1056,11 @@ impl SessionActor {
             Agent::Claude { session, .. } => Ok(session
                 .respond(
                     PermissionRequestId(native.0),
-                    mapping::claude_answer(reply, by),
+                    claude_answer(reply, by),
                 )
                 .await?),
             Agent::Codex { thread, .. } => Ok(thread
-                .respond(ApprovalId(native.0), mapping::codex_answer(reply))
+                .respond(ApprovalId(native.0), codex_answer(reply))
                 .await?),
             Agent::Down => Err(AgentError::Down),
         }
@@ -1173,10 +1157,7 @@ impl SessionActor {
         }
     }
 
-    async fn checklist(
-        &mut self,
-        steps: Vec<agents::PlanStep>,
-    ) -> Result<(), Stopped> {
+    async fn checklist(&mut self, steps: Vec<PlanStep>) -> Result<(), Stopped> {
         let synced = tasks::synced(&self.tasks, steps, self.id);
         if synced == self.tasks {
             Ok(())

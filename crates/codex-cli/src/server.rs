@@ -15,13 +15,14 @@ use n0_future::StreamExt;
 use proto::{CodexCredential, Effort};
 use serde_json::Value;
 
-use crate::{Exit, Home};
+use agents::Exit;
+use install::Home;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::config;
-use super::protocol::{
+use codex::{
     AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision,
     INITIALIZE, Inbound, Outbound, RequestId, ThreadEvent, ThreadId,
     ThreadOptions, ThreadSettings, TurnId, answer, encode, history_page,
@@ -457,7 +458,7 @@ pub fn command(opts: &ServerOptions) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    crate::process::no_window(cmd)
+    install::process::no_window(cmd)
 }
 
 /// Logs stderr while the server runs, retaining its last nonempty line.
@@ -498,7 +499,7 @@ impl Running {
             stdout: _,
             last_stderr,
         } = self;
-        let status = crate::process::stop(child, stdin).await;
+        let status = install::process::stop(child, stdin).await;
         let refusal = tokio::time::timeout(STDERR_TIMEOUT, last_stderr)
             .await
             .ok()

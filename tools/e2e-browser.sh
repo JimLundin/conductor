@@ -2,7 +2,7 @@
 # Browser end to end: builds the web app, serves it under /conductor/ like
 # GitHub Pages does, and drives headless Chromium and WebKit at an iPhone
 # viewport against `conductord host` running the fake CLIs
-# (crates/agents/tests/fake-*.sh) through n0's relays. Each scenario gets its
+# (crates/*-cli/tests/fake-*.sh) through n0's relays. Each scenario gets its
 # own host: a Claude turn with approval in both engines (turn), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
 port=${PORT:-8080}
 recordings=$PWD/fixtures/e2e
-fakes=$PWD/crates/agents/tests
+claude=$PWD/crates/claude-cli/tests/fake-claude.sh
 
 target=$(tools/target-dir)
 (cd crates/app && dx build --platform web --release >/dev/null)
@@ -71,7 +71,7 @@ start_host() {
   head -2 "$recordings/claude-killed.jsonl" >"$scratch/$name/probe/stdout.jsonl"
   "$target"/debug/conductord host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" \
-    --claude-path "$fakes/fake-claude.sh" --codex-path "${codex:-$scratch/no-codex}" "$@" \
+    --claude-path "$claude" --codex-path "${codex:-$scratch/no-codex}" "$@" \
     >"$scratch/$name.log" 2>&1 &
   hosts+=($!)
   until grep -q '^join:' "$scratch/$name.log"; do
@@ -135,7 +135,7 @@ set +e
   session "$scratch/codex" codex-two-threads-listed.jsonl
   repo "$scratch/codex/first"
   repo "$scratch/codex/second"
-  codex=$fakes/fake-codex.sh start_host codex
+  codex=$PWD/crates/codex-cli/tests/fake-codex.sh start_host codex
   echo
   echo "## Codex, two sessions on one app-server, chromium"
   run chromium codex "$scratch/codex.png" "$scratch/codex"

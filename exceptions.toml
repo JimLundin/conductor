@@ -11,9 +11,19 @@ rule = "std"
 reason = "net is proto's I/O on iroh: frame streams, and the client's link to a host with its reconnect loop"
 
 [[exception]]
-path = "crates/agents/Cargo.toml"
+path = "crates/claude-cli/Cargo.toml"
 rule = "std"
-reason = "agents spawns and drives the claude and codex processes over tokio"
+reason = "claude-cli spawns and drives the claude process over tokio"
+
+[[exception]]
+path = "crates/codex-cli/Cargo.toml"
+rule = "std"
+reason = "codex-cli spawns and drives the codex app-server over tokio, and edits its home's config.toml"
+
+[[exception]]
+path = "crates/install/Cargo.toml"
+rule = "std"
+reason = "install downloads and verifies the pinned CLIs onto disk, and starts and stops their processes"
 
 [[exception]]
 path = "crates/daemon/Cargo.toml"
@@ -26,7 +36,7 @@ rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
 
 [[exception]]
-path = "crates/agents/src/bin/s*.rs"
+path = "crates/*-cli/src/bin/s*.rs"
 rule = "shell"
 reason = "s1 and s2 are live checks that script the real CLIs step by step; their branches check what each CLI answered"
 

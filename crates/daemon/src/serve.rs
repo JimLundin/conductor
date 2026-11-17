@@ -1,5 +1,6 @@
 //! Serves the protocol (`proto::ALPN`) on accepted iroh connections.
 
+use agents::Reply;
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
@@ -15,7 +16,7 @@ use tokio::sync::broadcast;
 use crate::Stopped;
 use crate::log::{BeginCommand, Log};
 use crate::registry::Registry;
-use crate::session::{Order, Reply};
+use crate::session::Order;
 
 #[derive(Debug, Clone)]
 pub struct Conductor {

@@ -16,7 +16,7 @@ class PinTest(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
         self.rs = Path(self.scratch.name) / "pins.rs"
-        self.rs.write_bytes((ROOT / "crates/agents/src/pins.rs").read_bytes())
+        self.rs.write_bytes((ROOT / "crates/install/src/pins.rs").read_bytes())
         self.pin["read"].__globals__["PINS_RS"] = self.rs
         self.pin["read"].__globals__["ROOT"] = self.rs.parent
 

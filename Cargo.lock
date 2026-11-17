@@ -41,21 +41,7 @@ dependencies = [
 name = "agents"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "data-encoding",
- "n0-future",
  "proto",
- "reqwest 0.13.5",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
- "tokio",
- "toml_edit",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -557,6 +543,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
+name = "claude"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "proto",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "claude-cli"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "anyhow",
+ "claude",
+ "install",
+ "n0-future",
+ "proto",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "client"
 version = "0.1.0"
 dependencies = [
@@ -576,6 +591,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "codex"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "proto",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "codex-cli"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "anyhow",
+ "codex",
+ "install",
+ "n0-future",
+ "proto",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml_edit",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -856,10 +900,15 @@ dependencies = [
  "anyhow",
  "chacha20poly1305",
  "clap",
+ "claude",
+ "claude-cli",
  "client",
+ "codex",
+ "codex-cli",
  "data-encoding",
  "directories",
  "getrandom 0.4.3",
+ "install",
  "iroh",
  "n0-future",
  "net",
@@ -2231,6 +2280,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "install"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "anyhow",
+ "claude",
+ "data-encoding",
+ "n0-future",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

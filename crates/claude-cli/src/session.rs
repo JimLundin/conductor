@@ -12,13 +12,14 @@ use std::time::Duration;
 use proto::{ClaudeCredential, Effort, Models};
 use serde_json::Value;
 
-use crate::{Exit, Home};
+use agents::Exit;
+use install::Home;
 use n0_future::StreamExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
-use super::protocol::{
+use claude::{
     Applied, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
     PermissionDecision, PermissionMode, PermissionRequestId, SessionId,
     UnsupportedVersion, applied, check_version, encode, models, parse_line,
@@ -546,7 +547,7 @@ pub fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    crate::process::no_window(cmd)
+    install::process::no_window(cmd)
 }
 
 /// Logs each stderr line, and returns the last once stderr closes.
@@ -629,7 +630,7 @@ impl Running {
             stdin,
             stdout: _,
         } = self;
-        crate::process::stop(child, stdin).await
+        install::process::stop(child, stdin).await
     }
 }
 
@@ -906,7 +907,7 @@ mod tests {
         ClaudeOptions, PermissionMode, Resume, SessionId, SettingSource,
         VersionPolicy, command,
     };
-    use crate::Home;
+    use install::Home;
 
     #[test]
     fn missing_a_different_session_is_not_a_safe_fork_fallback() {

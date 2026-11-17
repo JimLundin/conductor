@@ -3,9 +3,7 @@
 //! we write is built here. Methods and fields we do not model are ignored or
 //! passed on as `Unknown`.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-
+use agents::{Exit, PlanStep};
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
     QuestionOption, Selection, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
@@ -14,7 +12,7 @@ use proto::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Exit, PlanStep};
+use crate::prelude::*;
 
 pub const INITIALIZE: &str = "initialize";
 
@@ -33,7 +31,8 @@ pub struct TurnId(pub String);
 pub struct ApprovalId(pub String);
 
 impl ApprovalId {
-    pub(crate) fn of(id: &RequestId) -> Self {
+    #[must_use]
+    pub fn of(id: &RequestId) -> Self {
         Self(match id {
             RequestId::Integer(n) => n.to_string(),
             RequestId::String(s) => s.clone(),
@@ -74,7 +73,8 @@ pub enum Sandbox {
 /// Settings for `thread/start` and `thread/resume`.
 #[derive(Debug, Clone)]
 pub struct ThreadOptions {
-    pub cwd: PathBuf,
+    /// The thread's working directory, as Codex reads it.
+    pub cwd: String,
     pub model: Option<String>,
     /// Passed as the `model_reasoning_effort` config override.
     pub effort: Option<Effort>,
@@ -542,6 +542,8 @@ enum SpecialPlace {
     },
 }
 
+/// # Errors
+/// Fails when the line is not JSON.
 pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
     Ok(match serde_json::from_value::<Envelope>(raw.clone()) {
@@ -1105,6 +1107,8 @@ struct ThreadTurnsPage {
     next_cursor: Value,
 }
 
+/// # Errors
+/// Fails when `value` is not a page of turns with its `nextCursor`.
 pub fn history_page(
     value: Value,
 ) -> serde_json::Result<(Vec<TurnId>, Option<String>)> {
@@ -1170,7 +1174,8 @@ struct TurnInterruptParams {
 }
 
 impl Call {
-    pub(crate) const fn method(&self) -> &str {
+    #[must_use]
+    pub const fn method(&self) -> &str {
         match self {
             Self::Initialize => INITIALIZE,
             Self::ModelList => "model/list",
@@ -1244,7 +1249,7 @@ fn thread_params(
         history_mode,
         approval_policy: opts.approval_policy,
         sandbox: opts.sandbox,
-        cwd: opts.cwd.display().to_string(),
+        cwd: opts.cwd.clone(),
         model: opts.model.clone(),
         config: ThreadConfig {
             features: Features {
@@ -1284,6 +1289,9 @@ struct SupportedEffort {
 }
 
 /// The models `model/list` offers, without the hidden ones.
+///
+/// # Errors
+/// Fails when `result` is not a model list.
 pub fn models(result: Value) -> serde_json::Result<Models> {
     let list = serde_json::from_value::<ModelList>(result)?;
     let shown = list
@@ -1340,6 +1348,9 @@ struct InitializeResponse {
 
 /// `thread/start` and `thread/resume` both answer `{thread: {id, ..},
 /// model, reasoningEffort, ..}`.
+///
+/// # Errors
+/// Fails when `result` names no thread and model.
 pub fn thread_started(
     result: Value,
 ) -> serde_json::Result<(ThreadId, ThreadSettings)> {
@@ -1353,12 +1364,17 @@ pub fn thread_started(
     ))
 }
 
+/// # Errors
+/// Fails when `result` names no turn.
 pub fn turn_id(result: Value) -> serde_json::Result<TurnId> {
     let r = serde_json::from_value::<TurnResponse>(result)?;
     Ok(TurnId(r.turn.id))
 }
 
 /// `userAgent` from `initialize`, such as `conductor/0.166.0 (Ubuntu ...)`.
+///
+/// # Errors
+/// Fails when `result` has no `userAgent`.
 pub fn user_agent(result: Value) -> serde_json::Result<String> {
     let r = serde_json::from_value::<InitializeResponse>(result)?;
     Ok(r.user_agent)
@@ -1420,6 +1436,10 @@ enum PlainDecision {
 }
 
 /// The JSON-RPC `result` that answers an open request with `decision`.
+///
+/// # Errors
+/// Fails when `decision` can't answer a request of this shape, or its
+/// answer won't encode.
 pub fn answer(
     shape: &AnswerShape,
     decision: Decision,
@@ -1533,6 +1553,8 @@ struct RpcError {
     message: String,
 }
 
+/// # Errors
+/// Fails when a request's params won't encode.
 pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
         Outbound::Request { id, call } => OutboundFrame::Request {

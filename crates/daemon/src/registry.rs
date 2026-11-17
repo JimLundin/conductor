@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::path::PathBuf;
 
-use agents::claude::Sandbox;
+use claude_cli::Sandbox;
 use n0_future::MaybeFuture;
 use n0_future::boxed::BoxFuture;
 use proto::{
@@ -1016,11 +1016,11 @@ fn configured(
     }
 }
 
-/// Without Claude's sandbox the scrub is off (`agents::claude::sandbox`),
+/// Without Claude's sandbox the scrub is off (`claude_cli::sandbox`),
 /// so the commands Claude runs inherit a gateway token.
 fn warn_unprotected(credentials: &Credentials) {
     if let (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) =
-        (&credentials.claude, agents::claude::sandbox())
+        (&credentials.claude, claude_cli::sandbox())
     {
         tracing::warn!(
             "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them"
@@ -1032,7 +1032,7 @@ fn warn_unprotected(credentials: &Credentials) {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use agents::Home;
+    use install::Home;
     use proto::{
         ClientName, CloseReason, CommandResult, Event, EventKind, HostPath,
         HostSeq, Models, Provider, RequestId, Resolution, SessionId,
@@ -1048,7 +1048,7 @@ mod tests {
         Launcher::Ready {
             launch: Launch::Claude(ClaudeLaunch {
                 claude_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../agents/tests/fake-claude.sh"),
+                    .join("../claude-cli/tests/fake-claude.sh"),
                 home: Home::User,
                 credential: None,
             }),

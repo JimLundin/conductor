@@ -35,7 +35,7 @@ for engine in chromium webkit; do
   head -2 fixtures/e2e/claude-killed.jsonl >"$data/probe/stdout.jsonl"
   "$target/debug/conductord" host --data-dir "$data" \
     --web-url "http://localhost:$port/conductor/" \
-    --claude-path "$PWD/crates/agents/tests/fake-claude.sh" \
+    --claude-path "$PWD/crates/claude-cli/tests/fake-claude.sh" \
     --codex-path "$scratch/no-codex" >"$scratch/host.txt" 2>&1 &
   hosts+=($!)
   until rg -q '^join:' "$scratch/host.txt"; do

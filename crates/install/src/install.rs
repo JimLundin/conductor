@@ -403,8 +403,8 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
 
     use super::{Package, Pin, put, sha256};
-    use crate::claude::check_version;
     use crate::pins;
+    use claude::check_version;
 
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

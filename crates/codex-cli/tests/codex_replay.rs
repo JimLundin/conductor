@@ -12,12 +12,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::Home;
-use agents::codex::{
-    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, CodexServer,
-    CodexThread, Decision, Sandbox, ServerOptions, ThreadEvent, ThreadId,
-    ThreadOptions, ThreadSettings, TurnId,
+use codex::{
+    ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, Decision, Sandbox,
+    ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
 };
+use codex_cli::{CodexServer, CodexThread, ServerOptions};
+use install::Home;
 use n0_future::StreamExt;
 use proto::{Answer, Effort, TaskStatus, ToolKind, ToolPhase, TurnOutcome};
 use serde_json::Value;
@@ -824,13 +824,13 @@ async fn thread_refusal(
             .await
             .err()
             .ok_or("thread/resume succeeded")?,
-        _ => agents::codex::Error::Command(format!(
+        _ => codex_cli::Error::Command(format!(
             "unexpected test method {method}"
         )),
     };
     assert_eq!(error.to_string(), expected);
     // A later request must retain the same stderr reason after the actor exits.
-    if let agents::codex::Error::Refused(_) = error {
+    if let codex_cli::Error::Refused(_) = error {
         assert_eq!(
             server
                 .start_thread(opts())

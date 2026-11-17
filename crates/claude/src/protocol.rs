@@ -2,6 +2,7 @@
 //! and mapped into our own types here, and every line we write is built here.
 //! Frames and fields we do not model are ignored or passed on as `Unknown`.
 
+use agents::{Exit, PlanStep};
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
     QuestionOption, Selection, TaskStatus, ToolKind, ToolOutcome, TurnOutcome,
@@ -9,7 +10,7 @@ use proto::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Exit, PlanStep};
+use crate::prelude::*;
 
 /// A Claude session id, as printed in `system/init` and accepted by `--resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -36,7 +37,8 @@ pub enum PermissionMode {
 
 impl PermissionMode {
     /// The name `--permission-mode` and `set_permission_mode` take.
-    pub(crate) const fn wire(&self) -> &str {
+    #[must_use]
+    pub const fn wire(&self) -> &str {
         match self {
             Self::Default => "default",
             Self::AcceptEdits => "acceptEdits",
@@ -504,6 +506,8 @@ enum ContentBlock {
     },
 }
 
+/// # Errors
+/// Fails when the line is not JSON.
 pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
     Ok(match serde_json::from_value::<Frame>(raw.clone()) {
@@ -777,6 +781,8 @@ struct Settings {
     applied: Applied,
 }
 
+/// # Errors
+/// Fails when `settings` has no `applied` model.
 pub fn applied(settings: Value) -> serde_json::Result<Applied> {
     serde_json::from_value::<Settings>(settings).map(|parsed| parsed.applied)
 }
@@ -787,6 +793,7 @@ const DEFAULT_ROW: &str = "default";
 /// The models an `initialize` response lists. The `default` row is not a
 /// choice of its own: it names the row with the same `resolvedModel` as
 /// the default.
+#[must_use]
 pub fn models(initialize: &Value) -> Models {
     let rows = serde_json::from_value::<InitializeModels>(initialize.clone())
         .map_or(Vec::new(), |listed| listed.models);
@@ -822,6 +829,9 @@ pub fn models(initialize: &Value) -> Models {
 }
 
 /// Checks the `claude_code_version` an `initialize` response reports.
+///
+/// # Errors
+/// Fails when it reports none, or one we have not checked.
 pub fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map_err(|_| UnsupportedVersion::Unreported)?
@@ -848,7 +858,8 @@ pub enum ControlCall {
 }
 
 impl ControlCall {
-    pub(crate) const fn subtype(&self) -> &str {
+    #[must_use]
+    pub const fn subtype(&self) -> &str {
         match self {
             Self::Initialize => "initialize",
             Self::Interrupt => "interrupt",
@@ -950,6 +961,8 @@ enum Verdict {
     },
 }
 
+/// # Errors
+/// Fails when the answers to a question don't fit its input.
 pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
         Outbound::User(text) => Line::User {

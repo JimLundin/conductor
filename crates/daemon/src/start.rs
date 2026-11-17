@@ -9,11 +9,11 @@ use crate::log::Log;
 use crate::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use crate::serve::Conductor;
 use crate::session::{ClaudeLaunch, CodexLaunch, Launch, list_models};
-use agents::Home;
-use agents::codex::ServerOptions;
-use agents::install::{Cli, install};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
+use codex_cli::ServerOptions;
+use install::Home;
+use install::{Cli, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
@@ -149,7 +149,7 @@ async fn claude_launcher(
             Ok(found) => found,
             Err(reason) => return unavailable(reason),
         };
-    let status = agents::claude::auth_status(&claude_path, home);
+    let status = claude_cli::auth_status(&claude_path, home);
     let launch = ClaudeLaunch {
         claude_path: claude_path.clone(),
         home: home.clone(),
@@ -165,7 +165,7 @@ async fn claude_launcher(
         }),
         data_dir,
     );
-    match runs(agents::claude::cli(&claude_path, home)).await {
+    match runs(claude_cli::cli(&claude_path, home)).await {
         Ok(cli) => ready(
             cli,
             Launch::Claude(launch),
@@ -188,8 +188,8 @@ async fn codex_launcher(
         Ok(found) => found,
         Err(reason) => return unavailable(reason),
     };
-    let version = agents::codex::cli(&codex_path, &home);
-    let status = agents::codex::login_status(&codex_path, &home);
+    let version = codex_cli::cli(&codex_path, &home);
+    let status = codex_cli::login_status(&codex_path, &home);
     // The app-server's own working directory is the data dir;
     // each thread runs in its session's directory.
     let hub = CodexHub::spawn(ServerOptions {
@@ -219,11 +219,11 @@ async fn login(args: LoginArgs) -> anyhow::Result<()> {
     let data_dir = data_dir_or_default(args.data_dir)?;
     let homes = crate::homes(&data_dir)?;
     let mut sign_in = match args.provider {
-        LoginProvider::Claude => agents::claude::login(
+        LoginProvider::Claude => claude_cli::login(
             &install(Cli::Claude, &data_dir).await?,
             &homes.claude,
         ),
-        LoginProvider::Codex => agents::codex::login(
+        LoginProvider::Codex => codex_cli::login(
             &install(Cli::Codex, &data_dir).await?,
             &homes.codex,
         ),

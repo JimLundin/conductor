@@ -11,12 +11,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::Home;
-use agents::claude::{
-    AfterDeny, Block, ClaudeEvent, ClaudeOptions, ClaudeSession,
-    PermissionDecision, PermissionMode, PermissionRequestId, Role,
-    SettingSource, VersionPolicy,
+use claude::{
+    AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionMode,
+    PermissionRequestId, Role,
 };
+use claude_cli::{ClaudeOptions, ClaudeSession, SettingSource, VersionPolicy};
+use install::Home;
 use n0_future::StreamExt;
 use proto::{Effort, ModelId, TaskStatus};
 use serde_json::Value;
@@ -70,7 +70,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: agents::claude::Resume::Fresh,
+        resume: claude_cli::Resume::Fresh,
         project_name: None,
         setting_sources: Some(Vec::from([SettingSource::Project])),
         stdout_log: None,
@@ -800,7 +800,7 @@ async fn a_resume_with_no_transcript_fails_with_the_clis_reason()
 #[tokio::test]
 async fn missing_requested_resume_target_has_a_typed_recovery_error()
 -> TestResult<()> {
-    let id = agents::claude::SessionId(String::from("target"));
+    let id = claude::SessionId(String::from("target"));
     let stdout = recording(
         "typed-resume-missing",
         &[
@@ -810,7 +810,7 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error()
     )?;
     let claude = fake_claude("typed-resume-missing", &stdout)?;
     let opts = ClaudeOptions {
-        resume: agents::claude::Resume::Session(id.clone()),
+        resume: claude_cli::Resume::Session(id.clone()),
         ..options(&claude)
     };
     let error = ClaudeSession::spawn(opts)
@@ -823,7 +823,7 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error()
     );
     assert_eq!(
         match error {
-            agents::claude::Error::MissingSession(missing) => Some(missing),
+            claude_cli::Error::MissingSession(missing) => Some(missing),
             _ => None,
         },
         Some(id)
@@ -1024,7 +1024,7 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
 
 async fn drive_boundary(
     events: &mut mpsc::Receiver<ClaudeEvent>,
-) -> TestResult<Option<agents::claude::MessageId>> {
+) -> TestResult<Option<claude::MessageId>> {
     loop {
         if let ClaudeEvent::TurnFinished { last_message, .. } =
             tokio::time::timeout(Duration::from_secs(20), events.recv())
@@ -1068,9 +1068,9 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
     assert_eq!(
         Vec::from([first, second, third]),
         Vec::from([
-            Some(agents::claude::MessageId(String::from("retained"))),
+            Some(claude::MessageId(String::from("retained"))),
             None,
-            Some(agents::claude::MessageId(String::from("interrupted")))
+            Some(claude::MessageId(String::from("interrupted")))
         ])
     );
     let _ = session.shutdown().await?;

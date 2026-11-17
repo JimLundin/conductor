@@ -6,8 +6,8 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. `proto` is the `no_std` core, and its iroh
-  I/O lives in `net`. `exceptions.toml` lets `net`, `agents`, `client` and
-  `daemon` use std and records each lint that macro output can't meet. Next:
+  I/O lives in `net`. `exceptions.toml` lets `net`, `claude-cli`,
+  `codex-cli`, `install` and `daemon` use std and records each lint that macro output can't meet. Next:
   move decisions out of those libraries into pure cores, retiring their
   `std` exceptions one by one.
 
@@ -35,7 +35,7 @@ What is built and what comes next. Update it in the commit that changes it.
   verified `thread/revert` prefixes.
 
 - **Single CLI pin source** (#28). `tools/pin` writes only
-  `crates/agents/src/pins.rs`, including upstream verification notes.
+  `crates/install/src/pins.rs`, including upstream verification notes.
   Fixture and supported-version checks use the compiled pins.
 
 - **Codex start errors** (#19). Failed starts and Continue keep the
@@ -43,9 +43,14 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,
   file changes and outcomes. The daemon keeps request ids, session state and
   approval wording.
-- **Agents.** `crates/agents` drives the `claude` CLI (stream-json control
-  protocol) and `codex app-server` (JSON-RPC): messages, streaming deltas,
-  tool calls, approvals, interrupts. `s1` and `s2` are the live checks.
+- **Agents.** `claude-cli` drives the `claude` CLI (stream-json control
+  protocol) and `codex-cli` the `codex app-server` (JSON-RPC): messages,
+  streaming deltas, tool calls, approvals, interrupts. `s1` and `s2` are the
+  live checks.
+- **Agent core.** Sessions speak the provider-agnostic `agents` API. The
+  `claude` and `codex` wire crates map into it and, like `agents`, are pure
+  `no_std` cores; process I/O lives in `claude-cli`, `codex-cli` and
+  `install`.
 - **Host.** `conductord` serves one host over iroh: a durable redb event log
   (streaming deltas are live-only), a session actor per agent, one shared
   Codex app-server. Clients reach it over iroh through n0's public relays.

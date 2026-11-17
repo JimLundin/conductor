@@ -11,13 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use agents::Home;
-use agents::claude::Sandbox;
-use agents::codex::ServerOptions;
+use claude_cli::Sandbox;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
     ToolState,
 };
+use codex_cli::ServerOptions;
 use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
 use daemon::credentials::Store;
@@ -25,6 +24,7 @@ use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
 use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
+use install::Home;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
@@ -85,13 +85,15 @@ impl Fixture {
 
 /// The gated stand-in that plays `stdout.jsonl` from the session's directory.
 fn fake_claude() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fake-claude.sh")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../claude-cli/tests/fake-claude.sh")
 }
 
 /// The gated stand-in that plays `stdout.jsonl` from the app-server's
 /// working directory.
 fn fake_codex() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fake-codex.sh")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../codex-cli/tests/fake-codex.sh")
 }
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
@@ -2321,7 +2323,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
         read(&dir.join("env.txt"))?,
         format!(
             "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\n{}CLAUDE_CONFIG_DIR={}\n",
-            match agents::claude::sandbox() {
+            match claude_cli::sandbox() {
                 Sandbox::Available => "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\n",
                 Sandbox::Missing => "",
             },
@@ -2371,7 +2373,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
             0,
             0,
             // Once when the gateway is set, once when the restart finds it.
-            match agents::claude::sandbox() {
+            match claude_cli::sandbox() {
                 Sandbox::Available => 0,
                 Sandbox::Missing => 2,
             }

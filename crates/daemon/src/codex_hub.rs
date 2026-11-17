@@ -16,10 +16,8 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 
 use agents::Exit;
-use agents::codex::{
-    CodexEvent, CodexServer, CodexThread, ServerOptions, ThreadEvent, ThreadId,
-    ThreadOptions,
-};
+use codex::{CodexEvent, ThreadEvent, ThreadId, ThreadOptions};
+use codex_cli::{CodexServer, CodexThread, ServerOptions};
 use n0_future::StreamExt;
 use proto::{CodexCredential, Models};
 use tokio::sync::{mpsc, oneshot};
@@ -45,7 +43,7 @@ pub struct CodexHub {
 #[derive(Debug, thiserror::Error)]
 pub enum HubError {
     #[error("{0}")]
-    Codex(#[from] agents::codex::Error),
+    Codex(#[from] codex_cli::Error),
     #[error("the codex hub has stopped")]
     Stopped(#[from] Stopped),
 }
@@ -57,12 +55,12 @@ enum HubMsg {
         options: ThreadOptions,
         resume: Option<ThreadId>,
         reply: oneshot::Sender<
-            Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>,
+            Result<(CodexThread, mpsc::Receiver<Routed>), codex_cli::Error>,
         >,
     },
     /// The models the server lists.
     Models {
-        reply: oneshot::Sender<Result<Models, agents::codex::Error>>,
+        reply: oneshot::Sender<Result<Models, codex_cli::Error>>,
     },
     /// Runs the next server with this credential, stopping the current one.
     Configure {
@@ -263,8 +261,7 @@ impl HubActor {
         &mut self,
         options: ThreadOptions,
         resume: Option<ThreadId>,
-    ) -> Result<(CodexThread, mpsc::Receiver<Routed>), agents::codex::Error>
-    {
+    ) -> Result<(CodexThread, mpsc::Receiver<Routed>), codex_cli::Error> {
         let server = self.up().await?;
         let thread = match resume {
             Some(id) => server.resume_thread(id, options).await?,
@@ -276,7 +273,7 @@ impl HubActor {
     }
 
     /// The running server, started first if none runs.
-    async fn up(&mut self) -> Result<CodexServer, agents::codex::Error> {
+    async fn up(&mut self) -> Result<CodexServer, codex_cli::Error> {
         match &self.server {
             Server::Up { server, .. } => Ok(server.clone()),
             Server::Down => {

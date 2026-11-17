@@ -1,0 +1,25 @@
+[package]
+name = "codex-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+agents = { path = "../agents" }
+codex = { path = "../codex" }
+install = { path = "../install" }
+n0-future.workspace = true
+proto = { path = "../proto" }
+serde_json = { workspace = true, features = ["std"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+# Edits the private Codex home's config.toml, keeping what Codex wrote there.
+toml_edit = { version = "0.25.19", default-features = false, features = ["parse", "display"] }
+tracing = { workspace = true, features = ["std"] }
+# For the s2 live check.
+anyhow.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

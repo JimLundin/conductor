@@ -1,0 +1,384 @@
+//! Codex events to the agent API's steps. Pure: a provider event in, the
+//! steps the session applies out.
+
+use agents::{
+    NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
+};
+use proto::{
+    CloseReason, Decision as Chosen, EventKind, ToolCallId, ToolKind, ToolPhase,
+};
+
+use crate::prelude::*;
+use crate::{ApprovalKind, CodexEvent, Decision, PermissionAsk, ThreadEvent};
+
+/// Why a Codex question went unasked. Every answer is stored and sent to
+/// every client, so none can be kept secret.
+const SECRET_DECLINED: &str = "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.";
+
+#[must_use]
+pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
+    match event {
+        CodexEvent::Thread {
+            event: thread_event,
+            ..
+        } => codex_thread_steps(thread_event),
+        CodexEvent::Exited { status } => {
+            Vec::from([Step::Closed(CloseReason::Exited {
+                status: status.describe(),
+            })])
+        }
+        CodexEvent::Unknown(frame) => {
+            tracing::trace!(%frame, "unmapped codex frame");
+            Vec::new()
+        }
+    }
+}
+
+fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
+    match event {
+        ThreadEvent::Started => Vec::new(),
+        ThreadEvent::TurnStarted { turn } => {
+            Vec::from([Step::TurnStarted(NativeTurn(turn.0))])
+        }
+        ThreadEvent::AgentDelta { text, .. } => {
+            Vec::from([Step::Emit(EventKind::AssistantDelta { text })])
+        }
+        ThreadEvent::AgentMessage { text, .. } => {
+            Vec::from([Step::Emit(EventKind::AssistantMessage { text })])
+        }
+        ThreadEvent::ReasoningDelta { text, .. } => {
+            reasoning_delta(text).into_iter().collect()
+        }
+        ThreadEvent::Reasoning { text, .. } => {
+            reasoning(text).into_iter().collect()
+        }
+        ThreadEvent::ToolCall {
+            call,
+            phase: ToolPhase::Started { tool },
+            ..
+        } => Vec::from([Step::Emit(EventKind::ToolCall {
+            call,
+            phase: ToolPhase::Started { tool },
+        })]),
+        ThreadEvent::ToolCall {
+            call,
+            phase: ToolPhase::Finished { outcome },
+            ..
+        } => Vec::from([Step::ToolFinished { call, outcome }]),
+        ThreadEvent::ApprovalRequested { id, item, kind, .. } => {
+            Vec::from([approval_step(
+                NativeRequest(id.0),
+                ToolCallId(item),
+                kind,
+            )])
+        }
+        ThreadEvent::ApprovalCancelled { id } => {
+            Vec::from([Step::Withdraw(NativeRequest(id.0))])
+        }
+        ThreadEvent::SecretQuestionDeclined { .. } => {
+            Vec::from([Step::Emit(EventKind::Error {
+                message: String::from(SECRET_DECLINED),
+            })])
+        }
+        ThreadEvent::TurnCompleted { outcome, .. } => {
+            Vec::from([Step::TurnEnded(outcome)])
+        }
+        ThreadEvent::PlanUpdated { steps, .. } => {
+            Vec::from([Step::Checklist(steps)])
+        }
+        ThreadEvent::SettingsChanged(settings) => {
+            tracing::debug!(?settings, "codex thread settings");
+            Vec::new()
+        }
+        ThreadEvent::Unknown(frame) => {
+            tracing::trace!(%frame, "unmapped codex thread frame");
+            Vec::new()
+        }
+    }
+}
+
+/// A server request: a question, or an approval with the tool it asks
+/// about, Codex's reason, and what `acceptForSession` allows. Codex takes
+/// `acceptForSession` for a command, though `availableDecisions` omits it;
+/// `s2` step 8 checks that it still does (PROTOCOL.md).
+fn approval_step(
+    native: NativeRequest,
+    call: ToolCallId,
+    kind: ApprovalKind,
+) -> Step {
+    match kind {
+        ApprovalKind::Command {
+            command: asked,
+            reason,
+            ..
+        } => {
+            let command = asked.unwrap_or_default();
+            Step::Open {
+                native,
+                call,
+                tool: ToolKind::Command {
+                    command: command.clone(),
+                },
+                reason,
+                for_session: Some(command),
+            }
+        }
+        // The request names no paths; the tool card the item started has them.
+        ApprovalKind::FileChange { reason, .. } => Step::Open {
+            native,
+            call,
+            tool: ToolKind::FileChange { files: Vec::new() },
+            reason,
+            // No run has recorded a file change approval yet (PROTOCOL.md).
+            for_session: None,
+        },
+        ApprovalKind::Permissions { reason, asks } => {
+            let detail = asks
+                .into_iter()
+                .map(|ask| match ask {
+                    PermissionAsk::Network => String::from("network access"),
+                    PermissionAsk::Read(places) => {
+                        format!("read {}", places.join(", "))
+                    }
+                    PermissionAsk::Write(places) => {
+                        format!("write to {}", places.join(", "))
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join("; ");
+            Step::Open {
+                native,
+                call,
+                tool: ToolKind::Other {
+                    name: String::from("permissions"),
+                    detail: detail.clone(),
+                },
+                reason,
+                for_session: Some(detail),
+            }
+        }
+        ApprovalKind::UserInput { questions } => {
+            Step::Ask { native, questions }
+        }
+    }
+}
+
+#[must_use]
+pub fn codex_answer(reply: Reply) -> Decision {
+    match reply {
+        Reply::Decide(Chosen::Approve) => Decision::Accept,
+        Reply::Decide(Chosen::ApproveForSession) => Decision::AcceptForSession,
+        Reply::Decide(Chosen::Deny) => Decision::Decline,
+        Reply::Answer(answers) => Decision::Answer(answers),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agents::{NativeRequest, PlanStep, Reply, Step};
+    use proto::{
+        Answer, Decision as Chosen, EventKind, Question, QuestionOption,
+        Selection, TaskStatus, ToolCallId, ToolKind,
+    };
+
+    use super::{codex_answer, codex_steps};
+    use crate::{
+        ApprovalId, ApprovalKind, CodexEvent, Decision, PermissionAsk,
+        ThreadEvent, ThreadId, TurnId,
+    };
+
+    /// The steps one provider event maps to, and the steps it should.
+    struct Case {
+        got: Vec<Step>,
+        want: Vec<Step>,
+    }
+
+    fn on_thread(event: ThreadEvent) -> Vec<Step> {
+        codex_steps(CodexEvent::Thread {
+            thread: ThreadId(String::from("th_1")),
+            event,
+        })
+    }
+
+    fn turn() -> TurnId {
+        TurnId(String::from("tu_1"))
+    }
+
+    fn step() -> PlanStep {
+        PlanStep {
+            text: String::from("write a.txt"),
+            status: TaskStatus::InProgress,
+        }
+    }
+
+    fn color() -> Question {
+        Question {
+            header: String::from("Color"),
+            text: String::from("Which color?"),
+            options: Vec::from([QuestionOption {
+                label: String::from("Blue"),
+                description: String::from("Cool"),
+            }]),
+            selection: Selection::One,
+        }
+    }
+
+    #[test]
+    fn each_reply_maps_to_codexs_answer() {
+        let answers = Vec::from([Answer(Vec::from([String::from("Blue")]))]);
+        let replies = Vec::from([
+            Reply::Decide(Chosen::Approve),
+            Reply::Decide(Chosen::ApproveForSession),
+            Reply::Decide(Chosen::Deny),
+            Reply::Answer(answers.clone()),
+        ]);
+        assert_eq!(
+            replies
+                .into_iter()
+                .map(codex_answer)
+                .collect::<Vec<Decision>>(),
+            Vec::from([
+                Decision::Accept,
+                Decision::AcceptForSession,
+                Decision::Decline,
+                Decision::Answer(answers),
+            ])
+        );
+    }
+
+    #[test]
+    fn reasoning_and_plans_map_to_their_steps() {
+        assert_cases([
+            Case {
+                got: on_thread(ThreadEvent::ReasoningDelta {
+                    turn: turn(),
+                    text: String::from("**Plan**"),
+                }),
+                want: Vec::from([Step::Emit(EventKind::ReasoningDelta {
+                    text: String::from("**Plan**"),
+                })]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::Reasoning {
+                    turn: turn(),
+                    text: String::from("**Plan**\n\nList it."),
+                }),
+                want: Vec::from([Step::Emit(EventKind::Reasoning {
+                    text: String::from("**Plan**\n\nList it."),
+                })]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::Reasoning {
+                    turn: turn(),
+                    text: String::new(),
+                }),
+                want: Vec::new(),
+            },
+            Case {
+                got: on_thread(ThreadEvent::PlanUpdated {
+                    turn: turn(),
+                    steps: Vec::from([step()]),
+                }),
+                want: Vec::from([Step::Checklist(Vec::from([step()]))]),
+            },
+        ]);
+    }
+
+    #[test]
+    fn codex_requests_map_to_their_steps() {
+        assert_cases([
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("1")),
+                    turn: turn(),
+                    item: String::from("exec-2"),
+                    kind: ApprovalKind::Command {
+                        command: Some(String::from("touch ~/b.txt")),
+                        cwd: None,
+                        reason: Some(String::from(
+                            "needs to write outside the workspace",
+                        )),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest(String::from("1")),
+                    call: ToolCallId(String::from("exec-2")),
+                    tool: ToolKind::Command {
+                        command: String::from("touch ~/b.txt"),
+                    },
+                    reason: Some(String::from(
+                        "needs to write outside the workspace",
+                    )),
+                    for_session: Some(String::from("touch ~/b.txt")),
+                }]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("2")),
+                    turn: turn(),
+                    item: String::from("exec-3"),
+                    kind: ApprovalKind::Permissions {
+                        reason: Some(String::from("to fetch the crate")),
+                        asks: Vec::from([
+                            PermissionAsk::Network,
+                            PermissionAsk::Write(Vec::from([
+                                String::from("/home/u/.cargo"),
+                                String::from("/tmp"),
+                            ])),
+                        ]),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Open {
+                    native: NativeRequest(String::from("2")),
+                    call: ToolCallId(String::from("exec-3")),
+                    tool: ToolKind::Other {
+                        name: String::from("permissions"),
+                        detail: String::from(
+                            "network access; write to /home/u/.cargo, /tmp",
+                        ),
+                    },
+                    reason: Some(String::from("to fetch the crate")),
+                    for_session: Some(String::from(
+                        "network access; write to /home/u/.cargo, /tmp",
+                    )),
+                }]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::ApprovalRequested {
+                    id: ApprovalId(String::from("0")),
+                    turn: turn(),
+                    item: String::from("exec-1"),
+                    kind: ApprovalKind::UserInput {
+                        questions: Vec::from([color()]),
+                    },
+                    options: Vec::new(),
+                }),
+                want: Vec::from([Step::Ask {
+                    native: NativeRequest(String::from("0")),
+                    questions: Vec::from([color()]),
+                }]),
+            },
+            Case {
+                got: on_thread(ThreadEvent::SecretQuestionDeclined {
+                    turn: turn(),
+                }),
+                want: Vec::from([Step::Emit(EventKind::Error {
+                    message: String::from(
+                        "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.",
+                    ),
+                })]),
+            },
+        ]);
+    }
+
+    fn assert_cases<const N: usize>(cases: [Case; N]) {
+        let (got, want) = cases
+            .into_iter()
+            .map(|case| (case.got, case.want))
+            .unzip::<Vec<Step>, Vec<Step>, Vec<Vec<Step>>, Vec<Vec<Step>>>(
+        );
+        assert_eq!(got, want);
+    }
+}
