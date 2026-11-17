@@ -20,14 +20,26 @@ pub enum WireError {
     Frame(#[from] proto::FrameError),
 }
 
-pub async fn write<T: Serialize>(
+/// Writes `msg` as one frame.
+///
+/// # Errors
+///
+/// [`WireError::Frame`] when `msg` doesn't encode, and
+/// [`WireError::Write`] when the stream fails.
+pub async fn write<T: Serialize + Sync>(
     send: &mut SendStream,
     msg: &T,
 ) -> Result<(), WireError> {
     Ok(send.write_all(&proto::encode(msg)?).await?)
 }
 
-/// `Ok(None)` when the peer finished the stream between frames.
+/// Reads one frame: `Ok(None)` when the peer finished the stream between
+/// frames.
+///
+/// # Errors
+///
+/// [`WireError::Read`] when the stream fails or ends inside a frame, and
+/// [`WireError::Frame`] when the frame doesn't decode.
 pub async fn read<T: DeserializeOwned>(
     recv: &mut RecvStream,
 ) -> Result<Option<T>, WireError> {

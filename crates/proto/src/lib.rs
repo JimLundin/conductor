@@ -53,6 +53,7 @@ pub const ALPN: &[u8] = b"conductor/11";
 pub struct HostSeq(pub u64);
 
 impl HostSeq {
+    #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -84,6 +85,7 @@ pub struct CommandId(pub u128);
 pub struct RequestId(pub u64);
 
 impl RequestId {
+    #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -172,6 +174,7 @@ pub enum Effort {
 }
 
 impl Effort {
+    #[must_use]
     pub const fn wire(&self) -> &str {
         match self {
             Self::Low => "low",
@@ -184,6 +187,7 @@ impl Effort {
     }
 
     /// A level a CLI lists. Any other, such as Codex's `minimal`, is `None`.
+    #[must_use]
     pub fn parse(word: &str) -> Option<Self> {
         match word {
             "low" => Some(Self::Low),
@@ -198,6 +202,7 @@ impl Effort {
 }
 
 impl Models {
+    #[must_use]
     pub const fn none() -> Self {
         Self {
             choices: Vec::new(),
@@ -205,6 +210,7 @@ impl Models {
         }
     }
 
+    #[must_use]
     pub fn find(&self, id: &ModelId) -> Option<&ModelChoice> {
         self.choices.iter().find(|choice| &choice.id == id)
     }
@@ -223,9 +229,11 @@ pub enum Auth {
     Unmanaged,
 }
 
-/// The credentials a host stores, one per provider. This is the unit the
-/// fleet config (§6.5) carries to every host. Other kinds, an API key and
-/// the Claude subscription token, become variants of each provider's enum.
+/// The credentials a host stores, one per provider.
+///
+/// This is the unit the fleet config (§6.5) carries to every host. Other
+/// kinds, an API key and the Claude subscription token, become variants of
+/// each provider's enum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     pub claude: Option<ClaudeCredential>,
@@ -279,6 +287,7 @@ impl core::fmt::Debug for CodexCredential {
 }
 
 impl Credentials {
+    #[must_use]
     pub const fn none() -> Self {
         Self {
             claude: None,
@@ -287,6 +296,7 @@ impl Credentials {
     }
 
     /// These credentials with `credential` in its provider's place.
+    #[must_use]
     pub fn set(self, credential: Credential) -> Self {
         match credential {
             Credential::Claude(claude) => Self {
@@ -300,6 +310,7 @@ impl Credentials {
         }
     }
 
+    #[must_use]
     pub fn clear(self, provider: Provider) -> Self {
         match provider {
             Provider::Claude => Self {
@@ -315,6 +326,7 @@ impl Credentials {
 
     /// What `Welcome` may say about a provider's credential: its kind and
     /// base URL.
+    #[must_use]
     pub fn auth(&self, provider: Provider) -> Option<Auth> {
         match provider {
             Provider::Claude => {
@@ -336,6 +348,7 @@ impl Credentials {
 }
 
 impl Credential {
+    #[must_use]
     pub const fn provider(&self) -> Provider {
         match self {
             Self::Claude(_) => Provider::Claude,
@@ -346,6 +359,10 @@ impl Credential {
     /// Refuses a base URL that isn't plain `http(s)://host/path`. The URL is
     /// shown to every client and written into Codex's config, so it must
     /// not hide a secret in userinfo, a query or a fragment.
+    ///
+    /// # Errors
+    ///
+    /// Why the base URL is refused.
     pub fn check(&self) -> Result<(), String> {
         let base_url = match self {
             Self::Claude(ClaudeCredential::Gateway { base_url, .. })
@@ -374,6 +391,7 @@ impl Credential {
 }
 
 impl Providers {
+    #[must_use]
     pub const fn of(&self, provider: Provider) -> &Availability {
         match provider {
             Provider::Claude => &self.claude,
@@ -568,6 +586,7 @@ pub enum Rejection {
 
 impl Rejection {
     /// Why the host refused the command, for a person to read.
+    #[must_use]
     pub fn label(&self) -> String {
         match self {
             Self::NoSuchDirectory => {
@@ -791,6 +810,7 @@ pub enum TaskStatus {
 pub struct CheckpointId(pub u64);
 
 impl CheckpointId {
+    #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -980,9 +1000,10 @@ mod tests {
     }
 
     #[test]
-    fn durability_v9_bytes_keep_their_original_meaning() {
+    fn durability_v9_bytes_keep_their_original_meaning()
+    -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
-            postcard::from_bytes::<super::Event>(&[1, 1, 1]).unwrap(),
+            postcard::from_bytes::<super::Event>(&[1, 1, 1])?,
             super::Event {
                 seq: super::HostSeq(1),
                 session: super::SessionId(1),
@@ -990,11 +1011,11 @@ mod tests {
             }
         );
         assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[0]).unwrap(),
+            postcard::from_bytes::<super::CommandResult>(&[0])?,
             super::CommandResult::Accepted
         );
         assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[3, 3]).unwrap(),
+            postcard::from_bytes::<super::CommandResult>(&[3, 3])?,
             super::CommandResult::Rejected(super::Rejection::SessionClosed)
         );
         assert_eq!(
@@ -1002,10 +1023,10 @@ mod tests {
                 seq: super::HostSeq(1),
                 session: super::SessionId(1),
                 kind: super::EventKind::SessionReady,
-            })
-            .unwrap(),
+            })?,
             Vec::from([1, 1, 1])
         );
+        Ok(())
     }
 
     #[test]

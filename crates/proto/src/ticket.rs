@@ -112,11 +112,11 @@ impl Ticket {
         let (token, relay) = rest
             .split_first_chunk::<TOKEN_LEN>()
             .ok_or(TicketError::Truncated)?;
-        let relay =
+        let text =
             core::str::from_utf8(relay).map_err(|_| TicketError::RelayUrl)?;
         Ok(Self {
             host: *id,
-            relay: String::from(relay),
+            relay: String::from(text),
             token: AuthToken(*token),
         })
     }
