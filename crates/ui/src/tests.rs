@@ -137,8 +137,7 @@ fn sent(effects: &[Effect]) -> Vec<CommandBody> {
             Effect::SaveTicket(_)
             | Effect::ForgetTicket
             | Effect::Focus(_)
-            | Effect::ShowEffort(_)
-            | Effect::Log(_) => None,
+            | Effect::ShowEffort(_) => None,
         })
         .collect()
 }
@@ -806,21 +805,13 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
                 (text("low"), text("low effort"), false, false),
                 (text("high"), text("high effort"), false, false),
             ])),
-            Vec::from([
-                Effect::Log(Status {
-                    state: LinkState::Live,
-                    host: Some(text("desk")),
-                    providers: Some(claude(signed_in())),
-                    error: None,
-                }),
-                Effect::Send {
-                    body: CommandBody::SetEffort {
-                        session: SESSION,
-                        effort: Effort::High
-                    },
-                    reply: reply(ReplyTo::Effort(None)),
-                }
-            ]),
+            Vec::from([Effect::Send {
+                body: CommandBody::SetEffort {
+                    session: SESSION,
+                    effort: Effort::High
+                },
+                reply: reply(ReplyTo::Effort(None)),
+            }]),
             Vec::from([Effect::ShowEffort(String::new())]),
             Some(text("a turn is already running")),
         )

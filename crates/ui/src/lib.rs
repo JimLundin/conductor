@@ -21,7 +21,7 @@ mod transcript;
 mod tests;
 
 use crate::prelude::*;
-use client::link::{Status, Update};
+use client::link::Update;
 use proto::{
     CheckpointId, CommandBody, CommandResult, Effort, Provider, SessionId,
     Ticket, TicketError,
@@ -142,8 +142,6 @@ pub enum Effect {
     /// Put the session's effort picker back on this value, which a refused
     /// change left behind.
     ShowEffort(String),
-    /// A new link status, for the log.
-    Log(Status),
 }
 
 /// Where focus goes once a control it was on goes away.

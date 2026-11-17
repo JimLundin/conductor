@@ -73,7 +73,7 @@ impl Host {
 
     pub fn update(self, intent: Intent) -> (Self, Vec<Effect>) {
         match intent {
-            Intent::Link(update) => self.linked(update),
+            Intent::Link(update) => (self.linked(update), Vec::new()),
             Intent::Show(place) => (self.show(place), Vec::new()),
             Intent::DismissNotice => (
                 Self {
@@ -109,20 +109,13 @@ impl Host {
         }
     }
 
-    fn linked(self, update: Update) -> (Self, Vec<Effect>) {
-        let logged = match &update {
-            Update::Status(status) => Vec::from([Effect::Log(status.clone())]),
-            Update::Reset(_) | Update::Event(_) => Vec::new(),
-        };
+    fn linked(self, update: Update) -> Self {
         let (status, view) = shown_after(self.status, self.view, update);
-        (
-            Self {
-                status,
-                view,
-                ..self
-            },
-            logged,
-        )
+        Self {
+            status,
+            view,
+            ..self
+        }
     }
 
     /// Showing another place drops what the last one held: its drafts, the

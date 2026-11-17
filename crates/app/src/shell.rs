@@ -77,11 +77,6 @@ impl Shell {
                     "document.querySelector('select.effort-pick').value = '{effort}'"
                 ));
             }
-            Effect::Log(status) => tracing::info!(
-                state = ?status.state,
-                error = ?status.error,
-                "link status"
-            ),
         }
     }
 }
