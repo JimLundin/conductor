@@ -43,22 +43,22 @@ impl Draft {
             mut chosen,
             mut typed,
         } = self;
-        if let Some(chosen) = chosen.get_mut(question) {
-            match (selection, chosen.iter().position(|seen| seen == &label)) {
+        if let Some(labels) = chosen.get_mut(question) {
+            match (selection, labels.iter().position(|seen| seen == &label)) {
                 (Selection::One, _) => {
-                    chosen.clear();
-                    chosen.push(label);
+                    labels.clear();
+                    labels.push(label);
                 }
                 (Selection::Many, Some(at)) => {
-                    chosen.remove(at);
+                    labels.remove(at);
                 }
-                (Selection::Many, None) => chosen.push(label),
+                (Selection::Many, None) => labels.push(label),
             }
         }
-        if let (Selection::One, Some(typed)) =
+        if let (Selection::One, Some(text)) =
             (selection, typed.get_mut(question))
         {
-            typed.clear();
+            text.clear();
         }
         Self { chosen, typed }
     }
@@ -76,14 +76,14 @@ impl Draft {
             mut chosen,
             mut typed,
         } = self;
-        if let Some(typed) = typed.get_mut(question) {
-            typed.clear();
-            typed.push_str(text);
+        if let Some(answer) = typed.get_mut(question) {
+            answer.clear();
+            answer.push_str(text);
         }
-        if let (Selection::One, Some(chosen)) =
+        if let (Selection::One, Some(labels)) =
             (selection, chosen.get_mut(question))
         {
-            chosen.clear();
+            labels.clear();
         }
         Self { chosen, typed }
     }
@@ -102,7 +102,7 @@ impl Draft {
                         .cloned()
                         .chain(
                             Some(typed.trim())
-                                .filter(|typed| !typed.is_empty())
+                                .filter(|trimmed| !trimmed.is_empty())
                                 .map(String::from),
                         )
                         .collect(),
@@ -110,7 +110,7 @@ impl Draft {
             })
             .collect::<Vec<Answer>>();
         Some(answers)
-            .filter(|answers| answers.iter().all(|answer| !answer.0.is_empty()))
+            .filter(|all| all.iter().all(|answer| !answer.0.is_empty()))
     }
 }
 
@@ -135,23 +135,30 @@ mod tests {
 
     #[test]
     fn every_question_needs_an_answer_before_the_draft_is_sent() {
-        let draft =
+        let fresh =
             Draft::new(&[question(Selection::One), question(Selection::Many)]);
-        let empty = draft.answers();
-        let draft = draft.pick(0, String::from("Red"), Selection::One);
-        let one = draft.answers();
-        let draft = draft
+        let empty = fresh.answers();
+        let first_only = fresh.pick(0, String::from("Red"), Selection::One);
+        let one = first_only.answers();
+        let complete = first_only
             .pick(0, String::from("Blue"), Selection::One)
             .pick(1, String::from("Apple"), Selection::Many)
             .pick(1, String::from("Pear"), Selection::Many)
             .pick(1, String::from("Apple"), Selection::Many)
             .r#type(1, " Plum ", Selection::Many);
-        let both = draft.answers();
-        let draft = draft.r#type(0, "Green", Selection::One);
-        let typed = draft.answers();
-        let draft = draft.pick(0, String::from("Red"), Selection::One);
+        let both = complete.answers();
+        let retyped = complete.r#type(0, "Green", Selection::One);
+        let typed = retyped.answers();
+        let repicked = retyped.pick(0, String::from("Red"), Selection::One);
         assert_eq!(
-            (empty, one, both, typed, draft.answers(), draft.typed(0)),
+            (
+                empty,
+                one,
+                both,
+                typed,
+                repicked.answers(),
+                repicked.typed(0)
+            ),
             (
                 None,
                 None,

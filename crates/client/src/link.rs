@@ -123,6 +123,8 @@ pub enum SendError {
     NoResult,
     #[error("{0}")]
     Wire(#[from] WireError),
+    #[error("no random source for a command id: {0}")]
+    Random(#[from] getrandom::Error),
 }
 
 /// A handle to the link's task. Dropping every handle stops the task and
@@ -154,6 +156,9 @@ impl HostLink {
     /// Binds an endpoint on `options.network` and starts the link on it. A
     /// dial that stalls is retried on a fresh endpoint of the same network,
     /// and the link then runs on whichever connected and closes the other.
+    ///
+    /// # Errors
+    /// Fails when no endpoint can be bound on `options.network`.
     pub async fn spawn(
         target: Target,
         options: LinkOptions,
@@ -199,13 +204,18 @@ impl HostLink {
     /// Runs one command on its own stream. Fails fast while not connected;
     /// the caller decides whether to retry.
     /// A `Providers` answer is in the status by the time this returns.
+    ///
+    /// # Errors
+    /// Fails when the link is not connected or has stopped, or the host
+    /// closes the stream without a result or sends one that can't be read,
+    /// or the platform has no random source for the command's id.
     pub async fn send(
         &self,
         body: CommandBody,
     ) -> Result<CommandResult, SendError> {
         let result = self.ask(|reply| Request::Send { body, reply }).await??;
-        if let CommandResult::Providers(providers) = &result {
-            let providers = providers.clone();
+        if let CommandResult::Providers(listed) = &result {
+            let providers = listed.clone();
             self.ask(|reply| Request::Adopt { providers, reply })
                 .await?;
         }
@@ -220,6 +230,9 @@ impl HostLink {
 
     /// Closes the connection and every endpoint the link bound, and returns
     /// once they are closed.
+    ///
+    /// # Errors
+    /// Fails when the link has already stopped.
     pub async fn stop(self) -> Result<(), SendError> {
         self.ask(|reply| Request::Stop { reply }).await
     }
@@ -331,15 +344,15 @@ impl Link {
     }
 
     async fn on(&mut self, input: Input) -> Result<(), Stopped> {
-        let phase = std::mem::replace(&mut self.phase, Phase::Dialing);
-        match self.step(phase, input).await {
-            Ok(phase) => {
-                self.phase = phase;
+        let current = std::mem::replace(&mut self.phase, Phase::Dialing);
+        match self.step(current, input).await {
+            Ok(next) => {
+                self.phase = next;
                 Ok(())
             }
             Err(stopped) => {
                 // Also when every handle was dropped without a stop.
-                self.close().await;
+                close(&self.endpoint, &self.retiring).await;
                 Err(stopped)
             }
         }
@@ -351,8 +364,8 @@ impl Link {
         input: Input,
     ) -> Result<Phase, Stopped> {
         match (phase, input) {
-            (Phase::Connected(connected), input) => {
-                self.carry_on(connected, input).await
+            (Phase::Connected(connected), connected_input) => {
+                self.carry_on(connected, connected_input).await
             }
             (
                 Phase::Dialing | Phase::Waiting(_),
@@ -371,7 +384,7 @@ impl Link {
                 Ok(idle)
             }
             (_, Input::Request(Some(Request::Stop { reply }))) => {
-                Err(self.stop(reply).await)
+                Err(stop(&self.endpoint, &self.retiring, reply).await)
             }
             (_, Input::Request(None)) => Err(Stopped {}),
             (idle, Input::Frame(_)) => Ok(idle),
@@ -392,7 +405,7 @@ impl Link {
     ) -> Result<Phase, Stopped> {
         let conn = connected.conn.clone();
         match self.carry(connected, input).await {
-            Ok(connected) => Ok(Phase::Connected(connected)),
+            Ok(still) => Ok(Phase::Connected(still)),
             Err(lost) => {
                 conn.close(0u32.into(), b"bye");
                 self.down(lost).await
@@ -410,11 +423,15 @@ impl Link {
                 self.outbox.disconnected(None).await?;
                 Ok(Phase::Dialing)
             }
-            lost => {
-                self.outbox.disconnected(Some(lost.to_string())).await?;
+            other => {
+                self.outbox.disconnected(Some(other.to_string())).await?;
+                let random = getrandom::u64().unwrap_or_else(|err| {
+                    tracing::warn!(%err, "no random source; backing off without jitter");
+                    0
+                });
                 let delay = backoff(
                     self.failures,
-                    random_u64(),
+                    random,
                     BACKOFF_FLOOR,
                     BACKOFF_CEILING,
                 );
@@ -499,14 +516,22 @@ impl Link {
                 Ok(connected)
             }
             Input::Request(Some(Request::Stop { reply })) => {
-                Err(self.stop(reply).await.into())
+                Err(stop(&self.endpoint, &self.retiring, reply).await.into())
             }
             Input::Request(Some(Request::Send { body, reply })) => {
-                let command = Command {
-                    id: random_command_id(),
-                    body,
-                };
-                task::spawn(answer(connected.conn.clone(), command, reply));
+                match random_command_id() {
+                    Ok(id) => {
+                        let command = Command { id, body };
+                        task::spawn(answer(
+                            connected.conn.clone(),
+                            command,
+                            reply,
+                        ));
+                    }
+                    Err(err) => {
+                        let _ = reply.send(Err(err.into()));
+                    }
+                }
                 Ok(connected)
             }
             Input::Frame(Ok(Some(event))) => {
@@ -520,18 +545,6 @@ impl Link {
             Input::Frame(Err(err)) => Err(err.into()),
             Input::Dial => Ok(connected),
         }
-    }
-
-    async fn stop(&mut self, reply: oneshot::Sender<()>) -> Stopped {
-        self.close().await;
-        let _ = reply.send(());
-        Stopped {}
-    }
-
-    /// Closes the endpoint the link runs on and waits out the retired ones.
-    async fn close(&mut self) {
-        self.endpoint.close().await;
-        let _ = join_all(self.retiring.iter().map(Endpoint::closed)).await;
     }
 
     fn cursor_seq(&self) -> HostSeq {
@@ -695,17 +708,33 @@ async fn dial(
     endpoint.connect(addr, proto::ALPN).await
 }
 
+async fn stop(
+    endpoint: &Endpoint,
+    retiring: &[Endpoint],
+    reply: oneshot::Sender<()>,
+) -> Stopped {
+    close(endpoint, retiring).await;
+    let _ = reply.send(());
+    Stopped {}
+}
+
+/// Closes the endpoint the link runs on and waits out the retired ones.
+async fn close(endpoint: &Endpoint, retiring: &[Endpoint]) {
+    endpoint.close().await;
+    let _ = join_all(retiring.iter().map(Endpoint::closed)).await;
+}
+
 /// Dials from `endpoint`, and from a fresh endpoint too if the first dial
 /// hasn't returned after [`HEDGE_AFTER`].
 async fn dial_hedged(
     network: Network,
-    endpoint: Endpoint,
+    bound: Endpoint,
     addr: EndpointAddr,
 ) -> Dialed {
     let Attempt {
         endpoint,
         mut connecting,
-    } = Attempt::start(endpoint, addr.clone());
+    } = Attempt::start(bound, addr.clone());
     tokio::select! {
         conn = &mut connecting => Dialed { endpoint, conn, retired: None },
         () = sleep(HEDGE_AFTER) => hedge(network, Attempt { endpoint, connecting }, addr).await,
@@ -750,10 +779,10 @@ async fn race(first: Attempt, second: Attempt) -> Dialed {
 /// decides.
 async fn settle(
     endpoint: Endpoint,
-    conn: Result<Connection, ConnectError>,
+    outcome: Result<Connection, ConnectError>,
     other: Attempt,
 ) -> Dialed {
-    match conn {
+    match outcome {
         Ok(conn) => {
             tracing::info!(endpoint = %endpoint.id().fmt_short(), "hedged dial connected");
             Dialed {
@@ -852,10 +881,10 @@ fn backoff(
     floor: Duration,
     ceiling: Duration,
 ) -> Duration {
-    let ceiling = floor
+    let capped = floor
         .saturating_mul(1u32.checked_shl(failures).unwrap_or(u32::MAX))
         .min(ceiling);
-    let half = ceiling.checked_div(2).unwrap_or(ceiling);
+    let half = capped.checked_div(2).unwrap_or(capped);
     let span = u64::try_from(half.as_millis())
         .unwrap_or(u64::MAX)
         .saturating_add(1);
@@ -863,16 +892,10 @@ fn backoff(
     half.saturating_add(jitter)
 }
 
-fn random_command_id() -> CommandId {
+fn random_command_id() -> Result<CommandId, getrandom::Error> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("the platform has a random source");
-    CommandId(u128::from_le_bytes(bytes))
-}
-
-fn random_u64() -> u64 {
-    let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).expect("the platform has a random source");
-    u64::from_le_bytes(bytes)
+    getrandom::fill(&mut bytes)?;
+    Ok(CommandId(u128::from_le_bytes(bytes)))
 }
 
 #[cfg(test)]

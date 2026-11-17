@@ -401,8 +401,8 @@ enum TodoStatus {
 }
 
 fn todos(input: &Value) -> serde_json::Result<Vec<PlanStep>> {
-    serde_json::from_value::<TodoInput>(input.clone()).map(|input| {
-        input
+    serde_json::from_value::<TodoInput>(input.clone()).map(|parsed| {
+        parsed
             .todos
             .into_iter()
             .map(|todo| PlanStep {
@@ -420,23 +420,23 @@ fn todos(input: &Value) -> serde_json::Result<Vec<PlanStep>> {
 impl Rule {
     /// The rule as the CLI writes it in settings: `Bash(git status)`.
     fn label(&self) -> String {
-        match &self.rule_content {
-            Some(content) => format!("{}({content})", self.tool_name),
-            None => self.tool_name.clone(),
-        }
+        self.rule_content.as_ref().map_or_else(
+            || self.tool_name.clone(),
+            |content| format!("{}({content})", self.tool_name),
+        )
     }
 }
 
 /// The session grant the CLI's suggestions offer: their allow rules, if
 /// any.
-fn grant(suggestions: Option<Value>) -> Option<Grant> {
-    let suggestions = suggestions
+fn grant(raw: Option<Value>) -> Option<Grant> {
+    let suggestions = raw
         .and_then(|value| serde_json::from_value::<Vec<Value>>(value).ok())
         .unwrap_or_default()
         .into_iter()
         .filter_map(|value| serde_json::from_value::<Suggestion>(value).ok())
         .collect::<Vec<Suggestion>>();
-    let rules = suggestions
+    let allowed = suggestions
         .into_iter()
         .filter_map(|suggestion| match suggestion {
             Suggestion::AddRules {
@@ -446,7 +446,7 @@ fn grant(suggestions: Option<Value>) -> Option<Grant> {
         })
         .flatten()
         .collect::<Vec<Value>>();
-    Some(rules)
+    Some(allowed)
         .filter(|rules| !rules.is_empty())
         .map(|rules| Grant {
             label: rules
@@ -537,6 +537,9 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
         | Frame::User {
             parent_tool_use_id: Some(_),
             ..
+        }
+        | Frame::StreamEvent {
+            event: StreamEvent { delta: None },
         } => Inbound::Event(ClaudeEvent::Unknown(raw)),
         Frame::StreamEvent {
             event:
@@ -550,9 +553,6 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
                     delta: Some(Delta::ThinkingDelta { thinking }),
                 },
         } => Inbound::Event(ClaudeEvent::ThinkingDelta { text: thinking }),
-        Frame::StreamEvent {
-            event: StreamEvent { delta: None },
-        } => Inbound::Event(ClaudeEvent::Unknown(raw)),
         Frame::Result {
             subtype,
             is_error,
@@ -581,7 +581,7 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
         Frame::ControlRequest {
             request_id,
             request,
-        } => control_request(request_id, request),
+        } => control_request(request_id, &request),
         Frame::ControlResponse {
             response:
                 ControlResponse::Success {
@@ -607,15 +607,16 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
 }
 
 fn tool_outcome(is_error: Option<bool>) -> ToolOutcome {
-    match is_error.unwrap_or(false).then_some(ToolOutcome::Failed) {
-        Some(failed) => failed,
-        None => ToolOutcome::Succeeded,
+    if is_error.unwrap_or(false) {
+        ToolOutcome::Failed
+    } else {
+        ToolOutcome::Succeeded
     }
 }
 
 /// A request we can't parse, unknown or malformed, still yields its
 /// `request_id`, so it gets an error reply.
-fn control_request(request_id: String, request: Value) -> Inbound {
+fn control_request(request_id: String, request: &Value) -> Inbound {
     match serde_json::from_value::<ControlRequest>(request.clone()) {
         Ok(ControlRequest::CanUseTool {
             tool_name,
@@ -632,17 +633,15 @@ fn control_request(request_id: String, request: Value) -> Inbound {
                         id: id.clone(),
                         questions: asked
                             .into_iter()
-                            .map(|asked| Question {
-                                header: asked.header,
-                                text: asked.question,
-                                options: asked.options,
-                                selection: match asked
-                                    .multi_select
-                                    .unwrap_or(false)
-                                    .then_some(Selection::Many)
+                            .map(|one| Question {
+                                header: one.header,
+                                text: one.question,
+                                options: one.options,
+                                selection: if one.multi_select.unwrap_or(false)
                                 {
-                                    Some(many) => many,
-                                    None => Selection::One,
+                                    Selection::Many
+                                } else {
+                                    Selection::One
                                 },
                             })
                             .collect(),
@@ -651,18 +650,18 @@ fn control_request(request_id: String, request: Value) -> Inbound {
                     None,
                 )
             } else {
-                let grant = grant(permission_suggestions);
+                let offered = grant(permission_suggestions);
                 (
                     ClaudeEvent::PermissionRequested {
                         id: id.clone(),
                         tool: tool_kind(&tool_name, &input),
                         tool_name,
                         tool_use_id,
-                        for_session: grant
+                        for_session: offered
                             .as_ref()
-                            .map(|grant| grant.label.clone()),
+                            .map(|session_grant| session_grant.label.clone()),
                     },
-                    grant,
+                    offered,
                 )
             };
             Inbound::Permission {
@@ -779,8 +778,7 @@ struct Settings {
 }
 
 pub fn applied(settings: Value) -> serde_json::Result<Applied> {
-    serde_json::from_value::<Settings>(settings)
-        .map(|settings| settings.applied)
+    serde_json::from_value::<Settings>(settings).map(|parsed| parsed.applied)
 }
 
 /// The row of `models` that stands for whichever model is the default.
@@ -1038,10 +1036,10 @@ fn verdict(
 /// `AskUserQuestion`'s input with `answers` added: each question's text to
 /// its answer, the chosen labels joined with ", " as the CLI's own prompt
 /// joins them.
-fn answered(input: Value, answers: Vec<Answer>) -> serde_json::Result<Value> {
+fn answered(input: Value, given: Vec<Answer>) -> serde_json::Result<Value> {
     let answers = questions(&input)?
         .into_iter()
-        .zip(answers)
+        .zip(given)
         .map(|(asked, answer)| {
             (asked.question, Value::String(answer.0.join(", ")))
         })
@@ -1072,43 +1070,46 @@ mod tests {
         encode, parse_line,
     };
 
-    fn json(text: &str) -> Value {
-        serde_json::from_str(text).unwrap()
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+    fn json(text: &str) -> serde_json::Result<Value> {
+        serde_json::from_str(text)
     }
 
-    fn sent(msg: Outbound) -> Value {
-        json(&encode(msg).unwrap())
+    fn sent(msg: Outbound) -> serde_json::Result<Value> {
+        json(&encode(msg)?)
     }
 
     /// A `can_use_tool` request as the CLI prints it, read: what the actor
     /// emits, and what it keeps for the answer.
-    fn asked(line: &str) -> (ClaudeEvent, Open) {
-        match parse_line(line).unwrap() {
-            Inbound::Permission { open, event, .. } => Some((event, open)),
-            Inbound::Event(_)
+    fn asked(line: &str) -> TestResult<(ClaudeEvent, Open)> {
+        match parse_line(line)? {
+            Inbound::Permission { open, event, .. } => Ok((event, open)),
+            other @ (Inbound::Event(_)
             | Inbound::ControlResponse { .. }
-            | Inbound::UnsupportedControlRequest { .. } => None,
+            | Inbound::UnsupportedControlRequest { .. }) => {
+                Err(format!("not a permission request: {other:?}").into())
+            }
         }
-        .unwrap()
     }
 
     /// The `response` of our answer to the request on `line`.
     fn answered(
         line: &str,
         decision: PermissionDecision,
-    ) -> (ClaudeEvent, Value) {
-        let (event, open) = asked(line);
-        let sent = sent(Outbound::Permission {
+    ) -> TestResult<(ClaudeEvent, Value)> {
+        let (event, open) = asked(line)?;
+        let reply = sent(Outbound::Permission {
             id: PermissionRequestId(String::from("r1")),
             decision,
             open,
-        });
-        let response = sent
+        })?;
+        let response = reply
             .get("response")
-            .and_then(|reply| reply.get("response"))
+            .and_then(|envelope| envelope.get("response"))
             .cloned()
-            .unwrap();
-        (event, response)
+            .ok_or("the reply has no response")?;
+        Ok((event, response))
     }
 
     /// Recorded from Claude Code 2.1.316 (`s1`, 2026-11-12).
@@ -1168,19 +1169,21 @@ mod tests {
     const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","display_name":"AskUserQuestion","input":{"questions":[{"question":"Which fruits do you like?","header":"Fruits","options":[{"label":"Apple","description":"Crisp"},{"label":"Pear","description":"Soft"}],"multiSelect":true},{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false}]},"tool_use_id":"toolu_3","requires_user_interaction":true}}"#;
 
     #[test]
-    fn allow_echoes_the_proposed_input_as_updated_input() {
+    fn allow_echoes_the_proposed_input_as_updated_input() -> TestResult<()> {
         assert_eq!(
-            answered(WRITE, PermissionDecision::Allow).1,
+            answered(WRITE, PermissionDecision::Allow)?.1,
             json(
                 r#"{"behavior": "allow", "updatedInput": {"file_path": "/tmp/a.txt", "content": "hi"}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn allow_for_session_adds_the_suggested_rules_for_the_session_only() {
+    fn allow_for_session_adds_the_suggested_rules_for_the_session_only()
+    -> TestResult<()> {
         let (event, response) =
-            answered(BASH, PermissionDecision::AllowForSession);
+            answered(BASH, PermissionDecision::AllowForSession)?;
         assert_eq!(
             event,
             ClaudeEvent::PermissionRequested {
@@ -1200,14 +1203,15 @@ mod tests {
                 "updatedInput": {"command": "touch t1.txt", "description": "Create empty file t1.txt"},
                 "updatedPermissions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "touch t1.txt"}],
                     "behavior": "allow", "destination": "session"}]}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn a_suggested_mode_is_no_session_grant() {
+    fn a_suggested_mode_is_no_session_grant() -> TestResult<()> {
         let (event, response) =
-            answered(WRITE, PermissionDecision::AllowForSession);
+            answered(WRITE, PermissionDecision::AllowForSession)?;
         assert_eq!(
             (event, response.get("updatedPermissions")),
             (
@@ -1223,9 +1227,10 @@ mod tests {
                     tool_use_id: String::from("toolu_2"),
                     for_session: None,
                 },
-                Some(&json("[]")),
+                Some(&json("[]")?),
             )
         );
+        Ok(())
     }
 
     fn option(label: &str, description: &str) -> QuestionOption {
@@ -1236,7 +1241,8 @@ mod tests {
     }
 
     #[test]
-    fn ask_user_question_is_a_question_answered_in_its_input() {
+    fn ask_user_question_is_a_question_answered_in_its_input() -> TestResult<()>
+    {
         let (event, response) = answered(
             ASK,
             PermissionDecision::Answer(Vec::from([
@@ -1246,7 +1252,7 @@ mod tests {
                 ])),
                 Answer(Vec::from([String::from("Green, really")])),
             ])),
-        );
+        )?;
         assert_eq!(
             event,
             ClaudeEvent::QuestionAsked {
@@ -1282,45 +1288,47 @@ mod tests {
                     .and_then(|input| input.get("answers"))
             ),
             (
-                Some(&json(r#""allow""#)),
+                Some(&json(r#""allow""#)?),
                 Some(&json(
                     r#"{"Which fruits do you like?": "Apple, Pear", "Which color do you prefer?": "Green, really"}"#
-                ))
+                )?)
             )
         );
+        Ok(())
     }
 
-    fn denied(then: AfterDeny) -> Value {
-        let (_, open) = asked(WRITE);
-        sent(Outbound::Permission {
+    fn denied(then: AfterDeny) -> TestResult<Value> {
+        let (_, open) = asked(WRITE)?;
+        Ok(sent(Outbound::Permission {
             id: PermissionRequestId(String::from("r2")),
             decision: PermissionDecision::Deny {
                 message: String::from("not b.txt"),
                 then,
             },
             open,
-        })
+        })?)
     }
 
     #[test]
-    fn deny_sends_interrupt_only_when_set() {
+    fn deny_sends_interrupt_only_when_set() -> TestResult<()> {
         assert_eq!(
-            denied(AfterDeny::Continue),
+            denied(AfterDeny::Continue)?,
             json(
                 r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
                 "response": {"behavior": "deny", "message": "not b.txt"}}}"#
-            )
+            )?
         );
         assert_eq!(
-            denied(AfterDeny::Interrupt),
+            denied(AfterDeny::Interrupt)?,
             json(
                 r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
                 "response": {"behavior": "deny", "message": "not b.txt", "interrupt": true}}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
-    fn control(call: ControlCall) -> Value {
+    fn control(call: ControlCall) -> serde_json::Result<Value> {
         sent(Outbound::Control {
             request_id: String::from("req_7"),
             call,
@@ -1328,56 +1336,59 @@ mod tests {
     }
 
     #[test]
-    fn control_requests_match_the_sdk_envelope() {
+    fn control_requests_match_the_sdk_envelope() -> TestResult<()> {
         assert_eq!(
-            control(ControlCall::Interrupt),
+            control(ControlCall::Interrupt)?,
             json(
                 r#"{"type": "control_request", "request_id": "req_7", "request": {"subtype": "interrupt"}}"#
-            )
+            )?
         );
         assert_eq!(
             control(ControlCall::SetPermissionMode(
                 PermissionMode::AcceptEdits
-            )),
+            ))?,
             json(
                 r#"{"type": "control_request", "request_id": "req_7",
                 "request": {"subtype": "set_permission_mode", "mode": "acceptEdits"}}"#
-            )
+            )?
         );
         // The SDK also sends `"hooks": null`; we omit it and the CLI accepts that.
         assert_eq!(
-            control(ControlCall::Initialize),
+            control(ControlCall::Initialize)?,
             json(
                 r#"{"type": "control_request", "request_id": "req_7", "request": {"subtype": "initialize"}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn user_text_is_sent_as_one_text_block() {
+    fn user_text_is_sent_as_one_text_block() -> TestResult<()> {
         assert_eq!(
-            sent(Outbound::User(String::from("create a.txt"))),
+            sent(Outbound::User(String::from("create a.txt")))?,
             json(
                 r#"{"type": "user", "message": {"role": "user",
                 "content": [{"type": "text", "text": "create a.txt"}]}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn unsupported_control_request_gets_an_error_reply() {
+    fn unsupported_control_request_gets_an_error_reply() -> TestResult<()> {
         assert_eq!(
             sent(Outbound::ControlError {
                 request_id: String::from("cli_9"),
                 message: String::from(
                     "unsupported control request subtype: hook_callback"
                 ),
-            }),
+            })?,
             json(
                 r#"{"type": "control_response", "response": {"subtype": "error", "request_id": "cli_9",
                 "error": "unsupported control request subtype: hook_callback"}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
@@ -1388,7 +1399,7 @@ mod tests {
             parse_line(line)?,
             Inbound::Event(ClaudeEvent::Unknown(json(
                 r#"{"type": "brand_new_frame", "x": 1}"#
-            )))
+            )?))
         );
         Ok(())
     }
@@ -1449,25 +1460,24 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn tool_inputs_become_shared_tool_kinds()
-    -> Result<(), Box<dyn std::error::Error>> {
-        struct Case {
-            name: String,
-            input: Value,
-            want: ToolKind,
-        }
-        let cases = [
-            Case {
+    struct ToolCase {
+        name: String,
+        input: &'static str,
+        want: ToolKind,
+    }
+
+    fn tool_cases() -> [ToolCase; 11] {
+        [
+            ToolCase {
                 name: String::from("Bash"),
-                input: json(r#"{"command":"ls -a"}"#),
+                input: r#"{"command":"ls -a"}"#,
                 want: ToolKind::Command {
                     command: String::from("ls -a"),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Write"),
-                input: json(r#"{"file_path":"a.txt"}"#),
+                input: r#"{"file_path":"a.txt"}"#,
                 want: ToolKind::FileChange {
                     files: Vec::from([FileChange {
                         path: String::from("a.txt"),
@@ -1475,9 +1485,9 @@ mod tests {
                     }]),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Edit"),
-                input: json(r#"{"file_path":"b.txt"}"#),
+                input: r#"{"file_path":"b.txt"}"#,
                 want: ToolKind::FileChange {
                     files: Vec::from([FileChange {
                         path: String::from("b.txt"),
@@ -1485,9 +1495,9 @@ mod tests {
                     }]),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("MultiEdit"),
-                input: json(r#"{"file_path":"c.txt"}"#),
+                input: r#"{"file_path":"c.txt"}"#,
                 want: ToolKind::FileChange {
                     files: Vec::from([FileChange {
                         path: String::from("c.txt"),
@@ -1495,57 +1505,57 @@ mod tests {
                     }]),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Read"),
-                input: json(r#"{"file_path":"d.txt"}"#),
+                input: r#"{"file_path":"d.txt"}"#,
                 want: ToolKind::Other {
                     name: String::from("Read"),
                     detail: String::from("d.txt"),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Grep"),
-                input: json(r#"{"pattern":"fn main"}"#),
+                input: r#"{"pattern":"fn main"}"#,
                 want: ToolKind::Other {
                     name: String::from("Grep"),
                     detail: String::from("fn main"),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Glob"),
-                input: json(r#"{"pattern":"*.rs"}"#),
+                input: r#"{"pattern":"*.rs"}"#,
                 want: ToolKind::Other {
                     name: String::from("Glob"),
                     detail: String::from("*.rs"),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("WebFetch"),
-                input: json(r#"{"url":"https://example.com"}"#),
+                input: r#"{"url":"https://example.com"}"#,
                 want: ToolKind::Other {
                     name: String::from("WebFetch"),
                     detail: String::from("https://example.com"),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Write"),
-                input: json(r#"{"content":"no path"}"#),
+                input: r#"{"content":"no path"}"#,
                 want: ToolKind::Other {
                     name: String::from("Write"),
                     detail: String::from(r#"{"content":"no path"}"#),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("Bash"),
-                input: json(r#"{"command":7}"#),
+                input: r#"{"command":7}"#,
                 want: ToolKind::Other {
                     name: String::from("Bash"),
                     detail: String::from(r#"{"command":7}"#),
                 },
             },
-            Case {
+            ToolCase {
                 name: String::from("TodoWrite"),
-                input: json(r#"{"todos":[{"content":"a","status":"later"}]}"#),
+                input: r#"{"todos":[{"content":"a","status":"later"}]}"#,
                 want: ToolKind::Other {
                     name: String::from("TodoWrite"),
                     detail: String::from(
@@ -1553,9 +1563,15 @@ mod tests {
                     ),
                 },
             },
-        ];
+        ]
+    }
+
+    #[test]
+    fn tool_inputs_become_shared_tool_kinds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cases = tool_cases();
         let (got, want) = cases.into_iter().map(|case| {
-            let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"call","name":{},"input":{}}}]}}}}"#, serde_json::to_string(&case.name)?, case.input);
+            let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"call","name":{},"input":{}}}]}}}}"#, serde_json::to_string(&case.name)?, json(case.input)?);
             let got = match parse_line(&line)? {
                 Inbound::Event(ClaudeEvent::Message { content, .. }) => content.into_iter().find_map(|block| match block {
                     super::Block::ToolUse { tool, .. } => Some(tool),

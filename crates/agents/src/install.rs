@@ -1,5 +1,6 @@
-//! Installs the pinned CLIs (`pins.rs`, docs/architecture.md §6.2). Each
-//! one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
+//! Installs the pinned CLIs (`pins.rs`, docs/architecture.md §6.2).
+//!
+//! Each one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
 //! file, a SHA-256 check of that file against the pin and a rename, so a
 //! crash leaves either nothing or a verified install. `<data>/cli/<cli>/lock`
 //! keeps two processes from installing into one data dir at once.
@@ -149,6 +150,10 @@ fn pin(cli: Cli) -> Result<Pin, InstallError> {
 /// Makes sure the pinned `cli` is installed under `data_dir` and returns its
 /// path, after removing every other version. It runs before any session, so
 /// no session can be using one.
+///
+/// # Errors
+/// Fails when the CLI has no pin for this platform, or the download,
+/// verification or install fails.
 pub async fn install(
     cli: Cli,
     data_dir: &Path,
@@ -406,12 +411,15 @@ mod tests {
     }
 
     /// Every string at `pointer` in the lines recorded in `fixtures/<dir>`.
-    fn recorded(dir: &str, pointer: &str) -> BTreeSet<String> {
-        std::fs::read_dir(root().join("fixtures").join(dir))
-            .unwrap()
-            .map(|entry| {
-                std::fs::read_to_string(entry.unwrap().path()).unwrap()
-            })
+    fn recorded(
+        dir: &str,
+        pointer: &str,
+    ) -> Result<BTreeSet<String>, std::io::Error> {
+        let texts = std::fs::read_dir(root().join("fixtures").join(dir))?
+            .map(|entry| std::fs::read_to_string(entry?.path()))
+            .collect::<Result<Vec<String>, std::io::Error>>()?;
+        Ok(texts
+            .iter()
             .flat_map(|text| {
                 text.lines()
                     .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -422,7 +430,7 @@ mod tests {
                     })
                     .collect::<Vec<String>>()
             })
-            .collect()
+            .collect())
     }
 
     #[test]
@@ -430,7 +438,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let version = String::from(pins::CLAUDE_VERSION);
         let versions =
-            recorded("claude", "/response/response/claude_code_version");
+            recorded("claude", "/response/response/claude_code_version")?;
         let initialize = serde_json::from_str(&format!(
             "{{\"claude_code_version\": \"{version}\"}}"
         ))?;
@@ -448,19 +456,20 @@ mod tests {
     }
 
     #[test]
-    fn codex_pin_is_recorded() {
+    fn codex_pin_is_recorded() -> Result<(), Box<dyn std::error::Error>> {
         let version = String::from(pins::CODEX_VERSION);
-        let versions = recorded("codex", "/result/userAgent")
+        let versions = recorded("codex", "/result/userAgent")?
             .iter()
             .filter_map(|agent| agent.split_whitespace().next())
             .filter_map(|product| product.split_once('/'))
-            .map(|(_, version)| String::from(version))
+            .map(|(_, recorded_version)| String::from(recorded_version))
             .collect::<BTreeSet<String>>();
         assert_eq!(
             versions.get(&version),
             Some(&version),
             "no fixture in fixtures/codex was recorded at the pinned codex; run s2"
         );
+        Ok(())
     }
 
     /// The test binary: 8 MiB of sevens, sent in 64 KiB pieces with a pause

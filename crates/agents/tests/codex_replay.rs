@@ -23,6 +23,8 @@ use proto::{Answer, Effort, TaskStatus, ToolKind, ToolPhase, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/codex")
@@ -33,21 +35,20 @@ fn fixture(name: &str) -> PathBuf {
 /// found there. The script is committed, not written here: executing a file
 /// another test thread may have just written fails with "Text file busy" when
 /// a concurrent fork still holds it open.
-fn fake_codex_dir(fixture: &Path) -> PathBuf {
-    let dir = std::env::current_exe()
-        .unwrap()
+fn fake_codex_dir(fixture: &Path) -> TestResult<PathBuf> {
+    let stem = fixture
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or("the fixture has no UTF-8 file stem")?;
+    let dir = std::env::current_exe()?
         .ancestors()
         .nth(3)
-        .unwrap()
+        .ok_or("the test binary is not under target/<profile>/deps")?
         .join("tmp")
-        .join(format!(
-            "agents-codex-replay-{}-{}",
-            std::process::id(),
-            fixture.file_stem().unwrap().to_str().unwrap()
-        ));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::copy(fixture, dir.join("stdout.jsonl")).unwrap();
-    dir
+        .join(format!("agents-codex-replay-{}-{stem}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(fixture, dir.join("stdout.jsonl"))?;
+    Ok(dir)
 }
 
 fn opts() -> ThreadOptions {
@@ -110,38 +111,34 @@ struct Recorder {
 }
 
 impl Recorder {
-    async fn until(self, goal: Goal, interrupt: Interrupt) -> Self {
-        Self {
-            goal,
-            interrupt,
-            ..self
-        }
-        .run()
-        .await
-    }
-
-    async fn run(mut self) -> Self {
+    async fn until(
+        &mut self,
+        goal: Goal,
+        interrupt: Interrupt,
+    ) -> TestResult<()> {
+        self.goal = goal;
+        self.interrupt = interrupt;
         loop {
-            let event = self.next().await;
-            match self.on(event).await {
+            let event = self.next().await?;
+            match self.on(event).await? {
                 Progress::Playing => {}
-                Progress::Done => break self,
+                Progress::Done => break Ok(()),
             }
         }
     }
 
-    async fn next(&mut self) -> CodexEvent {
+    async fn next(&mut self) -> TestResult<CodexEvent> {
         let event =
             tokio::time::timeout(Duration::from_secs(20), self.events.recv())
                 .await
-                .expect("no event within 20s; the replay is stuck")
-                .expect("event stream ended early");
+                .map_err(|_| "no event within 20s; the replay is stuck")?
+                .ok_or("event stream ended early")?;
         self.record(&event);
-        event
+        Ok(event)
     }
 
-    async fn on(&mut self, event: CodexEvent) -> Progress {
-        match (&self.goal, event) {
+    async fn on(&mut self, received: CodexEvent) -> TestResult<Progress> {
+        Ok(match (&self.goal, received) {
             (Goal::Exit, CodexEvent::Exited { .. }) => Progress::Done,
             (
                 Goal::Turns,
@@ -173,26 +170,21 @@ impl Recorder {
                     (
                         ThreadEvent::ApprovalRequested { .. },
                         Interrupt::OnRequest,
+                    )
+                    | (
+                        ThreadEvent::AgentMessage { .. }
+                        | ThreadEvent::ToolCall { .. },
+                        Interrupt::AfterFirstOutput,
                     ) => {
-                        expected.interrupt(turn.clone()).await.unwrap();
+                        expected.interrupt(turn.clone()).await?;
                         self.interrupt = Interrupt::Sent;
                         Progress::Playing
                     }
                     (ThreadEvent::ApprovalRequested { id, .. }, _) => {
                         self.server
                             .respond(id.clone(), decision.clone())
-                            .await
-                            .unwrap();
+                            .await?;
                         self.answered.push(id);
-                        Progress::Playing
-                    }
-                    (
-                        ThreadEvent::AgentMessage { .. }
-                        | ThreadEvent::ToolCall { .. },
-                        Interrupt::AfterFirstOutput,
-                    ) => {
-                        expected.interrupt(turn.clone()).await.unwrap();
-                        self.interrupt = Interrupt::Sent;
                         Progress::Playing
                     }
                     (ThreadEvent::TurnCompleted { turn: done, .. }, _)
@@ -206,11 +198,11 @@ impl Recorder {
             (Goal::Exit | Goal::Turns | Goal::Turn { .. }, _) => {
                 Progress::Playing
             }
-        }
+        })
     }
 
-    fn record(&mut self, event: &CodexEvent) {
-        match event {
+    fn record(&mut self, received: &CodexEvent) {
+        match received {
             CodexEvent::Thread {
                 event: ThreadEvent::Unknown(raw),
                 ..
@@ -294,7 +286,7 @@ fn summary(event: &ThreadEvent) -> String {
         ThreadEvent::ApprovalRequested {
             id, kind, options, ..
         } => {
-            let kind = match kind {
+            let label = match kind {
                 ApprovalKind::Command { .. } => "command",
                 ApprovalKind::FileChange { .. } => "fileChange",
                 ApprovalKind::Permissions { .. } => "permissions",
@@ -302,7 +294,7 @@ fn summary(event: &ThreadEvent) -> String {
                     &format!("userInput {questions:?}")
                 }
             };
-            format!("approval {} {kind} ({} options)", id.0, options.len())
+            format!("approval {} {label} ({} options)", id.0, options.len())
         }
         ThreadEvent::ApprovalCancelled { id } => {
             format!("approval {} cancelled", id.0)
@@ -329,18 +321,17 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
     }
 }
 
-async fn spawn(name: &str) -> Recorder {
+async fn spawn(name: &str) -> TestResult<Recorder> {
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fake-codex.sh"),
         home: Home::User,
         credential: None,
-        cwd: fake_codex_dir(&fixture(name)),
+        cwd: fake_codex_dir(&fixture(name))?,
         stdout_log: None,
     })
-    .await
-    .expect("initialize is answered by the recording");
-    Recorder {
+    .await?;
+    Ok(Recorder {
         server,
         events,
         goal: Goal::Exit,
@@ -351,18 +342,18 @@ async fn spawn(name: &str) -> Recorder {
         deltas: HashMap::new(),
         unknown: BTreeMap::new(),
         answered: Vec::new(),
-    }
+    })
 }
 
 /// Starts a turn on `thread` and records it until it completes.
 async fn turn(
-    rec: Recorder,
+    rec: &mut Recorder,
     thread: &CodexThread,
     text: &str,
     decision: Decision,
     interrupt: Interrupt,
-) -> Recorder {
-    let turn = thread.send_turn(String::from(text), None).await.unwrap();
+) -> TestResult<()> {
+    let turn = thread.send_turn(String::from(text), None).await?;
     let goal = Goal::Turn {
         thread: thread.clone(),
         turn,
@@ -379,9 +370,8 @@ async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
 }
 
 #[tokio::test]
-async fn approve_decline_interrupt_and_two_threads()
--> Result<(), Box<dyn std::error::Error>> {
-    let rec = spawn("server1.jsonl").await;
+async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
+    let mut rec = spawn("server1.jsonl").await?;
     let server = rec.server.clone();
     assert_eq!(server.codex_version(), Some("0.166.0"));
     let models = server.list_models().await?;
@@ -394,17 +384,17 @@ async fn approve_decline_interrupt_and_two_threads()
     );
 
     let a = server.start_thread(opts()).await?;
-    let rec = turn(rec, &a, "a.txt", Decision::Accept, Interrupt::Never).await;
-    let rec = turn(rec, &a, "b.txt", Decision::Decline, Interrupt::Never).await;
-    let rec = turn(
-        rec,
+    turn(&mut rec, &a, "a.txt", Decision::Accept, Interrupt::Never).await?;
+    turn(&mut rec, &a, "b.txt", Decision::Decline, Interrupt::Never).await?;
+    turn(
+        &mut rec,
         &a,
         "long",
         Decision::Decline,
         Interrupt::AfterFirstOutput,
     )
-    .await;
-    let rec = turn(rec, &a, "pong", Decision::Decline, Interrupt::Never).await;
+    .await?;
+    turn(&mut rec, &a, "pong", Decision::Decline, Interrupt::Never).await?;
 
     let b = server.start_thread(opts()).await?;
     let c = server.start_thread(opts()).await?;
@@ -413,120 +403,115 @@ async fn approve_decline_interrupt_and_two_threads()
         c.send_turn(String::from("bravo"), None),
     )
     .await?;
-    let rec = Recorder {
-        open: HashMap::from([(b.id.clone(), tb), (c.id.clone(), tc)]),
-        ..rec
-    }
-    .until(Goal::Turns, Interrupt::Never)
-    .await;
+    rec.open = HashMap::from([(b.id.clone(), tb), (c.id.clone(), tc)]);
+    rec.until(Goal::Turns, Interrupt::Never).await?;
 
     let again = n0_future::stream::iter(rec.answered.clone())
         .then(|id| answer_again(&server, id))
         .collect::<Vec<String>>()
         .await;
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
-    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    rec.until(Goal::Exit, Interrupt::Never).await?;
 
-    assert_eq!(
-        rec.seen,
-        [
-            "A started",
-            // 1: approve. The first write fails in the read-only sandbox
-            // without asking; the retry asks.
-            "A turn started",
-            "A streams [\"I\", \"’ll\", \" create\", \" the\", \" requested\", \" file\", \" with\", \" exactly\", \" that\", \" content\", \".\"]",
-            "A says \"I’ll create the requested file with exactly that content.\"",
-            "A started command",
-            "A finished tool Failed",
-            "A reasons \"\"",
-            "A started command",
-            "A approval 0 command (3 options)",
-            "A finished tool Succeeded",
-            "A streams [\"Created\", \" `\", \"a\", \".txt\", \"`\", \" containing\", \" exactly\", \" `\", \"hello\", \" from\", \" s\", \"2\", \"`.\"]",
-            "A says \"Created `a.txt` containing exactly `hello from s2`.\"",
-            "A turn completed",
-            // 2: decline.
-            "A turn started",
-            "A reasons \"\"",
-            "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
-            "A says \"I’ll request permission to write `b.txt`; if it’s declined, I’ll stop.\"",
-            "A started command",
-            "A approval 1 command (3 options)",
-            "A finished tool Declined",
-            "A streams [\"The\", \" request\", \" to\", \" create\", \" `\", \"b\", \".txt\", \"`\", \" was\", \" declined\", \".\"]",
-            "A says \"The request to create `b.txt` was declined.\"",
-            "A turn completed",
-            // 3: interrupt after the first output, then a normal turn.
-            "A turn started",
-            "A streams [\"starting\"]",
-            "A says \"starting\"",
-            "A turn interrupted",
-            "A turn started",
-            "A streams [\"pong\"]",
-            "A says \"pong\"",
-            "A turn completed",
-            // 4: two threads with turns in flight on one process.
-            "B started",
-            "C started",
-            "C turn started",
-            "B turn started",
-            "C streams [\"br\", \"avo\"]",
-            "C says \"bravo\"",
-            "C turn completed",
-            "B streams [\"alpha\"]",
-            "B says \"alpha\"",
-            "B turn completed",
-            "exited exit status: 0",
-        ]
-    );
+    assert_eq!(rec.seen, SERVER1_SEEN);
     assert_eq!(
         again,
         ["no open approval with id 0", "no open approval with id 1",]
     );
     // Item kinds we do not map (userMessage), reasoning and agentMessage
     // starts stay Unknown, alongside the frames §7.2 does not ask for.
-    assert_eq!(
-        rec.unknown,
-        BTreeMap::from([
-            ("account/rateLimits/updated".to_owned(), 9),
-            ("hook/completed".to_owned(), 3),
-            ("hook/started".to_owned(), 3),
-            ("item/commandExecution/outputDelta".to_owned(), 1),
-            ("item/completed".to_owned(), 6),
-            ("item/started".to_owned(), 16),
-            ("mcpServer/startupStatus/updated".to_owned(), 6),
-            ("remoteControl/status/changed".to_owned(), 1),
-            ("thread/readState/changed".to_owned(), 5),
-            ("thread/status/changed".to_owned(), 16),
-            ("thread/tokenUsage/updated".to_owned(), 9),
-        ])
-    );
+    assert_eq!(rec.unknown, server1_unknown());
     Ok(())
 }
 
+/// What `approve_decline_interrupt_and_two_threads` records.
+const SERVER1_SEEN: &[&str] = &[
+    "A started",
+    // 1: approve. The first write fails in the read-only sandbox
+    // without asking; the retry asks.
+    "A turn started",
+    "A streams [\"I\", \"’ll\", \" create\", \" the\", \" requested\", \" file\", \" with\", \" exactly\", \" that\", \" content\", \".\"]",
+    "A says \"I’ll create the requested file with exactly that content.\"",
+    "A started command",
+    "A finished tool Failed",
+    "A reasons \"\"",
+    "A started command",
+    "A approval 0 command (3 options)",
+    "A finished tool Succeeded",
+    "A streams [\"Created\", \" `\", \"a\", \".txt\", \"`\", \" containing\", \" exactly\", \" `\", \"hello\", \" from\", \" s\", \"2\", \"`.\"]",
+    "A says \"Created `a.txt` containing exactly `hello from s2`.\"",
+    "A turn completed",
+    // 2: decline.
+    "A turn started",
+    "A reasons \"\"",
+    "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
+    "A says \"I’ll request permission to write `b.txt`; if it’s declined, I’ll stop.\"",
+    "A started command",
+    "A approval 1 command (3 options)",
+    "A finished tool Declined",
+    "A streams [\"The\", \" request\", \" to\", \" create\", \" `\", \"b\", \".txt\", \"`\", \" was\", \" declined\", \".\"]",
+    "A says \"The request to create `b.txt` was declined.\"",
+    "A turn completed",
+    // 3: interrupt after the first output, then a normal turn.
+    "A turn started",
+    "A streams [\"starting\"]",
+    "A says \"starting\"",
+    "A turn interrupted",
+    "A turn started",
+    "A streams [\"pong\"]",
+    "A says \"pong\"",
+    "A turn completed",
+    // 4: two threads with turns in flight on one process.
+    "B started",
+    "C started",
+    "C turn started",
+    "B turn started",
+    "C streams [\"br\", \"avo\"]",
+    "C says \"bravo\"",
+    "C turn completed",
+    "B streams [\"alpha\"]",
+    "B says \"alpha\"",
+    "B turn completed",
+    "exited exit status: 0",
+];
+
+fn server1_unknown() -> BTreeMap<String, usize> {
+    BTreeMap::from([
+        ("account/rateLimits/updated".to_owned(), 9),
+        ("hook/completed".to_owned(), 3),
+        ("hook/started".to_owned(), 3),
+        ("item/commandExecution/outputDelta".to_owned(), 1),
+        ("item/completed".to_owned(), 6),
+        ("item/started".to_owned(), 16),
+        ("mcpServer/startupStatus/updated".to_owned(), 6),
+        ("remoteControl/status/changed".to_owned(), 1),
+        ("thread/readState/changed".to_owned(), 5),
+        ("thread/status/changed".to_owned(), 16),
+        ("thread/tokenUsage/updated".to_owned(), 9),
+    ])
+}
+
 #[tokio::test]
-async fn resume_in_a_new_process() -> Result<(), Box<dyn std::error::Error>> {
-    let rec = spawn("server2-resume.jsonl").await;
+async fn resume_in_a_new_process() -> TestResult<()> {
+    let mut rec = spawn("server2-resume.jsonl").await?;
     let server = rec.server.clone();
-    let a = ThreadId(
-        first_thread_id(&fixture("server1.jsonl")).ok_or("expected a value")?,
-    );
+    let a = ThreadId(first_thread_id(&fixture("server1.jsonl"))?);
     let resumed = server.resume_thread(a.clone(), opts()).await?;
     assert_eq!(resumed.id, a);
-    let rec = turn(
-        rec,
+    turn(
+        &mut rec,
         &resumed,
         "which file?",
         Decision::Decline,
         Interrupt::Never,
     )
-    .await;
+    .await?;
     let bogus = server
         .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
         .await
         .map_err(|e| e.to_string());
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
-    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    rec.until(Goal::Exit, Interrupt::Never).await?;
 
     assert_eq!(
         rec.seen,
@@ -547,21 +532,20 @@ async fn resume_in_a_new_process() -> Result<(), Box<dyn std::error::Error>> {
 /// reports back, and a turn that reasons. The recording goes on to the turn
 /// `s2` killed, which waits here for a `turn/start` nobody sends.
 #[tokio::test]
-async fn chosen_effort_and_reasoning() -> Result<(), Box<dyn std::error::Error>>
-{
-    let rec = spawn("server4-chosen-killed.jsonl").await;
+async fn chosen_effort_and_reasoning() -> TestResult<()> {
+    let mut rec = spawn("server4-chosen-killed.jsonl").await?;
     let server = rec.server.clone();
     let a = server.start_thread(opts()).await?;
-    let rec = turn(
-        rec,
+    turn(
+        &mut rec,
         &a,
         "is 1000003 prime?",
         Decision::Decline,
         Interrupt::Never,
     )
-    .await;
+    .await?;
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
-    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    rec.until(Goal::Exit, Interrupt::Never).await?;
     let deltas = rec
         .seen
         .iter()
@@ -600,34 +584,32 @@ async fn chosen_effort_and_reasoning() -> Result<(), Box<dyn std::error::Error>>
 /// `s2` steps 14 and 15: three plan updates, each the whole plan, and a
 /// turn started at `high`, which Codex reports as the thread's effort.
 #[tokio::test]
-async fn plan_and_effort_changed_with_the_turn()
--> Result<(), Box<dyn std::error::Error>> {
-    let rec = spawn("server8-plan-effort.jsonl").await;
+async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
+    let mut rec = spawn("server8-plan-effort.jsonl").await?;
     let server = rec.server.clone();
     let a = server.start_thread(opts()).await?;
-    let rec = turn(rec, &a, "plan", Decision::Decline, Interrupt::Never).await;
+    turn(&mut rec, &a, "plan", Decision::Decline, Interrupt::Never).await?;
     let high = a
         .send_turn(String::from("pong"), Some(Effort::High))
         .await?;
-    let rec = rec
-        .until(
-            Goal::Turn {
-                thread: a.clone(),
-                turn: high,
-                decision: Decision::Decline,
-            },
-            Interrupt::Never,
-        )
-        .await;
+    rec.until(
+        Goal::Turn {
+            thread: a.clone(),
+            turn: high,
+            decision: Decision::Decline,
+        },
+        Interrupt::Never,
+    )
+    .await?;
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
-    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    rec.until(Goal::Exit, Interrupt::Never).await?;
     let plan = |first| {
         format!(
             "A plan [(\"write a.txt\", {first}), (\"write b.txt\", Pending), (\"write c.txt\", Pending)]"
         )
     };
     let started = std::fs::read_to_string(
-        fake_codex_dir(&fixture("server8-plan-effort.jsonl"))
+        fake_codex_dir(&fixture("server8-plan-effort.jsonl"))?
             .join("stdin.jsonl"),
     )?
     .lines()
@@ -669,35 +651,34 @@ async fn plan_and_effort_changed_with_the_turn()
 /// `serverRequest/resolved` until our answer, so a change to the question's
 /// shape in a later pin fails here, as does a lost feature `warning`.
 #[tokio::test]
-async fn questions_and_accept_for_session()
--> Result<(), Box<dyn std::error::Error>> {
-    let rec = spawn("server3-questions.jsonl").await;
+async fn questions_and_accept_for_session() -> TestResult<()> {
+    let mut rec = spawn("server3-questions.jsonl").await?;
     let server = rec.server.clone();
     let a = server.start_thread(opts()).await?;
     let blue =
         Decision::Answer(Vec::from([Answer(Vec::from([String::from(
             "Blue",
         )]))]));
-    let rec = turn(rec, &a, "ask", blue, Interrupt::Never).await;
-    let rec = turn(
-        rec,
+    turn(&mut rec, &a, "ask", blue, Interrupt::Never).await?;
+    turn(
+        &mut rec,
         &a,
         "touch",
         Decision::AcceptForSession,
         Interrupt::Never,
     )
-    .await;
-    let rec = turn(rec, &a, "again", Decision::Decline, Interrupt::Never).await;
-    let rec = turn(
-        rec,
+    .await?;
+    turn(&mut rec, &a, "again", Decision::Decline, Interrupt::Never).await?;
+    turn(
+        &mut rec,
         &a,
         "ask again",
         Decision::Decline,
         Interrupt::OnRequest,
     )
-    .await;
+    .await?;
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
-    let rec = rec.until(Goal::Exit, Interrupt::Never).await;
+    rec.until(Goal::Exit, Interrupt::Never).await?;
     assert_eq!(
         rec.seen,
         [
@@ -731,45 +712,48 @@ async fn questions_and_accept_for_session()
     Ok(())
 }
 
-fn first_thread_id(fixture: &Path) -> Option<String> {
-    std::fs::read_to_string(fixture)
-        .ok()?
+fn first_thread_id(fixture: &Path) -> TestResult<String> {
+    let messages = std::fs::read_to_string(fixture)?
         .lines()
-        .map(|l| serde_json::from_str::<Value>(l).unwrap())
-        .find_map(|m| match m.get("method").and_then(Value::as_str) {
-            Some("thread/started") => Some(m),
-            _ => None,
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<Value>, _>>()?;
+    let started = messages
+        .iter()
+        .find(|m| {
+            m.get("method").and_then(Value::as_str) == Some("thread/started")
         })
-        .and_then(|m| {
-            m.pointer("/params/thread/id")?.as_str().map(str::to_owned)
-        })
+        .ok_or("the fixture starts no thread")?;
+    Ok(started
+        .pointer("/params/thread/id")
+        .and_then(Value::as_str)
+        .ok_or("thread/started names no thread id")?
+        .to_owned())
 }
 
 /// Each refusal recording has its own directory, even when tests run together.
-fn refusal_options(name: &str, recording: &str) -> ServerOptions {
+fn refusal_options(name: &str, recording: &str) -> TestResult<ServerOptions> {
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/tmp")
         .join(format!("codex-refusal-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cwd);
-    std::fs::create_dir_all(&cwd).unwrap();
-    std::fs::write(cwd.join("stdout.jsonl"), recording).unwrap();
-    ServerOptions {
+    std::fs::create_dir_all(&cwd)?;
+    std::fs::write(cwd.join("stdout.jsonl"), recording)?;
+    Ok(ServerOptions {
         codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fake-codex.sh"),
         home: Home::User,
         credential: None,
         cwd,
         stdout_log: None,
-    }
+    })
 }
 
 #[tokio::test]
-async fn initialize_exit_reports_last_nonempty_stderr_line()
--> Result<(), Box<dyn std::error::Error>> {
+async fn initialize_exit_reports_last_nonempty_stderr_line() -> TestResult<()> {
     let options = refusal_options(
         "initialize-stderr",
         r#"{"fake":"fail","stderr":"loading config\ninvalid provider configuration\n\n","status":1}"#,
-    );
+    )?;
     let cwd = options.cwd.clone();
     let error = CodexServer::spawn(options)
         .await
@@ -784,12 +768,11 @@ async fn initialize_exit_reports_last_nonempty_stderr_line()
 }
 
 #[tokio::test]
-async fn initialize_exit_without_stderr_keeps_exit_error()
--> Result<(), Box<dyn std::error::Error>> {
+async fn initialize_exit_without_stderr_keeps_exit_error() -> TestResult<()> {
     let options = refusal_options(
         "initialize-empty",
         r#"{"fake":"fail","stderr":"","status":1}"#,
-    );
+    )?;
     let cwd = options.cwd.clone();
     let error = CodexServer::spawn(options)
         .await
@@ -801,12 +784,11 @@ async fn initialize_exit_without_stderr_keeps_exit_error()
 }
 
 #[tokio::test]
-async fn initialize_rejection_reports_json_rpc_message()
--> Result<(), Box<dyn std::error::Error>> {
+async fn initialize_rejection_reports_json_rpc_message() -> TestResult<()> {
     let options = refusal_options(
         "initialize-rpc",
         r#"{"id":1,"error":{"code":-32600,"message":"unsupported initialize request"}}"#,
-    );
+    )?;
     let cwd = options.cwd.clone();
     let error = CodexServer::spawn(options)
         .await
@@ -820,20 +802,28 @@ async fn initialize_rejection_reports_json_rpc_message()
     Ok(())
 }
 
-async fn thread_refusal(method: &str, failure: &str, expected: &str) {
+async fn thread_refusal(
+    method: &str,
+    failure: &str,
+    expected: &str,
+) -> TestResult<()> {
     let recording = format!(
         "{{\"id\":1,\"result\":{{\"userAgent\":\"conductor/0.166.0\"}}}}\n{{\"fake\":\"await\",\"match\":{{\"method\":\"{method}\"}}}}\n{failure}\n"
     );
-    let options = refusal_options(&format!("{method}-{expected}"), &recording);
+    let options = refusal_options(&format!("{method}-{expected}"), &recording)?;
     let cwd = options.cwd.clone();
-    let (server, _events) = CodexServer::spawn(options).await.unwrap();
+    let (server, _events) = CodexServer::spawn(options).await?;
     let error = match method {
-        "thread/start" => server.start_thread(opts()).await.err().unwrap(),
+        "thread/start" => server
+            .start_thread(opts())
+            .await
+            .err()
+            .ok_or("thread/start succeeded")?,
         "thread/resume" => server
             .resume_thread(ThreadId(String::from("missing")), opts())
             .await
             .err()
-            .unwrap(),
+            .ok_or("thread/resume succeeded")?,
         _ => agents::codex::Error::Command(format!(
             "unexpected test method {method}"
         )),
@@ -842,44 +832,51 @@ async fn thread_refusal(method: &str, failure: &str, expected: &str) {
     // A later request must retain the same stderr reason after the actor exits.
     if let agents::codex::Error::Refused(_) = error {
         assert_eq!(
-            server.start_thread(opts()).await.err().unwrap().to_string(),
+            server
+                .start_thread(opts())
+                .await
+                .err()
+                .ok_or("a later thread/start succeeded")?
+                .to_string(),
             expected
         );
     }
-    let _ = server.shutdown().await.unwrap();
-    std::fs::remove_dir_all(cwd).unwrap();
+    let _ = server.shutdown().await?;
+    std::fs::remove_dir_all(cwd)?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn start_and_resume_exit_report_stderr() {
+async fn start_and_resume_exit_report_stderr() -> TestResult<()> {
     thread_refusal(
         "thread/start",
         r#"{"fake":"fail","stderr":"could not create thread storage","status":1}"#,
         "the codex app-server has exited: could not create thread storage",
     )
-    .await;
+    .await?;
     thread_refusal(
         "thread/resume",
         r#"{"fake":"fail","stderr":"could not load thread storage","status":1}"#,
         "the codex app-server has exited: could not load thread storage",
     )
-    .await;
+    .await
 }
 
 #[tokio::test]
-async fn start_and_resume_rejection_report_json_rpc_messages() {
+async fn start_and_resume_rejection_report_json_rpc_messages() -> TestResult<()>
+{
     thread_refusal(
         "thread/start",
         r#"{"id":2,"error":{"code":-32600,"message":"invalid working directory"}}"#,
         "codex rejected thread/start: invalid working directory",
     )
-    .await;
+    .await?;
     thread_refusal(
         "thread/resume",
         r#"{"id":2,"error":{"code":-32600,"message":"thread not found"}}"#,
         "codex rejected thread/resume: thread not found",
     )
-    .await;
+    .await
 }
 
 struct RevertFixture {
@@ -888,7 +885,10 @@ struct RevertFixture {
     cwd: PathBuf,
 }
 
-async fn revert_fixture(name: &str, outcome: &str) -> RevertFixture {
+async fn revert_fixture(
+    name: &str,
+    outcome: &str,
+) -> TestResult<RevertFixture> {
     let recording = format!(
         "{{\"id\":1,\"result\":{{\"userAgent\":\"conductor/0.166.0\"}}}}\n\
          {{\"id\":2,\"result\":{{\"thread\":{{\"id\":\"th_undo\"}},\"model\":\"gpt-6-luna\",\"reasoningEffort\":\"low\"}}}}\n\
@@ -897,33 +897,27 @@ async fn revert_fixture(name: &str, outcome: &str) -> RevertFixture {
          {outcome}\n\
          {{\"id\":6,\"result\":{{\"turn\":{{\"id\":\"tu_after\"}}}}}}\n"
     );
-    let options = refusal_options(name, &recording);
+    let options = refusal_options(name, &recording)?;
     let cwd = options.cwd.clone();
-    let (server, _events) = CodexServer::spawn(options).await.unwrap();
-    let thread = server.start_thread(opts()).await.unwrap();
-    let _ = thread
-        .send_turn(String::from("retain"), None)
-        .await
-        .unwrap();
-    let _ = thread
-        .send_turn(String::from("discard"), None)
-        .await
-        .unwrap();
-    RevertFixture {
+    let (server, _events) = CodexServer::spawn(options).await?;
+    let thread = server.start_thread(opts()).await?;
+    let _ = thread.send_turn(String::from("retain"), None).await?;
+    let _ = thread.send_turn(String::from("discard"), None).await?;
+    Ok(RevertFixture {
         server,
         thread,
         cwd,
-    }
+    })
 }
 
 #[tokio::test]
-async fn revert_targets_native_turn_and_keeps_thread_usable()
--> Result<(), Box<dyn std::error::Error>> {
+async fn revert_targets_native_turn_and_keeps_thread_usable() -> TestResult<()>
+{
     let live = revert_fixture(
         "revert-ok",
         r#"{"id":5,"result":{"thread":{"id":"th_undo","turns":[]}}}"#,
     )
-    .await;
+    .await?;
     live.thread
         .revert(TurnId(String::from("tu_discard")))
         .await?;
@@ -955,17 +949,18 @@ async fn revert_targets_native_turn_and_keeps_thread_usable()
 
 #[tokio::test]
 async fn revert_refusal_preserves_reason_and_does_not_close_thread()
--> Result<(), Box<dyn std::error::Error>> {
+-> TestResult<()> {
     let live = revert_fixture(
         "revert-refused",
         r#"{"id":5,"error":{"code":-32600,"message":"cannot revert an active turn"}}"#,
     )
-    .await;
+    .await?;
     let error = live
         .thread
         .revert(TurnId(String::from("tu_discard")))
         .await
-        .unwrap_err();
+        .err()
+        .ok_or("the revert succeeded")?;
     assert_eq!(
         error.to_string(),
         "codex rejected thread/revert: cannot revert an active turn"
@@ -981,31 +976,30 @@ async fn revert_refusal_preserves_reason_and_does_not_close_thread()
     Ok(())
 }
 
-async fn history_fixture(name: &str, pages: &str) -> RevertFixture {
+async fn history_fixture(name: &str, pages: &str) -> TestResult<RevertFixture> {
     let recording = format!(
         "{{\"id\":1,\"result\":{{\"userAgent\":\"conductor/0.166.0\"}}}}\n\
          {{\"id\":2,\"result\":{{\"thread\":{{\"id\":\"th_history\"}},\"model\":\"gpt-6-luna\",\"reasoningEffort\":\"low\"}}}}\n{pages}\n"
     );
-    let options = refusal_options(name, &recording);
+    let options = refusal_options(name, &recording)?;
     let cwd = options.cwd.clone();
-    let (server, _events) = CodexServer::spawn(options).await.unwrap();
-    let thread = server.start_thread(opts()).await.unwrap();
-    RevertFixture {
+    let (server, _events) = CodexServer::spawn(options).await?;
+    let thread = server.start_thread(opts()).await?;
+    Ok(RevertFixture {
         server,
         thread,
         cwd,
-    }
+    })
 }
 
 #[tokio::test]
-async fn history_reads_every_page_in_chronological_order()
--> Result<(), Box<dyn std::error::Error>> {
+async fn history_reads_every_page_in_chronological_order() -> TestResult<()> {
     let live = history_fixture(
         "history-pages",
         r#"{"id":3,"result":{"data":[{"id":"first"},{"id":"second"}],"nextCursor":"after-second"}}
 {"id":4,"result":{"data":[{"id":"third"}],"nextCursor":null}}"#,
     )
-    .await;
+    .await?;
     assert_eq!(
         live.thread.history_turns().await?,
         Vec::from([
@@ -1043,16 +1037,17 @@ async fn history_reads_every_page_in_chronological_order()
 
 #[tokio::test]
 async fn endless_history_cursor_fails_instead_of_returning_partial_prefix()
--> Result<(), Box<dyn std::error::Error>> {
+-> TestResult<()> {
     let pages = std::ops::RangeInclusive::new(3,102).map(|id|format!("{{\"id\":{id},\"result\":{{\"data\":[{{\"id\":\"partial\"}}],\"nextCursor\":\"endless\"}}}}"))
         .collect::<Vec<String>>().join("\n");
-    let live = history_fixture("history-bound", &pages).await;
+    let live = history_fixture("history-bound", &pages).await?;
     let error = tokio::time::timeout(
         Duration::from_secs(20),
         live.thread.history_turns(),
     )
     .await?
-    .unwrap_err();
+    .err()
+    .ok_or("the endless history was read")?;
     assert_eq!(
         error.to_string(),
         "codex history exceeded 100 pages; refusing an incomplete undo check"

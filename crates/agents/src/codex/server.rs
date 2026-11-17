@@ -106,6 +106,10 @@ pub struct CodexThread {
 
 impl CodexServer {
     /// Starts `codex app-server` and completes the `initialize` handshake.
+    ///
+    /// # Errors
+    /// Fails when the private home cannot be configured, the process cannot
+    /// be started, or it does not complete the handshake.
     pub async fn spawn(
         opts: ServerOptions,
     ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
@@ -179,10 +183,16 @@ impl CodexServer {
         first.split_once('/').map(|(_, version)| version)
     }
 
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
     pub async fn list_models(&self) -> Result<proto::Models, Error> {
         Ok(models(request(&self.commands, Call::ModelList).await?)?)
     }
 
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
     pub async fn start_thread(
         &self,
         opts: ThreadOptions,
@@ -194,18 +204,26 @@ impl CodexServer {
     }
 
     /// Loads a thread from Codex's own history; works in a new process.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
     pub async fn resume_thread(
         &self,
         id: ThreadId,
         opts: ThreadOptions,
     ) -> Result<CodexThread, Error> {
-        let (id, settings) = thread_started(
+        let (resumed, settings) = thread_started(
             request(&self.commands, Call::ThreadResume(id, opts)).await?,
         )?;
-        Ok(self.thread(id, settings))
+        Ok(self.thread(resumed, settings))
     }
 
     /// Answers an open approval or user-input request exactly once.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, no approval with `id` is open, or
+    /// `decision` does not fit it.
     pub async fn respond(
         &self,
         id: ApprovalId,
@@ -220,6 +238,9 @@ impl CodexServer {
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
+    ///
+    /// # Errors
+    /// Fails when the server's actor has already stopped.
     pub async fn shutdown(&self) -> Result<Exit, Error> {
         ask(&self.commands, |reply| CommandMsg::Shutdown { reply }).await
     }
@@ -236,6 +257,10 @@ impl CodexServer {
 impl CodexThread {
     /// Starts a turn, at `effort` if given: it stays the thread's effort
     /// for later turns. The turn's events follow on the server's stream.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
     pub async fn send_turn(
         &self,
         text: String,
@@ -251,6 +276,10 @@ impl CodexThread {
 
     /// Discards this turn and every later turn from persisted conversation
     /// history. The thread id stays the same. The caller restores files separately.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
     pub async fn revert(&self, before: TurnId) -> Result<(), Error> {
         let call = Call::ThreadRevert {
             thread: self.id.clone(),
@@ -262,6 +291,10 @@ impl CodexThread {
 
     /// All native turn ids in chronological order. Fails rather than return
     /// a partial history if the bounded pagination cannot reach its end.
+    ///
+    /// # Errors
+    /// Fails when a page request fails or the history runs past the page
+    /// limit.
     pub async fn history_turns(&self) -> Result<Vec<TurnId>, Error> {
         History {
             thread: self.clone(),
@@ -274,6 +307,10 @@ impl CodexThread {
     }
 
     /// Resolves once Codex accepts; `TurnCompleted` follows as an event.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, does not answer in time, rejects the
+    /// request or answers with something we cannot read.
     pub async fn interrupt(&self, turn: TurnId) -> Result<(), Error> {
         let call = Call::TurnInterrupt {
             thread: self.id.clone(),
@@ -284,6 +321,10 @@ impl CodexThread {
     }
 
     /// Answers one of this thread's open approvals exactly once.
+    ///
+    /// # Errors
+    /// Fails when Codex has exited, no approval with `id` is open, or
+    /// `decision` does not fit it.
     pub async fn respond(
         &self,
         id: ApprovalId,
@@ -654,7 +695,7 @@ impl Actor {
                 outcome.map_err(|message| Error::Rpc { method, message }),
             );
         } else {
-            tracing::warn!("response for unknown request {id:?}")
+            tracing::warn!("response for unknown request {id:?}");
         }
     }
 
@@ -799,7 +840,8 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn an_answer_that_does_not_encode_fails_and_closes_the_approval() {
+    async fn an_answer_that_does_not_encode_fails_and_closes_the_approval()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (events, _listening) = mpsc::channel(1);
         let mut actor = Actor {
             process: Process::Exited(Exit::Unknown(String::from(
@@ -818,8 +860,10 @@ mod tests {
             thread: ThreadId(String::from("th_1")),
             shape: AnswerShape::Command,
         };
-        let failure =
-            serde_json::to_value(BTreeMap::from([((1, 2), 0)])).unwrap_err();
+        let Err(failure) = serde_json::to_value(BTreeMap::from([((1, 2), 0)]))
+        else {
+            return Err("a map with tuple keys encoded".into());
+        };
         let first = actor
             .settle(id.clone(), open, Err(AnswerError::Encode(failure)))
             .await;
@@ -836,6 +880,7 @@ mod tests {
                 Err(String::from("no open approval with id ap_1"))
             )
         );
+        Ok(())
     }
 
     #[test]

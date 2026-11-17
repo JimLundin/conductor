@@ -36,7 +36,9 @@ pub enum Verdict {
     Pass,
     Fail,
 }
-pub fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
+/// # Errors
+/// Fails when stdout cannot be written.
+pub fn report(step: &str, verdict: Verdict, detail: &str) -> Result<Verdict> {
     let label = match verdict {
         Verdict::Pass => "PASS",
         Verdict::Fail => "FAIL",
@@ -46,12 +48,12 @@ pub fn report(step: &str, verdict: Verdict, detail: String) -> Result<Verdict> {
 }
 #[must_use]
 pub fn log_path(fixtures: Option<&Path>, name: &str) -> Option<PathBuf> {
-    fixtures.map(|dir| {
-        let path = dir.join(format!("{name}.jsonl"));
-        let _ = std::fs::remove_file(&path);
-        path
-    })
+    let path = fixtures?.join(format!("{name}.jsonl"));
+    let _ = std::fs::remove_file(&path);
+    Some(path)
 }
+/// # Errors
+/// Fails when the directory cannot be recreated or `git init` fails.
 pub fn fresh_scratch(scratch: &Path) -> Result<()> {
     if matches!(presence(scratch), Presence::Present) {
         std::fs::remove_dir_all(scratch)?;

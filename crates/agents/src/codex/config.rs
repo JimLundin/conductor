@@ -55,9 +55,7 @@ fn with_provider(
             provider.insert("base_url", value(base_url.as_str()));
             provider.insert("env_key", value(KEY_VAR));
             provider.insert("wire_api", value("responses"));
-            if let Some(providers) =
-                section(root, String::from("model_providers"))
-            {
+            if let Some(providers) = section(root, "model_providers") {
                 providers.insert(PROVIDER_ID, Item::Table(provider));
             }
             if let Some(filters) = shell_filters(root) {
@@ -67,16 +65,11 @@ fn with_provider(
             root.insert("model", value(model.as_str()));
         }
         None => {
-            if let Some(providers) =
-                section(root, String::from("model_providers"))
-            {
+            if let Some(providers) = section(root, "model_providers") {
                 providers.remove(PROVIDER_ID);
             }
-            if let Some(policy) =
-                section(root, String::from("shell_environment_policy"))
-            {
-                if let Some(filters) = section(policy, String::from("filters"))
-                {
+            if let Some(policy) = section(root, "shell_environment_policy") {
+                if let Some(filters) = section(policy, "filters") {
                     filters.remove(KEY_VAR);
                 }
                 // Ours was its only filter: a bare header would be left.
@@ -95,18 +88,18 @@ fn with_provider(
 /// key to them by default (`ignore_default_excludes` defaults to true in
 /// `config/src/shell_environment_policy.rs`).
 fn shell_filters(root: &mut Table) -> Option<&mut Table> {
-    section(root, String::from("shell_environment_policy"))
-        .and_then(|policy| section(policy, String::from("filters")))
+    section(root, "shell_environment_policy")
+        .and_then(|policy| section(policy, "filters"))
 }
 
 /// The table at `key`, created with no header of its own, so
 /// `[model_providers.conductor]` is written without a bare
 /// `[model_providers]` above it.
-fn section(table: &mut Table, key: String) -> Option<&mut Table> {
+fn section<'a>(table: &'a mut Table, key: &str) -> Option<&'a mut Table> {
     let mut implicit = Table::new();
     implicit.set_implicit(true);
     table
-        .entry(&key)
+        .entry(key)
         .or_insert(Item::Table(implicit))
         .as_table_mut()
 }
