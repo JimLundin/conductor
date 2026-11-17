@@ -19,7 +19,6 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["fs"] }
 # Edits the private Codex home's config.toml, keeping what Codex wrote there.
 toml_edit = { version = "0.25.19", default-features = false, features = ["parse", "display"] }
-tracing = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

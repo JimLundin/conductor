@@ -102,28 +102,3 @@ reason = "reading a frame still decides between a finished stream and an error b
 path = "crates/net/src/platform/mod.rs"
 rule = "shell"
 reason = "the endpoint setup still picks relays per network inline"
-
-[[exception]]
-path = "crates/claude-cli/src/session.rs"
-rule = "shell"
-reason = "the claude driver still decides control replies and lifecycle inline; they move into claude"
-
-[[exception]]
-path = "crates/codex-cli/src/server.rs"
-rule = "shell"
-reason = "the codex driver still decides JSON-RPC routing and lifecycle inline; they move into codex"
-
-[[exception]]
-path = "crates/codex-cli/src/config.rs"
-rule = "shell"
-reason = "which config.toml keys to keep or write is still decided beside the file edit; it moves into codex"
-
-[[exception]]
-path = "crates/install/src/install.rs"
-rule = "shell"
-reason = "verifying and placing a pinned download is still decided beside the I/O"
-
-[[exception]]
-path = "crates/install/src/process.rs"
-rule = "shell"
-reason = "stopping a process still decides between a clean exit and a kill inline"

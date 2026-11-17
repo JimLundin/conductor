@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::path::PathBuf;
 
-use claude_cli::Sandbox;
+use claude::Sandbox;
 use n0_future::MaybeFuture;
 use n0_future::boxed::BoxFuture;
 use proto::{

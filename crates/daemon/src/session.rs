@@ -14,7 +14,8 @@ use claude::{
     ClaudeEvent, PermissionMode, PermissionRequestId, claude_answer,
     claude_steps,
 };
-use claude_cli::{ClaudeOptions, ClaudeSession, SettingSource, VersionPolicy};
+use claude::{SettingSource, VersionPolicy};
+use claude_cli::{ClaudeOptions, ClaudeSession};
 use codex::{
     ApprovalId, ApprovalPolicy, CodexEvent, Sandbox, ThreadId, ThreadOptions,
     TurnId, codex_answer, codex_steps,
@@ -543,14 +544,14 @@ async fn start(
 fn claude_resume(
     history: Option<HistoryAnchor>,
     conversation: Option<Conversation>,
-) -> claude_cli::Resume {
+) -> claude::Resume {
     match history {
-        Some(HistoryAnchor::Fresh) => claude_cli::Resume::Fresh,
+        Some(HistoryAnchor::Fresh) => claude::Resume::Fresh,
         Some(HistoryAnchor::ClaudeFork {
             source,
             through,
             target,
-        }) => claude_cli::Resume::Fork {
+        }) => claude::Resume::Fork {
             session: claude::SessionId(source),
             through: claude::MessageId(through),
             target: claude::SessionId(target),
@@ -558,9 +559,9 @@ fn claude_resume(
         Some(HistoryAnchor::Claude {
             conversation: native,
             ..
-        }) => claude_cli::Resume::Session(claude::SessionId(native)),
-        _ => conversation.map_or(claude_cli::Resume::Fresh, |saved| {
-            claude_cli::Resume::Session(claude::SessionId(saved.0))
+        }) => claude::Resume::Session(claude::SessionId(native)),
+        _ => conversation.map_or(claude::Resume::Fresh, |saved| {
+            claude::Resume::Session(claude::SessionId(saved.0))
         }),
     }
 }
@@ -572,9 +573,9 @@ async fn spawn_claude(
     history: Option<&HistoryAnchor>,
 ) -> Result<(ClaudeSession, mpsc::Receiver<ClaudeEvent>), claude_cli::Error> {
     match &options.resume {
-        claude_cli::Resume::Fork { target, .. } => {
+        claude::Resume::Fork { target, .. } => {
             let probe = ClaudeOptions {
-                resume: claude_cli::Resume::Session(target.clone()),
+                resume: claude::Resume::Session(target.clone()),
                 ..options.clone()
             };
             match ClaudeSession::spawn(probe).await {
@@ -586,7 +587,7 @@ async fn spawn_claude(
                 started => started,
             }
         }
-        claude_cli::Resume::Session(target) => {
+        claude::Resume::Session(target) => {
             match ClaudeSession::spawn(options.clone()).await {
                 Err(claude_cli::Error::MissingSession(missing))
                     if &missing == target =>
@@ -596,7 +597,7 @@ async fn spawn_claude(
                             message: None, ..
                         }) => {
                             ClaudeSession::spawn(ClaudeOptions {
-                                resume: claude_cli::Resume::Fresh,
+                                resume: claude::Resume::Fresh,
                                 ..options
                             })
                             .await
@@ -607,7 +608,7 @@ async fn spawn_claude(
                 started => started,
             }
         }
-        claude_cli::Resume::Fresh => ClaudeSession::spawn(options).await,
+        claude::Resume::Fresh => ClaudeSession::spawn(options).await,
     }
 }
 
@@ -648,7 +649,7 @@ async fn claude_models(
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
-        resume: claude_cli::Resume::Fresh,
+        resume: claude::Resume::Fresh,
         project_name: None,
         setting_sources: None,
         stdout_log: None,

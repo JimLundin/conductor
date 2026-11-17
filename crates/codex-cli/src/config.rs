@@ -1,37 +1,34 @@
-//! The model provider in a private home's `config.toml` (§6.3). The home's
-//! `model_provider`, `model` and `[model_providers.conductor]` are
-//! Conductor's; everything else Codex wrote there stays.
+//! The model provider in a private home's `config.toml` (§6.3): applies
+//! the edits `codex::config_edits` decides, keeping what Codex wrote there.
 
 use std::io::ErrorKind;
 use std::path::Path;
 
+use codex::Edit;
 use proto::CodexCredential;
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use super::server::Error;
 
-/// Our provider's id in `model_providers`.
-const PROVIDER_ID: &str = "conductor";
-/// The variable our provider's `env_key` names, which carries its key.
-pub const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
-
 /// Writes `credential`'s provider into `<home>/config.toml`, or takes ours
-/// out for `None`. The key stays out of the file.
+/// out for `None`.
 pub fn write(
     home: &Path,
     credential: Option<&CodexCredential>,
 ) -> Result<(), Error> {
     let path = home.join("config.toml");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => Ok(text),
-        Err(err) => match err.kind() {
-            ErrorKind::NotFound => Ok(String::new()),
-            _ => Err(err),
-        },
-    }?;
+    let text = read(&path)?;
     let config = with_provider(&text, credential)
         .map_err(|err| Error::Command(format!("{}: {err}", path.display())))?;
     Ok(std::fs::write(&path, config)?)
+}
+
+/// The file's text; a home with none yet has an empty one.
+fn read(path: &Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(String::new()),
+        read => read,
+    }
 }
 
 fn with_provider(
@@ -39,62 +36,50 @@ fn with_provider(
     credential: Option<&CodexCredential>,
 ) -> Result<String, toml_edit::TomlError> {
     let mut config = text.parse::<DocumentMut>()?;
-    config.remove("model_provider");
-    config.remove("model");
-    let root = config.as_table_mut();
-    // A section that isn't a table is Codex's to refuse.
-    match credential {
-        Some(CodexCredential::Provider {
-            name,
-            base_url,
-            key: _,
-            model,
-        }) => {
-            let mut provider = Table::new();
-            provider.insert("name", value(name.as_str()));
-            provider.insert("base_url", value(base_url.as_str()));
-            provider.insert("env_key", value(KEY_VAR));
-            provider.insert("wire_api", value("responses"));
-            if let Some(providers) = section(root, "model_providers") {
-                providers.insert(PROVIDER_ID, Item::Table(provider));
-            }
-            if let Some(filters) = shell_filters(root) {
-                filters.insert(KEY_VAR, value("exclude"));
-            }
-            root.insert("model_provider", value(PROVIDER_ID));
-            root.insert("model", value(model.as_str()));
-        }
-        None => {
-            if let Some(providers) = section(root, "model_providers") {
-                providers.remove(PROVIDER_ID);
-            }
-            if let Some(policy) = section(root, "shell_environment_policy") {
-                if let Some(filters) = section(policy, "filters") {
-                    filters.remove(KEY_VAR);
-                }
-                // Ours was its only filter: a bare header would be left.
-                policy.retain(|key, item| {
-                    key != "filters"
-                        || !item.as_table().is_some_and(Table::is_empty)
-                });
-            }
-        }
+    for edit in codex::config_edits(credential) {
+        apply(config.as_table_mut(), edit);
     }
     Ok(config.to_string())
 }
 
-/// `shell_environment_policy.filters`, where our exclude keeps the key out
-/// of every command Codex runs. Codex 0.166 passes variables named like a
-/// key to them by default (`ignore_default_excludes` defaults to true in
-/// `config/src/shell_environment_policy.rs`).
-fn shell_filters(root: &mut Table) -> Option<&mut Table> {
-    section(root, "shell_environment_policy")
-        .and_then(|policy| section(policy, "filters"))
+fn apply(root: &mut Table, edit: Edit) {
+    match edit {
+        Edit::Remove(path) => {
+            at(root, &path, |table, key| {
+                table.remove(key);
+            });
+        }
+        Edit::Set { path, value: text } => at(root, &path, |table, key| {
+            table.insert(key, value(text));
+        }),
+        Edit::Table { path, entries } => at(root, &path, |table, key| {
+            table.insert(key, Item::Table(entries.into_iter().collect()));
+        }),
+        Edit::RemoveIfEmpty(path) => at(root, &path, |table, key| {
+            table.retain(|name, item| {
+                name != key || !item.as_table().is_some_and(Table::is_empty)
+            });
+        }),
+    }
 }
 
-/// The table at `key`, created with no header of its own, so
-/// `[model_providers.conductor]` is written without a bare
-/// `[model_providers]` above it.
+/// Runs `change` on the table that holds the last key of `path`, if every
+/// table on the way is one.
+fn at(
+    root: &mut Table,
+    path: &[String],
+    change: impl FnOnce(&mut Table, &str),
+) {
+    if let Some((key, tables)) = path.split_last()
+        && let Some(table) = tables
+            .iter()
+            .try_fold(root, |table, name| section(table, name))
+    {
+        change(table, key);
+    }
+}
+
+/// The table at `key`, created with no header of its own.
 fn section<'a>(table: &'a mut Table, key: &str) -> Option<&'a mut Table> {
     let mut implicit = Table::new();
     implicit.set_implicit(true);
@@ -127,6 +112,14 @@ mod tests {
             "check_for_update_on_startup = false\nmodel_provider = \"conductor\"\nmodel = \"gpt-6\"\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n\n[model_providers.conductor]\nname = \"Gateway\"\nbase_url = \"https://gateway.example/v1\"\nenv_key = \"CONDUCTOR_CODEX_KEY\"\nwire_api = \"responses\"\n\n[shell_environment_policy.filters]\nCONDUCTOR_CODEX_KEY = \"exclude\"\n"
         );
         assert_eq!(with_provider(&set, None)?, CODEX_WROTE);
+        Ok(())
+    }
+
+    #[test]
+    fn a_section_that_is_not_a_table_is_left_alone()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let odd = "model_providers = 1\nshell_environment_policy = \"all\"\n";
+        assert_eq!(with_provider(odd, None)?, odd);
         Ok(())
     }
 }
