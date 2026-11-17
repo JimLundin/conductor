@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
-use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
+use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     Answer, Auth, Availability, Change, CheckpointId, ClaudeCredential,
     ClientName, CloseReason, CodexCredential, CommandBody, CommandResult,

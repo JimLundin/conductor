@@ -18,9 +18,6 @@ use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
     ToolState,
 };
-use client::{
-    Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
-};
 use daemon::Stopped;
 use daemon::codex_hub::CodexHub;
 use daemon::credentials::Store;
@@ -31,6 +28,9 @@ use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
+use net::{
+    Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
+};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClaudeCredential,
     ClientName, CloseReason, CodexCredential, CommandBody, CommandResult,

@@ -1,6 +1,6 @@
 use proto::ClientName;
 
-use crate::device::{Touch, device_name};
+use client::device::{Touch, device_name};
 
 /// The device this browser runs on, as `Hello` names it.
 #[must_use]

@@ -1,11 +1,20 @@
-//! `proto` on iroh: frame I/O on streams, and a ticket as an address to dial.
+//! `proto` on iroh: frame I/O on streams, a ticket as an address to dial,
+//! and the client's link to a host. It compiles natively and to
+//! `wasm32-unknown-unknown`; target differences live in [`platform`].
 
+mod link;
+pub mod platform;
 mod relay;
 pub mod wire;
 
 use iroh::{EndpointAddr, EndpointId, RelayUrl};
 use proto::{Ticket, TicketError};
 
+pub use link::{
+    Cursor, HostLink, LinkOptions, LinkState, SendError, StartError, Status,
+    Target, Update, shown_after,
+};
+pub use platform::Network;
 pub use relay::without_root_dot;
 
 /// Parses ticket text and checks that it names a host that can be dialled.

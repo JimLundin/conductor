@@ -14,7 +14,7 @@ python3 tools/scrub-ips.py --check "${records[@]}" || status=1
 # future_not_send holds. The standard bans a target-conditional #[expect], so
 # the wasm build alone allows that one lint.
 wasm=(--target wasm32-unknown-unknown -- -A clippy::future_not_send)
-for crate in proto client; do
+for crate in proto client net; do
 	cargo clippy -q -p "$crate" "${wasm[@]}" || status=1
 done
 cargo clippy -q -p app --features web "${wasm[@]}" || status=1

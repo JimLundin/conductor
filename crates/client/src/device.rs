@@ -1,6 +1,7 @@
 //! The name a client gives in `Hello`: the kind of device it runs on, so a
 //! resolved card can say which device approved.
 
+use crate::prelude::*;
 use proto::ClientName;
 
 /// Whether the device has a touchscreen, which tells an iPad that asks for

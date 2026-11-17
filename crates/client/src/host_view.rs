@@ -1,8 +1,9 @@
 //! A host's sessions folded from its events: what the UI renders. No UI
 //! types, so it is unit-testable and shared by every client target.
 
-use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
+use core::cmp::Reverse;
 
 use proto::{
     CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath,
@@ -804,7 +805,7 @@ impl RequestState {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use alloc::collections::BTreeMap;
 
     use proto::{
         Answer, ClientName, CloseReason, Decision, Effort, Event, EventKind,

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
-use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
+use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     ClientName, CommandBody, CommandResult, EventKind, HostPath, Provider,
     SessionId, Ticket,

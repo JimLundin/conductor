@@ -21,8 +21,8 @@ use std::rc::Rc;
 
 use crate::ticket::{self, Opening};
 use client::host_view::HostView;
-use client::{HostLink, LinkOptions, LinkState, Status, Update};
 use dioxus::prelude::*;
+use net::{HostLink, LinkOptions, LinkState, Status, Update};
 use proto::{CommandBody, CommandResult, SessionId, Ticket};
 use tokio::sync::mpsc;
 
@@ -218,7 +218,7 @@ async fn run_link(
     view: Signal<HostView>,
     link: Signal<Link>,
 ) {
-    let options = LinkOptions::new(client::platform::client_name());
+    let options = LinkOptions::new(net::platform::client_name());
     let started = HostLink::start(&ticket, options).await;
     follow(started.ok(), link, status, view).await;
 }
@@ -238,11 +238,8 @@ async fn follow(
     };
     link.set(Link::Live(Rc::new(handle)));
     while let Some(update) = updates.recv().await {
-        let (next_status, next_view) = client::shown_after(
-            status(),
-            view.replace(HostView::empty()),
-            update,
-        );
+        let (next_status, next_view) =
+            net::shown_after(status(), view.replace(HostView::empty()), update);
         status.set(next_status);
         view.set(next_view);
     }

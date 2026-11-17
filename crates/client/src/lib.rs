@@ -1,15 +1,13 @@
-//! The client core (architecture §9). Compiles natively and to
-//! `wasm32-unknown-unknown`; target differences live in [`platform`].
+//! The client core (architecture §9): a host's events folded into the view
+//! the app draws, and the drafts the app sends back. It is pure and `no_std`;
+//! the link that feeds it lives in `net`.
+
+#![cfg_attr(not(test), no_std)]
+
+extern crate alloc;
 
 pub mod answers;
 pub mod device;
 pub mod host_view;
-mod link;
 pub mod new_session;
-pub mod platform;
-
-pub use link::{
-    Cursor, HostLink, LinkOptions, LinkState, SendError, StartError, Status,
-    Target, Update, shown_after,
-};
-pub use platform::Network;
+mod prelude;

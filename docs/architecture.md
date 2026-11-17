@@ -208,7 +208,7 @@ Each frame is a `u32` length and a postcard body.
 
 - `Endpoint::builder(presets::N0)` with a custom relay map: n0's relays named
   without the root dot, because WebKit refuses the dotted name's certificate
-  (`proto::without_root_dot`, `client::platform::n0_relays`).
+  (`net::without_root_dot`, `net::platform::n0_relays`).
 - The host waits for `Endpoint::online()` and prints a ticket with its node id,
   home relay and the auth token (`proto::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
@@ -1194,17 +1194,18 @@ The owner settled these on 2026-11-12.
 - Codex in CI, refresh and sharing `auth.json`: [codex-ci]
 - Codex app-server: [codex-app-server]
 
-## 7. The client (`crates/client`)
+## 7. The client (`crates/client`, `crates/net`)
 
-- `HostLink` is one per host. One task owns the connection and walks
+- `HostLink` (in `net`) is one per host. One task owns the connection and walks
   `Disconnected → Connecting → Authenticating → CatchingUp → Live`,
   reconnecting with jittered backoff. It keeps the cursor, so every
   reconnect resubscribes after the last applied seq, with no duplicates and
   no gaps.
-- `HostView` folds a host's events into what the UI renders: sessions,
+- `HostView` (in `client`, the pure `no_std` core) folds a host's events
+  into what the UI renders: sessions,
   transcripts, tool cards, open requests, what the composer and the
   interrupt button may do. It has no UI types and is unit-tested.
-- The client compiles to wasm32 for the app. A native build exists only as
+- Both compile to wasm32 for the app. A native build exists only as
   the harness for the daemon's e2e tests and the headless example.
 
 ## 8. The app (`crates/app`)

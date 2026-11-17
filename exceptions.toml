@@ -8,17 +8,12 @@ reason = "iroh and dioxus pin different majors of windows-sys, netlink, thiserro
 [[exception]]
 path = "crates/net/Cargo.toml"
 rule = "std"
-reason = "net is proto's I/O on iroh streams, which need std"
+reason = "net is proto's I/O on iroh: frame streams, and the client's link to a host with its reconnect loop"
 
 [[exception]]
 path = "crates/agents/Cargo.toml"
 rule = "std"
 reason = "agents spawns and drives the claude and codex processes over tokio"
-
-[[exception]]
-path = "crates/client/Cargo.toml"
-rule = "std"
-reason = "client holds the iroh link to a host and its reconnect loop"
 
 [[exception]]
 path = "crates/daemon/Cargo.toml"

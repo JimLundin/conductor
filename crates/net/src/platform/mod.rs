@@ -45,7 +45,7 @@ pub(crate) async fn bind_endpoint(
     }
 }
 
-/// n0's public relays, named without the root dot (`net::without_root_dot`).
+/// n0's public relays, named without the root dot ([`crate::without_root_dot`]).
 ///
 /// Every endpoint, host included, uses this map: a host advertises its home
 /// relay to peers, and a browser that dials the dotted name fails `WebKit`'s
@@ -54,6 +54,6 @@ pub fn n0_relays() -> iroh::RelayMap {
     iroh::defaults::prod::default_relay_map()
         .urls::<Vec<iroh::RelayUrl>>()
         .iter()
-        .map(net::without_root_dot)
+        .map(crate::without_root_dot)
         .collect()
 }

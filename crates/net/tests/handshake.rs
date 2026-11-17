@@ -2,12 +2,10 @@
 
 use std::time::Duration;
 
-use client::{
-    HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
-};
 use iroh::endpoint::{Connection, ConnectionError, SendStream, presets};
 use iroh::{Endpoint, RelayMode};
 use net::wire;
+use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq, Open,
     Providers, Welcome,

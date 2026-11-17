@@ -6,12 +6,27 @@ license.workspace = true
 publish = false
 
 [dependencies]
-iroh.workspace = true
+client = { path = "../client" }
+getrandom.workspace = true
+iroh = { workspace = true, features = ["tls-ring"] }
 iroh-base.workspace = true
+n0-future.workspace = true
 proto = { path = "../proto" }
 serde.workspace = true
 thiserror.workspace = true
+tokio = { version = "1.54.1", default-features = false, features = ["sync", "macros"] }
+tracing.workspace = true
 url = "2.5.8"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { workspace = true, features = ["wasm_js"] }
+web-sys = { version = "0.3.107", features = ["Navigator", "Window"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+clap = { version = "4.6.7", features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

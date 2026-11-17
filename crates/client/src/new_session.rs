@@ -1,5 +1,6 @@
 //! The new-session form: what came of the last attempt to start a session.
 
+use crate::prelude::*;
 use proto::{
     Availability, CommandResult, Effort, ModelId, Models, Provider, Rejection,
 };

@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::time::Duration;
 
+use crate::wire::{self, WireError};
 use iroh::endpoint::{
     BindError, ConnectError, Connection, RecvStream, SendStream,
 };
@@ -18,9 +19,8 @@ use iroh::{Endpoint, EndpointAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{StreamExt, join_all, task};
-use net::wire::{self, WireError};
 
-use crate::host_view::HostView;
+use client::host_view::HostView;
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
     Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers,
@@ -35,8 +35,7 @@ const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
 const BACKOFF_CEILING: Duration = Duration::from_secs(10);
 /// How long a dial may run before a second one starts on a fresh endpoint.
 /// A relay connection can stall at the network level for seconds while a
-/// fresh one is up in well under a second (docs/forensics/reconnect on the
-/// `reconnect-forensics` branch).
+/// fresh one is up in well under a second.
 const HEDGE_AFTER: Duration = Duration::from_millis(1500);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -50,10 +49,10 @@ pub struct Target {
 impl Target {
     /// # Errors
     ///
-    /// The [`TicketError`] of [`net::address`].
+    /// The [`TicketError`] of [`crate::address`].
     pub fn of_ticket(ticket: &Ticket) -> Result<Self, TicketError> {
         Ok(Self {
-            addr: net::address(ticket)?,
+            addr: crate::address(ticket)?,
             token: ticket.token,
         })
     }

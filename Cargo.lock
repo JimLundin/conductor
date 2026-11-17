@@ -560,18 +560,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 name = "client"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "clap",
- "getrandom 0.4.3",
- "iroh",
- "n0-future",
- "net",
  "proto",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "web-sys",
 ]
 
 [[package]]
@@ -2917,12 +2906,21 @@ dependencies = [
 name = "net"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "client",
+ "getrandom 0.4.3",
  "iroh",
  "iroh-base",
+ "n0-future",
  "proto",
  "serde",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "url",
+ "web-sys",
 ]
 
 [[package]]

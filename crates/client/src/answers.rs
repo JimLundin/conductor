@@ -1,6 +1,7 @@
 //! The answers a person is putting together for an open question card,
 //! before they send them. No UI types, so the rules are unit-testable.
 
+use crate::prelude::*;
 use proto::{Answer, Question, Selection};
 
 /// For each question, the options chosen and the text typed so far.
