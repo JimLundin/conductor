@@ -15,9 +15,8 @@ use serde_json::Value;
 
 use agents::Exit;
 use install::Home;
-use n0_future::{MaybeFuture, StreamExt, future};
-use std::future::Future;
-use std::pin::Pin;
+use n0_future::StreamExt;
+use std::future::pending;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
@@ -118,9 +117,6 @@ type Waiter = oneshot::Sender<Exit>;
 type Input = claude::Input<Reply, Waiter, std::io::Error>;
 type Effect = claude::Effect<Reply, Waiter, std::io::Error>;
 type CommandMsg = claude::Command<Reply, Waiter>;
-/// An effect being performed, and the effects it leads to.
-type Performing<'a> =
-    Pin<Box<dyn Future<Output = Result<Vec<Effect>, Stopped>> + Send + 'a>>;
 
 pub struct ClaudeSession {
     commands: mpsc::Sender<CommandMsg>,
@@ -361,7 +357,10 @@ impl Starting {
             ..self.session
         };
         match claude::admit(initialize, policy) {
-            Ok(()) => Ok((session, self.events)),
+            Ok(warning) => {
+                warning.iter().for_each(runtime::log);
+                Ok((session, self.events))
+            }
             Err(unsupported) => Err(session.refuse(unsupported).await),
         }
     }
@@ -470,7 +469,7 @@ async fn log_stderr(stderr: ChildStderr) -> Option<String> {
                 .map(|line| (line, lines))
         },
     )
-    .inspect(|line| claude::log_stderr(line))
+    .inspect(|line| tracing::warn!(target: "claude::stderr", "{line}"))
     .last()
     .await
 }
@@ -498,7 +497,7 @@ fn record(
     if let (Some(log), Ok(Some(line))) = (stdout_log, read)
         && let Err(error) = writeln!(log, "{line}")
     {
-        claude::log_unrecorded(&error.to_string());
+        tracing::warn!("writing stdout log: {error}");
     }
 }
 
@@ -529,10 +528,11 @@ impl Actor {
         &mut self,
         commands: &mut mpsc::Receiver<CommandMsg>,
     ) -> Input {
-        let line = self.process.as_mut().map_or(MaybeFuture::None, |running| {
-            MaybeFuture::Some(running.read())
-        });
-        future::race(line, receive(commands)).await
+        tokio::select! {
+            biased;
+            read = read(self.process.as_mut()) => read,
+            command = commands.recv() => command.map_or(Input::Closed, Input::Command),
+        }
     }
 
     /// Steps the session and performs its effects in order, each effect's
@@ -547,18 +547,23 @@ impl Actor {
         Ok(())
     }
 
-    fn perform(&mut self, effect: Effect) -> Performing<'_> {
+    async fn perform(
+        &mut self,
+        effect: Effect,
+    ) -> Result<Vec<Effect>, Stopped> {
         match effect {
-            Effect::Write { line, then } => Box::pin(self.write(line, then)),
-            Effect::Emit(event) => Box::pin(self.emit(event)),
-            Effect::Reply(reply, answer) => Box::pin(future::ready(Ok(
-                deliver(reply, answer.map_err(Error::from)),
-            ))),
-            Effect::Report(waiter, exit) => {
-                Box::pin(future::ready(Ok(deliver(waiter, exit))))
+            Effect::Write { line, then } => self.write(line, then).await,
+            Effect::Emit(event) => self.emit(event).await,
+            Effect::Log(note) => {
+                runtime::log(&note);
+                Ok(Vec::new())
             }
-            Effect::Stop(then) => Box::pin(self.stop(then)),
-            Effect::End => Box::pin(future::ready(Err(Stopped {}))),
+            Effect::Reply(reply, answer) => {
+                Ok(deliver(reply, answer.map_err(Error::from)))
+            }
+            Effect::Report(waiter, exit) => Ok(deliver(waiter, exit)),
+            Effect::Stop(then) => self.stop(then).await,
+            Effect::End => Err(Stopped {}),
         }
     }
 
@@ -586,8 +591,12 @@ impl Actor {
     }
 }
 
-async fn receive(commands: &mut mpsc::Receiver<CommandMsg>) -> Input {
-    commands.recv().await.map_or(Input::Closed, Input::Command)
+/// The next stdout line; once the process has stopped, nothing.
+async fn read(running: Option<&mut Running>) -> Input {
+    match running {
+        Some(process) => process.read().await,
+        None => pending().await,
+    }
 }
 
 /// A dropped receiver only means nobody waits any more.

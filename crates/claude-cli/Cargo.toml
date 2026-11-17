@@ -14,9 +14,12 @@ claude = { path = "../claude" }
 install = { path = "../install" }
 n0-future.workspace = true
 proto = { path = "../proto" }
+runtime = { path = "../runtime" }
 serde_json = { workspace = true, features = ["std"] }
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+ulid = "1.2"
 uuid.workspace = true
 
 [lints]

@@ -8,15 +8,21 @@
 //! is the next input, so the session finishes one order or agent step before
 //! it takes the next.
 //!
+//! The session speaks to its agent only in the runtime protocol
+//! (`agents::runtime`): each agent call is a [`Command`], and its
+//! [`Outcome`] is the next input. Which provider runs the agent is the
+//! runtime's business.
+//!
 //! The session outlives its agent. When the agent's process exits, the
 //! session is closed and keeps its conversation's id, and a `Start` order
-//! starts the agent again on it with the provider's resume.
+//! starts the agent again on it.
 
 use core::mem;
 
 use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
 use crate::prelude::*;
 use crate::tasks;
+use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -24,8 +30,8 @@ use alloc::format;
 use proto::{
     Checkpoint, CheckpointDiff, CheckpointId, ClientName, CloseReason,
     CommandResult, Decision, Effort, Event, EventKind, HistoryAnchor, HostPath,
-    HostSeq, ModelId, Models, Provider, Rejection, RequestId, Resolution,
-    SessionId, Task, TaskId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    HostSeq, ModelId, Models, Rejection, RequestId, Resolution, SessionId,
+    Task, TaskId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability, Workspace,
 };
 
@@ -41,8 +47,8 @@ pub struct Choice {
 /// provider offers.
 ///
 /// No model is the default. An effort must be one the
-/// model lists, unless the host knows nothing of the model (a default from
-/// `--claude-model` or a Codex credential that the CLI didn't list).
+/// model lists, unless the host knows nothing of the model (a default the
+/// host was given, or one a credential names, that the CLI didn't list).
 ///
 /// # Errors
 ///
@@ -114,12 +120,10 @@ pub enum Order {
     },
     Interrupt,
     Diff(CheckpointId),
-    /// Undoes the turns from `checkpoint` on, restarting the session's
-    /// `provider` if it must. A Claude fork made for it takes `fork` as its
-    /// conversation's id.
+    /// Undoes the turns from `checkpoint` on, restarting the agent if it
+    /// must. A conversation forked for it takes `fork` as its id.
     Undo {
         checkpoint: CheckpointId,
-        provider: Provider,
         fork: String,
     },
     Reply {
@@ -131,7 +135,6 @@ pub enum Order {
     /// when the session starts, and on `Continue`. `offered` is what the
     /// provider offers now.
     Start {
-        provider: Provider,
         offered: Models,
     },
     /// Sets the effort of later turns, if the session's model in these
@@ -144,10 +147,8 @@ pub enum Order {
 pub enum Input {
     Order(Order),
     Step(Step),
-    /// The host stopped the agent, for this reason.
-    Stopped(String),
-    /// The agent's events ended.
-    Exited,
+    /// The outcome of the [`Call::Agent`] command.
+    Agent(Outcome),
     /// The outcome of [`Call::Record`].
     Recorded(HostSeq),
     /// The commit [`Call::Snapshot`] made.
@@ -159,20 +160,8 @@ pub enum Input {
     Minted(Vec<TaskId>),
     /// Whether the directory of [`Call::Exists`] can be read.
     Exists(bool),
-    /// The conversation of the agent [`Call::Start`] started.
-    Started(Result<String, Unstarted>),
-    /// The Codex thread's turns, oldest first, for [`Call::Turns`].
-    Turns(Result<Vec<String>, String>),
-    /// The outcome of a call that answers nothing else.
+    /// The outcome of a workspace call that answers nothing else.
     Done(Result<(), String>),
-}
-
-/// Why an agent didn't start. `missing` is the conversation it was asked to
-/// resume, when the provider has no such conversation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Unstarted {
-    pub message: String,
-    pub missing: Option<String>,
 }
 
 /// What the shell does next.
@@ -186,8 +175,6 @@ pub enum Effect {
     /// changes.
     Barrier,
     Trace(&'static str),
-    /// Drop the agent: its process has gone.
-    Release,
     /// Answer the order.
     Reply(CommandResult),
     Call(Call),
@@ -218,26 +205,8 @@ pub enum Call {
     /// This many new task ids.
     Mint(usize),
     Exists(HostPath),
-    /// Start an agent in place of the one running, if it starts.
-    Start(Launching),
-    /// Change Claude's effort in its process, before a turn.
-    SetEffort(Effort),
-    /// Start a turn. Codex changes to `effort` with it.
-    Send {
-        text: String,
-        effort: Option<Effort>,
-    },
-    Interrupt(NativeTurn),
-    Answer {
-        native: NativeRequest,
-        reply: Reply,
-        by: ClientName,
-    },
-    /// Drop the agent, shutting a Claude down first.
-    Shutdown,
-    Turns,
-    /// Revert the Codex thread to before this turn.
-    Revert(String),
+    /// Send the agent this command; its outcome is [`Input::Agent`].
+    Agent(Command),
 }
 
 /// A checkpoint whose changes since its parent the shell lists.
@@ -248,59 +217,18 @@ pub struct Compared {
     pub parent: Checkpoint,
 }
 
-/// How to start an agent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Launching {
-    pub directory: HostPath,
-    pub choice: Choice,
-    pub resume: Resume,
-}
+/// Where an agent starts: the history to restore, else the saved
+/// conversation.
+type At = (Option<HistoryAnchor>, Option<String>);
 
-/// Which conversation an agent starts on, by its provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resume {
-    Claude(ClaudeResume),
-    /// The Codex thread to resume, or a new one.
-    Codex(Option<String>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudeResume {
-    Fresh,
-    Session(String),
-    /// A new conversation `target` with `source`'s messages through
-    /// `through`.
-    Fork {
-        source: String,
-        through: String,
-        target: String,
-    },
-}
-
-impl Resume {
-    const fn provider(&self) -> Provider {
-        match self {
-            Self::Claude(_) => Provider::Claude,
-            Self::Codex(_) => Provider::Codex,
-        }
-    }
-
-    fn session(&self) -> Option<&str> {
-        match self {
-            Self::Claude(ClaudeResume::Session(session)) => Some(session),
-            _ => None,
-        }
-    }
-}
-
-/// The agent as the session knows it: its conversation and the effort it
-/// runs with.
+/// The agent as the session knows it: how its history is anchored, its
+/// conversation and the effort it runs with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Agent {
     /// No agent runs: it exited, the host stopped it, or it never started.
     Down,
     Up {
-        provider: Provider,
+        anchoring: Anchoring,
         conversation: String,
         effort: Option<Effort>,
     },
@@ -374,19 +302,18 @@ enum Flow {
     Saving(Saving),
     /// The user's message is being logged; `text` goes to the agent next.
     Recording(String),
-    /// Claude changes its effort before `text` goes to it.
-    Retuning(String, Effort),
     /// The message is being sent, changing the agent's effort to this.
     Sending(Option<Effort>),
     /// An agent call whose failure is logged as an error, then the reply.
     Noting(Option<CommandResult>),
     Minting(Vec<PlanStep>, Vec<Option<TaskId>>),
     Diffing,
-    Starting(Starting),
+    /// The agent is starting, for this.
+    Starting(Launched),
     Preflighting(UndoOrder),
     /// Finding the directory to restore the agent's history in.
     Locating(Undoing, HistoryAnchor),
-    /// Claude stops, to start again at the history.
+    /// The agent stops, to start again at the history.
     Restarting(Undoing, HostPath, HistoryAnchor),
     Listing(Revert),
     Reverting(Revert),
@@ -406,21 +333,13 @@ struct Saving {
 
 /// What a snapshot was taken for.
 enum Saved {
-    Start(Provider, Models),
+    Start(Models),
     Send(String, ClientName),
     TurnEnded(TurnOutcome),
     Closed(CloseReason),
 }
 
-/// The agent start in flight, the attempts left if it finds its
-/// conversation missing, and what it was started for.
-struct Starting {
-    attempt: Resume,
-    rest: Vec<Resume>,
-    directory: HostPath,
-    then: Launched,
-}
-
+/// What an agent was started for.
 enum Launched {
     Ready,
     Revert(Revert),
@@ -430,16 +349,15 @@ enum Launched {
 
 struct UndoOrder {
     checkpoint: CheckpointId,
-    provider: Provider,
     fork: String,
 }
 
 struct Undoing {
     undo: Undo,
-    provider: Provider,
 }
 
-/// A Codex thread being reverted to before `turn`, in `directory`.
+/// A conversation anchored at its turns being reverted to before `turn`,
+/// in `directory`.
 struct Revert {
     undoing: Undoing,
     directory: HostPath,
@@ -524,33 +442,27 @@ impl Session {
         match (flow, input) {
             (Flow::Idle, Input::Order(order)) => self.order(order),
             (Flow::Idle, Input::Step(step)) => self.agent_step(step),
-            (Flow::Idle, Input::Stopped(reason)) => {
-                self.agent_step(Step::Closed(CloseReason::Stopped { reason }))
-            }
-            (Flow::Idle, Input::Exited) => {
-                self.agent_step(Step::Closed(CloseReason::Exited {
-                    status: String::from("the agent's events ended"),
-                }))
-            }
             (Flow::Saving(saving), Input::Snapshotted(taken)) => {
                 self.snapshotted(saving, taken)
             }
             (Flow::Recording(text), Input::Recorded(seq)) => {
                 self.recorded(text, seq)
             }
-            (Flow::Retuning(text, effort), Input::Done(retuned)) => {
-                self.retuned(text, effort, retuned)
-            }
-            (Flow::Sending(change), Input::Done(sent)) => {
+            (Flow::Sending(change), Input::Agent(Outcome::Sent(sent))) => {
                 self.sent(change, sent)
             }
-            (Flow::Noting(then), Input::Done(called)) => noted(called, then),
+            (
+                Flow::Noting(then),
+                Input::Agent(
+                    Outcome::Interrupted(called) | Outcome::Replied(called),
+                ),
+            ) => noted(called, then),
             (Flow::Minting(steps, kept), Input::Minted(ids)) => {
                 self.minted(steps, kept, ids)
             }
             (Flow::Diffing, Input::Diffed(diff)) => answer(diffed(diff)),
-            (Flow::Starting(starting), Input::Started(started)) => {
-                self.started(starting, started)
+            (Flow::Starting(then), Input::Agent(Outcome::Started(started))) => {
+                self.started(then, started)
             }
             (Flow::Preflighting(order), Input::Done(checked)) => {
                 self.preflighted(&order, checked)
@@ -560,20 +472,22 @@ impl Session {
             }
             (
                 Flow::Restarting(undoing, directory, history),
-                Input::Done(stopped),
+                Input::Agent(Outcome::ShutDown(stopped)),
             ) => self.restart(undoing, directory, history, stopped),
-            (Flow::Listing(revert), Input::Turns(listed)) => {
+            (Flow::Listing(revert), Input::Agent(Outcome::Turns(listed))) => {
                 self.listed(revert, listed)
             }
-            (Flow::Reverting(revert), Input::Done(reverted)) => {
-                self.reverted(revert, reverted)
-            }
-            (Flow::Checking(revert), Input::Turns(listed)) => {
+            (
+                Flow::Reverting(revert),
+                Input::Agent(Outcome::Reverted(reverted)),
+            ) => self.reverted(revert, reverted),
+            (Flow::Checking(revert), Input::Agent(Outcome::Turns(listed))) => {
                 self.checked(revert, listed)
             }
-            (Flow::Leaving(undoing, history), Input::Done(left)) => {
-                self.history_restored(undoing, left.map(|()| history))
-            }
+            (
+                Flow::Leaving(undoing, history),
+                Input::Agent(Outcome::ShutDown(left)),
+            ) => self.history_restored(undoing, left.map(|()| history)),
             (Flow::Retasking(undoing, history), Input::History(events)) => {
                 self.retasked(undoing, history, &events)
             }
@@ -590,15 +504,9 @@ impl Session {
     fn order(&mut self, order: Order) -> Vec<Effect> {
         match order {
             Order::Diff(checkpoint) => self.diff(checkpoint),
-            Order::Undo {
-                checkpoint,
-                provider,
-                fork,
-            } => self.undo(UndoOrder {
-                checkpoint,
-                provider,
-                fork,
-            }),
+            Order::Undo { checkpoint, fork } => {
+                self.undo(UndoOrder { checkpoint, fork })
+            }
             other => match &self.book.recovery {
                 Some(_) => rejected(Rejection::UndoInProgress),
                 None => self.normal_order(other),
@@ -608,8 +516,8 @@ impl Session {
 
     fn normal_order(&mut self, order: Order) -> Vec<Effect> {
         match (order, &self.turn, &self.agent) {
-            (Order::Start { provider, offered }, _, Agent::Down) => {
-                self.save(Saved::Start(provider, offered))
+            (Order::Start { offered }, _, Agent::Down) => {
+                self.save(Saved::Start(offered))
             }
             // Continue is idempotent: the agent already runs.
             (Order::Start { .. }, _, _) => answer(CommandResult::Accepted),
@@ -637,7 +545,7 @@ impl Session {
                 ])
             }
             (Order::Interrupt, Turn::Running(native), _) => {
-                let call = Call::Interrupt(native.clone());
+                let call = Call::Agent(Command::Interrupt(native.clone()));
                 self.flow = Flow::Noting(Some(CommandResult::Accepted));
                 Vec::from([Effect::Call(call)])
             }
@@ -710,51 +618,18 @@ impl Session {
         });
         self.boundary = None;
         let change = changed(self.choice.effort, self.agent.effort());
-        match (&self.agent, change) {
-            (
-                Agent::Up {
-                    provider: Provider::Claude,
-                    ..
-                },
-                Some(effort),
-            ) => {
-                self.flow = Flow::Retuning(text, effort);
-                Vec::from([Effect::Call(Call::SetEffort(effort))])
-            }
-            _ => self.send(text, change),
-        }
+        self.send(text, change)
     }
 
-    fn retuned(
-        &mut self,
-        text: String,
-        effort: Effort,
-        retuned: Result<(), String>,
-    ) -> Vec<Effect> {
-        match retuned {
-            Ok(()) => {
-                if let Agent::Up {
-                    effort: running, ..
-                } = &mut self.agent
-                {
-                    *running = Some(effort);
-                }
-                self.send(text, None)
-            }
-            Err(message) => self.sent(None, Err(message)),
-        }
-    }
-
-    /// Starts a turn, at the session's effort if the agent runs another:
-    /// Claude changed it in its process first, Codex changes it with the
-    /// turn. Codex returns the turn's id too; the session takes it from
-    /// `TurnStarted`, which an interrupt must wait for anyway.
+    /// Starts a turn, at the session's effort if the agent runs another.
+    /// The session takes the turn's id from `TurnStarted`, which an
+    /// interrupt must wait for anyway.
     fn send(&mut self, text: String, change: Option<Effort>) -> Vec<Effect> {
         self.flow = Flow::Sending(change);
-        Vec::from([Effect::Call(Call::Send {
+        Vec::from([Effect::Call(Call::Agent(Command::Send {
             text,
             effort: change,
-        })])
+        }))])
     }
 
     /// A message the agent never got starts no turn.
@@ -837,7 +712,7 @@ impl Session {
                 request,
                 resolution,
             }),
-            Effect::Call(Call::Answer { native, reply, by }),
+            Effect::Call(Call::Agent(Command::Reply { native, reply, by })),
         ])
     }
 
@@ -880,7 +755,7 @@ impl Session {
             Step::Withdraw(native) => self.withdraw(&native),
             Step::Checklist(steps) => self.checklist(steps),
             // A request still open when the turn ends can't be answered any
-            // more: Codex withdraws it only after `TurnCompleted`, and an
+            // more: an agent may withdraw it only after `TurnCompleted`, and an
             // answer in between would log a decision for a command that
             // never runs. Its later withdrawal then finds nothing open.
             Step::HistoryBoundary(boundary) => self.history_boundary(boundary),
@@ -995,7 +870,7 @@ impl Session {
             (
                 Some(_),
                 Agent::Up {
-                    provider: Provider::Codex,
+                    anchoring: Anchoring::Turns,
                     ..
                 },
             ) => {
@@ -1025,7 +900,7 @@ impl Session {
                     Effect::Trace(
                         "the turn started: sending the held interrupt",
                     ),
-                    Effect::Call(Call::Interrupt(native)),
+                    Effect::Call(Call::Agent(Command::Interrupt(native))),
                 ])
             }
             Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => {
@@ -1045,27 +920,24 @@ impl Session {
                 *pending = Pending::Resolved(Resolution::Withdrawn);
             }
         }
-        Vec::from([
-            Effect::Release,
-            Effect::Emit(EventKind::SessionClosed { reason }),
-        ])
+        Vec::from([Effect::Emit(EventKind::SessionClosed { reason })])
     }
 
     fn anchor(&self, native: Option<&NativeTurn>) -> HistoryAnchor {
         match &self.agent {
             Agent::Up {
-                provider: Provider::Claude,
+                anchoring: Anchoring::Messages,
                 conversation,
                 ..
-            } => HistoryAnchor::Claude {
+            } => HistoryAnchor::Messages {
                 conversation: conversation.clone(),
                 message: self.boundary.clone(),
             },
             Agent::Up {
-                provider: Provider::Codex,
+                anchoring: Anchoring::Turns,
                 conversation,
                 ..
-            } => HistoryAnchor::Codex {
+            } => HistoryAnchor::Turns {
                 conversation: conversation.clone(),
                 turn: native.map(|turn| turn.0.clone()),
             },
@@ -1152,15 +1024,11 @@ impl Session {
 
     fn saved(&mut self, then: Saved, saved: Result<(), String>) -> Vec<Effect> {
         match (then, saved) {
-            (Saved::Start(provider, offered), Ok(())) => {
+            (Saved::Start(offered), Ok(())) => {
                 let changed = self.offered(&offered);
-                let attempts = attempts(
-                    provider,
-                    self.book.resume.clone(),
-                    self.conversation.clone(),
-                );
+                let at = (self.book.resume.clone(), self.conversation.clone());
                 let directory = self.directory.clone();
-                join(changed, self.start(directory, attempts, Launched::Ready))
+                join(changed, self.start(directory, at, Launched::Ready))
             }
             (Saved::Send(text, by), Ok(())) => {
                 self.flow = Flow::Recording(text.clone());
@@ -1180,56 +1048,43 @@ impl Session {
         }
     }
 
+    /// Starts an agent in `directory` at `at`, in place of the one running
+    /// if it starts.
     fn start(
         &mut self,
         directory: HostPath,
-        (attempt, rest): (Resume, Vec<Resume>),
+        (history, conversation): At,
         then: Launched,
     ) -> Vec<Effect> {
-        let call = Call::Start(Launching {
-            directory: directory.clone(),
-            choice: self.choice.clone(),
-            resume: attempt.clone(),
-        });
-        self.flow = Flow::Starting(Starting {
-            attempt,
-            rest,
+        self.flow = Flow::Starting(then);
+        Vec::from([Effect::Call(Call::Agent(Command::Start(Start {
+            session: self.id,
             directory,
-            then,
-        });
-        Vec::from([Effect::Call(call)])
+            model: self.choice.model.clone(),
+            effort: self.choice.effort,
+            history,
+            conversation,
+        })))])
     }
 
-    /// An agent that finds the conversation it resumes missing starts on
-    /// the next attempt, if there is one.
     fn started(
         &mut self,
-        starting: Starting,
-        started: Result<String, Unstarted>,
+        then: Launched,
+        started: Result<Started, String>,
     ) -> Vec<Effect> {
-        let Starting {
-            attempt,
-            rest,
-            directory,
-            then,
-        } = starting;
-        let mut left = rest.into_iter();
-        match (started, left.next()) {
-            (Err(unstarted), Some(next))
-                if unstarted.missing.is_some()
-                    && unstarted.missing.as_deref() == attempt.session() =>
-            {
-                self.start(directory, (next, left.collect()), then)
-            }
-            (Ok(conversation), _) => {
+        match started {
+            Ok(Started {
+                conversation,
+                anchoring,
+            }) => {
                 self.agent = Agent::Up {
-                    provider: attempt.provider(),
+                    anchoring,
                     conversation: conversation.clone(),
                     effort: self.choice.effort,
                 };
                 self.launched(then, Ok(conversation))
             }
-            (Err(unstarted), _) => self.launched(then, Err(unstarted.message)),
+            Err(message) => self.launched(then, Err(message)),
         }
     }
 
@@ -1397,10 +1252,7 @@ impl Session {
             Err(reason) => rejected(reason),
             Ok(undo) => {
                 let begun = self.begin_undo(&undo);
-                let undoing = Undoing {
-                    undo,
-                    provider: order.provider,
-                };
+                let undoing = Undoing { undo };
                 join(begun, self.recover(undoing))
             }
         }
@@ -1450,13 +1302,12 @@ impl Session {
             _ => self.directory.clone(),
         };
         match history {
-            HistoryAnchor::Codex {
+            HistoryAnchor::Turns {
                 conversation,
                 turn: Some(turn),
             } => {
-                let attempts = attempts(
-                    undoing.provider,
-                    Some(HistoryAnchor::Codex {
+                let at = (
+                    Some(HistoryAnchor::Turns {
                         conversation: conversation.clone(),
                         turn: None,
                     }),
@@ -1468,12 +1319,12 @@ impl Session {
                     conversation,
                     turn,
                 };
-                self.start(directory, attempts, Launched::Revert(revert))
+                self.start(directory, at, Launched::Revert(revert))
             }
-            HistoryAnchor::Fresh | HistoryAnchor::ClaudeFork { .. } => {
+            HistoryAnchor::Fresh | HistoryAnchor::Fork { .. } => {
                 self.agent = Agent::Down;
                 self.flow = Flow::Restarting(undoing, directory, history);
-                Vec::from([Effect::Call(Call::Shutdown)])
+                Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
             }
             _ => self.restored(
                 undoing,
@@ -1483,7 +1334,7 @@ impl Session {
         }
     }
 
-    /// Claude stopped; it starts again in `directory` at `history`.
+    /// The agent stopped; it starts again in `directory` at `history`.
     fn restart(
         &mut self,
         undoing: Undoing,
@@ -1493,11 +1344,10 @@ impl Session {
     ) -> Vec<Effect> {
         match stopped {
             Ok(()) => {
-                let attempts =
-                    attempts(undoing.provider, Some(history.clone()), None);
+                let at = (Some(history.clone()), None);
                 let then =
                     Launched::Restart(undoing, directory.clone(), history);
-                self.start(directory, attempts, then)
+                self.start(directory, at, then)
             }
             Err(reason) => self.restored(undoing, &directory, Err(reason)),
         }
@@ -1506,16 +1356,18 @@ impl Session {
     fn list(&mut self, revert: Revert) -> Vec<Effect> {
         match &self.agent {
             Agent::Up {
-                provider: Provider::Codex,
+                anchoring: Anchoring::Turns,
                 ..
             } => {
                 self.flow = Flow::Listing(revert);
-                Vec::from([Effect::Call(Call::Turns)])
+                Vec::from([Effect::Call(Call::Agent(Command::Turns))])
             }
             _ => self.restored(
                 revert.undoing,
                 &revert.directory,
-                Err(String::from("Codex undo started another provider")),
+                Err(String::from(
+                    "the agent restored to revert turns keeps no turns",
+                )),
             ),
         }
     }
@@ -1527,7 +1379,7 @@ impl Session {
     ) -> Vec<Effect> {
         match listed {
             Ok(before) if before.contains(&revert.turn) => {
-                let call = Call::Revert(revert.turn.clone());
+                let call = Call::Agent(Command::Revert(revert.turn.clone()));
                 self.flow = Flow::Reverting(revert);
                 Vec::from([Effect::Call(call)])
             }
@@ -1546,7 +1398,7 @@ impl Session {
         match reverted {
             Ok(()) => {
                 self.flow = Flow::Checking(revert);
-                Vec::from([Effect::Call(Call::Turns)])
+                Vec::from([Effect::Call(Call::Agent(Command::Turns))])
             }
             Err(reason) => {
                 self.restored(revert.undoing, &revert.directory, Err(reason))
@@ -1563,7 +1415,7 @@ impl Session {
         let desired = self.kept_turns(revert.undoing.undo.restored);
         let history = listed.and_then(|after| {
             (after == desired)
-                .then(|| HistoryAnchor::Codex {
+                .then(|| HistoryAnchor::Turns {
                     conversation: revert.conversation,
                     turn: desired.last().cloned(),
                 })
@@ -1583,7 +1435,7 @@ impl Session {
             .filter(|id| id <= &&restored)
             .filter_map(|id| self.book.checkpoints.get(id))
             .filter_map(|checkpoint| match &checkpoint.history {
-                HistoryAnchor::Codex {
+                HistoryAnchor::Turns {
                     turn: Some(kept), ..
                 } => Some(kept.clone()),
                 _ => None,
@@ -1603,7 +1455,7 @@ impl Session {
             Ok(history) if directory != &self.directory => {
                 self.agent = Agent::Down;
                 self.flow = Flow::Leaving(undoing, history);
-                Vec::from([Effect::Call(Call::Shutdown)])
+                Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
             }
             other => self.history_restored(undoing, other),
         }
@@ -1667,13 +1519,9 @@ impl Session {
         match (restored, &self.agent) {
             (Err(reason), _) => self.undo_failed(undoing.undo.selected, reason),
             (Ok(()), Agent::Down) => {
-                let attempts = attempts(
-                    undoing.provider,
-                    self.book.resume.clone(),
-                    self.conversation.clone(),
-                );
+                let at = (self.book.resume.clone(), self.conversation.clone());
                 let directory = self.directory.clone();
-                self.start(directory, attempts, Launched::Complete(undoing))
+                self.start(directory, at, Launched::Complete(undoing))
             }
             (Ok(()), Agent::Up { .. }) => self.finish_undo(&undoing.undo),
         }
@@ -1774,7 +1622,8 @@ fn changed(wanted: Option<Effort>, running: Option<Effort>) -> Option<Effort> {
 }
 
 /// What an undo restores the agent's history to: a fresh conversation, a
-/// fork of Claude's through the parent's last message, or Codex's turn.
+/// fork through the parent's last message, or the turns before the
+/// checkpoint's.
 fn undo_history(
     parent: &HistoryAnchor,
     checkpoint: &HistoryAnchor,
@@ -1783,23 +1632,23 @@ fn undo_history(
     match (parent, checkpoint) {
         (HistoryAnchor::Fresh, _) => Ok(HistoryAnchor::Fresh),
         (
-            HistoryAnchor::Claude {
+            HistoryAnchor::Messages {
                 conversation,
                 message: Some(message),
             },
             _,
-        ) => Ok(HistoryAnchor::ClaudeFork {
+        ) => Ok(HistoryAnchor::Fork {
             source: conversation.clone(),
             through: message.clone(),
             target: String::from(fork),
         }),
         (
             _,
-            HistoryAnchor::Codex {
+            HistoryAnchor::Turns {
                 conversation,
                 turn: Some(turn),
             },
-        ) => Ok(HistoryAnchor::Codex {
+        ) => Ok(HistoryAnchor::Turns {
             conversation: conversation.clone(),
             turn: Some(turn.clone()),
         }),
@@ -1807,82 +1656,9 @@ fn undo_history(
     }
 }
 
-/// The resumes to try in turn when starting `provider`'s agent at
-/// `history`, else on the saved `conversation`; each after the first only
-/// when the one before finds its conversation missing.
-///
-/// A fork whose target already exists resumes the target instead, and a
-/// missing Claude conversation with no observed message starts fresh.
-fn attempts(
-    provider: Provider,
-    history: Option<HistoryAnchor>,
-    conversation: Option<String>,
-) -> (Resume, Vec<Resume>) {
-    match provider {
-        Provider::Claude => {
-            let fallback = matches!(
-                history,
-                Some(HistoryAnchor::Claude { message: None, .. })
-            );
-            match claude_resume(history, conversation) {
-                ClaudeResume::Fork {
-                    source,
-                    through,
-                    target,
-                } => (
-                    Resume::Claude(ClaudeResume::Session(target.clone())),
-                    Vec::from([Resume::Claude(ClaudeResume::Fork {
-                        source,
-                        through,
-                        target,
-                    })]),
-                ),
-                ClaudeResume::Session(session) if fallback => (
-                    Resume::Claude(ClaudeResume::Session(session)),
-                    Vec::from([Resume::Claude(ClaudeResume::Fresh)]),
-                ),
-                resume => (Resume::Claude(resume), Vec::new()),
-            }
-        }
-        Provider::Codex => (
-            Resume::Codex(match history {
-                Some(HistoryAnchor::Fresh) => None,
-                Some(HistoryAnchor::Codex {
-                    conversation: native,
-                    ..
-                }) => Some(native),
-                _ => conversation,
-            }),
-            Vec::new(),
-        ),
-    }
-}
-
-fn claude_resume(
-    history: Option<HistoryAnchor>,
-    conversation: Option<String>,
-) -> ClaudeResume {
-    match history {
-        Some(HistoryAnchor::Fresh) => ClaudeResume::Fresh,
-        Some(HistoryAnchor::ClaudeFork {
-            source,
-            through,
-            target,
-        }) => ClaudeResume::Fork {
-            source,
-            through,
-            target,
-        },
-        Some(HistoryAnchor::Claude {
-            conversation: native,
-            ..
-        }) => ClaudeResume::Session(native),
-        _ => conversation.map_or(ClaudeResume::Fresh, ClaudeResume::Session),
-    }
-}
-
 /// Where a restored session resumes. A fresh restart that took a message
-/// resumes the conversation the host saved for it.
+/// has no history to restore yet: it resumes the conversation the host
+/// saved for it.
 fn resumed(
     replayed: &Book,
     conversation: Option<&String>,
@@ -1898,28 +1674,12 @@ fn resumed(
     match (&replayed.resume, conversation, last) {
         (
             Some(HistoryAnchor::Fresh),
-            Some(saved),
+            Some(_),
             Some(Event {
                 kind: EventKind::UserMessage { .. },
                 ..
             }),
-        ) => history.iter().find_map(|event| match event.kind {
-            EventKind::SessionCreated {
-                provider: Provider::Claude,
-                ..
-            } => Some(HistoryAnchor::Claude {
-                conversation: saved.clone(),
-                message: None,
-            }),
-            EventKind::SessionCreated {
-                provider: Provider::Codex,
-                ..
-            } => Some(HistoryAnchor::Codex {
-                conversation: saved.clone(),
-                turn: None,
-            }),
-            _ => None,
-        }),
+        ) => None,
         _ => replayed.resume.clone(),
     }
 }

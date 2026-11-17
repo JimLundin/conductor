@@ -1,8 +1,8 @@
 //! Codex's `codex app-server` JSON-RPC: the few messages we read and write,
 //! and their events mapped into the agent API (`agents`), how the server
-//! starts, what the server actor decides and what the hub that shares
-//! the server among threads decides. `codex-cli` runs the server
-//! that speaks it.
+//! starts, what the server actor decides, what the hub that shares the
+//! server among threads decides and what a thread's agent decides with a
+//! session's runtime commands. `codex-cli` runs the server that speaks it.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -14,16 +14,14 @@ mod launch;
 mod mapping;
 mod prelude;
 mod protocol;
+pub mod runtime;
 
-pub use driver::{
-    After, Command, Effect, Failure, Input, Server, Then, log_stderr,
-    log_unrecorded,
-};
+pub use driver::{After, Command, Effect, Failure, Input, Server, Then};
 pub use launch::{
     Edit, History, KEY_VAR, Paging, app_server, cli, config_edits, login,
     login_status, version,
 };
-pub use mapping::{codex_answer, codex_steps};
+pub use mapping::{codex_answer, codex_note, codex_steps};
 pub use protocol::{
     AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call,
     CodexEvent, Decision, INITIALIZE, Inbound, Outbound, PermissionAsk,

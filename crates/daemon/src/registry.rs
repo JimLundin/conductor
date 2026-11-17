@@ -3,17 +3,16 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::path::PathBuf;
 
-use claude::Sandbox;
+use agents::runtime::Command;
 use n0_future::MaybeFuture;
 use n0_future::boxed::BoxFuture;
 use proto::{
-    Auth, Availability, ClaudeCredential, ClientName, CloseReason,
-    CodexCredential, CommandResult, Credential, Credentials, Effort, Event,
-    EventKind, HostPath, ModelId, Models, Provider, Providers, Rejection,
-    SessionId, TurnOutcome,
+    Auth, Availability, ClientName, CloseReason, CodexCredential,
+    CommandResult, Credential, Credentials, Effort, Event, EventKind, HostPath,
+    ModelId, Models, Provider, Providers, Rejection, SessionId, TurnOutcome,
 };
+use runtime::{Runtime, Starter};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
@@ -21,7 +20,7 @@ use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use host::session::{Choice, choose};
 
-use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session, list_models};
+use crate::session::Session;
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -32,19 +31,30 @@ pub struct Launchers {
 
 #[derive(Debug, Clone)]
 pub enum Launcher {
-    /// The CLI runs, and signs in as `own` says when the host stores no
-    /// credential for it. `models` is what it listed when the host started;
-    /// the registry lists them again when the credential changes.
-    /// `chosen` (`--claude-model`, `--codex-model`) comes before the CLI's
-    /// own default.
+    /// The CLI runs, `start` starts its agents, and it signs in as `own`
+    /// says when the host stores no credential for it. `models` is what it
+    /// listed when the host started; the registry lists them again when the
+    /// credential changes. `chosen` (`--claude-model`, `--codex-model`)
+    /// comes before the CLI's own default.
     Ready {
-        launch: Launch,
+        start: Starter,
         own: OwnSignIn,
         models: Models,
         chosen: Option<ModelId>,
     },
     /// The host can't run this provider's sessions, for this reason.
     Unavailable(String),
+}
+
+impl Launcher {
+    /// An agent's runtime: one whose commands all fail when the provider
+    /// is unavailable.
+    fn runtime(&self) -> Runtime {
+        match self {
+            Self::Ready { start, .. } => start.start(),
+            Self::Unavailable(reason) => Runtime::refusing(reason.clone()),
+        }
+    }
 }
 
 /// What a CLI signs in with when the host stores no credential for it.
@@ -108,7 +118,7 @@ enum RegistryMsg {
     },
     Continue {
         session: SessionId,
-        reply: oneshot::Sender<Result<(Session, Launch, Models), Rejection>>,
+        reply: oneshot::Sender<Result<(Session, Models), Rejection>>,
     },
     Find {
         session: SessionId,
@@ -152,7 +162,6 @@ struct RefreshJob {
     provider: Provider,
     launcher: Launcher,
     credentials: Credentials,
-    directory: PathBuf,
 }
 
 struct Refreshed {
@@ -258,22 +267,20 @@ async fn refresh(job: RefreshJob) -> Refreshed {
     }
 }
 
+/// The provider's agents take the credentials, and then it lists what it
+/// offers with them.
 async fn refresh_models(job: RefreshJob) -> Result<Models, String> {
-    if let Launcher::Ready {
-        launch: Launch::Codex(CodexLaunch { hub }),
-        ..
-    } = &job.launcher
-    {
-        hub.set_credential(job.credentials.codex.clone())
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    let (launch, _) = configured(
+    let mut runtime = job.launcher.runtime();
+    runtime
+        .ask(Command::Credentials(job.credentials.clone()))
+        .await
+        .configured()?;
+    configured(
         &job.launcher,
         job.provider,
         &Stored::Opened(job.credentials),
     )?;
-    list_models(launch, &job.directory).await
+    runtime.ask(Command::Models).await.models()
 }
 
 impl Registry {
@@ -285,9 +292,6 @@ impl Registry {
         store: Store,
         stored: Stored,
     ) -> Self {
-        if let Stored::Opened(credentials) = &stored {
-            warn_unprotected(credentials);
-        }
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
@@ -341,7 +345,7 @@ impl Registry {
     pub async fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<Result<(Session, Launch, Models), Rejection>, Stopped> {
+    ) -> Result<Result<(Session, Models), Rejection>, Stopped> {
         self.ask(|reply| RegistryMsg::Continue { session, reply })
             .await
     }
@@ -446,9 +450,7 @@ impl RegistryActor {
                     Some((known, handle)) => {
                         let provider = *known;
                         self.ready(provider)
-                            .map(|(launch, _)| {
-                                (handle.clone(), launch, self.models(provider))
-                            })
+                            .map(|_| (handle.clone(), self.models(provider)))
                             .map_err(|reason| Rejection::ProviderUnavailable {
                                 reason,
                             })
@@ -559,11 +561,12 @@ impl RegistryActor {
                 .into_iter()
                 .filter(|event| event.session == id)
                 .collect::<Vec<Event>>();
+            let runtime = self.launchers.of(provider).runtime();
             let session = Session::restore(
                 id,
                 directory,
                 choice,
-                conversation,
+                (runtime, conversation),
                 &recovered,
                 self.log.clone(),
             );
@@ -603,13 +606,11 @@ impl RegistryActor {
             ));
         } else {
             tracing::info!(?provider, "stored a credential change");
-            warn_unprotected(&next);
             let job = RefreshJob {
                 id: ulid::Ulid::new(),
                 provider,
                 launcher: self.launchers.of(provider).clone(),
                 credentials: next.clone(),
-                directory: self.store.dir().to_path_buf(),
             };
             self.stored = Stored::Opened(next);
             match provider {
@@ -636,15 +637,12 @@ impl RegistryActor {
                 (
                     Ok(models),
                     Launcher::Ready {
-                        launch,
-                        own,
-                        chosen,
-                        ..
+                        start, own, chosen, ..
                     },
                 ) => {
                     let ready = Launcher::Ready {
                         models,
-                        launch: launch.clone(),
+                        start: start.clone(),
                         own: own.to_owned(),
                         chosen: chosen.clone(),
                     };
@@ -706,11 +704,11 @@ impl RegistryActor {
         }
     }
 
-    /// How `provider` runs, with the credential a Claude session gets when
-    /// it starts, and how it signs in, or why it can't. A stored credential
-    /// comes first, then the CLI's own sign-in. A store that doesn't open
-    /// may hold a credential, so it never falls back to the sign-in.
-    fn ready(&self, provider: Provider) -> Result<(Launch, Auth), String> {
+    /// How `provider`'s agents start and how it signs in, or why it can't.
+    /// A stored credential comes first, then the CLI's own sign-in. A store
+    /// that doesn't open may hold a credential, so it never falls back to
+    /// the sign-in.
+    fn ready(&self, provider: Provider) -> Result<(Starter, Auth), String> {
         match provider {
             Provider::Claude => self.claude_refresh.ready()?,
             Provider::Codex => self.codex_refresh.ready()?,
@@ -726,7 +724,7 @@ impl RegistryActor {
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         // `read_dir` fails for a missing path and for a file alike.
-        let ready = self.ready(provider).map(|(launch, _)| launch);
+        let ready = self.ready(provider).map(|(start, _)| start);
         let (model, effort) = asked;
         match (
             std::fs::read_dir(&directory.0),
@@ -744,7 +742,7 @@ impl RegistryActor {
             (Ok(_), Ok(_), Err(reason)) => {
                 Ok(CommandResult::Rejected(Rejection::NotOffered { reason }))
             }
-            (Ok(_), Ok(launch), Ok(choice)) => {
+            (Ok(_), Ok(start), Ok(choice)) => {
                 let id = SessionId(u128::from(ulid::Ulid::new()));
                 let created = EventKind::SessionCreated {
                     provider,
@@ -811,7 +809,7 @@ impl RegistryActor {
                                 id,
                                 directory,
                                 choice,
-                                (launch, offered),
+                                (start.start(), offered),
                                 self.log.clone(),
                                 &[workspace_event, checkpoint_event],
                             );
@@ -994,37 +992,18 @@ fn configured(
     launcher: &Launcher,
     provider: Provider,
     stored: &Stored,
-) -> Result<(Launch, Auth), String> {
+) -> Result<(Starter, Auth), String> {
     match (launcher, stored) {
         (Launcher::Unavailable(reason), _)
         | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => {
             Err(reason.clone())
         }
-        (Launcher::Ready { launch, own, .. }, Stored::Opened(credentials)) => {
-            let credentialed = match launch.clone() {
-                Launch::Claude(claude) => Launch::Claude(ClaudeLaunch {
-                    credential: credentials.claude.clone(),
-                    ..claude
-                }),
-                Launch::Codex(codex) => Launch::Codex(codex),
-            };
-            match credentials.auth(provider) {
-                Some(auth) => Ok((credentialed, auth)),
-                None => own.auth().map(|auth| (credentialed, auth)),
-            }
+        (Launcher::Ready { start, own, .. }, Stored::Opened(credentials)) => {
+            credentials
+                .auth(provider)
+                .map_or_else(|| own.auth(), Ok)
+                .map(|auth| (start.clone(), auth))
         }
-    }
-}
-
-/// Without Claude's sandbox the scrub is off (`claude_cli::sandbox`),
-/// so the commands Claude runs inherit a gateway token.
-fn warn_unprotected(credentials: &Credentials) {
-    if let (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) =
-        (&credentials.claude, claude_cli::sandbox())
-    {
-        tracing::warn!(
-            "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them"
-        );
     }
 }
 
@@ -1042,15 +1021,16 @@ mod tests {
     use super::{Launcher, Launchers, OwnSignIn, Registry};
     use crate::credentials::Store;
     use crate::log::Log;
-    use crate::session::{ClaudeLaunch, Launch, Order};
+    use crate::session::Order;
 
-    fn launcher() -> Launcher {
+    fn launcher(directory: &Path) -> Launcher {
         Launcher::Ready {
-            launch: Launch::Claude(ClaudeLaunch {
+            start: claude_cli::starter(claude_cli::ClaudeLaunch {
                 claude_path: Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../claude-cli/tests/fake-claude.sh"),
                 home: Home::User,
                 credential: None,
+                probe: directory.join("probe"),
             }),
             own: OwnSignIn::Unmanaged,
             models: Models::none(),
@@ -1097,7 +1077,7 @@ mod tests {
         let registry = Registry::spawn(
             second.clone(),
             Launchers {
-                claude: launcher(),
+                claude: launcher(&directory),
                 codex: Launcher::Unavailable(String::from("test")),
             },
             store,
@@ -1106,12 +1086,12 @@ mod tests {
         let providers = registry.providers().await?;
         assert_eq!(second.welcome(providers).await?.epoch, epoch);
         assert_recovered(&second.subscribe(HostSeq(4)).await?.replay);
-        let (session, launch, models) = registry
+        let (session, models) = registry
             .relaunch(id)
             .await?
             .map_err(|rejection| format!("{rejection:?}"))?;
         assert_eq!(
-            session.order(Order::Start(launch, models)).await?,
+            session.order(Order::Start(models)).await?,
             CommandResult::Accepted
         );
         let arguments = std::fs::read_to_string(directory.join("argv.txt"))?;

@@ -50,26 +50,6 @@ pub fn verify(found: String, expected: &str) -> Result<(), Mismatch> {
     }
 }
 
-/// Logs that the pinned `name` is already installed at `path`.
-pub fn log_present(name: &str, version: &str, path: &str) {
-    tracing::info!(path = %path, "pinned {name} {version} is installed");
-}
-
-/// Logs that the pinned `name` is being downloaded from `url`.
-pub fn log_installing(name: &str, version: &str, url: &str) {
-    tracing::info!(url = %url, "installing pinned {name} {version}");
-}
-
-/// Logs that the pinned `name` is installed at `path`, verified.
-pub fn log_installed(name: &str, version: &str, path: &str, sha256: &str) {
-    tracing::info!(path = %path, sha256 = %sha256, "installed pinned {name} {version}");
-}
-
-/// Logs that an older install at `path` is being removed.
-pub fn log_removing(path: &str) {
-    tracing::info!(path = %path, "removing an older pinned CLI");
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Mismatch, Platform, platform, verify};

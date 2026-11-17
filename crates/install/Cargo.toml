@@ -17,6 +17,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 sha2 = { version = "0.11.0", default-features = false }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs"] }
+tracing.workspace = true
 
 [dev-dependencies]
 claude = { path = "../claude" }

@@ -6,13 +6,22 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
-  `agents`, `claude`, `codex` and `host`; `net`, `daemon`, `claude-cli`,
-  `codex-cli` and `install` declare themselves the shell. `client` holds
-  the host link's state machine, and `host` holds checkpoints and tasks.
-  Next: the shell still makes most decisions, and `exceptions.toml` lists
-  each shell file that does as debt. Move the session, registry, serve and
-  log actors into `host`, and the drivers' decisions into `claude` and
-  `codex`, retiring an entry with each.
+  `agents`, `claude`, `codex` and `host`; `net`, `daemon`, `runtime`,
+  `claude-cli`, `codex-cli` and `install` declare themselves the shell.
+  `client` holds the host link's state machine, and `host` holds
+  checkpoints and tasks. Next: the shell still makes most decisions, and
+  `exceptions.toml` lists each shell file that does as debt. Move the
+  registry, serve, log and workspace decisions into `host`, retiring an
+  entry with each.
+
+- **One agent runtime** (§5.2). The daemon asks one interface for agents:
+  `agents::runtime`'s commands and events over a `runtime::Runtime`
+  channel pair, with Claude and Codex as two plugins behind it. Each
+  provider's core translates the protocol into its wire as a state
+  machine, Claude's resume fallbacks included, and `host::session` and the
+  daemon's session know no provider. Logging moved out of the cores into
+  the shell, and the shell code bent to the old complexity measure is
+  plain `async fn` and `select!` again.
 
 - **Managed CLIs** (#1) (§6.2). `conductord` installs the pinned Claude
   Code and Codex into its data dir, checks their hashes and runs only those,

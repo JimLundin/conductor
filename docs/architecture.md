@@ -245,27 +245,43 @@ Every piece of state has one owner task; handles talk to it over channels.
   stays unavailable while refreshing, and reports a failure if discovery
   fails. Per-provider ordering also isolates Claude's shared probe directory
   and prevents older Codex reconfiguration from running after a newer one.
-- **Session** owns one agent, its turn and its open requests. An interrupt
-  that arrives before the agent began the turn is held until it does. An
-  open request is withdrawn when the turn ends. It outlives the agent's
-  process: once that exits it takes only `Continue`, which starts the agent
-  again on the same conversation.
+- **Session** owns one agent's runtime (§5.2), its turn and its open
+  requests. An interrupt that arrives before the agent began the turn is
+  held until it does. An open request is withdrawn when the turn ends. It
+  outlives the agent's process: once that exits it takes only `Continue`,
+  which starts the agent again on the same conversation.
 - **Serve** accepts connections, checks `Hello`, dispatches commands and
   feeds subscriptions.
 
 ### 5.2 Agents
 
-- `agents`: the provider-agnostic API a session speaks: `Step`, `Reply`,
-  the native request and turn ids, `PlanStep` and `Exit`. Pure `no_std`.
-- `claude` and `codex`: each provider's wire (stream-json, JSON-RPC) and its
-  mapping into `agents`. Pure `no_std`.
-- `claude-cli` and `codex-cli`: run and drive each CLI's process over tokio,
-  with their replay tests.
+A session asks one interface for its agent, whichever provider runs it:
+the runtime protocol `agents::runtime`. The session sends a `Command`
+(start or resume at a history anchor, send, interrupt, reply, list or
+revert turns, list models, set credentials, shut down) and waits for its
+`Outcome`; meanwhile the agent reports `Step`s. The handle is
+`runtime::Runtime`, a channel pair, and each provider hands the daemon a
+`runtime::Starter` for its agents. `host::session` and the daemon's
+session actor know no provider; the registry maps each `Provider` to its
+starter, built in `start.rs`.
+
+- `agents`: the provider-agnostic API: the runtime protocol, `Step`,
+  `Reply`, the native request and turn ids, `PlanStep`, `Exit` and the
+  `Note`s a core logs through its shell. Pure `no_std`.
+- `claude` and `codex`: each provider's wire (stream-json, JSON-RPC), its
+  mapping into `agents`, and the state machines that drive it: the process
+  actor (`driver`), the runtime that turns commands into calls and events
+  into steps (`runtime`), and Codex's `hub`. Claude's resume fallbacks
+  live in `claude::runtime`: a missing conversation with no message seen
+  starts fresh, and an undo's fork whose target exists resumes the target.
+  Pure `no_std`; they log nothing themselves.
+- `runtime`: the shell's handle type and the starter both providers share.
+- `claude-cli` and `codex-cli`: run each CLI's process over tokio and each
+  agent's runtime task, with their replay tests. All logging happens here.
 - The Codex hub, `codex_cli::Hub`, is the one task that owns the host's
-  `codex app-server` and routes each thread's events to its session; its
-  decisions are the state machine `codex::hub`. A daemon session asks it for
-  a thread and gets that thread's events, as a Claude session gets its own
-  process, and never manages the shared server.
+  `codex app-server` and routes each thread's events to its agent's
+  runtime; its decisions are the state machine `codex::hub`. It is
+  internal to the Codex runtime: a session never sees the shared server.
 - `install`: what both CLIs share: the pinned installs, each CLI's home and
   process start and stop.
 

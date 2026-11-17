@@ -12,17 +12,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use claude::Sandbox;
+use claude_cli::ClaudeLaunch;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
     ToolState,
 };
 use codex_cli::{Hub, ServerOptions};
 use daemon::Stopped;
-use daemon::credentials::Store;
+use daemon::credentials::{Store, Stored};
 use daemon::log::Log;
 use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use daemon::serve::Conductor;
-use daemon::session::{ClaudeLaunch, CodexLaunch, Launch};
 use install::Home;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
@@ -99,10 +99,11 @@ fn fake_codex() -> PathBuf {
 async fn host_with(claude_path: PathBuf) -> Fallible<Fixture> {
     host_of(Launchers {
         claude: Launcher::Ready {
-            launch: Launch::Claude(ClaudeLaunch {
+            start: claude_cli::starter(ClaudeLaunch {
                 claude_path,
                 home: Home::User,
                 credential: None,
+                probe: target_tmp()?.join("probe"),
             }),
             own: OwnSignIn::Unmanaged,
             models: models(),
@@ -127,7 +128,7 @@ async fn codex_host(recording: &str) -> Fallible<(Fixture, PathBuf)> {
     let fixture = host_of(Launchers {
         claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
         codex: Launcher::Ready {
-            launch: Launch::Codex(CodexLaunch { hub }),
+            start: codex_cli::starter(hub),
             own: OwnSignIn::Unmanaged,
             models: models(),
             chosen: None,
@@ -226,10 +227,11 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
         log.clone(),
         Launchers {
             claude: Launcher::Ready {
-                launch: Launch::Claude(ClaudeLaunch {
+                start: claude_cli::starter(ClaudeLaunch {
                     claude_path: fake_claude(),
                     home: Home::User,
                     credential: None,
+                    probe: data.join("probe"),
                 }),
                 own: OwnSignIn::Unmanaged,
                 models: models(),
@@ -2204,17 +2206,23 @@ fn count(path: &Path, text: &str) -> Fallible<usize> {
 }
 
 /// A host on `data` whose Claude is the fake in a private home, with no
-/// sign-in of its own, and whose Codex is unavailable.
+/// sign-in of its own, and whose Codex is unavailable. Its Claude starts
+/// with the credential the store holds, as `conductord host` does.
 async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
     let homes = daemon::homes(data)?;
     std::fs::create_dir_all(data.join("probe"))?;
     std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n"))?;
+    let credential = match Store::open(data)?.1 {
+        Stored::Opened(credentials) => credentials.claude,
+        Stored::Unreadable(_) => None,
+    };
     let launchers = Launchers {
         claude: Launcher::Ready {
-            launch: Launch::Claude(ClaudeLaunch {
+            start: claude_cli::starter(ClaudeLaunch {
                 claude_path: fake_claude(),
                 home: homes.claude,
-                credential: None,
+                credential,
+                probe: data.join("probe"),
             }),
             own: OwnSignIn::Missing,
             models: models(),
@@ -2466,7 +2474,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
     let launchers = Launchers {
         claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
         codex: Launcher::Ready {
-            launch: Launch::Codex(CodexLaunch { hub }),
+            start: codex_cli::starter(hub),
             own: OwnSignIn::Missing,
             models: models(),
             chosen: None,
@@ -3588,12 +3596,13 @@ async fn refresh_host(
     serve_log(endpoint().await?, launchers, data, log).await
 }
 
-fn refresh_claude(home: Home) -> Launcher {
+fn refresh_claude(home: Home, data: &Path) -> Launcher {
     Launcher::Ready {
-        launch: Launch::Claude(ClaudeLaunch {
+        start: claude_cli::starter(ClaudeLaunch {
             claude_path: fake_claude(),
             home,
             credential: None,
+            probe: data.join("probe"),
         }),
         own: OwnSignIn::Unmanaged,
         models: models(),
@@ -3726,7 +3735,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let source = scratch("refresh-claude", "claude-approve.jsonl")?;
     let probe = held_claude_probe(&data)?;
     let launchers = Launchers {
-        claude: refresh_claude(daemon::homes(&data)?.claude),
+        claude: refresh_claude(daemon::homes(&data)?.claude, &data),
         codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
     };
     let fx = refresh_host(&data, &source, launchers.clone()).await?;
@@ -3860,9 +3869,9 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
         &data,
         &source,
         Launchers {
-            claude: refresh_claude(homes.claude),
+            claude: refresh_claude(homes.claude, &data),
             codex: Launcher::Ready {
-                launch: Launch::Codex(CodexLaunch { hub }),
+                start: codex_cli::starter(hub),
                 own: OwnSignIn::Missing,
                 models: models(),
                 chosen: None,
@@ -4504,10 +4513,10 @@ async fn inject_failed_undo(
     discarded: &proto::Checkpoint,
 ) -> Fallible {
     let history = match retained.history.clone() {
-        proto::HistoryAnchor::Claude {
+        proto::HistoryAnchor::Messages {
             conversation,
             message: Some(through),
-        } => Some(proto::HistoryAnchor::ClaudeFork {
+        } => Some(proto::HistoryAnchor::Fork {
             source: conversation,
             through,
             target: String::from("00000000-0000-4000-8000-000000000300"),
@@ -4720,7 +4729,7 @@ fn fork_target(undone: &[Event]) -> Fallible<String> {
         .iter()
         .find_map(|event| match &event.kind {
             EventKind::UndoHistoryRestored {
-                history: proto::HistoryAnchor::ClaudeFork { target, .. },
+                history: proto::HistoryAnchor::Fork { target, .. },
                 ..
             } => Some(target.clone()),
             _ => None,
@@ -4832,7 +4841,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
     let after = events_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
         checkpoint(&after, proto::CheckpointId(4))?.history,
-        proto::HistoryAnchor::Claude {
+        proto::HistoryAnchor::Messages {
             conversation: target,
             message: Some(String::from("00000000-0000-4000-8000-000000000204"))
         }

@@ -8,7 +8,7 @@
 
 use core::fmt;
 
-use agents::Exit;
+use agents::{Exit, Note};
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -92,6 +92,7 @@ pub enum Effect<R, S, E> {
         then: Then<R>,
     },
     Emit(ClaudeEvent),
+    Log(Note),
     /// Answer a handle's command; a command with no value answers `Null`.
     Reply(R, Result<Value, Failure<E>>),
     /// Answer a shutdown with how the process ended.
@@ -197,8 +198,11 @@ impl<R> Session<R> {
             Input::Read(Ok(Some(line))) => self.line(&line),
             Input::Read(Ok(None)) => self.stop(After::Nothing),
             Input::Read(Err(error)) => {
-                tracing::error!("reading claude stdout: {error}");
-                self.stop(After::Nothing)
+                let mut effects = Vec::from([Effect::Log(Note::error(
+                    format!("reading claude stdout: {error}"),
+                ))]);
+                effects.extend(self.stop(After::Nothing));
+                effects
             }
             Input::Command(command) => self.command(command),
             Input::Closed => self.stop(After::End),
@@ -208,10 +212,23 @@ impl<R> Session<R> {
     }
 
     fn line<S, E: fmt::Display>(&mut self, line: &str) -> Vec<Effect<R, S, E>> {
-        let inbound = parse_line(line).unwrap_or_else(|error| {
-            tracing::warn!("claude printed a non-JSON line ({error}): {line}");
-            Inbound::Event(ClaudeEvent::Unknown(Value::String(line.to_owned())))
-        });
+        match parse_line(line) {
+            Ok(inbound) => self.inbound(inbound),
+            Err(error) => Vec::from([
+                Effect::Log(Note::warn(format!(
+                    "claude printed a non-JSON line ({error}): {line}"
+                ))),
+                Effect::Emit(ClaudeEvent::Unknown(Value::String(
+                    line.to_owned(),
+                ))),
+            ]),
+        }
+    }
+
+    fn inbound<S, E: fmt::Display>(
+        &mut self,
+        inbound: Inbound,
+    ) -> Vec<Effect<R, S, E>> {
         match inbound {
             Inbound::Event(received) => {
                 Vec::from([Effect::Emit(self.event(received))])
@@ -230,14 +247,16 @@ impl<R> Session<R> {
             } => {
                 let message =
                     format!("unsupported control request subtype: {subtype}");
-                tracing::warn!("{message}");
-                self.write(
+                let mut effects =
+                    Vec::from([Effect::Log(Note::warn(message.clone()))]);
+                effects.extend(self.write(
                     Outbound::ControlError {
                         request_id,
                         message,
                     },
                     Then::Refusal { subtype },
-                )
+                ));
+                effects
             }
         }
     }
@@ -288,10 +307,9 @@ impl<R> Session<R> {
     ) -> Vec<Effect<R, S, E>> {
         self.pending.remove(request_id).map_or_else(
             || {
-                tracing::warn!(
+                Vec::from([Effect::Log(Note::warn(format!(
                     "control_response for unknown request {request_id}"
-                );
-                Vec::new()
+                )))])
             },
             |(call, reply)| {
                 Vec::from([Effect::Reply(
@@ -417,16 +435,6 @@ impl<R> Session<R> {
     }
 }
 
-/// Logs a line the CLI printed on stderr.
-pub fn log_stderr(line: &str) {
-    tracing::warn!(target: "claude::stderr", "{line}");
-}
-
-/// Logs why a stdout line could not be appended to the stdout log.
-pub fn log_unrecorded(error: &str) {
-    tracing::warn!("writing stdout log: {error}");
-}
-
 fn after<R, S, E>(then: After<S>, exit: &Exit) -> Vec<Effect<R, S, E>> {
     match then {
         After::Nothing => Vec::new(),
@@ -448,16 +456,15 @@ fn failed<R, S, E: fmt::Display>(
         | Then::Control { reply, .. } => {
             Vec::from([Effect::Reply(reply, Err(failure))])
         }
-        Then::Refusal { subtype } => {
-            tracing::error!("replying to {subtype}: {failure}");
-            Vec::new()
-        }
+        Then::Refusal { subtype } => Vec::from([Effect::Log(Note::error(
+            format!("replying to {subtype}: {failure}"),
+        ))]),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use agents::Exit;
+    use agents::{Exit, Note};
     use serde_json::{Value, json};
 
     use super::{After, Command, Effect, Failure, Input, Session, Then};
@@ -585,7 +592,9 @@ mod tests {
                     })
                 )]),
                 Vec::from([Effect::Reply(1, Ok(json!({ "ok": true })))]),
-                Vec::new(),
+                Vec::from([Effect::Log(Note::warn(String::from(
+                    "control_response for unknown request req_1"
+                )))]),
             ])
         );
     }
@@ -617,7 +626,9 @@ mod tests {
             Vec::from([
                 Vec::from([Effect::Reply(1, Err(Failure::Io("broken pipe")))]),
                 Vec::from([Effect::Reply(2, Err(Failure::Io("broken pipe")))]),
-                Vec::new(),
+                Vec::from([Effect::Log(Note::error(String::from(
+                    "replying to hook_callback: claude i/o: broken pipe"
+                )))]),
             ])
         );
     }
@@ -630,19 +641,21 @@ mod tests {
             "request_id": "cli_1",
             "request": { "subtype": "hook_callback" },
         })));
+        let message = "unsupported control request subtype: hook_callback";
         assert_eq!(
             seen,
-            Vec::from([written(
-                Outbound::ControlError {
-                    request_id: String::from("cli_1"),
-                    message: String::from(
-                        "unsupported control request subtype: hook_callback",
-                    ),
-                },
-                Then::Refusal {
-                    subtype: String::from("hook_callback"),
-                },
-            )])
+            Vec::from([
+                Effect::Log(Note::warn(String::from(message))),
+                written(
+                    Outbound::ControlError {
+                        request_id: String::from("cli_1"),
+                        message: String::from(message),
+                    },
+                    Then::Refusal {
+                        subtype: String::from("hook_callback"),
+                    },
+                )
+            ])
         );
     }
 
@@ -744,9 +757,14 @@ mod tests {
             session.step(Input::Read(Ok(Some(String::from("oops")))));
         assert_eq!(
             seen,
-            Vec::from([Effect::Emit(ClaudeEvent::Unknown(Value::String(
-                String::from("oops")
-            )))])
+            Vec::from([
+                Effect::Log(Note::warn(String::from(
+                    "claude printed a non-JSON line (expected value at line 1 column 1): oops"
+                ))),
+                Effect::Emit(ClaudeEvent::Unknown(Value::String(
+                    String::from("oops")
+                )))
+            ])
         );
     }
 
@@ -820,7 +838,12 @@ mod tests {
             seen,
             Vec::from([
                 Vec::from([Effect::Stop(After::Nothing)]),
-                Vec::from([Effect::Stop(After::Nothing)]),
+                Vec::from([
+                    Effect::Log(Note::error(String::from(
+                        "reading claude stdout: reset"
+                    ))),
+                    Effect::Stop(After::Nothing)
+                ]),
                 Vec::from([Effect::Stop(After::End)]),
                 Vec::from([
                     Effect::Emit(ClaudeEvent::Exited { status: exit() }),

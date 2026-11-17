@@ -1,3 +1,4 @@
+use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
     Answer, Checkpoint, CheckpointId, ClientName, CloseReason, CommandResult,
@@ -7,10 +8,7 @@ use proto::{
     ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
-use super::{
-    Asked, Call, Choice, ClaudeResume, Effect, Input, Launching, Order, Resume,
-    Session, Unstarted, fits,
-};
+use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
 
 fn event(kind: EventKind) -> Event {
     Event {
@@ -55,21 +53,34 @@ fn expect(session: Session, script: Vec<(Input, Vec<Effect>)>) -> Session {
     })
 }
 
-fn launching(directory: &str, resume: Resume) -> Effect {
-    Effect::Call(Call::Start(Launching {
+fn agent(command: Command) -> Effect {
+    Effect::Call(Call::Agent(command))
+}
+
+fn launching(
+    directory: &str,
+    history: Option<HistoryAnchor>,
+    conversation: Option<&str>,
+) -> Effect {
+    agent(Command::Start(Start {
+        session: SessionId(1),
         directory: HostPath(text(directory)),
-        choice: no_choice(),
-        resume,
+        model: None,
+        effort: None,
+        history,
+        conversation: conversation.map(String::from),
     }))
 }
 
-fn claude(resume: ClaudeResume) -> Effect {
-    launching("/work", Resume::Claude(resume))
+fn started(conversation: &str, anchoring: Anchoring) -> Input {
+    Input::Agent(Outcome::Started(Ok(Started {
+        conversation: text(conversation),
+        anchoring,
+    })))
 }
 
 fn start() -> Input {
     Input::Order(Order::Start {
-        provider: Provider::Claude,
         offered: Models::none(),
     })
 }
@@ -89,10 +100,14 @@ fn record(message: &str) -> Effect {
 }
 
 fn sending(message: &str) -> Effect {
-    Effect::Call(Call::Send {
+    agent(Command::Send {
         text: text(message),
         effort: None,
     })
+}
+
+fn sent() -> Input {
+    Input::Agent(Outcome::Sent(Ok(())))
 }
 
 fn turn_started() -> Input {
@@ -129,9 +144,9 @@ fn ready() -> Session {
     expect(
         restored(&[], None),
         Vec::from([
-            (start(), Vec::from([claude(ClaudeResume::Fresh)])),
+            (start(), Vec::from([launching("/work", None, None)])),
             (
-                Input::Started(Ok(text("conv"))),
+                started("conv", Anchoring::Messages),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -142,14 +157,14 @@ fn ready() -> Session {
     )
 }
 
-/// A Claude session whose turn has begun.
+/// A session whose turn has begun.
 fn running() -> Session {
     expect(
         ready(),
         Vec::from([
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
-            (ok(), Vec::from([saved(), accepted()])),
+            (sent(), Vec::from([saved(), accepted()])),
             (turn_started(), Vec::from([saved()])),
         ]),
     )
@@ -182,7 +197,7 @@ fn a_turn_runs_from_the_message_to_its_end() {
         Vec::from([
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
-            (ok(), Vec::from([saved(), accepted()])),
+            (sent(), Vec::from([saved(), accepted()])),
             (
                 send("again"),
                 Vec::from([rejected(Rejection::TurnInProgress)]),
@@ -202,7 +217,7 @@ fn a_message_the_agent_never_got_fails_the_turn() {
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (
-                Input::Done(Err(text("broken pipe"))),
+                Input::Agent(Outcome::Sent(Err(text("broken pipe")))),
                 Vec::from([
                     Effect::Emit(EventKind::TurnCompleted {
                         outcome: TurnOutcome::Failed {
@@ -245,14 +260,17 @@ fn a_request_is_opened_answered_once_and_withdrawn_when_the_turn_ends() {
                             by: phone(),
                         },
                     }),
-                    Effect::Call(Call::Answer {
+                    agent(Command::Reply {
                         native: NativeRequest(text("perm-1")),
                         reply: deny(),
                         by: phone(),
                     }),
                 ]),
             ),
-            (ok(), Vec::from([accepted()])),
+            (
+                Input::Agent(Outcome::Replied(Ok(()))),
+                Vec::from([accepted()]),
+            ),
             (
                 reply(1, deny(), "laptop"),
                 Vec::from([rejected(Rejection::AlreadyResolved {
@@ -337,15 +355,17 @@ fn a_reply_that_does_not_fit_the_request_is_rejected() {
 #[test]
 fn an_interrupt_before_the_turn_starts_waits_for_it() {
     let interrupt = || Input::Order(Order::Interrupt);
-    let interrupting =
-        || Effect::Call(Call::Interrupt(NativeTurn(text("conv"))));
+    let interrupting = || agent(Command::Interrupt(NativeTurn(text("conv"))));
+    let interrupted = |outcome: Result<(), String>| {
+        Input::Agent(Outcome::Interrupted(outcome))
+    };
     let _ = expect(
         ready(),
         Vec::from([
             (interrupt(), Vec::from([rejected(Rejection::NoTurnRunning)])),
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
-            (ok(), Vec::from([saved(), accepted()])),
+            (sent(), Vec::from([saved(), accepted()])),
             (
                 interrupt(),
                 Vec::from([
@@ -366,13 +386,13 @@ fn an_interrupt_before_the_turn_starts_waits_for_it() {
                 ]),
             ),
             (
-                Input::Done(Err(text("gone"))),
+                interrupted(Err(text("gone"))),
                 Vec::from([Effect::Emit(EventKind::Error {
                     message: text("gone"),
                 })]),
             ),
             (interrupt(), Vec::from([interrupting()])),
-            (ok(), Vec::from([accepted()])),
+            (interrupted(Ok(())), Vec::from([accepted()])),
         ]),
     );
 }
@@ -411,10 +431,12 @@ fn an_effort_the_model_takes_applies_from_the_next_turn() {
             (send("hi"), Vec::from([record("hi")])),
             (
                 Input::Recorded(HostSeq(4)),
-                Vec::from([Effect::Call(Call::SetEffort(Effort::High))]),
+                Vec::from([agent(Command::Send {
+                    text: text("hi"),
+                    effort: Some(Effort::High),
+                })]),
             ),
-            (ok(), Vec::from([sending("hi")])),
-            (ok(), Vec::from([saved(), accepted()])),
+            (sent(), Vec::from([saved(), accepted()])),
             (turn_started(), Vec::from([saved()])),
             (turn_ended(), Vec::from([completed()])),
             (send("later"), Vec::from([record("later")])),
@@ -441,23 +463,19 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
                 })]),
             ),
             (
-                Input::Exited,
-                Vec::from([
-                    Effect::Release,
-                    Effect::Emit(EventKind::SessionClosed {
-                        reason: CloseReason::Exited {
-                            status: text("the agent's events ended"),
-                        },
-                    }),
-                ]),
+                Input::Step(Step::Closed(CloseReason::Exited {
+                    status: text("exit status: 1"),
+                })),
+                Vec::from([Effect::Emit(EventKind::SessionClosed {
+                    reason: CloseReason::Exited {
+                        status: text("exit status: 1"),
+                    },
+                })]),
             ),
             (send("hi"), Vec::from([rejected(Rejection::SessionClosed)])),
+            (start(), Vec::from([launching("/work", None, Some("conv"))])),
             (
-                start(),
-                Vec::from([claude(ClaudeResume::Session(text("conv")))]),
-            ),
-            (
-                Input::Started(Ok(text("conv"))),
+                started("conv", Anchoring::Messages),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -473,38 +491,23 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
 }
 
 #[test]
-fn a_start_whose_conversation_is_missing_tries_the_next_resume() {
-    let history = [
-        event(EventKind::SessionCreated {
-            provider: Provider::Claude,
-            directory: HostPath(text("/work")),
-            by: phone(),
-            model: None,
-            effort: None,
-        }),
-        event(EventKind::HistoryMaterialized {
-            history: HistoryAnchor::Claude {
-                conversation: text("conv"),
-                message: None,
-            },
-        }),
-    ];
-    let missing = |session: &str| {
-        Input::Started(Err(Unstarted {
-            message: text("missing"),
-            missing: Some(text(session)),
-        }))
+fn a_start_asks_for_the_history_to_restore_and_one_that_fails_closes() {
+    let anchored = HistoryAnchor::Messages {
+        conversation: text("conv"),
+        message: None,
     };
+    let history = [event(EventKind::HistoryMaterialized {
+        history: anchored.clone(),
+    })];
     let _ = expect(
         restored(&history, Some("conv")),
         Vec::from([
             (
                 start(),
-                Vec::from([claude(ClaudeResume::Session(text("conv")))]),
+                Vec::from([launching("/work", Some(anchored), Some("conv"))]),
             ),
-            (missing("conv"), Vec::from([claude(ClaudeResume::Fresh)])),
             (
-                missing("other"),
+                Input::Agent(Outcome::Started(Err(text("missing")))),
                 Vec::from([
                     Effect::Emit(EventKind::SessionClosed {
                         reason: CloseReason::FailedToStart {
@@ -514,37 +517,46 @@ fn a_start_whose_conversation_is_missing_tries_the_next_resume() {
                     accepted(),
                 ]),
             ),
+            (send("hi"), Vec::from([rejected(Rejection::SessionClosed)])),
         ]),
     );
 }
 
 #[test]
-fn a_fork_whose_target_exists_resumes_the_target() {
-    let history = [event(EventKind::UndoHistoryRestored {
-        checkpoint: CheckpointId(2),
-        history: HistoryAnchor::ClaudeFork {
-            source: text("source"),
-            through: text("boundary"),
-            target: text("target"),
-        },
-    })];
+fn an_agent_anchored_at_turns_materializes_its_history_as_each_starts() {
+    let thread = |turn: Option<&str>| HistoryAnchor::Turns {
+        conversation: text("thread"),
+        turn: turn.map(String::from),
+    };
     let _ = expect(
-        restored(&history, None),
+        restored(
+            &[event(EventKind::WorkspaceCreated {
+                workspace: workspace(),
+            })],
+            None,
+        ),
         Vec::from([
+            (start(), Vec::from([launching("/work", None, None)])),
             (
-                start(),
-                Vec::from([claude(ClaudeResume::Session(text("target")))]),
+                started("thread", Anchoring::Turns),
+                Vec::from([
+                    Effect::Conversation(text("thread")),
+                    Effect::Emit(EventKind::SessionReady),
+                    accepted(),
+                ]),
             ),
             (
-                Input::Started(Err(Unstarted {
-                    message: text("missing"),
-                    missing: Some(text("target")),
-                })),
-                Vec::from([claude(ClaudeResume::Fork {
-                    source: text("source"),
-                    through: text("boundary"),
-                    target: text("target"),
-                })]),
+                Input::Step(Step::TurnStarted(NativeTurn(text("t1")))),
+                Vec::from([
+                    Effect::Conversation(text("thread")),
+                    Effect::Emit(EventKind::HistoryMaterialized {
+                        history: thread(Some("t1")),
+                    }),
+                    Effect::Emit(EventKind::NativeTurnStarted {
+                        history: thread(Some("t1")),
+                        turn_start: None,
+                    }),
+                ]),
             ),
         ]),
     );
@@ -577,10 +589,9 @@ fn checkpoint(
     })
 }
 
-fn undo(provider: Provider) -> Input {
+fn undo() -> Input {
     Input::Order(Order::Undo {
         checkpoint: CheckpointId(1),
-        provider,
         fork: text("fork"),
     })
 }
@@ -625,7 +636,7 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
         checkpoint(0, HistoryAnchor::Fresh, UndoAvailability::Available),
         checkpoint(
             1,
-            HistoryAnchor::Claude {
+            HistoryAnchor::Messages {
                 conversation: text("conv"),
                 message: Some(text("m1")),
             },
@@ -635,7 +646,7 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
     let _ = expect(
         restored(&history, None),
         Vec::from([
-            (undo(Provider::Claude), Vec::from([preflight()])),
+            (undo(), Vec::from([preflight()])),
             (
                 ok(),
                 Vec::from([
@@ -648,13 +659,17 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
                     Effect::Call(Call::Exists(HostPath(text("/work")))),
                 ]),
             ),
+            (Input::Exists(true), Vec::from([agent(Command::Shutdown)])),
             (
-                Input::Exists(true),
-                Vec::from([Effect::Call(Call::Shutdown)]),
+                Input::Agent(Outcome::ShutDown(Ok(()))),
+                Vec::from([launching(
+                    "/work",
+                    Some(HistoryAnchor::Fresh),
+                    None,
+                )]),
             ),
-            (ok(), Vec::from([claude(ClaudeResume::Fresh)])),
             (
-                Input::Started(Ok(text("new"))),
+                started("new", Anchoring::Messages),
                 Vec::from([
                     Effect::Conversation(text("new")),
                     history_restored(HistoryAnchor::Fresh),
@@ -678,10 +693,10 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
                 ]),
             ),
             (send("hi"), Vec::from([rejected(Rejection::UndoInProgress)])),
-            (undo(Provider::Claude), Vec::from([restore()])),
+            (undo(), Vec::from([restore()])),
             (ok(), undone()),
             (
-                undo(Provider::Claude),
+                undo(),
                 Vec::from([rejected(Rejection::CheckpointUnavailable)]),
             ),
         ]),
@@ -689,8 +704,8 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
 }
 
 #[test]
-fn an_undo_in_a_gone_directory_restores_the_codex_thread_in_the_worktree() {
-    let codex = |turn: &str| HistoryAnchor::Codex {
+fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
+    let thread = |turn: &str| HistoryAnchor::Turns {
         conversation: text("thread"),
         turn: Some(text(turn)),
     };
@@ -698,23 +713,27 @@ fn an_undo_in_a_gone_directory_restores_the_codex_thread_in_the_worktree() {
         event(EventKind::WorkspaceCreated {
             workspace: workspace(),
         }),
-        checkpoint(0, codex("t0"), UndoAvailability::Available),
-        checkpoint(1, codex("t1"), UndoAvailability::Available),
+        checkpoint(0, thread("t0"), UndoAvailability::Available),
+        checkpoint(1, thread("t1"), UndoAvailability::Available),
     ];
     let turns = |listed: &[&str]| {
-        Input::Turns(Ok(listed.iter().copied().map(String::from).collect()))
+        Input::Agent(Outcome::Turns(Ok(listed
+            .iter()
+            .copied()
+            .map(String::from)
+            .collect())))
     };
     let _ = expect(
         restored(&history, None),
         Vec::from([
-            (undo(Provider::Codex), Vec::from([preflight()])),
+            (undo(), Vec::from([preflight()])),
             (
                 ok(),
                 Vec::from([
                     Effect::Emit(EventKind::UndoStarted {
                         checkpoint: CheckpointId(1),
                         restore: CheckpointId(0),
-                        history: codex("t1"),
+                        history: thread("t1"),
                     }),
                     Effect::Barrier,
                     Effect::Call(Call::Exists(HostPath(text("/work")))),
@@ -724,23 +743,30 @@ fn an_undo_in_a_gone_directory_restores_the_codex_thread_in_the_worktree() {
                 Input::Exists(false),
                 Vec::from([launching(
                     "/worktree",
-                    Resume::Codex(Some(text("thread"))),
+                    Some(HistoryAnchor::Turns {
+                        conversation: text("thread"),
+                        turn: None,
+                    }),
+                    None,
                 )]),
             ),
             (
-                Input::Started(Ok(text("thread"))),
-                Vec::from([Effect::Call(Call::Turns)]),
+                started("thread", Anchoring::Turns),
+                Vec::from([agent(Command::Turns)]),
             ),
             (
                 turns(&["t0", "t1"]),
-                Vec::from([Effect::Call(Call::Revert(text("t1")))]),
+                Vec::from([agent(Command::Revert(text("t1")))]),
             ),
-            (ok(), Vec::from([Effect::Call(Call::Turns)])),
-            (turns(&["t0"]), Vec::from([Effect::Call(Call::Shutdown)])),
             (
-                ok(),
+                Input::Agent(Outcome::Reverted(Ok(()))),
+                Vec::from([agent(Command::Turns)]),
+            ),
+            (turns(&["t0"]), Vec::from([agent(Command::Shutdown)])),
+            (
+                Input::Agent(Outcome::ShutDown(Ok(()))),
                 Vec::from([
-                    history_restored(codex("t0")),
+                    history_restored(thread("t0")),
                     Effect::Call(Call::History),
                 ]),
             ),
@@ -750,12 +776,9 @@ fn an_undo_in_a_gone_directory_restores_the_codex_thread_in_the_worktree() {
             ),
             (
                 ok(),
-                Vec::from([launching(
-                    "/work",
-                    Resume::Codex(Some(text("thread"))),
-                )]),
+                Vec::from([launching("/work", Some(thread("t0")), None)]),
             ),
-            (Input::Started(Ok(text("thread"))), undone()),
+            (started("thread", Anchoring::Turns), undone()),
         ]),
     );
 }
@@ -780,7 +803,7 @@ fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
             reason: text("boundary not observed"),
         },
     );
-    let fork = HistoryAnchor::ClaudeFork {
+    let fork = HistoryAnchor::Fork {
         source: text("source"),
         through: text("boundary"),
         target: text("target"),
@@ -805,13 +828,12 @@ fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
     });
     let unsent = restored(&[created.clone(), fresh.clone()], Some("new-id"));
     assert_eq!(unsent.book.resume, Some(HistoryAnchor::Fresh));
-    let sent = restored(&[created, fresh, user, unknown], Some("new-id"));
-    assert_eq!(
-        sent.book.resume,
-        Some(HistoryAnchor::Claude {
-            conversation: text("new-id"),
-            message: None
-        })
+    let _ = expect(
+        restored(&[created, fresh, user, unknown], Some("new-id")),
+        Vec::from([(
+            start(),
+            Vec::from([launching("/work", None, Some("new-id"))]),
+        )]),
     );
 }
 

@@ -22,19 +22,17 @@ data-encoding.workspace = true
 directories = "6.0.0"
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
-log = "0.4.35"
 net = { path = "../net" }
 n0-future.workspace = true
 postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
 agents = { path = "../agents" }
 host = { path = "../host" }
-claude = { path = "../claude" }
 claude-cli = { path = "../claude-cli" }
-codex = { path = "../codex" }
 codex-cli = { path = "../codex-cli" }
 install = { path = "../install" }
 proto = { path = "../proto" }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+runtime = { path = "../runtime" }
 serde.workspace = true
 redb = "3.1"
 ulid = "1.2"
@@ -45,6 +43,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
+claude = { path = "../claude" }
 client = { path = "../client" }
 
 [lints]

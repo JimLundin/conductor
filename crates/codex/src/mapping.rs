@@ -2,7 +2,7 @@
 //! steps the session applies out.
 
 use agents::{
-    NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
+    NativeRequest, NativeTurn, Note, Reply, Step, reasoning, reasoning_delta,
 };
 use proto::{
     CloseReason, Decision as Chosen, EventKind, ToolCallId, ToolKind, ToolPhase,
@@ -27,16 +27,31 @@ pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
                 status: status.describe(),
             })])
         }
+        CodexEvent::Unknown(_) => Vec::new(),
+    }
+}
+
+/// What an event that maps to no step is logged as.
+#[must_use]
+pub fn codex_note(event: &CodexEvent) -> Option<Note> {
+    match event {
         CodexEvent::Unknown(frame) => {
-            tracing::trace!(%frame, "unmapped codex frame");
-            Vec::new()
+            Some(Note::trace(format!("unmapped codex frame: {frame}")))
         }
+        CodexEvent::Thread {
+            event: ThreadEvent::SettingsChanged(settings),
+            ..
+        } => Some(Note::debug(format!("codex thread settings: {settings:?}"))),
+        CodexEvent::Thread {
+            event: ThreadEvent::Unknown(frame),
+            ..
+        } => Some(Note::trace(format!("unmapped codex thread frame: {frame}"))),
+        CodexEvent::Thread { .. } | CodexEvent::Exited { .. } => None,
     }
 }
 
 fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
     match event {
-        ThreadEvent::Started => Vec::new(),
         ThreadEvent::TurnStarted { turn } => {
             Vec::from([Step::TurnStarted(NativeTurn(turn.0))])
         }
@@ -86,14 +101,9 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
         ThreadEvent::PlanUpdated { steps, .. } => {
             Vec::from([Step::Checklist(steps)])
         }
-        ThreadEvent::SettingsChanged(settings) => {
-            tracing::debug!(?settings, "codex thread settings");
-            Vec::new()
-        }
-        ThreadEvent::Unknown(frame) => {
-            tracing::trace!(%frame, "unmapped codex thread frame");
-            Vec::new()
-        }
+        ThreadEvent::Started
+        | ThreadEvent::SettingsChanged(_)
+        | ThreadEvent::Unknown(_) => Vec::new(),
     }
 }
 

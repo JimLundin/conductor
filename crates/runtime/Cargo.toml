@@ -1,0 +1,18 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.standards]
+layer = "shell"
+
+[dependencies]
+agents = { path = "../agents" }
+proto = { path = "../proto" }
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

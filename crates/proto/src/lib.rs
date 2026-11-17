@@ -837,19 +837,25 @@ pub struct Checkpoint {
     pub undo: UndoAvailability,
 }
 
+/// A point in an agent's own history, by the provider's ids. How an agent
+/// anchors its history decides the shape: at the last message a turn ended
+/// on, or at each turn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HistoryAnchor {
     Fresh,
-    Claude {
+    /// The conversation through its message `message`, once one is seen.
+    Messages {
         conversation: String,
         message: Option<String>,
     },
-    Codex {
+    /// The conversation as of its turn `turn`, once one is seen.
+    Turns {
         conversation: String,
         turn: Option<String>,
     },
-    /// Lazy inclusive fork: initialize alone does not create the target transcript.
-    ClaudeFork {
+    /// A new conversation `target` with `source`'s messages through
+    /// `through`. Starting the agent alone may not create the target yet.
+    Fork {
         source: String,
         through: String,
         target: String,

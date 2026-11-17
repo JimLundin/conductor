@@ -71,7 +71,7 @@ pub enum Sandbox {
 }
 
 /// Settings for `thread/start` and `thread/resume`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadOptions {
     /// The thread's working directory, as Codex reads it.
     pub cwd: String,

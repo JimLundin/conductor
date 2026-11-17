@@ -219,9 +219,7 @@ impl Conductor {
                 session,
                 checkpoint,
             } => match self.registry.relaunch(session).await? {
-                Ok((handle, launch, _)) => {
-                    handle.order(Order::Undo(checkpoint, launch)).await
-                }
+                Ok((handle, _)) => handle.order(Order::Undo(checkpoint)).await,
                 Err(reason) => Ok(CommandResult::Rejected(reason)),
             },
             CommandBody::StartSession {
@@ -237,18 +235,17 @@ impl Conductor {
             CommandBody::Continue { session } => {
                 match self.registry.relaunch(session).await? {
                     Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-                    Ok((handle, launch, offered)) => Ok(handle
-                        .order(Order::Start(launch, offered))
-                        .await
-                        .unwrap_or(CommandResult::Rejected(
-                            Rejection::SessionClosed,
-                        ))),
+                    Ok((handle, offered)) => {
+                        Ok(handle.order(Order::Start(offered)).await.unwrap_or(
+                            CommandResult::Rejected(Rejection::SessionClosed),
+                        ))
+                    }
                 }
             }
             CommandBody::SetEffort { session, effort } => {
                 match self.registry.relaunch(session).await? {
                     Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-                    Ok((handle, _, offered)) => Ok(handle
+                    Ok((handle, offered)) => Ok(handle
                         .order(Order::Effort(effort, offered))
                         .await
                         .unwrap_or(CommandResult::Rejected(

@@ -7,18 +7,19 @@ use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use crate::registry::{Launcher, Launchers, OwnSignIn, Registry};
 use crate::serve::Conductor;
-use crate::session::{ClaudeLaunch, CodexLaunch, Launch, list_models};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
+use claude_cli::ClaudeLaunch;
 use codex_cli::{Hub, ServerOptions};
 use install::Home;
 use install::{Cli, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{ModelId, Models, Ticket};
+use proto::{Credentials, ModelId, Models, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
+use runtime::Starter;
 
 #[derive(Parser)]
 #[command(name = "conductord", about = "The Conductor host daemon")]
@@ -149,28 +150,18 @@ async fn claude_launcher(
             Err(reason) => return unavailable(reason),
         };
     let status = claude_cli::auth_status(&claude_path, home);
-    let launch = ClaudeLaunch {
+    let start = claude_cli::starter(ClaudeLaunch {
         claude_path: claude_path.clone(),
         home: home.clone(),
-        credential: None,
-    };
-    let listed = list_models(
-        Launch::Claude(ClaudeLaunch {
-            credential: match stored {
-                Stored::Opened(credentials) => credentials.claude.clone(),
-                Stored::Unreadable(_) => None,
-            },
-            ..launch.clone()
-        }),
-        data_dir,
-    );
+        credential: credentials(stored).claude,
+        probe: data_dir.join("probe"),
+    });
     match runs(claude_cli::cli(&claude_path, home)).await {
-        Ok(cli) => ready(
-            cli,
-            Launch::Claude(launch),
-            own_sign_in(origin, status).await,
-            (listed.await, model),
-        ),
+        Ok(cli) => {
+            let own = own_sign_in(origin, status).await;
+            let listed = start.models().await;
+            ready(cli, start, own, (listed, model))
+        }
         Err(reason) => unavailable(reason),
     }
 }
@@ -191,26 +182,29 @@ async fn codex_launcher(
     let status = codex_cli::login_status(&codex_path, &home);
     // The app-server's own working directory is the data dir;
     // each thread runs in its session's directory.
-    let hub = Hub::spawn(ServerOptions {
+    let start = codex_cli::starter(Hub::spawn(ServerOptions {
         codex_path,
         home,
-        credential: match stored {
-            Stored::Opened(credentials) => credentials.codex.clone(),
-            Stored::Unreadable(_) => None,
-        },
+        credential: credentials(stored).codex,
         cwd: data_dir.to_path_buf(),
         stdout_log: None,
-    });
-    let listed =
-        list_models(Launch::Codex(CodexLaunch { hub: hub.clone() }), data_dir);
+    }));
     match runs(version).await {
-        Ok(cli) => ready(
-            cli,
-            Launch::Codex(CodexLaunch { hub }),
-            own_sign_in(origin, status).await,
-            (listed.await, model),
-        ),
+        Ok(cli) => {
+            let own = own_sign_in(origin, status).await;
+            let listed = start.models().await;
+            ready(cli, start, own, (listed, model))
+        }
         Err(reason) => unavailable(reason),
+    }
+}
+
+/// What the store held when the host started; a store that doesn't open
+/// gives the CLIs none, and leaves the providers unavailable.
+fn credentials(stored: &Stored) -> Credentials {
+    match stored {
+        Stored::Opened(credentials) => credentials.clone(),
+        Stored::Unreadable(_) => Credentials::none(),
     }
 }
 
@@ -363,7 +357,7 @@ async fn runs(
 /// not signed in yet, offers only the default.
 fn ready(
     cli: (String, String),
-    launch: Launch,
+    start: Starter,
     own: OwnSignIn,
     models: (Result<Models, String>, Option<String>),
 ) -> Launcher {
@@ -375,7 +369,7 @@ fn ready(
     let (path, version) = cli;
     tracing::info!(%path, %version, ?own, models = models.choices.len(), "ready");
     Launcher::Ready {
-        launch,
+        start,
         own,
         models,
         chosen: chosen.map(ModelId),

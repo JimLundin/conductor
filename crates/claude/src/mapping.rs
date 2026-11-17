@@ -64,10 +64,7 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
                 status: status.describe(),
             })])
         }
-        ClaudeEvent::Unknown(frame) => {
-            tracing::trace!(%frame, "unmapped claude frame");
-            Vec::new()
-        }
+        ClaudeEvent::Unknown(_) => Vec::new(),
     }
 }
 

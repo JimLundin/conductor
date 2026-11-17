@@ -163,11 +163,7 @@ async fn ensure(
     let binary = parent.join(&pin.version).join(&pin.binary);
     match presence(&binary) {
         Presence::Present => {
-            agents::pin::log_present(
-                name,
-                &pin.version,
-                &binary.display().to_string(),
-            );
+            tracing::info!(path = %binary.display(), "pinned {name} {} is installed", pin.version);
             Ok(binary)
         }
         Presence::Missing => download(name, pin, parent, binary).await,
@@ -181,16 +177,16 @@ async fn download(
     parent: &Path,
     binary: PathBuf,
 ) -> Result<PathBuf, InstallError> {
-    agents::pin::log_installing(name, &pin.version, &pin.url);
+    tracing::info!(url = %pin.url, "installing pinned {name} {}", pin.version);
     let download = parent.join(format!("{}.download", pin.version));
     fetch_verified(&pin, &download).await?;
     unpack(&pin.package, &download, &parent.join(&pin.version), &binary)
         .await?;
-    agents::pin::log_installed(
-        name,
-        &pin.version,
-        &binary.display().to_string(),
-        &pin.sha256,
+    tracing::info!(
+        path = %binary.display(),
+        sha256 = %pin.sha256,
+        "installed pinned {name} {}",
+        pin.version
     );
     Ok(binary)
 }
@@ -267,7 +263,7 @@ fn remove_others(parent: &Path, keep: &str) -> Result<(), InstallError> {
 }
 
 fn remove(path: &Path) -> Result<(), InstallError> {
-    agents::pin::log_removing(&path.display().to_string());
+    tracing::info!(path = %path.display(), "removing an older pinned CLI");
     std::fs::remove_dir_all(path)
         .or_else(|_| std::fs::remove_file(path))
         .map_err(|error| io(path, error))

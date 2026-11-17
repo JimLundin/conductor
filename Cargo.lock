@@ -42,7 +42,6 @@ name = "agents"
 version = "0.1.0"
 dependencies = [
  "proto",
- "tracing",
 ]
 
 [[package]]
@@ -551,7 +550,6 @@ dependencies = [
  "proto",
  "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -563,9 +561,12 @@ dependencies = [
  "install",
  "n0-future",
  "proto",
+ "runtime",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
+ "ulid",
  "uuid",
 ]
 
@@ -599,7 +600,6 @@ dependencies = [
  "proto",
  "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -611,6 +611,7 @@ dependencies = [
  "install",
  "n0-future",
  "proto",
+ "runtime",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
@@ -899,7 +900,6 @@ dependencies = [
  "claude",
  "claude-cli",
  "client",
- "codex",
  "codex-cli",
  "data-encoding",
  "directories",
@@ -907,13 +907,13 @@ dependencies = [
  "host",
  "install",
  "iroh",
- "log",
  "n0-future",
  "net",
  "postcard",
  "proto",
  "qrcode",
  "redb",
+ "runtime",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2302,6 +2302,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3938,6 +3939,16 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "proto",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

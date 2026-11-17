@@ -52,7 +52,7 @@ impl Book {
     #[must_use]
     pub fn availability(&self, history: &HistoryAnchor) -> UndoAvailability {
         match history {
-            HistoryAnchor::Codex { .. } => match self
+            HistoryAnchor::Turns { .. } => match self
                 .active
                 .iter()
                 .filter_map(|id| self.checkpoints.get(id))
@@ -220,14 +220,14 @@ pub fn availability(
         | (
             Some(Checkpoint {
                 history:
-                    HistoryAnchor::Claude {
+                    HistoryAnchor::Messages {
                         message: Some(_), ..
                     },
                 ..
             }),
-            HistoryAnchor::Claude { .. },
+            HistoryAnchor::Messages { .. },
         )
-        | (Some(_), HistoryAnchor::Codex { turn: Some(_), .. }) => {
+        | (Some(_), HistoryAnchor::Turns { turn: Some(_), .. }) => {
             UndoAvailability::Available
         }
         _ => UndoAvailability::Unavailable {
@@ -306,7 +306,7 @@ mod tests {
             ])
             .collect::<Vec<Event>>();
         assert_eq!(
-            Book::replay(&unknown).availability(&HistoryAnchor::Codex {
+            Book::replay(&unknown).availability(&HistoryAnchor::Turns {
                 conversation: String::from("native"),
                 turn: Some(String::from("later"))
             }),
@@ -320,14 +320,14 @@ mod tests {
 
     #[test]
     fn failed_snapshot_retains_the_completed_native_boundary_for_retry() {
-        let history = HistoryAnchor::Claude {
+        let history = HistoryAnchor::Messages {
             conversation: String::from("native"),
             message: Some(String::from("finished")),
         };
         let events = Vec::from([
             checkpoint(0),
             event(EventKind::NativeTurnStarted {
-                history: HistoryAnchor::Claude {
+                history: HistoryAnchor::Messages {
                     conversation: String::from("native"),
                     message: None,
                 },
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn failure_keeps_native_recovery_pending_until_durable_completion() {
-        let history = HistoryAnchor::ClaudeFork {
+        let history = HistoryAnchor::Fork {
             source: String::from("source"),
             through: String::from("boundary"),
             target: String::from("target"),

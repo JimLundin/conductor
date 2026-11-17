@@ -2,7 +2,7 @@
 //! decides: its command line, its environment and whether its version
 //! runs.
 
-use agents::{HomeKind, Invocation, Var};
+use agents::{HomeKind, Invocation, Note, Var};
 use proto::{ClaudeCredential, Effort};
 use serde_json::Value;
 
@@ -331,43 +331,58 @@ pub fn reported_refusal(events: Vec<ClaudeEvent>) -> Option<String> {
     })
 }
 
-/// Whether the CLI that answered `initialize` runs under `policy`. An
-/// untested one that runs is logged.
+/// Whether the CLI that answered `initialize` runs under `policy`, with
+/// the warning an untested one that runs is logged with.
 ///
 /// # Errors
 /// The CLI's version is unsupported or unreported and `policy` refuses it.
 pub fn admit(
     initialize: Value,
     policy: VersionPolicy,
-) -> Result<(), UnsupportedVersion> {
+) -> Result<Option<Note>, UnsupportedVersion> {
     match (check_version(initialize), policy) {
-        (Ok(()), _) => Ok(()),
+        (Ok(()), _) => Ok(None),
         (
             Err(UnsupportedVersion::Outside { found, supported }),
             VersionPolicy::AllowUntested,
-        ) => {
-            tracing::warn!(
-                "running untested claude {found} (supported: {supported})"
-            );
-            Ok(())
-        }
+        ) => Ok(Some(Note::warn(format!(
+            "running untested claude {found} (supported: {supported})"
+        )))),
         (Err(UnsupportedVersion::Unreported), VersionPolicy::AllowUntested) => {
-            tracing::warn!("running a claude that did not report its version");
-            Ok(())
+            Ok(Some(Note::warn(String::from(
+                "running a claude that did not report its version",
+            ))))
         }
         (Err(unsupported), VersionPolicy::SupportedOnly) => Err(unsupported),
     }
 }
 
+/// The warning a gateway credential gets when Claude's commands run
+/// unsandboxed, since they then inherit its token.
+#[must_use]
+pub fn unprotected(
+    credential: Option<&ClaudeCredential>,
+    sandbox: Sandbox,
+) -> Option<Note> {
+    match (credential, sandbox) {
+        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) => {
+            Some(Note::warn(String::from(
+                "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them",
+            )))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use agents::{HomeKind, Invocation, Var};
+    use agents::{HomeKind, Invocation, Note, Var};
     use proto::{ClaudeCredential, Effort};
     use serde_json::json;
 
     use super::{
         Launch, Resume, Sandbox, SettingSource, VersionPolicy, admit,
-        reported_refusal, sandbox, session,
+        reported_refusal, sandbox, session, unprotected,
     };
     use crate::{
         ClaudeEvent, MessageId, PermissionMode, SessionId, UnsupportedVersion,
@@ -580,7 +595,32 @@ mod tests {
                     VersionPolicy::SupportedOnly
                 ),
             ],
-            [Ok(()), Ok(()), Err(UnsupportedVersion::Unreported), Ok(())]
+            [
+                Ok(Some(Note::warn(String::from(
+                    "running untested claude 1.0.0 (supported: 2.1.316 to 2.1.322)"
+                )))),
+                Ok(Some(Note::warn(String::from(
+                    "running a claude that did not report its version"
+                )))),
+                Err(UnsupportedVersion::Unreported),
+                Ok(None)
+            ]
+        );
+    }
+
+    #[test]
+    fn only_an_unsandboxed_gateway_is_warned_about() {
+        let gateway = ClaudeCredential::Gateway {
+            base_url: String::from("https://gateway.example"),
+            token: String::from("secret"),
+        };
+        assert_eq!(
+            [
+                unprotected(Some(&gateway), Sandbox::Missing).is_some(),
+                unprotected(Some(&gateway), Sandbox::Available).is_some(),
+                unprotected(None, Sandbox::Missing).is_some(),
+            ],
+            [true, false, false]
         );
     }
 }

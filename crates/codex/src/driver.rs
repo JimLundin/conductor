@@ -10,7 +10,7 @@
 
 use core::fmt;
 
-use agents::Exit;
+use agents::{Exit, Note};
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -91,6 +91,7 @@ pub enum Effect<R, S, E> {
         then: Then<R>,
     },
     Emit(CodexEvent),
+    Log(Note),
     /// Answer a handle's command; an answer to Codex answers `Null`.
     Reply(R, Result<Value, Failure<E>>),
     /// Answer a shutdown with how the process ended.
@@ -217,10 +218,10 @@ impl<R> Server<R> {
         match input {
             Input::Read(Ok(Some(line))) => self.line(&line),
             Input::Read(Ok(None)) => self.stop(After::Nothing),
-            Input::Read(Err(error)) => {
-                tracing::error!("reading codex stdout: {error}");
-                self.stop(After::Nothing)
-            }
+            Input::Read(Err(error)) => logged(
+                Note::error(format!("reading codex stdout: {error}")),
+                self.stop(After::Nothing),
+            ),
             Input::Command(command) => self.command(command),
             Input::Closed => self.stop(After::End),
             Input::Wrote { then, outcome } => self.wrote(then, outcome),
@@ -233,10 +234,23 @@ impl<R> Server<R> {
     }
 
     fn line<S, E: fmt::Display>(&mut self, line: &str) -> Vec<Effect<R, S, E>> {
-        let inbound = parse_line(line).unwrap_or_else(|error| {
-            tracing::warn!("codex printed a non-JSON line ({error}): {line}");
-            Inbound::Event(CodexEvent::Unknown(Value::String(line.to_owned())))
-        });
+        match parse_line(line) {
+            Ok(inbound) => self.inbound(inbound),
+            Err(error) => logged(
+                Note::warn(format!(
+                    "codex printed a non-JSON line ({error}): {line}"
+                )),
+                Vec::from([Effect::Emit(CodexEvent::Unknown(Value::String(
+                    line.to_owned(),
+                )))]),
+            ),
+        }
+    }
+
+    fn inbound<S, E: fmt::Display>(
+        &mut self,
+        inbound: Inbound,
+    ) -> Vec<Effect<R, S, E>> {
         match inbound {
             Inbound::Event(event) => Vec::from([Effect::Emit(event)]),
             Inbound::Response { id, outcome } => self.response(&id, outcome),
@@ -265,25 +279,27 @@ impl<R> Server<R> {
                 event,
             } => {
                 let message = format!("conductor does not handle {method}");
-                tracing::warn!("{message}");
-                self.reject(
-                    rpc_id,
-                    message,
-                    format!("rejecting {method}"),
-                    event,
+                logged(
+                    Note::warn(message.clone()),
+                    self.reject(
+                        rpc_id,
+                        message,
+                        format!("rejecting {method}"),
+                        event,
+                    ),
                 )
             }
-            Inbound::Declined { rpc_id, event } => {
-                tracing::info!(
-                    "declined a question that asks for a secret answer"
-                );
+            Inbound::Declined { rpc_id, event } => logged(
+                Note::info(String::from(
+                    "declined a question that asks for a secret answer",
+                )),
                 self.reject(
                     rpc_id,
                     String::from("conductor does not take secret answers"),
                     String::from("declining a secret question"),
                     event,
-                )
-            }
+                ),
+            ),
         }
     }
 
@@ -329,8 +345,9 @@ impl<R> Server<R> {
             RequestId::String(_) => None,
         };
         let Some((method, reply)) = waiting else {
-            tracing::warn!("response for unknown request {id:?}");
-            return Vec::new();
+            return Vec::from([Effect::Log(Note::warn(format!(
+                "response for unknown request {id:?}"
+            )))]);
         };
         let initialized = match (method.as_str(), &outcome) {
             (INITIALIZE, Ok(_)) => self.write(
@@ -388,20 +405,19 @@ impl<R> Server<R> {
         reply: R,
     ) -> Vec<Effect<R, S, E>> {
         match answered {
-            Ok(result) => {
-                tracing::debug!(
+            Ok(result) => logged(
+                Note::debug(format!(
                     "answering {} on thread {}",
-                    id.0,
-                    open.thread.0
-                );
+                    id.0, open.thread.0
+                )),
                 self.write(
                     Outbound::Answer {
                         rpc_id: open.rpc_id,
                         result,
                     },
                     Then::Answer(reply),
-                )
-            }
+                ),
+            ),
             Err(AnswerError::NotApplicable) => {
                 self.open.insert(id.clone(), open);
                 Vec::from([Effect::Reply(
@@ -518,28 +534,25 @@ fn failed<R, S, E: fmt::Display>(
         Then::Request { reply, .. } | Then::Answer(reply) => {
             Vec::from([Effect::Reply(reply, Err(failure))])
         }
-        Then::Logged(context) => {
-            tracing::error!("{context}: {failure}");
-            Vec::new()
-        }
+        Then::Logged(context) => Vec::from([Effect::Log(Note::error(
+            format!("{context}: {failure}"),
+        ))]),
     }
 }
 
-/// Logs a line the server printed on stderr.
-pub fn log_stderr(line: &str) {
-    tracing::debug!(target: "codex::stderr", "{line}");
-}
-
-/// Logs why a stdout line could not be appended to the stdout log.
-pub fn log_unrecorded(error: &str) {
-    tracing::warn!("writing stdout log: {error}");
+/// `note`, then `effects`.
+fn logged<R, S, E>(
+    note: Note,
+    effects: Vec<Effect<R, S, E>>,
+) -> Vec<Effect<R, S, E>> {
+    core::iter::once(Effect::Log(note)).chain(effects).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use agents::Exit;
+    use agents::{Exit, Note};
     use serde_json::{Value, json};
 
     use super::{After, Command, Effect, Failure, Input, Open, Server, Then};
@@ -642,8 +655,12 @@ mod tests {
                         ),
                         Effect::Reply(1, Ok(json!({ "userAgent": "c/1" }))),
                     ]),
-                    Vec::new(),
-                    Vec::new(),
+                    Vec::from([Effect::Log(Note::warn(String::from(
+                        "response for unknown request Integer(1)"
+                    )))]),
+                    Vec::from([Effect::Log(Note::warn(String::from(
+                        "response for unknown request String(\"1\")"
+                    )))]),
                 ][..]
             )
         );
@@ -688,13 +705,18 @@ mod tests {
                         String::from("7")
                     )))
                 )]),
-                Vec::from([written(
-                    Outbound::Answer {
-                        rpc_id: RequestId::Integer(7),
-                        result: json!({ "decision": "accept" }),
-                    },
-                    Then::Answer(2)
-                )]),
+                Vec::from([
+                    Effect::Log(Note::debug(String::from(
+                        "answering 7 on thread th_1"
+                    ))),
+                    written(
+                        Outbound::Answer {
+                            rpc_id: RequestId::Integer(7),
+                            result: json!({ "decision": "accept" }),
+                        },
+                        Then::Answer(2)
+                    )
+                ]),
                 Vec::from([Effect::Reply(
                     3,
                     Err(Failure::UnknownApproval(ApprovalId(String::from(
@@ -757,16 +779,21 @@ mod tests {
             "params": { "threadId": "th_1" },
         })));
         assert_eq!(
-            seen.first(),
-            Some(&written(
-                Outbound::Reject {
-                    rpc_id: RequestId::Integer(9),
-                    message: String::from(
-                        "conductor does not handle item/tool/call"
-                    ),
-                },
-                Then::Logged(String::from("rejecting item/tool/call"))
-            ))
+            &seen[..2],
+            [
+                Effect::Log(Note::warn(String::from(
+                    "conductor does not handle item/tool/call"
+                ))),
+                written(
+                    Outbound::Reject {
+                        rpc_id: RequestId::Integer(9),
+                        message: String::from(
+                            "conductor does not handle item/tool/call"
+                        ),
+                    },
+                    Then::Logged(String::from("rejecting item/tool/call"))
+                )
+            ]
         );
     }
 
@@ -849,9 +876,16 @@ mod tests {
             &seen[..4],
             [
                 Vec::from([Effect::Stop(After::Nothing)]),
-                Vec::from([Effect::Stop(After::Nothing)]),
+                Vec::from([
+                    Effect::Log(Note::error(String::from(
+                        "reading codex stdout: reset"
+                    ))),
+                    Effect::Stop(After::Nothing)
+                ]),
                 Vec::from([Effect::Reply(1, Err(Failure::Io("broken pipe")))]),
-                Vec::new(),
+                Vec::from([Effect::Log(Note::error(String::from(
+                    "rejecting x: codex i/o: broken pipe"
+                )))]),
             ]
         );
     }
