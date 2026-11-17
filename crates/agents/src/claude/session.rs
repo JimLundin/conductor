@@ -150,6 +150,10 @@ pub struct ClaudeSession {
 impl ClaudeSession {
     /// Starts `claude` and completes the `initialize` handshake. Refuses a CLI
     /// version outside the supported range unless `VersionPolicy::AllowUntested`.
+    ///
+    /// # Errors
+    /// Fails when the CLI cannot be started, exits or refuses before it
+    /// answers `initialize`, or reports a version the policy refuses.
     pub async fn spawn(
         opts: ClaudeOptions,
     ) -> Result<(Self, mpsc::Receiver<ClaudeEvent>), Error> {
@@ -196,13 +200,13 @@ impl ClaudeSession {
         };
         tokio::spawn(actor.run(commands_rx));
 
-        let session = Self {
+        let starting = Self {
             commands: commands_tx,
             id,
             models: Models::none(),
             pid,
         };
-        let initialize = match session.control(ControlCall::Initialize).await {
+        let initialize = match starting.control(ControlCall::Initialize).await {
             Err(Error::Exited) => Err(refused(
                 &opts.resume,
                 refusal(&mut events_rx, last_stderr).await,
@@ -211,7 +215,7 @@ impl ClaudeSession {
         }?;
         let session = Self {
             models: models(&initialize),
-            ..session
+            ..starting
         };
         match (check_version(initialize), opts.versions) {
             (Ok(()), _) => Ok((session, events_rx)),
@@ -269,28 +273,45 @@ impl ClaudeSession {
     }
 
     /// The model and effort the CLI runs with (`get_settings`).
+    ///
+    /// # Errors
+    /// Fails when the CLI has exited, does not answer in time or rejects
+    /// the request.
     pub async fn applied(&self) -> Result<Applied, Error> {
         Ok(applied(self.control(ControlCall::GetSettings).await?)?)
     }
 
     /// Changes the effort of the CLI's later API requests, in this process
     /// (`apply_flag_settings`); `applied` reports it back.
+    ///
+    /// # Errors
+    /// Fails when the CLI has exited, does not answer in time or rejects
+    /// the request.
     pub async fn set_effort(&self, effort: Effort) -> Result<(), Error> {
         let _ = self.control(ControlCall::SetEffort(effort)).await?;
         Ok(())
     }
 
+    /// # Errors
+    /// Fails when the CLI has exited or the message cannot be written.
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
         self.ask(|reply| CommandMsg::SendUser { text, reply })
             .await?
     }
 
     /// Resolves once the CLI acknowledges; the turn's `result` follows as an event.
+    ///
+    /// # Errors
+    /// Fails when the CLI has exited, does not answer in time or rejects
+    /// the request.
     pub async fn interrupt(&self) -> Result<(), Error> {
         let _ = self.control(ControlCall::Interrupt).await?;
         Ok(())
     }
 
+    /// # Errors
+    /// Fails when the CLI has exited, does not answer in time or rejects
+    /// the mode.
     pub async fn set_permission_mode(
         &self,
         mode: PermissionMode,
@@ -299,6 +320,9 @@ impl ClaudeSession {
         Ok(())
     }
 
+    /// # Errors
+    /// Fails when the CLI has exited, no request with `id` is open, or the
+    /// answer cannot be written.
     pub async fn respond(
         &self,
         id: PermissionRequestId,
@@ -313,6 +337,9 @@ impl ClaudeSession {
     }
 
     /// Closes stdin, waits briefly for a clean exit, then kills.
+    ///
+    /// # Errors
+    /// Fails when the session's actor has already stopped.
     pub async fn shutdown(self) -> Result<Exit, Error> {
         self.ask(|reply| CommandMsg::Shutdown { reply }).await
     }
@@ -397,8 +424,9 @@ pub enum Sandbox {
 /// What Claude's sandbox needs on Linux and WSL2.
 const SANDBOX_TOOLS: &[&str] = &["bwrap", "socat"];
 
-/// Whether Claude's command sandbox can run here ([sandboxing] in
-/// docs/architecture.md): Seatbelt on macOS always, on Linux and WSL2 with
+/// Whether Claude's command sandbox can run here.
+///
+/// See [sandboxing] in docs/architecture.md: Seatbelt on macOS always, on Linux and WSL2 with
 /// `bwrap` and `socat` on `PATH`, and never on native Windows, where Claude
 /// runs commands unsandboxed.
 #[must_use]
@@ -562,7 +590,7 @@ async fn refusal(
     events: &mut mpsc::Receiver<ClaudeEvent>,
     last_stderr: tokio::task::JoinHandle<Option<String>>,
 ) -> String {
-    let errors =
+    let reported =
         std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| {
             match event {
                 ClaudeEvent::TurnFinished { errors, .. } => {
@@ -571,8 +599,8 @@ async fn refusal(
                 _ => None,
             }
         });
-    match errors {
-        Some(errors) => errors,
+    match reported {
+        Some(reason) => reason,
         None => stderr_reason(last_stderr).await,
     }
 }
@@ -707,11 +735,11 @@ impl Actor {
             }
         };
         match inbound {
-            Inbound::Event(event) => {
-                if let ClaudeEvent::Message { uuid, .. } = &event {
+            Inbound::Event(received) => {
+                if let ClaudeEvent::Message { uuid, .. } = &received {
                     self.last_message = uuid.clone();
                 }
-                let event = match event {
+                let event = match received {
                     ClaudeEvent::TurnFinished {
                         subtype,
                         outcome,
@@ -727,7 +755,7 @@ impl Actor {
                         errors,
                         last_message: self.last_message.clone(),
                     },
-                    event => event,
+                    other => other,
                 };
                 if let ClaudeEvent::PermissionCancelled { id } = &event {
                     self.open_permissions.remove(id);
@@ -753,7 +781,7 @@ impl Actor {
                 } else {
                     tracing::warn!(
                         "control_response for unknown request {request_id}"
-                    )
+                    );
                 }
             }
             Inbound::UnsupportedControlRequest {
@@ -954,6 +982,39 @@ mod tests {
         Ok(())
     }
 
+    /// The variables the resume test checks, as the command sets them.
+    fn checked_env(
+        std: &std::process::Command,
+    ) -> Result<Vec<(&str, Option<&str>)>, &'static str> {
+        std.get_envs()
+            .filter_map(|(key, setting)| match (key.to_str(), setting) {
+                (
+                    Some(
+                        "CLAUDECODE"
+                        | "CLAUDE_CODE_OAUTH_TOKEN"
+                        | "CLAUDE_CODE_USE_BEDROCK"
+                        | "CLAUDE_CODE_USE_VERTEX"
+                        | "CLAUDE_CODE_USE_FOUNDRY"
+                        | "ANTHROPIC_BASE_URL"
+                        | "CLAUDE_CODE_SESSION_ID",
+                    ),
+                    None,
+                ) => Some((key, None)),
+                (
+                    Some(
+                        "CLAUDE_CONFIG_DIR"
+                        | "CLAUDE_CODE_PROJECT_DIR_NAME"
+                        | "DISABLE_UPDATES",
+                    ),
+                    Some(value),
+                ) => Some((key, value.to_str())),
+                _ => None,
+            })
+            .map(|(key, value)| key.to_str().map(|name| (name, value)))
+            .collect::<Option<Vec<(&str, Option<&str>)>>>()
+            .ok_or("a variable is not UTF-8")
+    }
+
     #[test]
     fn resumed_session_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
@@ -1012,36 +1073,8 @@ mod tests {
                 "stdio",
             ]
         );
-        let env = std
-            .get_envs()
-            .filter_map(|(key, value)| match (key.to_str(), value) {
-                (
-                    Some(
-                        "CLAUDECODE"
-                        | "CLAUDE_CODE_OAUTH_TOKEN"
-                        | "CLAUDE_CODE_USE_BEDROCK"
-                        | "CLAUDE_CODE_USE_VERTEX"
-                        | "CLAUDE_CODE_USE_FOUNDRY"
-                        | "ANTHROPIC_BASE_URL",
-                    ),
-                    None,
-                ) => Some((key, None)),
-                (Some("CLAUDE_CODE_SESSION_ID"), None) => Some((key, None)),
-                (
-                    Some(
-                        "CLAUDE_CONFIG_DIR"
-                        | "CLAUDE_CODE_PROJECT_DIR_NAME"
-                        | "DISABLE_UPDATES",
-                    ),
-                    Some(value),
-                ) => Some((key, value.to_str())),
-                _ => None,
-            })
-            .map(|(key, value)| key.to_str().map(|name| (name, value)))
-            .collect::<Option<Vec<(&str, Option<&str>)>>>()
-            .ok_or("a variable is not UTF-8")?;
         assert_eq!(
-            env,
+            checked_env(std)?,
             [
                 ("ANTHROPIC_BASE_URL", None),
                 ("CLAUDECODE", None),

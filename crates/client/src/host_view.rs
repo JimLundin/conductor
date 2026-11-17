@@ -342,18 +342,16 @@ impl SessionView {
                         ..
                     },
                 ),
-            ) => Working::Hidden,
-            (SessionStatus::Running, Attention::Quiet, _) => Working::Shown,
-            (SessionStatus::Running, Attention::Requests(_), _) => {
-                Working::Hidden
-            }
-            (
+            )
+            | (SessionStatus::Running, Attention::Requests(_), _)
+            | (
                 SessionStatus::Starting
                 | SessionStatus::Idle
                 | SessionStatus::Closed(_),
                 _,
                 _,
             ) => Working::Hidden,
+            (SessionStatus::Running, Attention::Quiet, _) => Working::Shown,
         }
     }
 
@@ -380,20 +378,13 @@ impl SessionView {
             .count();
         match open {
             0 => Attention::Quiet,
-            open => Attention::Requests(open),
+            count => Attention::Requests(count),
         }
     }
 
     fn apply(self, kind: EventKind, seq: HostSeq) -> Self {
         match kind {
-            EventKind::SessionReady => match self.status.clone() {
-                SessionStatus::Closed(reason) => self
-                    .status(SessionStatus::Idle)
-                    .push(Item::Continued(reason)),
-                SessionStatus::Starting
-                | SessionStatus::Idle
-                | SessionStatus::Running => self.status(SessionStatus::Idle),
-            },
+            EventKind::SessionReady => self.ready(),
             EventKind::ModelChanged {
                 model,
                 effort,
@@ -405,19 +396,11 @@ impl SessionView {
             }
             .push(Item::ModelChanged(reason)),
             EventKind::SessionClosed { reason } => self
-                .change(Change::End)
+                .change(&Change::End)
                 .settle()
                 .status(SessionStatus::Closed(reason)),
             EventKind::UserMessage { text, by } => {
-                let mut turn_starts = self.turn_starts;
-                turn_starts.insert(seq, self.items.len());
-                Self {
-                    turn_starts,
-                    undo: UndoState::Ready,
-                    ..self
-                }
-                .status(SessionStatus::Running)
-                .push(Item::User { text, by })
+                self.user_message(Item::User { text, by }, seq)
             }
             EventKind::AssistantDelta { text } => {
                 self.reply(text, ReplyState::Streaming)
@@ -443,7 +426,7 @@ impl SessionView {
             EventKind::ToolCall {
                 call,
                 phase: ToolPhase::Finished { outcome },
-            } => self.change(Change::Finish(call, outcome)),
+            } => self.change(&Change::Finish(call, outcome)),
             EventKind::RequestOpened {
                 request,
                 call,
@@ -453,12 +436,7 @@ impl SessionView {
             } => self.ask(
                 call,
                 tool,
-                Approval::Asked {
-                    request,
-                    reason,
-                    for_session,
-                    state: RequestState::Open,
-                },
+                Approval::open(request, reason, for_session),
             ),
             EventKind::QuestionAsked { request, questions } => {
                 self.push(Item::Question {
@@ -470,9 +448,9 @@ impl SessionView {
             EventKind::RequestResolved {
                 request,
                 resolution,
-            } => self.change(Change::Resolve(request, resolution)),
+            } => self.change(&Change::Resolve(request, resolution)),
             EventKind::TurnCompleted { outcome } => self
-                .change(Change::End)
+                .change(&Change::End)
                 .status(SessionStatus::Idle)
                 .push(Item::TurnCompleted(outcome)),
             EventKind::WorkspaceCreated { workspace } => Self {
@@ -485,32 +463,7 @@ impl SessionView {
                 ..self
             },
             EventKind::CheckpointCreated { checkpoint } => {
-                let start = checkpoint
-                    .turn_start
-                    .and_then(|seq| self.turn_starts.get(&seq).copied())
-                    .or_else(|| {
-                        checkpoint.parent.map(|_| {
-                            self.checkpoints
-                                .last()
-                                .map_or(0, |turn| turn.end.saturating_add(1))
-                        })
-                    });
-                match start {
-                    Some(start) => {
-                        let mut checkpoints = self.checkpoints;
-                        checkpoints.push(TurnCheckpoint {
-                            checkpoint: checkpoint.id,
-                            undo: checkpoint.undo,
-                            start,
-                            end: self.items.len().saturating_sub(1),
-                        });
-                        Self {
-                            checkpoints,
-                            ..self
-                        }
-                    }
-                    None => self,
-                }
+                self.checkpoint_created(checkpoint)
             }
             EventKind::SessionCreated { .. }
             | EventKind::UndoHistoryRestored { .. }
@@ -526,33 +479,7 @@ impl SessionView {
                 ..self
             },
             EventKind::TurnsUndone { checkpoint, .. } => {
-                match self
-                    .checkpoints
-                    .iter()
-                    .find(|turn| turn.checkpoint == checkpoint)
-                    .map(|turn| turn.start)
-                {
-                    Some(start) => Self {
-                        items: self.items.into_iter().take(start).collect(),
-                        checkpoints: self
-                            .checkpoints
-                            .into_iter()
-                            .filter(|turn| turn.start < start)
-                            .collect(),
-                        turn_starts: self
-                            .turn_starts
-                            .into_iter()
-                            .filter(|(_, index)| index < &start)
-                            .collect(),
-                        undo: UndoState::Undone,
-                        status: SessionStatus::Idle,
-                        ..self
-                    },
-                    None => Self {
-                        undo: UndoState::Undone,
-                        ..self
-                    },
-                }
+                self.turns_undone(checkpoint)
             }
             EventKind::Error { message } => self.push(Item::Error(message)),
         }
@@ -562,27 +489,114 @@ impl SessionView {
         Self { status, ..self }
     }
 
+    /// A session that closed and is ready again was continued.
+    fn ready(self) -> Self {
+        match self.status.clone() {
+            SessionStatus::Closed(reason) => self
+                .status(SessionStatus::Idle)
+                .push(Item::Continued(reason)),
+            SessionStatus::Starting
+            | SessionStatus::Idle
+            | SessionStatus::Running => self.status(SessionStatus::Idle),
+        }
+    }
+
+    /// A user message starts a turn at `seq`.
+    fn user_message(self, message: Item, seq: HostSeq) -> Self {
+        let mut turn_starts = self.turn_starts;
+        turn_starts.insert(seq, self.items.len());
+        Self {
+            turn_starts,
+            undo: UndoState::Ready,
+            ..self
+        }
+        .status(SessionStatus::Running)
+        .push(message)
+    }
+
+    /// A checkpoint covers the items since its turn started, or since the
+    /// last checkpoint when the host names no turn start.
+    fn checkpoint_created(self, checkpoint: proto::Checkpoint) -> Self {
+        let start = checkpoint
+            .turn_start
+            .and_then(|seq| self.turn_starts.get(&seq).copied())
+            .or_else(|| {
+                checkpoint.parent.map(|_| {
+                    self.checkpoints
+                        .last()
+                        .map_or(0, |turn| turn.end.saturating_add(1))
+                })
+            });
+        let Some(first) = start else {
+            return self;
+        };
+        let mut checkpoints = self.checkpoints;
+        checkpoints.push(TurnCheckpoint {
+            checkpoint: checkpoint.id,
+            undo: checkpoint.undo,
+            start: first,
+            end: self.items.len().saturating_sub(1),
+        });
+        Self {
+            checkpoints,
+            ..self
+        }
+    }
+
+    fn turns_undone(self, checkpoint: CheckpointId) -> Self {
+        match self
+            .checkpoints
+            .iter()
+            .find(|turn| turn.checkpoint == checkpoint)
+            .map(|turn| turn.start)
+        {
+            Some(start) => Self {
+                items: self.items.into_iter().take(start).collect(),
+                checkpoints: self
+                    .checkpoints
+                    .into_iter()
+                    .filter(|turn| turn.start < start)
+                    .collect(),
+                turn_starts: self
+                    .turn_starts
+                    .into_iter()
+                    .filter(|(_, index)| index < &start)
+                    .collect(),
+                undo: UndoState::Undone,
+                status: SessionStatus::Idle,
+                ..self
+            },
+            None => Self {
+                undo: UndoState::Undone,
+                ..self
+            },
+        }
+    }
+
     /// A delta joins the reply that is still streaming; the final text
     /// replaces it, so a client that missed the deltas shows the same reply.
     fn reply(self, text: String, state: ReplyState) -> Self {
         let mut items = self.items;
         let open = match items.pop() {
             Some(Item::Reply {
-                text,
+                text: streamed,
                 state: ReplyState::Streaming,
-            }) => Some(text),
+            }) => Some(streamed),
             last => {
                 items.extend(last.map(Item::settled));
                 None
             }
         };
-        let text = match state {
+        let joined = match state {
             ReplyState::Streaming => {
                 format!("{}{text}", open.unwrap_or_default())
             }
             ReplyState::Done => text,
         };
-        items.push(Item::Reply { text, state });
+        items.push(Item::Reply {
+            text: joined,
+            state,
+        });
         Self { items, ..self }
     }
 
@@ -591,21 +605,24 @@ impl SessionView {
         let mut items = self.items;
         let open = match items.pop() {
             Some(Item::Reasoning {
-                text,
+                text: streamed,
                 state: ReplyState::Streaming,
-            }) => Some(text),
+            }) => Some(streamed),
             last => {
                 items.extend(last.map(Item::settled));
                 None
             }
         };
-        let text = match state {
+        let joined = match state {
             ReplyState::Streaming => {
                 format!("{}{text}", open.unwrap_or_default())
             }
             ReplyState::Done => text,
         };
-        items.push(Item::Reasoning { text, state });
+        items.push(Item::Reasoning {
+            text: joined,
+            state,
+        });
         Self { items, ..self }
     }
 
@@ -633,7 +650,7 @@ impl SessionView {
             .filter_map(Item::call)
             .find(|seen| seen.0 == call.0)
         {
-            Some(_) => self.change(Change::Ask(call, approval)),
+            Some(_) => self.change(&Change::Ask(call, approval)),
             None => self.push(Item::Tool {
                 call,
                 tool,
@@ -643,12 +660,12 @@ impl SessionView {
         }
     }
 
-    fn change(self, change: Change) -> Self {
+    fn change(self, change: &Change) -> Self {
         Self {
             items: self
                 .items
                 .into_iter()
-                .map(|item| item.changed(&change))
+                .map(|item| item.changed(change))
                 .collect(),
             ..self
         }
@@ -703,7 +720,7 @@ impl Item {
                 questions,
                 state,
             } => Self::Question {
-                state: state.changed(&request, change),
+                state: state.changed(request, change),
                 request,
                 questions,
             },
@@ -731,17 +748,30 @@ impl ToolState {
 }
 
 impl Approval {
+    const fn open(
+        request: RequestId,
+        reason: Option<String>,
+        for_session: Option<String>,
+    ) -> Self {
+        Self::Asked {
+            request,
+            reason,
+            for_session,
+            state: RequestState::Open,
+        }
+    }
+
     fn changed(self, call: &ToolCallId, change: &Change) -> Self {
         match (self, change) {
             (_, Change::Ask(id, approval)) if call == id => approval.clone(),
-            (approval, change) => match approval {
+            (current, _) => match current {
                 Self::Asked {
                     request,
                     reason,
                     for_session,
                     state,
                 } => Self::Asked {
-                    state: state.changed(&request, change),
+                    state: state.changed(request, change),
                     request,
                     reason,
                     for_session,
@@ -755,9 +785,9 @@ impl Approval {
 impl RequestState {
     /// A request's answer, or its withdrawal when the turn or session ends
     /// with it still open.
-    fn changed(self, request: &RequestId, change: &Change) -> Self {
+    fn changed(self, request: RequestId, change: &Change) -> Self {
         match (self, change) {
-            (_, Change::Resolve(id, resolution)) if request == id => {
+            (_, Change::Resolve(id, resolution)) if request == *id => {
                 Self::Resolved(resolution.clone())
             }
             (Self::Open, Change::End) => Self::Resolved(Resolution::Withdrawn),
@@ -813,10 +843,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn events_fold_into_each_sessions_transcript_in_order() {
-        let call = ToolCallId(text("toolu_1"));
-        let events = Vec::from([
+    /// Two sessions interleaved: a turn with a tool call, its approval and
+    /// a request withdrawn, and a session that errs and closes.
+    fn transcript_events(call: &ToolCallId) -> Vec<(u64, EventKind)> {
+        Vec::from([
             (1, created("/a")),
             (2, created("/b")),
             (1, EventKind::SessionReady),
@@ -897,6 +927,16 @@ mod tests {
                     },
                 },
             ),
+        ])
+        .into_iter()
+        .chain(closing_events())
+        .collect()
+    }
+
+    /// The end of `transcript_events`: the turn completes, and the second
+    /// session errs and closes.
+    fn closing_events() -> [(u64, EventKind); 5] {
+        [
             (1, delta("Done")),
             (
                 1,
@@ -917,98 +957,104 @@ mod tests {
                 },
             ),
             (3, EventKind::SessionReady),
-        ]);
-        let view = fold(events);
-        assert_eq!(
-            view.sessions,
-            BTreeMap::from([
-                (
-                    SessionId(1),
-                    SessionView {
-                        provider: Provider::Claude,
-                        directory: HostPath(text("/a")),
-                        model: None,
-                        effort: None,
-                        status: SessionStatus::Idle,
-                        tasks: Vec::new(),
-                        items: Vec::from([
-                            Item::User {
-                                text: text("hi"),
-                                by: ClientName(text("phone")),
+        ]
+    }
+
+    fn expected_transcripts(
+        call: ToolCallId,
+    ) -> BTreeMap<SessionId, SessionView> {
+        BTreeMap::from([
+            (
+                SessionId(1),
+                SessionView {
+                    provider: Provider::Claude,
+                    directory: HostPath(text("/a")),
+                    model: None,
+                    effort: None,
+                    status: SessionStatus::Idle,
+                    tasks: Vec::new(),
+                    items: Vec::from([
+                        Item::User {
+                            text: text("hi"),
+                            by: ClientName(text("phone")),
+                        },
+                        Item::Reply {
+                            text: text("Hello."),
+                            state: ReplyState::Done,
+                        },
+                        Item::Tool {
+                            call,
+                            tool: ToolKind::Command {
+                                command: text("ls"),
                             },
-                            Item::Reply {
-                                text: text("Hello."),
-                                state: ReplyState::Done,
-                            },
-                            Item::Tool {
-                                call,
-                                tool: ToolKind::Command {
-                                    command: text("ls"),
-                                },
-                                state: ToolState::Finished(
-                                    ToolOutcome::Succeeded
+                            state: ToolState::Finished(ToolOutcome::Succeeded),
+                            approval: Approval::Asked {
+                                request: RequestId(1),
+                                reason: Some(text("to list")),
+                                for_session: None,
+                                state: RequestState::Resolved(
+                                    Resolution::Decided {
+                                        decision: Decision::Approve,
+                                        by: ClientName(text("phone")),
+                                    },
                                 ),
-                                approval: Approval::Asked {
-                                    request: RequestId(1),
-                                    reason: Some(text("to list")),
-                                    for_session: None,
-                                    state: RequestState::Resolved(
-                                        Resolution::Decided {
-                                            decision: Decision::Approve,
-                                            by: ClientName(text("phone")),
-                                        }
-                                    ),
-                                },
                             },
-                            Item::Tool {
-                                call: ToolCallId(text("toolu_2")),
-                                tool: ToolKind::Command {
-                                    command: text("rm"),
-                                },
-                                state: ToolState::Stopped,
-                                approval: Approval::Asked {
-                                    request: RequestId(2),
-                                    reason: None,
-                                    for_session: None,
-                                    state: RequestState::Resolved(
-                                        Resolution::Withdrawn
-                                    ),
-                                },
+                        },
+                        Item::Tool {
+                            call: ToolCallId(text("toolu_2")),
+                            tool: ToolKind::Command {
+                                command: text("rm"),
                             },
-                            Item::Reply {
-                                text: text("Done"),
-                                state: ReplyState::Done,
+                            state: ToolState::Stopped,
+                            approval: Approval::Asked {
+                                request: RequestId(2),
+                                reason: None,
+                                for_session: None,
+                                state: RequestState::Resolved(
+                                    Resolution::Withdrawn,
+                                ),
                             },
-                            Item::TurnCompleted(TurnOutcome::Completed),
-                        ]),
-                        workspace: None,
-                        checkpoints: Vec::new(),
-                        undo: UndoState::Ready,
-                        turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
-                        activity: HostSeq(13),
-                    },
-                ),
-                (
-                    SessionId(2),
-                    SessionView {
-                        provider: Provider::Claude,
-                        directory: HostPath(text("/b")),
-                        model: None,
-                        effort: None,
-                        status: SessionStatus::Closed(CloseReason::Exited {
-                            status: text("1")
-                        }),
-                        tasks: Vec::new(),
-                        items: Vec::from([Item::Error(text("odd"))]),
-                        workspace: None,
-                        checkpoints: Vec::new(),
-                        undo: UndoState::Ready,
-                        turn_starts: BTreeMap::new(),
-                        activity: HostSeq(15),
-                    },
-                ),
-            ])
-        );
+                        },
+                        Item::Reply {
+                            text: text("Done"),
+                            state: ReplyState::Done,
+                        },
+                        Item::TurnCompleted(TurnOutcome::Completed),
+                    ]),
+                    workspace: None,
+                    checkpoints: Vec::new(),
+                    undo: UndoState::Ready,
+                    turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
+                    activity: HostSeq(13),
+                },
+            ),
+            (
+                SessionId(2),
+                SessionView {
+                    provider: Provider::Claude,
+                    directory: HostPath(text("/b")),
+                    model: None,
+                    effort: None,
+                    status: SessionStatus::Closed(CloseReason::Exited {
+                        status: text("1"),
+                    }),
+                    tasks: Vec::new(),
+                    items: Vec::from([Item::Error(text("odd"))]),
+                    workspace: None,
+                    checkpoints: Vec::new(),
+                    undo: UndoState::Ready,
+                    turn_starts: BTreeMap::new(),
+                    activity: HostSeq(15),
+                },
+            ),
+        ])
+    }
+
+    #[test]
+    fn events_fold_into_each_sessions_transcript_in_order() {
+        let call = ToolCallId(text("toolu_1"));
+        let view = fold(transcript_events(&call));
+        assert_eq!(view.sessions, expected_transcripts(call));
     }
 
     /// Numbers the events as the host does: a delta repeats the last seq.
@@ -1533,8 +1579,8 @@ mod tests {
     ) -> Vec<(RequestId, RequestState)> {
         view.sessions.get(&SessionId(u128::from(session))).map_or(
             Vec::new(),
-            |session| {
-                session
+            |found| {
+                found
                     .items
                     .iter()
                     .filter_map(|item| match item {
@@ -1672,11 +1718,10 @@ mod tests {
     }
 
     fn numbered(kinds: Vec<EventKind>) -> Vec<Event> {
-        kinds
-            .into_iter()
-            .enumerate()
-            .map(|(index, kind)| Event {
-                seq: HostSeq(u64::try_from(index).unwrap().saturating_add(1)),
+        (1..)
+            .zip(kinds)
+            .map(|(seq, kind)| Event {
+                seq: HostSeq(seq),
                 session: SessionId(1),
                 kind,
             })
@@ -1710,13 +1755,15 @@ mod tests {
             .clone()
             .into_iter()
             .fold(HostView::empty(), HostView::apply);
-        let reconnect = events
+        let before_reconnect = events
             .iter()
             .take(15)
             .cloned()
             .fold(HostView::empty(), HostView::apply);
-        let reconnect =
-            events.into_iter().skip(15).fold(reconnect, HostView::apply);
+        let reconnect = events
+            .into_iter()
+            .skip(15)
+            .fold(before_reconnect, HostView::apply);
         assert_eq!(live, reconnect);
         let session =
             live.sessions.get(&SessionId(1)).ok_or("expected a value")?;

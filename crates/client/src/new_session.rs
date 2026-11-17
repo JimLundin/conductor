@@ -57,10 +57,10 @@ pub fn models(availability: Option<&Availability>) -> Models {
 /// The label of the model picker's first entry, which sends no model.
 #[must_use]
 pub fn default_label(models: &Models) -> String {
-    match &models.default {
-        Some(id) => format!("Default ({})", model_name(models, id)),
-        None => String::from("Default"),
-    }
+    models.default.as_ref().map_or_else(
+        || String::from("Default"),
+        |id| format!("Default ({})", model_name(models, id)),
+    )
 }
 
 /// The efforts `model` takes (`None`: the default model), lowest first.
@@ -80,7 +80,7 @@ pub fn kept_effort(
     model: Option<&ModelId>,
     effort: Option<Effort>,
 ) -> Option<Effort> {
-    effort.filter(|effort| efforts(models, model).contains(effort))
+    effort.filter(|kept| efforts(models, model).contains(kept))
 }
 
 /// A model's name as the host lists it, or its id if the host doesn't.

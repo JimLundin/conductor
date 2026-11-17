@@ -22,6 +22,8 @@ use proto::{Effort, ModelId, TaskStatus};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/claude")
@@ -38,25 +40,24 @@ struct FakeClaude {
     stdin_log: PathBuf,
 }
 
-fn test_dir(name: &str) -> PathBuf {
-    let dir = std::env::current_exe()
-        .unwrap()
+fn test_dir(name: &str) -> TestResult<PathBuf> {
+    let dir = std::env::current_exe()?
         .ancestors()
         .nth(3)
-        .unwrap()
+        .ok_or("the test binary is not under target/<profile>/deps")?
         .join("tmp")
         .join(format!("agents-replay-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
-fn fake_claude(name: &str, stdout: &Path) -> FakeClaude {
-    let dir = test_dir(name);
-    std::fs::copy(stdout, dir.join("stdout.jsonl")).unwrap();
-    FakeClaude {
+fn fake_claude(name: &str, stdout: &Path) -> TestResult<FakeClaude> {
+    let dir = test_dir(name)?;
+    std::fs::copy(stdout, dir.join("stdout.jsonl"))?;
+    Ok(FakeClaude {
         stdin_log: dir.join("stdin.jsonl"),
         dir,
-    }
+    })
 }
 
 fn options(claude: &FakeClaude) -> ClaudeOptions {
@@ -104,11 +105,11 @@ fn summary(event: &ClaudeEvent) -> String {
         ClaudeEvent::Message { role, content, .. } => {
             let blocks =
                 content.iter().map(block_summary).collect::<Vec<String>>();
-            let role = match role {
+            let speaker = match role {
                 Role::Assistant => "assistant",
                 Role::User => "user",
             };
-            format!("{role}: {}", blocks.join(", "))
+            format!("{speaker}: {}", blocks.join(", "))
         }
         ClaudeEvent::PermissionRequested {
             tool_name,
@@ -155,12 +156,11 @@ fn frame(v: &Value) -> String {
 }
 
 /// The `type` of a recorded stdout line.
-fn frame_type(line: &str) -> Option<String> {
-    serde_json::from_str::<Value>(line)
-        .unwrap()
+fn frame_type(line: &str) -> serde_json::Result<Option<String>> {
+    Ok(serde_json::from_str::<Value>(line)?
         .get("type")
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .map(str::to_owned))
 }
 
 /// Whether a replay has reached the event it reads until.
@@ -215,30 +215,27 @@ impl Replay {
         }
     }
 
-    async fn until(self, until: Until) -> Self {
-        Self { until, ..self }.run().await
-    }
-
-    async fn run(mut self) -> Self {
+    async fn until(&mut self, until: Until) -> TestResult<()> {
+        self.until = until;
         loop {
             let event = tokio::time::timeout(
                 Duration::from_secs(20),
                 self.events.recv(),
             )
             .await
-            .expect("no event within 20s; the replay is stuck")
-            .expect("event stream ended early");
-            match self.on(event).await {
+            .map_err(|_| "no event within 20s; the replay is stuck")?
+            .ok_or("event stream ended early")?;
+            match self.on(event).await? {
                 Progress::Playing => {}
-                Progress::Done => break self,
+                Progress::Done => break Ok(()),
             }
         }
     }
 
-    async fn on(&mut self, event: ClaudeEvent) -> Progress {
+    async fn on(&mut self, event: ClaudeEvent) -> TestResult<Progress> {
         match &event {
             ClaudeEvent::PermissionRequested { id, .. } => {
-                self.answer(id).await;
+                self.answer(id).await?;
             }
             ClaudeEvent::TurnFinished { .. } => {
                 self.finished = self.finished.saturating_add(1);
@@ -252,7 +249,7 @@ impl Replay {
             }
             _ => self.record(summary(&event)),
         }
-        match (&self.until, &event) {
+        Ok(match (&self.until, &event) {
             (Until::Permission, ClaudeEvent::PermissionRequested { .. })
             | (Until::Delta, ClaudeEvent::StreamDelta { .. }) => Progress::Done,
             (Until::Turns(turns), _) => match self.finished.cmp(turns) {
@@ -260,16 +257,15 @@ impl Replay {
                 Ordering::Equal | Ordering::Greater => Progress::Done,
             },
             (Until::Permission | Until::Delta, _) => Progress::Playing,
-        }
+        })
     }
 
-    async fn answer(&mut self, id: &PermissionRequestId) {
-        let answered = match self.decisions.get(self.ids.len()).cloned() {
-            Some(decision) => self.session.respond(id.clone(), decision).await,
-            None => Ok(()),
-        };
-        answered.unwrap();
+    async fn answer(&mut self, id: &PermissionRequestId) -> TestResult<()> {
+        if let Some(decision) = self.decisions.get(self.ids.len()).cloned() {
+            self.session.respond(id.clone(), decision).await?;
+        }
         self.ids.push(id.clone());
+        Ok(())
     }
 
     /// Records a line, after one for the deltas that came before it.
@@ -309,21 +305,24 @@ async fn answer_again(
     }
 }
 
-async fn replay(name: &str, decisions: Vec<PermissionDecision>) -> Replayed {
+async fn replay(
+    name: &str,
+    decisions: Vec<PermissionDecision>,
+) -> TestResult<Replayed> {
     let path = fixture(name);
     let (session, events) =
-        ClaudeSession::spawn(options(&fake_claude(name, &path)))
-            .await
-            .expect("initialize is answered by the recording's first line");
+        ClaudeSession::spawn(options(&fake_claude(name, &path)?)).await?;
 
-    let recording = std::fs::read_to_string(&path).unwrap();
+    let recording = std::fs::read_to_string(&path)?;
     let results = recording
         .lines()
-        .filter(|line| matches!(frame_type(line).as_deref(), Some("result")))
+        .map(frame_type)
+        .collect::<serde_json::Result<Vec<Option<String>>>>()?
+        .iter()
+        .filter(|kind| kind.as_deref() == Some("result"))
         .count();
-    let played = Replay::new(session, events, decisions)
-        .until(Until::Turns(results))
-        .await;
+    let mut played = Replay::new(session, events, decisions);
+    played.until(Until::Turns(results)).await?;
     assert_ne!(
         played.seen.len().cmp(&recording.lines().count()),
         Ordering::Greater
@@ -334,19 +333,16 @@ async fn replay(name: &str, decisions: Vec<PermissionDecision>) -> Replayed {
         .then(|id| answer_again(&session, id))
         .collect::<Vec<String>>()
         .await;
-    assert_eq!(
-        session.shutdown().await.unwrap().describe(),
-        "exit status: 0"
-    );
-    Replayed {
+    assert_eq!(session.shutdown().await?.describe(), "exit status: 0");
+    Ok(Replayed {
         events: played.seen,
         unknown: played.unknown,
         second,
-    }
+    })
 }
 
 #[tokio::test]
-async fn approve_deny_interrupt_recording() {
+async fn approve_deny_interrupt_recording() -> TestResult<()> {
     let replayed = replay(
         "session1-approve-deny-interrupt.jsonl",
         Vec::from([
@@ -357,7 +353,7 @@ async fn approve_deny_interrupt_recording() {
             },
         ]),
     )
-    .await;
+    .await?;
     assert_eq!(
         replayed.events,
         [
@@ -431,13 +427,14 @@ async fn approve_deny_interrupt_recording() {
             "no open permission request with id 8e8d863f-1d3f-4910-8591-5d1453ca9b6a",
         ]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn resume_and_accept_edits_recording() {
+async fn resume_and_accept_edits_recording() -> TestResult<()> {
     // acceptEdits must not ask, so no permission request may reach `second`.
     let replayed =
-        replay("session2-resume-accept-edits.jsonl", Vec::new()).await;
+        replay("session2-resume-accept-edits.jsonl", Vec::new()).await?;
     assert_eq!(
         replayed.events,
         [
@@ -461,14 +458,15 @@ async fn resume_and_accept_edits_recording() {
         ])
     );
     assert_eq!(replayed.second, Vec::<String>::new());
+    Ok(())
 }
 
 /// A probe of the pinned CLI with `--thinking-display summarized` and
 /// experimental betas on, through a proxy that dropped the one request field
 /// the owner's gateway refuses (Claude PROTOCOL.md).
 #[tokio::test]
-async fn summarized_thinking_recording() {
-    let replayed = replay("probe-thinking.jsonl", Vec::new()).await;
+async fn summarized_thinking_recording() -> TestResult<()> {
+    let replayed = replay("probe-thinking.jsonl", Vec::new()).await?;
     let thought = "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n";
     let deltas = replayed
         .events
@@ -505,14 +503,16 @@ async fn summarized_thinking_recording() {
             String::from("finished success Completed Some(\"completed\")"),
         ]
     );
+    Ok(())
 }
 
 /// `s1` step 15: three `TodoWrite` calls, each the whole checklist, and no
 /// permission request for any; step 16's turn after the effort changed.
 /// The recording's answers to step 16's control requests play unasked here.
 #[tokio::test]
-async fn checklist_and_effort_recording() {
-    let replayed = replay("session9-checklist-effort.jsonl", Vec::new()).await;
+async fn checklist_and_effort_recording() -> TestResult<()> {
+    let replayed =
+        replay("session9-checklist-effort.jsonl", Vec::new()).await?;
     let checklist = |first, second| {
         format!(
             "assistant: checklist [(\"Write a.txt\", {first}), (\"Write b.txt\", {second}), (\"Write c.txt\", {second})]"
@@ -546,28 +546,28 @@ async fn checklist_and_effort_recording() {
             String::from("finished success Completed Some(\"completed\")"),
         ]
     );
+    Ok(())
 }
 
 /// `s1` step 16: `apply_flag_settings` with `effortLevel`, then
 /// `get_settings`, answered as the pinned CLI answered them.
 #[tokio::test]
-async fn the_effort_is_set_in_the_running_process()
--> Result<(), Box<dyn std::error::Error>> {
+async fn the_effort_is_set_in_the_running_process() -> TestResult<()> {
     let recorded =
         std::fs::read_to_string(fixture("session9-checklist-effort.jsonl"))?;
     let line = |at| recorded.lines().nth(at).unwrap_or_default();
     let (initialize, set, applied) = (line(0), line(164), line(165));
     let stdout = recording(
         "set-effort",
-        Vec::from([
+        &[
             initialize,
             r#"{"fake":"await","match":{"type":"control_request","request":{"subtype":"apply_flag_settings"}}}"#,
             &set.replace("req_3", "req_2"),
             r#"{"fake":"await","match":{"type":"control_request","request":{"subtype":"get_settings"}}}"#,
             &applied.replace("req_4", "req_3"),
-        ]),
-    );
-    let claude = fake_claude("set-effort", &stdout);
+        ],
+    )?;
+    let claude = fake_claude("set-effort", &stdout)?;
     let (session, _events) = ClaudeSession::spawn(options(&claude)).await?;
     let set = session.set_effort(Effort::Low).await;
     let applied = session.applied().await.map(|applied| applied.effort);
@@ -596,8 +596,8 @@ async fn the_effort_is_set_in_the_running_process()
 /// A probe: the main agent runs a subagent, whose two `TodoWrite` calls
 /// carry its `parent_tool_use_id`. They are not the session's checklist.
 #[tokio::test]
-async fn a_subagents_checklist_is_not_the_sessions() {
-    let replayed = replay("probe-subagent-todo.jsonl", Vec::new()).await;
+async fn a_subagents_checklist_is_not_the_sessions() -> TestResult<()> {
+    let replayed = replay("probe-subagent-todo.jsonl", Vec::new()).await?;
     assert_eq!(
         (
             replayed
@@ -611,14 +611,14 @@ async fn a_subagents_checklist_is_not_the_sessions() {
         ),
         (0, Some(&2), Some(&3), Some(&1))
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn initialize_lists_the_models_and_their_efforts()
--> Result<(), Box<dyn std::error::Error>> {
+async fn initialize_lists_the_models_and_their_efforts() -> TestResult<()> {
     let path = fixture("session4-chosen-killed.jsonl");
     let (session, _events) =
-        ClaudeSession::spawn(options(&fake_claude("models", &path))).await?;
+        ClaudeSession::spawn(options(&fake_claude("models", &path)?)).await?;
     let models = session.models();
     assert_eq!(
         (
@@ -653,12 +653,12 @@ async fn initialize_lists_the_models_and_their_efforts()
 }
 
 #[tokio::test]
-async fn questions_and_session_approval_recording() {
+async fn questions_and_session_approval_recording() -> TestResult<()> {
     let replayed = replay(
         "session3-questions.jsonl",
         Vec::from([PermissionDecision::AllowForSession]),
     )
-    .await;
+    .await?;
     // 7 a question answered, 8 a command allowed for the session and run
     // again without a request, 9 a question the interrupt withdrew. Nothing
     // answers a question here, as the recording doesn't wait for it.
@@ -700,47 +700,46 @@ async fn questions_and_session_approval_recording() {
             "no open permission request with id fcc171e0-5399-4cb7-a65a-14d1ecabf519",
         ]
     );
+    Ok(())
 }
 
 /// Writes `lines` to a fresh recording and returns its path.
-fn recording(name: &str, lines: Vec<&str>) -> PathBuf {
-    let path = test_dir(name).join("recording.jsonl");
-    std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
-    path
+fn recording(name: &str, lines: &[&str]) -> TestResult<PathBuf> {
+    let path = test_dir(name)?.join("recording.jsonl");
+    std::fs::write(&path, format!("{}\n", lines.join("\n")))?;
+    Ok(path)
 }
 
 /// A real `result` line, so the test knows when the actor has handled every
 /// line before it.
-fn recorded_result() -> String {
-    std::fs::read_to_string(fixture("session2-resume-accept-edits.jsonl"))
-        .unwrap()
-        .lines()
-        .find_map(|line| match frame_type(line).as_deref() {
-            Some("result") => Some(line.to_owned()),
-            _ => None,
-        })
-        .unwrap()
+fn recorded_result() -> TestResult<String> {
+    let recorded =
+        std::fs::read_to_string(fixture("session2-resume-accept-edits.jsonl"))?;
+    for line in recorded.lines() {
+        if frame_type(line)?.as_deref() == Some("result") {
+            return Ok(line.to_owned());
+        }
+    }
+    Err("the recording has no result".into())
 }
 
 const INITIALIZED: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.1.316"}}}"#;
 
 #[tokio::test]
-async fn unknown_control_request_gets_an_error_reply()
--> Result<(), Box<dyn std::error::Error>> {
+async fn unknown_control_request_gets_an_error_reply() -> TestResult<()> {
     let stdout = recording(
         "unknown-control",
-        Vec::from([
+        &[
             INITIALIZED,
             r#"{"type":"control_request","request_id":"cli_3","request":{"subtype":"elicit_frobnicate","q":1}}"#,
             r#"{"type":"brand_new_frame","x":1}"#,
-            &recorded_result(),
-        ]),
-    );
-    let claude = fake_claude("unknown-control", &stdout);
+            &recorded_result()?,
+        ],
+    )?;
+    let claude = fake_claude("unknown-control", &stdout)?;
     let (session, events) = ClaudeSession::spawn(options(&claude)).await?;
-    let played = Replay::new(session, events, Vec::new())
-        .until(Until::Turns(1))
-        .await;
+    let mut played = Replay::new(session, events, Vec::new());
+    played.until(Until::Turns(1)).await?;
     played.session.shutdown().await?;
     assert_eq!(
         played.seen,
@@ -774,17 +773,17 @@ async fn unknown_control_request_gets_an_error_reply()
 /// answer to `initialize`.
 #[tokio::test]
 async fn a_resume_with_no_transcript_fails_with_the_clis_reason()
--> Result<(), Box<dyn std::error::Error>> {
+-> TestResult<()> {
     let recorded =
         std::fs::read_to_string(fixture("session6-resume-missing.jsonl"))?;
     let stdout = recording(
         "resume-missing",
-        Vec::from([
+        &[
             recorded.trim_end(),
             r#"{"fake":"fail","stderr":"No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10","status":1}"#,
-        ]),
-    );
-    let claude = fake_claude("resume-missing", &stdout);
+        ],
+    )?;
+    let claude = fake_claude("resume-missing", &stdout)?;
     let refused = ClaudeSession::spawn(options(&claude))
         .await
         .err()
@@ -800,16 +799,16 @@ async fn a_resume_with_no_transcript_fails_with_the_clis_reason()
 
 #[tokio::test]
 async fn missing_requested_resume_target_has_a_typed_recovery_error()
--> Result<(), Box<dyn std::error::Error>> {
+-> TestResult<()> {
     let id = agents::claude::SessionId(String::from("target"));
     let stdout = recording(
         "typed-resume-missing",
-        Vec::from([
+        &[
             r#"{"type":"result","subtype":"error_during_execution","session_id":"target","is_error":true,"errors":["No conversation found with session ID: target"]}"#,
             r#"{"fake":"fail","stderr":"No conversation found with session ID: target","status":1}"#,
-        ]),
-    );
-    let claude = fake_claude("typed-resume-missing", &stdout);
+        ],
+    )?;
+    let claude = fake_claude("typed-resume-missing", &stdout)?;
     let opts = ClaudeOptions {
         resume: agents::claude::Resume::Session(id.clone()),
         ..options(&claude)
@@ -835,14 +834,15 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error()
 /// A CLI that prints no `result`, as one without a flag we pass, fails
 /// with its last stderr line.
 #[tokio::test]
-async fn a_cli_that_exits_at_start_fails_with_its_last_stderr_line() {
+async fn a_cli_that_exits_at_start_fails_with_its_last_stderr_line()
+-> TestResult<()> {
     let stdout = recording(
         "unknown-option",
-        Vec::from([
+        &[
             r#"{"fake":"fail","stderr":"error: unknown option '--thinking-display'","status":1}"#,
-        ]),
-    );
-    let claude = fake_claude("unknown-option", &stdout);
+        ],
+    )?;
+    let claude = fake_claude("unknown-option", &stdout)?;
     let refused = ClaudeSession::spawn(options(&claude))
         .await
         .err()
@@ -851,14 +851,15 @@ async fn a_cli_that_exits_at_start_fails_with_its_last_stderr_line() {
         refused.as_deref(),
         Some("claude exited: error: unknown option '--thinking-display'")
     );
+    Ok(())
 }
 
 const FUTURE_CLI: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.2.0"}}}"#;
 
 #[tokio::test]
-async fn unsupported_cli_version_is_refused() {
-    let stdout = recording("future-cli", Vec::from([FUTURE_CLI]));
-    let claude = fake_claude("future-cli", &stdout);
+async fn unsupported_cli_version_is_refused() -> TestResult<()> {
+    let stdout = recording("future-cli", &[FUTURE_CLI])?;
+    let claude = fake_claude("future-cli", &stdout)?;
     let refused = ClaudeSession::spawn(options(&claude))
         .await
         .err()
@@ -869,14 +870,15 @@ async fn unsupported_cli_version_is_refused() {
             "claude 2.2.0 is not supported (supported: 2.1.316 to 2.1.322); set VersionPolicy::AllowUntested to run it anyway"
         )
     );
+    Ok(())
 }
 
 const VERSIONLESS_CLI: &str = r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{}}}"#;
 
 #[tokio::test]
-async fn cli_that_reports_no_version_is_refused() {
-    let stdout = recording("versionless-cli", Vec::from([VERSIONLESS_CLI]));
-    let claude = fake_claude("versionless-cli", &stdout);
+async fn cli_that_reports_no_version_is_refused() -> TestResult<()> {
+    let stdout = recording("versionless-cli", &[VERSIONLESS_CLI])?;
+    let claude = fake_claude("versionless-cli", &stdout)?;
     let refused = ClaudeSession::spawn(options(&claude))
         .await
         .err()
@@ -887,13 +889,13 @@ async fn cli_that_reports_no_version_is_refused() {
             "claude did not report its version, so it can't be checked; set VersionPolicy::AllowUntested to run it anyway"
         )
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn allow_untested_version_runs_it_anyway()
--> Result<(), Box<dyn std::error::Error>> {
-    let stdout = recording("future-cli-allowed", Vec::from([FUTURE_CLI]));
-    let claude = fake_claude("future-cli-allowed", &stdout);
+async fn allow_untested_version_runs_it_anyway() -> TestResult<()> {
+    let stdout = recording("future-cli-allowed", &[FUTURE_CLI])?;
+    let claude = fake_claude("future-cli-allowed", &stdout)?;
     let opts = ClaudeOptions {
         versions: VersionPolicy::AllowUntested,
         ..options(&claude)
@@ -916,24 +918,23 @@ async fn early(events: &mut mpsc::Receiver<ClaudeEvent>) -> Option<String> {
 }
 
 /// A session on an e2e recording, before its first user message.
-async fn gated(name: &str) -> Replay {
+async fn gated(name: &str) -> TestResult<Replay> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/e2e")
         .join(name);
-    let claude = fake_claude(name, &path);
-    let (session, events) =
-        ClaudeSession::spawn(options(&claude)).await.unwrap();
-    Replay::new(session, events, Vec::new())
+    let claude = fake_claude(name, &path)?;
+    let (session, events) = ClaudeSession::spawn(options(&claude)).await?;
+    Ok(Replay::new(session, events, Vec::new()))
 }
 
 #[tokio::test]
 async fn approve_recording_waits_for_the_message_and_the_answer()
--> Result<(), Box<dyn std::error::Error>> {
-    let mut r = gated("claude-approve.jsonl").await;
+-> TestResult<()> {
+    let mut r = gated("claude-approve.jsonl").await?;
     assert_eq!(early(&mut r.events).await, None);
 
     r.session.send_user(String::from("a.txt")).await?;
-    let mut r = r.until(Until::Permission).await;
+    r.until(Until::Permission).await?;
     assert_eq!(early(&mut r.events).await, None);
 
     r.session
@@ -944,7 +945,7 @@ async fn approve_recording_waits_for_the_message_and_the_answer()
             PermissionDecision::Allow,
         )
         .await?;
-    let r = r.until(Until::Turns(1)).await;
+    r.until(Until::Turns(1)).await?;
     assert_eq!(
         r.seen,
         [
@@ -963,12 +964,12 @@ async fn approve_recording_waits_for_the_message_and_the_answer()
 
 #[tokio::test]
 async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
--> Result<(), Box<dyn std::error::Error>> {
-    let mut r = gated("claude-deny-interrupt.jsonl").await;
+-> TestResult<()> {
+    let mut r = gated("claude-deny-interrupt.jsonl").await?;
     assert_eq!(early(&mut r.events).await, None);
 
     r.session.send_user(String::from("b.txt")).await?;
-    let mut r = r.until(Until::Permission).await;
+    r.until(Until::Permission).await?;
     assert_eq!(early(&mut r.events).await, None);
 
     let deny = PermissionDecision::Deny {
@@ -983,19 +984,19 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
             deny,
         )
         .await?;
-    let mut r = r.until(Until::Turns(1)).await;
+    r.until(Until::Turns(1)).await?;
     assert_eq!(early(&mut r.events).await, None);
 
     // The ack waits for our interrupt; had it come first, `interrupt` would
     // time out on an ack it never matched.
     r.session.send_user(String::from("count")).await?;
-    let r = r.until(Until::Delta).await;
+    r.until(Until::Delta).await?;
     r.session.interrupt().await?;
-    let mut r = r.until(Until::Turns(2)).await;
+    r.until(Until::Turns(2)).await?;
     assert_eq!(early(&mut r.events).await, None);
 
     r.session.send_user(String::from("pong")).await?;
-    let r = r.until(Until::Turns(3)).await;
+    r.until(Until::Turns(3)).await?;
     assert_eq!(
         r.seen,
         [
@@ -1023,23 +1024,22 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
 
 async fn drive_boundary(
     events: &mut mpsc::Receiver<ClaudeEvent>,
-) -> Option<agents::claude::MessageId> {
+) -> TestResult<Option<agents::claude::MessageId>> {
     loop {
         if let ClaudeEvent::TurnFinished { last_message, .. } =
             tokio::time::timeout(Duration::from_secs(20), events.recv())
-                .await
-                .unwrap()
-                .unwrap()
+                .await?
+                .ok_or("event stream ended early")?
         {
-            break last_message;
+            break Ok(last_message);
         }
     }
 }
 
 #[tokio::test]
 async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
--> Result<(), Box<dyn std::error::Error>> {
-    let dir = test_dir("native-boundaries");
+-> TestResult<()> {
+    let dir = test_dir("native-boundaries")?;
     let fake = FakeClaude {
         stdin_log: dir.join("stdin.jsonl"),
         dir: dir.clone(),
@@ -1060,11 +1060,11 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
     std::fs::write(dir.join("stdout.jsonl"), recording)?;
     let (session, mut events) = ClaudeSession::spawn(options(&fake)).await?;
     session.send_user(String::from("first")).await?;
-    let first = drive_boundary(&mut events).await;
+    let first = drive_boundary(&mut events).await?;
     session.send_user(String::from("second")).await?;
-    let second = drive_boundary(&mut events).await;
+    let second = drive_boundary(&mut events).await?;
     session.send_user(String::from("third")).await?;
-    let third = drive_boundary(&mut events).await;
+    let third = drive_boundary(&mut events).await?;
     assert_eq!(
         Vec::from([first, second, third]),
         Vec::from([

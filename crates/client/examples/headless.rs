@@ -22,9 +22,9 @@ use clap::{Parser, ValueEnum};
 use client::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     Answer, Auth, Availability, Change, CheckpointId, ClaudeCredential,
-    ClientName, CodexCredential, CommandBody, CommandResult, Credential,
-    Decision, Event, EventKind, HostPath, HostSeq, Provider, SessionId, Ticket,
-    TurnOutcome,
+    ClientName, CloseReason, CodexCredential, CommandBody, CommandResult,
+    Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider,
+    Question, RequestId, SessionId, Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -164,7 +164,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn log(start: Instant, line: String) -> std::io::Result<()> {
+fn log(start: Instant, line: &str) -> std::io::Result<()> {
     writeln!(
         std::io::stdout(),
         "[{:7.3}s] {line}",
@@ -253,7 +253,7 @@ impl Session {
         match update {
             Some(Update::Status(status)) => self.on_status(status).await,
             Some(Update::Reset(epoch)) => {
-                self.log(format!("reset to epoch {}", epoch.0))?;
+                self.log(&format!("reset to epoch {}", epoch.0))?;
                 self.last_seq = HostSeq(0);
                 Ok(Flow::Next)
             }
@@ -264,8 +264,8 @@ impl Session {
 
     async fn on_status(&mut self, status: Status) -> anyhow::Result<Flow> {
         let Status { state, error, .. } = status;
-        let error = error.map_or(String::new(), |e| format!(" error={e}"));
-        self.log(format!("status {state:?}{error}"))?;
+        let detail = error.map_or(String::new(), |e| format!(" error={e}"));
+        self.log(&format!("status {state:?}{detail}"))?;
         let now = match state {
             LinkState::Live => Liveness::Live,
             LinkState::Disconnected
@@ -285,30 +285,27 @@ impl Session {
 
     async fn went_live(&mut self) -> anyhow::Result<Flow> {
         self.times_live = self.times_live.saturating_add(1);
-        self.log(format!(
+        self.log(&format!(
             "live #{} after {:.3}s",
             self.times_live,
             self.start.elapsed().as_secs_f64()
         ))?;
-        match self.ours {
-            Some(_) => Ok(Flow::Next),
-            None => {
-                self.register().await?;
-                let after = self.last_seq;
-                let session = self.start_session().await?;
-                self.ours = Some(Ours { session, after });
-                let text = self.prompt.clone();
-                let result = self
-                    .link
-                    .send(CommandBody::SendMessage { session, text })
-                    .await?;
-                self.log(format!("message {:?} -> {result:?}", self.prompt))?;
-                if let When::AtSend = self.interrupt {
-                    self.interrupt(session).await?;
-                }
-                Ok(Flow::Next)
+        if self.ours.is_none() {
+            self.register().await?;
+            let after = self.last_seq;
+            let session = self.start_session().await?;
+            self.ours = Some(Ours { session, after });
+            let text = self.prompt.clone();
+            let result = self
+                .link
+                .send(CommandBody::SendMessage { session, text })
+                .await?;
+            self.log(&format!("message {:?} -> {result:?}", self.prompt))?;
+            if matches!(self.interrupt, When::AtSend) {
+                self.interrupt(session).await?;
             }
         }
+        Ok(Flow::Next)
     }
 
     /// Logs only the kind the host now reports, never a value.
@@ -332,10 +329,10 @@ impl Session {
         };
         match credential {
             None => Ok(()),
-            Some(credential) => {
+            Some(chosen) => {
                 let result = self
                     .link
-                    .send(CommandBody::SetCredential { credential })
+                    .send(CommandBody::SetCredential { credential: chosen })
                     .await?;
                 let kind = match &result {
                     CommandResult::Providers(providers) => {
@@ -361,7 +358,7 @@ impl Session {
                         "the host gave an unexpected answer",
                     )),
                 }?;
-                self.log(format!("registered the credential -> {kind}"))?;
+                self.log(&format!("registered the credential -> {kind}"))?;
                 Ok(())
             }
         }
@@ -377,7 +374,7 @@ impl Session {
                 effort: None,
             })
             .await?;
-        self.log(format!("start {:?} -> {result:?}", self.directory.0))?;
+        self.log(&format!("start {:?} -> {result:?}", self.directory.0))?;
         match result {
             CommandResult::Started { session } => Ok(session),
             CommandResult::Accepted
@@ -403,7 +400,7 @@ impl Session {
             Origin::Ours => "",
             Origin::History => "(history) ",
         };
-        self.log(format!("event #{} {marker}{:?}", event.seq.0, event.kind))?;
+        self.log(&format!("event #{} {marker}{:?}", event.seq.0, event.kind))?;
         match origin {
             Origin::Ours => self.on_our_event(event).await,
             Origin::History => Ok(Flow::Next),
@@ -414,13 +411,16 @@ impl Session {
         match event.kind {
             EventKind::AssistantDelta { .. } => {
                 self.deltas = self.deltas.saturating_add(1);
-                if let (When::FirstDelta, 1) = (self.interrupt, self.deltas) {
+                if matches!(
+                    (self.interrupt, self.deltas),
+                    (When::FirstDelta, 1)
+                ) {
                     self.interrupt(event.session).await?;
                 }
                 match (self.reconnect_after, self.reconnected) {
                     (Some(after), Reconnected::No) if after == self.deltas => {
                         self.reconnected = Reconnected::Yes;
-                        self.log(format!(
+                        self.log(&format!(
                             "dropping the connection mid-turn at seq {}",
                             event.seq.0
                         ))?;
@@ -440,44 +440,19 @@ impl Session {
                         decision,
                     })
                     .await?;
-                self.log(format!(
+                self.log(&format!(
                     "resolve {request:?} {decision:?} -> {result:?}"
                 ))?;
                 Ok(Flow::Next)
             }
-            // Each question gets its first option, or "yes" if it has none.
             EventKind::QuestionAsked { request, questions } => {
-                let answers = questions
-                    .into_iter()
-                    .map(|question| {
-                        Answer(Vec::from([question
-                            .options
-                            .into_iter()
-                            .next()
-                            .map_or_else(
-                                || String::from("yes"),
-                                |option| option.label,
-                            )]))
-                    })
-                    .collect::<Vec<Answer>>();
-                let result = self
-                    .link
-                    .send(CommandBody::Answer {
-                        session: event.session,
-                        request,
-                        answers: answers.clone(),
-                    })
-                    .await?;
-                self.log(format!(
-                    "answer {request:?} {answers:?} -> {result:?}"
-                ))?;
-                Ok(Flow::Next)
+                self.answer(event.session, request, questions).await
             }
             EventKind::TurnCompleted { outcome } => {
                 self.completed(event.session, outcome).await
             }
             EventKind::WorkspaceCreated { workspace } => {
-                self.log(format!("workspace {}", workspace.directory.0))?;
+                self.log(&format!("workspace {}", workspace.directory.0))?;
                 Ok(Flow::Next)
             }
             EventKind::CheckpointCreated { checkpoint } => {
@@ -487,7 +462,7 @@ impl Session {
                 self.try_undo(event.session).await
             }
             EventKind::UserMessage { .. } => {
-                if let Stage::SecondTurn = self.stage {
+                if matches!(self.stage, Stage::SecondTurn) {
                     self.undo_receipt = self.undo_receipt.started(event.seq);
                 }
                 Ok(Flow::Next)
@@ -496,68 +471,16 @@ impl Session {
                 self.reply.push_str(&text);
                 Ok(Flow::Next)
             }
-            EventKind::TurnsUndone { .. } => match self.stage {
-                Stage::Undoing => {
-                    self.stage = Stage::VerifyTurn;
-                    self.reply.clear();
-                    let text = String::from(
-                        "What are my retained and discarded codewords? If a codeword was never supplied, use unknown. Reply with exactly retained=WORD discarded=WORD, lowercase, no other text, and use no tools.",
-                    );
-                    accepted(
-                        self.link
-                            .send(CommandBody::SendMessage {
-                                session: event.session,
-                                text,
-                            })
-                            .await?,
-                    )?;
-                    Ok(Flow::Next)
-                }
-                _ => Ok(Flow::Next),
-            },
+            EventKind::TurnsUndone { .. } => {
+                self.turns_undone(event.session).await
+            }
             EventKind::UndoFailed { reason, .. } => {
                 Err(anyhow::Error::msg(reason))
             }
-            EventKind::SessionClosed { reason } => match self.stage {
-                Stage::Open => {
-                    self.stage = Stage::Continuing;
-                    let result = self
-                        .link
-                        .send(CommandBody::Continue {
-                            session: event.session,
-                        })
-                        .await?;
-                    self.log(format!(
-                        "continue after {reason:?} -> {result:?}"
-                    ))?;
-                    Ok(Flow::Next)
-                }
-                Stage::FirstTurn
-                | Stage::Continuing
-                | Stage::SecondTurn
-                | Stage::Undoing
-                | Stage::VerifyTurn => Err(anyhow::Error::msg(format!(
-                    "the session closed: {reason:?}"
-                ))),
-            },
-            EventKind::SessionReady => {
-                match (&self.then_continue, self.stage) {
-                    (Some(text), Stage::Continuing) => {
-                        self.stage = Stage::SecondTurn;
-                        let text = text.clone();
-                        let result = self
-                            .link
-                            .send(CommandBody::SendMessage {
-                                session: event.session,
-                                text: text.clone(),
-                            })
-                            .await?;
-                        self.log(format!("message {text:?} -> {result:?}"))?;
-                        Ok(Flow::Next)
-                    }
-                    (_, _) => Ok(Flow::Next),
-                }
+            EventKind::SessionClosed { reason } => {
+                self.closed(event.session, &reason).await
             }
+            EventKind::SessionReady => self.ready(event.session).await,
             EventKind::SessionCreated { .. }
             | EventKind::ReasoningDelta { .. }
             | EventKind::Reasoning { .. }
@@ -575,15 +498,107 @@ impl Session {
         }
     }
 
+    /// Each question gets its first option, or "yes" if it has none.
+    async fn answer(
+        &self,
+        session: SessionId,
+        request: RequestId,
+        questions: Vec<Question>,
+    ) -> anyhow::Result<Flow> {
+        let answers = questions
+            .into_iter()
+            .map(|question| {
+                Answer(Vec::from([question
+                    .options
+                    .into_iter()
+                    .next()
+                    .map_or_else(
+                        || String::from("yes"),
+                        |option| option.label,
+                    )]))
+            })
+            .collect::<Vec<Answer>>();
+        let result = self
+            .link
+            .send(CommandBody::Answer {
+                session,
+                request,
+                answers: answers.clone(),
+            })
+            .await?;
+        self.log(&format!("answer {request:?} {answers:?} -> {result:?}"))?;
+        Ok(Flow::Next)
+    }
+
+    async fn turns_undone(
+        &mut self,
+        session: SessionId,
+    ) -> anyhow::Result<Flow> {
+        if matches!(self.stage, Stage::Undoing) {
+            self.stage = Stage::VerifyTurn;
+            self.reply.clear();
+            let text = String::from(
+                "What are my retained and discarded codewords? If a codeword was never supplied, use unknown. Reply with exactly retained=WORD discarded=WORD, lowercase, no other text, and use no tools.",
+            );
+            accepted(
+                self.link
+                    .send(CommandBody::SendMessage { session, text })
+                    .await?,
+            )?;
+        }
+        Ok(Flow::Next)
+    }
+
+    async fn closed(
+        &mut self,
+        session: SessionId,
+        reason: &CloseReason,
+    ) -> anyhow::Result<Flow> {
+        match self.stage {
+            Stage::Open => {
+                self.stage = Stage::Continuing;
+                let result =
+                    self.link.send(CommandBody::Continue { session }).await?;
+                self.log(&format!("continue after {reason:?} -> {result:?}"))?;
+                Ok(Flow::Next)
+            }
+            Stage::FirstTurn
+            | Stage::Continuing
+            | Stage::SecondTurn
+            | Stage::Undoing
+            | Stage::VerifyTurn => Err(anyhow::Error::msg(format!(
+                "the session closed: {reason:?}"
+            ))),
+        }
+    }
+
+    async fn ready(&mut self, session: SessionId) -> anyhow::Result<Flow> {
+        if let (Some(then), Stage::Continuing) =
+            (&self.then_continue, self.stage)
+        {
+            self.stage = Stage::SecondTurn;
+            let text = then.clone();
+            let result = self
+                .link
+                .send(CommandBody::SendMessage {
+                    session,
+                    text: text.clone(),
+                })
+                .await?;
+            self.log(&format!("message {text:?} -> {result:?}"))?;
+        }
+        Ok(Flow::Next)
+    }
+
     async fn completed(
         &mut self,
         session: SessionId,
         outcome: TurnOutcome,
     ) -> anyhow::Result<Flow> {
         match (&self.then_undo, self.stage, outcome) {
-            (Some(text), Stage::FirstTurn, TurnOutcome::Completed) => {
+            (Some(then), Stage::FirstTurn, TurnOutcome::Completed) => {
                 self.stage = Stage::SecondTurn;
-                let text = text.clone();
+                let text = then.clone();
                 accepted(
                     self.link
                         .send(CommandBody::SendMessage { session, text })
@@ -595,36 +610,32 @@ impl Session {
                 self.undo_receipt = self.undo_receipt.completed();
                 self.try_undo(session).await
             }
-            (Some(_), Stage::VerifyTurn, TurnOutcome::Completed) => match self
-                .reply
-                .trim()
-            {
-                "retained=amber discarded=unknown" => {
-                    self.log(String::from("undo verified retained history"))?;
-                    Ok(Flow::Finished)
+            (Some(_), Stage::VerifyTurn, TurnOutcome::Completed) => {
+                match self.reply.trim() {
+                    "retained=amber discarded=unknown" => {
+                        self.log("undo verified retained history")?;
+                        Ok(Flow::Finished)
+                    }
+                    reply => Err(anyhow::Error::msg(format!(
+                        "undo history check failed: {reply}"
+                    ))),
                 }
-                reply => Err(anyhow::Error::msg(format!(
-                    "undo history check failed: {reply}"
-                ))),
-            },
+            }
             (Some(_), _, _) => {
                 Err(anyhow::Error::msg("the undo smoke turn did not complete"))
             }
-            (None, Stage::FirstTurn, _) => match &self.then_continue {
-                Some(_) => {
+            (None, Stage::FirstTurn, _) => {
+                if self.then_continue.is_some() {
                     self.stage = Stage::Open;
-                    self.log(String::from(
-                        "turn completed; waiting for the agent to exit",
-                    ))?;
+                    self.log("turn completed; waiting for the agent to exit")?;
                     Ok(Flow::Next)
-                }
-                None => {
-                    self.log(String::from("turn completed"))?;
+                } else {
+                    self.log("turn completed")?;
                     Ok(Flow::Finished)
                 }
-            },
+            }
             (None, _, _) => {
-                self.log(String::from("turn completed"))?;
+                self.log("turn completed")?;
                 Ok(Flow::Finished)
             }
         }
@@ -655,7 +666,7 @@ impl Session {
                                     && matches!(file.change, Change::Write)
                             })
                             .context("the second turn diff has no added discarded-only.txt")?;
-                        self.log(format!(
+                        self.log(&format!(
                             "undo diff checkpoint={} files={:?}",
                             checkpoint.0, diff.files
                         ))?;
@@ -681,11 +692,11 @@ impl Session {
 
     async fn interrupt(&self, session: SessionId) -> anyhow::Result<()> {
         let result = self.link.send(CommandBody::Interrupt { session }).await?;
-        self.log(format!("interrupt -> {result:?}"))?;
+        self.log(&format!("interrupt -> {result:?}"))?;
         Ok(())
     }
 
-    fn log(&self, line: String) -> std::io::Result<()> {
+    fn log(&self, line: &str) -> std::io::Result<()> {
         log(self.start, line)
     }
 }
@@ -699,8 +710,8 @@ fn var(name: &str) -> anyhow::Result<String> {
 fn accepted(result: CommandResult) -> anyhow::Result<()> {
     match result {
         CommandResult::Accepted => Ok(()),
-        result => Err(anyhow::Error::msg(format!(
-            "command was not accepted: {result:?}"
+        other => Err(anyhow::Error::msg(format!(
+            "command was not accepted: {other:?}"
         ))),
     }
 }
@@ -743,7 +754,10 @@ impl UndoReceipt {
 
     fn checkpoint(self, start: Option<HostSeq>, id: CheckpointId) -> Self {
         Self {
-            checkpoint: start.map(|start| SeenCheckpoint { start, id }),
+            checkpoint: start.map(|turn_start| SeenCheckpoint {
+                start: turn_start,
+                id,
+            }),
             ..self
         }
     }

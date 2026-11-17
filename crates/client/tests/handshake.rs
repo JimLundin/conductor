@@ -16,17 +16,20 @@ use tokio::sync::mpsc;
 
 const STEP: Duration = Duration::from_secs(15);
 
-async fn endpoint() -> Endpoint {
-    Endpoint::builder(presets::Minimal)
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+async fn endpoint() -> TestResult<Endpoint> {
+    Ok(Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)
         .alpns(Vec::from([proto::ALPN.to_vec()]))
         .bind()
-        .await
-        .unwrap()
+        .await?)
 }
 
-async fn link(endpoint: &Endpoint) -> (HostLink, mpsc::Receiver<Update>) {
-    HostLink::spawn(
+async fn link(
+    endpoint: &Endpoint,
+) -> TestResult<(HostLink, mpsc::Receiver<Update>)> {
+    Ok(HostLink::spawn(
         Target {
             addr: endpoint.addr(),
             token: AuthToken::from_bytes([7; 16]),
@@ -36,35 +39,43 @@ async fn link(endpoint: &Endpoint) -> (HostLink, mpsc::Receiver<Update>) {
             ..LinkOptions::new(ClientName(String::from("handshake-test")))
         },
     )
-    .await
-    .unwrap()
+    .await?)
 }
 
-async fn accept_hello(endpoint: &Endpoint) -> (Connection, SendStream) {
-    let conn = endpoint.accept().await.unwrap().await.unwrap();
-    let (send, mut recv) = conn.accept_bi().await.unwrap();
-    let opening = wire::read::<Open>(&mut recv).await.unwrap().unwrap();
+async fn accept_hello(
+    endpoint: &Endpoint,
+) -> TestResult<(Connection, SendStream)> {
+    let conn = endpoint
+        .accept()
+        .await
+        .ok_or("the endpoint closed before a connection")?
+        .await?;
+    let (send, mut recv) = conn.accept_bi().await?;
+    let opening = wire::read::<Open>(&mut recv)
+        .await?
+        .ok_or("the stream ended before the opening")?;
     assert_eq!(
-        Some(&opening).filter(|opening| matches!(opening, Open::Hello(_))),
+        Some(&opening).filter(|open| matches!(open, Open::Hello(_))),
         Some(&opening)
     );
-    (conn, send)
+    Ok((conn, send))
 }
 
-async fn stalled_hello(endpoint: &Endpoint) {
-    let (conn, _send) = accept_hello(endpoint).await;
-    let closed = tokio::time::timeout(STEP, conn.closed()).await.unwrap();
+async fn stalled_hello(endpoint: &Endpoint) -> TestResult<()> {
+    let (conn, _send) = accept_hello(endpoint).await?;
+    let closed = tokio::time::timeout(STEP, conn.closed()).await?;
     assert_eq!(
-        Some(&closed).filter(|closed| matches!(
-            closed,
+        Some(&closed).filter(|reason| matches!(
+            reason,
             ConnectionError::ApplicationClosed(_)
         )),
         Some(&closed)
     );
+    Ok(())
 }
 
-async fn delayed_hello(endpoint: &Endpoint) {
-    let (conn, mut send) = accept_hello(endpoint).await;
+async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
+    let (conn, mut send) = accept_hello(endpoint).await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
     let unavailable = Availability::Unavailable {
         reason: String::from("handshake test"),
@@ -81,20 +92,22 @@ async fn delayed_hello(endpoint: &Endpoint) {
             },
         }),
     )
-    .await
-    .unwrap();
-    send.finish().unwrap();
-    let _ = tokio::time::timeout(STEP, conn.closed()).await.unwrap();
+    .await?;
+    send.finish()?;
+    let _ = tokio::time::timeout(STEP, conn.closed()).await?;
+    Ok(())
 }
 
-async fn until_live(updates: &mut mpsc::Receiver<Update>) -> Vec<Status> {
+async fn until_live(
+    updates: &mut mpsc::Receiver<Update>,
+) -> TestResult<Vec<Status>> {
     let mut seen = Vec::new();
     loop {
-        match updates.recv().await.unwrap() {
+        match updates.recv().await.ok_or("the link's updates ended")? {
             Update::Status(status) => {
                 seen.push(status.clone());
-                if let LinkState::Live = status.state {
-                    break seen;
+                if status.state == LinkState::Live {
+                    break Ok(seen);
                 }
             }
             Update::Reset(_) | Update::Event(_) => {}
@@ -103,16 +116,15 @@ async fn until_live(updates: &mut mpsc::Receiver<Update>) -> Vec<Status> {
 }
 
 #[tokio::test]
-async fn stalled_hello_closes_the_connection_and_retries()
--> Result<(), Box<dyn std::error::Error>> {
-    let host = endpoint().await;
+async fn stalled_hello_closes_the_connection_and_retries() -> TestResult<()> {
+    let host = endpoint().await?;
     let server = host.clone();
     let serving = tokio::spawn(async move {
-        stalled_hello(&server).await;
-        delayed_hello(&server).await;
+        stalled_hello(&server).await?;
+        delayed_hello(&server).await
     });
-    let (link, mut updates) = link(&host).await;
-    let seen = tokio::time::timeout(STEP, until_live(&mut updates)).await?;
+    let (link, mut updates) = link(&host).await?;
+    let seen = tokio::time::timeout(STEP, until_live(&mut updates)).await??;
     assert_eq!(
         seen.iter().map(|status| status.state).collect::<Vec<_>>(),
         Vec::from([
@@ -136,19 +148,18 @@ async fn stalled_hello_closes_the_connection_and_retries()
     );
     assert_eq!(link.status().error, None);
     link.stop().await?;
-    serving.await?;
+    serving.await??;
     host.close().await;
     Ok(())
 }
 
 #[tokio::test]
-async fn slow_hello_succeeds_without_reconnecting()
--> Result<(), Box<dyn std::error::Error>> {
-    let host = endpoint().await;
+async fn slow_hello_succeeds_without_reconnecting() -> TestResult<()> {
+    let host = endpoint().await?;
     let server = host.clone();
     let serving = tokio::spawn(async move { delayed_hello(&server).await });
-    let (link, mut updates) = link(&host).await;
-    let seen = tokio::time::timeout(STEP, until_live(&mut updates)).await?;
+    let (link, mut updates) = link(&host).await?;
+    let seen = tokio::time::timeout(STEP, until_live(&mut updates)).await??;
     assert_eq!(
         seen.into_iter()
             .map(|status| status.state)
@@ -161,7 +172,7 @@ async fn slow_hello_succeeds_without_reconnecting()
         ])
     );
     link.stop().await?;
-    serving.await?;
+    serving.await??;
     host.close().await;
     Ok(())
 }

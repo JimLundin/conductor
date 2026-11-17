@@ -228,7 +228,7 @@ pub enum Decision {
 }
 
 /// What an answer to an open request has to look like.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnswerShape {
     Command,
     FileChange,
@@ -239,7 +239,7 @@ pub enum AnswerShape {
 }
 
 /// What one stdout line means to the server actor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inbound {
     Event(CodexEvent),
     /// Answer to a request we sent.
@@ -327,9 +327,12 @@ struct WireQuestion {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Target {
-    thread_id: String,
-    turn_id: String,
-    item_id: String,
+    #[serde(rename = "threadId")]
+    thread: String,
+    #[serde(rename = "turnId")]
+    turn: String,
+    #[serde(rename = "itemId")]
+    item: String,
 }
 
 /// The notifications we map, by `method`.
@@ -548,15 +551,15 @@ pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
 }
 
 fn inbound(envelope: Envelope, raw: Value) -> Inbound {
-    let Envelope {
-        id,
-        method,
-        params,
-        result,
-        error,
-    } = envelope;
-    match (id.as_ref().and_then(RequestId::read), method, result, error) {
-        (Some(id), Some(method), _, _) => request(id, method, params, raw),
+    match (
+        envelope.id.as_ref().and_then(RequestId::read),
+        envelope.method,
+        envelope.result,
+        envelope.error,
+    ) {
+        (Some(id), Some(method), _, _) => {
+            request(id, method, envelope.params, raw)
+        }
         (Some(id), None, Some(result), _) => Inbound::Response {
             id,
             outcome: Ok(result),
@@ -604,8 +607,16 @@ fn permission_asks(profile: PermissionProfile) -> Vec<PermissionAsk> {
         .and_then(|enabled| enabled.then_some(PermissionAsk::Network));
     let (read, write) = match profile.file_system {
         Some(file_system) => (
-            listed(&file_system.read, &file_system.entries, &Access::Read),
-            listed(&file_system.write, &file_system.entries, &Access::Write),
+            listed(
+                file_system.read.as_deref(),
+                file_system.entries.as_deref(),
+                &Access::Read,
+            ),
+            listed(
+                file_system.write.as_deref(),
+                file_system.entries.as_deref(),
+                &Access::Write,
+            ),
         ),
         None => (Vec::new(), Vec::new()),
     };
@@ -626,17 +637,17 @@ fn permission_asks(profile: PermissionProfile) -> Vec<PermissionAsk> {
 
 /// The places a profile asks `access` to, in its plain lists and its entries.
 fn listed(
-    plain: &Option<Vec<String>>,
-    entries: &Option<Vec<FileSystemEntry>>,
+    plain: Option<&[String]>,
+    entries: Option<&[FileSystemEntry]>,
     access: &Access,
 ) -> Vec<String> {
     plain
-        .iter()
+        .into_iter()
         .flatten()
         .cloned()
         .chain(
             entries
-                .iter()
+                .into_iter()
                 .flatten()
                 .filter(|entry| &entry.access == access)
                 .map(|entry| place(&entry.path)),
@@ -644,8 +655,8 @@ fn listed(
         .collect()
 }
 
-fn place(path: &Place) -> String {
-    match path {
+fn place(target: &Place) -> String {
+    match target {
         Place::Path { path } => path.clone(),
         Place::GlobPattern { pattern } => pattern.clone(),
         Place::Special { value } => match value {
@@ -682,7 +693,7 @@ fn served(request: ServerRequest) -> serde_json::Result<Served> {
                 asked(ServerRequest::UserInput { questions }).map(Served::Asked)
             }
         },
-        request => asked(request).map(Served::Asked),
+        other => asked(other).map(Served::Asked),
     }
 }
 
@@ -761,19 +772,19 @@ fn request(
         Ok((Served::Secret, target)) => Inbound::Declined {
             rpc_id,
             event: CodexEvent::Thread {
-                thread: ThreadId(target.thread_id),
+                thread: ThreadId(target.thread),
                 event: ThreadEvent::SecretQuestionDeclined {
-                    turn: TurnId(target.turn_id),
+                    turn: TurnId(target.turn),
                 },
             },
         },
         Ok((Served::Asked(asked), target)) => Inbound::Approval {
-            thread: ThreadId(target.thread_id),
+            thread: ThreadId(target.thread),
             shape: asked.shape,
             event: ThreadEvent::ApprovalRequested {
                 id: ApprovalId::of(&rpc_id),
-                turn: TurnId(target.turn_id),
-                item: target.item_id,
+                turn: TurnId(target.turn),
+                item: target.item,
                 kind: asked.kind,
                 options: asked.options,
             },
@@ -806,25 +817,7 @@ fn notification(raw: Value) -> Inbound {
             },
         ),
         Ok(Notification::TurnCompleted { thread_id, turn }) => {
-            let outcome = match turn.status {
-                TurnStatus::Completed => TurnOutcome::Completed,
-                TurnStatus::Interrupted => TurnOutcome::Interrupted,
-                TurnStatus::Failed | TurnStatus::InProgress => {
-                    TurnOutcome::Failed {
-                        message: turn.error.map_or_else(
-                            || String::from("the turn failed"),
-                            |e| e.message,
-                        ),
-                    }
-                }
-            };
-            on_thread(
-                thread_id,
-                ThreadEvent::TurnCompleted {
-                    turn: TurnId(turn.id),
-                    outcome,
-                },
-            )
+            on_thread(thread_id, turn_completed(turn))
         }
         Ok(Notification::AgentMessageDelta {
             thread_id,
@@ -851,13 +844,13 @@ fn notification(raw: Value) -> Inbound {
         Ok(Notification::ServerRequestResolved {
             thread_id,
             request_id,
-        }) => match RequestId::read(&request_id) {
-            Some(rpc_id) => Inbound::Resolved {
+        }) => RequestId::read(&request_id).map_or_else(
+            || Inbound::Event(thread_unknown(raw)),
+            |rpc_id| Inbound::Resolved {
                 thread: ThreadId(thread_id),
                 rpc_id,
             },
-            None => Inbound::Event(thread_unknown(raw)),
-        },
+        ),
         Ok(Notification::ItemStarted {
             item: ThreadItem::AgentMessage { .. } | ThreadItem::Reasoning { .. },
             ..
@@ -881,19 +874,7 @@ fn notification(raw: Value) -> Inbound {
             thread_id,
             ThreadEvent::PlanUpdated {
                 turn: TurnId(turn_id),
-                steps: plan
-                    .into_iter()
-                    .map(|step| PlanStep {
-                        text: step.step,
-                        status: match step.status {
-                            WirePlanStatus::Pending => TaskStatus::Pending,
-                            WirePlanStatus::InProgress => {
-                                TaskStatus::InProgress
-                            }
-                            WirePlanStatus::Completed => TaskStatus::Completed,
-                        },
-                    })
-                    .collect(),
+                steps: plan.into_iter().map(plan_step).collect(),
             },
         ),
         Ok(Notification::SettingsUpdated {
@@ -909,13 +890,40 @@ fn notification(raw: Value) -> Inbound {
     }
 }
 
+fn turn_completed(turn: Turn) -> ThreadEvent {
+    let outcome = match turn.status {
+        TurnStatus::Completed => TurnOutcome::Completed,
+        TurnStatus::Interrupted => TurnOutcome::Interrupted,
+        TurnStatus::Failed | TurnStatus::InProgress => TurnOutcome::Failed {
+            message: turn
+                .error
+                .map_or_else(|| String::from("the turn failed"), |e| e.message),
+        },
+    };
+    ThreadEvent::TurnCompleted {
+        turn: TurnId(turn.id),
+        outcome,
+    }
+}
+
+fn plan_step(step: WirePlanStep) -> PlanStep {
+    PlanStep {
+        text: step.step,
+        status: match step.status {
+            WirePlanStatus::Pending => TaskStatus::Pending,
+            WirePlanStatus::InProgress => TaskStatus::InProgress,
+            WirePlanStatus::Completed => TaskStatus::Completed,
+        },
+    }
+}
+
 fn item_event(
     thread: String,
-    turn: String,
+    turn_id: String,
     phase: ItemPhase,
     item: ThreadItem,
 ) -> Inbound {
-    let turn = TurnId(turn);
+    let turn = TurnId(turn_id);
     on_thread(
         thread,
         match item {
@@ -935,7 +943,7 @@ fn item_event(
                 id,
                 phase,
                 ToolKind::Command { command },
-                status,
+                &status,
             ),
             ThreadItem::FileChange {
                 id,
@@ -958,7 +966,7 @@ fn item_event(
                         })
                         .collect(),
                 },
-                status,
+                &status,
             ),
         },
     )
@@ -969,7 +977,7 @@ fn tool_event(
     id: String,
     phase: ItemPhase,
     tool: ToolKind,
-    status: String,
+    status: &str,
 ) -> ThreadEvent {
     ThreadEvent::ToolCall {
         turn,
@@ -977,7 +985,7 @@ fn tool_event(
         phase: match phase {
             ItemPhase::Started => ToolPhase::Started { tool },
             ItemPhase::Completed => ToolPhase::Finished {
-                outcome: match status.as_str() {
+                outcome: match status {
                     "completed" => ToolOutcome::Succeeded,
                     "declined" => ToolOutcome::Declined,
                     _ => ToolOutcome::Failed,
@@ -995,8 +1003,8 @@ fn thread_unknown(raw: Value) -> CodexEvent {
         .or_else(|| raw.pointer("/params/thread/id"))
         .and_then(Value::as_str);
     match thread {
-        Some(thread) => CodexEvent::Thread {
-            thread: ThreadId(thread.to_owned()),
+        Some(id) => CodexEvent::Thread {
+            thread: ThreadId(id.to_owned()),
             event: ThreadEvent::Unknown(raw),
         },
         None => CodexEvent::Unknown(raw),
@@ -1214,7 +1222,7 @@ impl Call {
             } => serde_json::to_value(TurnStartParams {
                 thread_id: thread.0.clone(),
                 input: Vec::from([UserInput::Text { text: text.clone() }]),
-                effort: effort.map(|effort| String::from(effort.wire())),
+                effort: effort.map(|level| String::from(level.wire())),
             }),
             Self::TurnInterrupt { thread, turn } => {
                 serde_json::to_value(TurnInterruptParams {
@@ -1437,9 +1445,9 @@ pub fn answer(
             | AnswerShape::Permissions(_),
             Decision::Answer(_),
         ) => Err(AnswerError::NotApplicable),
-        (AnswerShape::Command | AnswerShape::FileChange, decision) => {
+        (AnswerShape::Command | AnswerShape::FileChange, chosen) => {
             encoded(PlainAnswer {
-                decision: plain(decision),
+                decision: plain(&chosen),
             })
         }
         (AnswerShape::Permissions(requested), Decision::Accept) => {
@@ -1462,7 +1470,7 @@ pub fn answer(
     }
 }
 
-fn plain(decision: Decision) -> PlainDecision {
+const fn plain(decision: &Decision) -> PlainDecision {
     match decision {
         Decision::Accept => PlainDecision::Accept,
         Decision::AcceptForSession => PlainDecision::AcceptForSession,
@@ -1562,15 +1570,17 @@ mod tests {
         answer, encode, encoded, parse_line,
     };
 
-    fn json(text: &str) -> Value {
-        serde_json::from_str(text).unwrap()
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+    fn json(text: &str) -> serde_json::Result<Value> {
+        serde_json::from_str(text)
     }
 
-    fn sent(msg: Outbound) -> Value {
-        json(&encode(msg).unwrap())
+    fn sent(msg: Outbound) -> serde_json::Result<Value> {
+        json(&encode(msg)?)
     }
 
-    fn request(call: Call) -> Value {
+    fn request(call: Call) -> serde_json::Result<Value> {
         sent(Outbound::Request { id: 7, call })
     }
 
@@ -1590,7 +1600,7 @@ mod tests {
         assert_eq!(
             super::history_page(json(
                 r#"{"data":[{"id":"tu_1","status":"completed","items":[]},{"id":"tu_2","status":"interrupted"}],"nextCursor":"page-2","backwardsCursor":"unused"}"#
-            ))?,
+            )?)?,
             (
                 Vec::from([
                     TurnId(String::from("tu_1")),
@@ -1603,16 +1613,17 @@ mod tests {
             request(Call::ThreadTurns {
                 thread: ThreadId(String::from("th_1")),
                 cursor: Some(String::from("page-2"))
-            }),
+            })?,
             json(
                 r#"{"id":7,"method":"thread/turns/list","params":{"threadId":"th_1","cursor":"page-2","limit":100,"sortDirection":"asc"}}"#
-            )
+            )?
         );
         Ok(())
     }
 
     #[test]
-    fn incomplete_or_malformed_history_is_not_an_empty_prefix() {
+    fn incomplete_or_malformed_history_is_not_an_empty_prefix() -> TestResult<()>
+    {
         let pages = Vec::from([
             r#"{"data":[]}"#,
             r#"{"data":[],"nextCursor":42}"#,
@@ -1622,27 +1633,32 @@ mod tests {
         assert_eq!(
             pages
                 .into_iter()
-                .all(|page| super::history_page(json(page)).is_err())
+                .map(json)
+                .collect::<serde_json::Result<Vec<Value>>>()?
+                .into_iter()
+                .all(|page| super::history_page(page).is_err())
                 .then_some(()),
             Some(())
         );
+        Ok(())
     }
 
     #[test]
-    fn revert_excludes_the_selected_native_turn() {
+    fn revert_excludes_the_selected_native_turn() -> TestResult<()> {
         assert_eq!(
             request(Call::ThreadRevert {
                 thread: ThreadId(String::from("th_1")),
                 before: TurnId(String::from("tu_2")),
-            }),
+            })?,
             json(
                 r#"{"id":7,"method":"thread/revert","params":{"threadId":"th_1","beforeTurnId":"tu_2"}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn request_ids_accept_only_integer_and_string_shapes() {
+    fn request_ids_accept_only_integer_and_string_shapes() -> TestResult<()> {
         let cases = Vec::from([
             ("0", Some(RequestId::Integer(0))),
             ("-9", Some(RequestId::Integer(9_i64.wrapping_neg()))),
@@ -1656,13 +1672,14 @@ mod tests {
         assert_eq!(
             cases
                 .iter()
-                .map(|(wire, _)| RequestId::read(&json(wire)))
-                .collect::<Vec<Option<RequestId>>>(),
+                .map(|(wire, _)| json(wire).map(|read| RequestId::read(&read)))
+                .collect::<serde_json::Result<Vec<Option<RequestId>>>>()?,
             cases
                 .into_iter()
                 .map(|(_, expected)| expected)
                 .collect::<Vec<Option<RequestId>>>()
         );
+        Ok(())
     }
 
     #[test]
@@ -1679,55 +1696,61 @@ mod tests {
     }
 
     #[test]
-    fn thread_start_omits_absent_model_thread_and_effort() {
+    fn thread_start_omits_absent_model_thread_and_effort() -> TestResult<()> {
         let options = ThreadOptions {
             model: None,
             effort: None,
             ..opts()
         };
         assert_eq!(
-            request(Call::ThreadStart(options)),
+            request(Call::ThreadStart(options))?,
             json(
                 r#"{"id":7,"method":"thread/start","params":{"historyMode":"paginated",
                 "approvalPolicy":"on-request","sandbox":"read-only","cwd":"/tmp/s2-scratch",
                 "config":{"features":{"default_mode_request_user_input":true},
                 "model_reasoning_summary":"auto",
                 "tools":{"update_plan":{"enabled":true}}}}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn initialize_opts_into_the_experimental_api() {
+    fn initialize_opts_into_the_experimental_api() -> TestResult<()> {
         assert_eq!(
-            request(Call::Initialize),
+            request(Call::Initialize)?,
             json(&format!(
                 r#"{{"id": 7, "method": "initialize", "params": {{
                 "clientInfo": {{"name": "conductor", "version": "{}"}},
                 "capabilities": {{"experimentalApi": true}}}}}}"#,
                 env!("CARGO_PKG_VERSION")
-            ))
+            ))?
         );
         assert_eq!(
-            sent(Outbound::Initialized),
-            json(r#"{"method": "initialized"}"#)
+            sent(Outbound::Initialized)?,
+            json(r#"{"method": "initialized"}"#)?
         );
+        Ok(())
     }
 
     #[test]
-    fn thread_start_and_resume_carry_policy_sandbox_and_effort() {
+    fn thread_start_and_resume_carry_policy_sandbox_and_effort()
+    -> TestResult<()> {
         assert_eq!(
-            request(Call::ThreadStart(opts())),
+            request(Call::ThreadStart(opts()))?,
             json(
                 r#"{"id": 7, "method": "thread/start", "params": {"historyMode":"paginated",
                 "approvalPolicy": "on-request", "sandbox": "read-only", "cwd": "/tmp/s2-scratch",
                 "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low",
                 "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true},
                 "tools": {"update_plan": {"enabled": true}}}}}"#
-            )
+            )?
         );
         assert_eq!(
-            request(Call::ThreadResume(ThreadId(String::from("th_1")), opts())),
+            request(Call::ThreadResume(
+                ThreadId(String::from("th_1")),
+                opts()
+            ))?,
             json(
                 r#"{"id": 7, "method": "thread/resume", "params": {
                 "threadId": "th_1", "approvalPolicy": "on-request", "sandbox": "read-only",
@@ -1735,59 +1758,61 @@ mod tests {
                 "config": {"model_reasoning_effort": "low",
                 "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true},
                 "tools": {"update_plan": {"enabled": true}}}}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn turn_requests() {
+    fn turn_requests() -> TestResult<()> {
         assert_eq!(
             request(Call::TurnStart {
                 thread: ThreadId(String::from("th_1")),
                 text: String::from("create a.txt"),
                 effort: None,
-            }),
+            })?,
             json(
                 r#"{"id": 7, "method": "turn/start", "params": {
                 "threadId": "th_1", "input": [{"type": "text", "text": "create a.txt"}]}}"#
-            )
+            )?
         );
         assert_eq!(
             request(Call::TurnStart {
                 thread: ThreadId(String::from("th_1")),
                 text: String::from("pong"),
                 effort: Some(Effort::High),
-            }),
+            })?,
             json(
                 r#"{"id": 7, "method": "turn/start", "params": {
                 "threadId": "th_1", "input": [{"type": "text", "text": "pong"}],
                 "effort": "high"}}"#
-            )
+            )?
         );
         assert_eq!(
             request(Call::TurnInterrupt {
                 thread: ThreadId(String::from("th_1")),
                 turn: TurnId(String::from("tu_2"))
-            }),
+            })?,
             json(
                 r#"{"id": 7, "method": "turn/interrupt", "params": {"threadId": "th_1", "turnId": "tu_2"}}"#
-            )
+            )?
         );
         assert_eq!(
-            request(Call::ModelList),
-            json(r#"{"id": 7, "method": "model/list", "params": {}}"#)
+            request(Call::ModelList)?,
+            json(r#"{"id": 7, "method": "model/list", "params": {}}"#)?
         );
+        Ok(())
     }
 
-    fn answered(shape: &AnswerShape, decision: Decision) -> Value {
-        let result = answer(shape, decision).unwrap();
-        sent(Outbound::Answer {
+    fn answered(shape: &AnswerShape, decision: Decision) -> TestResult<Value> {
+        let result = answer(shape, decision).map_err(|e| format!("{e:?}"))?;
+        Ok(sent(Outbound::Answer {
             rpc_id: RequestId::Integer(0),
             result,
-        })
+        })?)
     }
 
-    fn plain_answers(shape: &AnswerShape) -> Vec<Value> {
+    fn plain_answers(shape: &AnswerShape) -> TestResult<Vec<Value>> {
         [
             Decision::Accept,
             Decision::AcceptForSession,
@@ -1796,11 +1821,11 @@ mod tests {
         ]
         .into_iter()
         .map(|decision| answered(shape, decision))
-        .collect()
+        .collect::<TestResult<Vec<Value>>>()
     }
 
     #[test]
-    fn command_and_file_change_decisions() {
+    fn command_and_file_change_decisions() -> TestResult<()> {
         let expected = ["accept", "acceptForSession", "decline", "cancel"]
             .into_iter()
             .map(|wire| {
@@ -1808,48 +1833,52 @@ mod tests {
                     r#"{{"id": 0, "result": {{"decision": "{wire}"}}}}"#
                 ))
             })
-            .collect::<Vec<Value>>();
-        assert_eq!(plain_answers(&AnswerShape::Command), expected);
-        assert_eq!(plain_answers(&AnswerShape::FileChange), expected);
+            .collect::<serde_json::Result<Vec<Value>>>()?;
+        assert_eq!(plain_answers(&AnswerShape::Command)?, expected);
+        assert_eq!(plain_answers(&AnswerShape::FileChange)?, expected);
+        Ok(())
     }
 
     #[test]
-    fn a_native_option_is_sent_verbatim() {
+    fn a_native_option_is_sent_verbatim() -> TestResult<()> {
         let option = json(
             r#"{"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls"]}}"#,
-        );
+        )?;
         assert_eq!(
             answered(
                 &AnswerShape::Command,
-                Decision::Raw(json(&format!(r#"{{"decision": {option}}}"#)))
-            ),
+                Decision::Raw(json(&format!(r#"{{"decision": {option}}}"#))?)
+            )?,
             json(
                 r#"{"id": 0, "result": {"decision":
                 {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls"]}}}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
-    fn permissions_grant_back_what_was_requested() {
-        let shape =
-            AnswerShape::Permissions(json(r#"{"network": {"enabled": true}}"#));
+    fn permissions_grant_back_what_was_requested() -> TestResult<()> {
+        let shape = AnswerShape::Permissions(json(
+            r#"{"network": {"enabled": true}}"#,
+        )?);
         assert_eq!(
-            answered(&shape, Decision::Accept),
+            answered(&shape, Decision::Accept)?,
             json(
                 r#"{"id": 0, "result": {"permissions": {"network": {"enabled": true}}, "scope": "turn"}}"#
-            )
+            )?
         );
         assert_eq!(
-            answered(&shape, Decision::AcceptForSession),
+            answered(&shape, Decision::AcceptForSession)?,
             json(
                 r#"{"id": 0, "result": {"permissions": {"network": {"enabled": true}}, "scope": "session"}}"#
-            )
+            )?
         );
         assert_eq!(
-            answered(&shape, Decision::Decline),
-            json(r#"{"id": 0, "result": {"permissions": {}}}"#)
+            answered(&shape, Decision::Decline)?,
+            json(r#"{"id": 0, "result": {"permissions": {}}}"#)?
         );
+        Ok(())
     }
 
     /// Recorded from codex-cli 0.166.0 (probe, 2026-11-12).
@@ -1919,10 +1948,10 @@ mod tests {
                 Decision::Answer(Vec::from([Answer(Vec::from([
                     String::from("Blue")
                 ]))]))
-            ),
+            )?,
             json(
                 r#"{"id": 0, "result": {"answers": {"preferred_color": {"answers": ["Blue"]}}}}"#
-            )
+            )?
         );
         assert_eq!(
             match answer(&shape, Decision::Accept) {
@@ -1952,19 +1981,21 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_request_is_rejected_with_method_not_found() {
+    fn unsupported_request_is_rejected_with_method_not_found() -> TestResult<()>
+    {
         assert_eq!(
             sent(Outbound::Reject {
                 rpc_id: RequestId::Integer(4),
                 message: String::from(
                     "conductor does not handle item/tool/call"
                 ),
-            }),
+            })?,
             json(
                 r#"{"id": 4, "error": {"code": -32601,
                 "message": "conductor does not handle item/tool/call"}}"#
-            )
+            )?
         );
+        Ok(())
     }
 
     #[test]
@@ -1987,11 +2018,11 @@ mod tests {
                         reason: Some(String::from("May I?")),
                     },
                     options: Vec::from([
-                        json(r#""accept""#),
+                        json(r#""accept""#)?,
                         json(
                             r#"{"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["printf"]}}"#
-                        ),
-                        json(r#""cancel""#),
+                        )?,
+                        json(r#""cancel""#)?,
                     ]),
                 },
             }
@@ -2040,7 +2071,7 @@ mod tests {
             parse_line(line)?,
             Inbound::Event(CodexEvent::Thread {
                 thread: ThreadId(String::from("th_1")),
-                event: ThreadEvent::Unknown(json(line)),
+                event: ThreadEvent::Unknown(json(line)?),
             })
         );
         Ok(())
@@ -2054,7 +2085,7 @@ mod tests {
             parse_line(line)?,
             Inbound::Event(CodexEvent::Thread {
                 thread: ThreadId(String::from("th_1")),
-                event: ThreadEvent::Unknown(json(line)),
+                event: ThreadEvent::Unknown(json(line)?),
             })
         );
         Ok(())
@@ -2071,7 +2102,7 @@ mod tests {
                 method: String::from("item/frobnicate"),
                 event: CodexEvent::Thread {
                     thread: ThreadId(String::from("th_1")),
-                    event: ThreadEvent::Unknown(json(line)),
+                    event: ThreadEvent::Unknown(json(line)?),
                 },
             }
         );

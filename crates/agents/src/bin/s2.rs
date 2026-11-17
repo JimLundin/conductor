@@ -289,8 +289,8 @@ impl Run {
             .context("event stream closed")
     }
 
-    async fn on(&mut self, event: CodexEvent) -> Result<Progress> {
-        match event {
+    async fn on(&mut self, received: CodexEvent) -> Result<Progress> {
+        match received {
             CodexEvent::Thread { thread, event } => {
                 let turn = self.turns.get(&thread).with_context(|| {
                     format!(
@@ -430,7 +430,7 @@ async fn single_at(
 ) -> Result<Single> {
     let id = thread.send_turn(String::from(prompt), effort).await?;
     let Run {
-        live,
+        live: driven,
         turns,
         interrupted,
         plan: _,
@@ -443,7 +443,7 @@ async fn single_at(
         .next()
         .context("a run of one turn lost its turn")?;
     Ok(Single {
-        live,
+        live: driven,
         turn,
         interrupted,
         exited,
@@ -452,9 +452,9 @@ async fn single_at(
 
 /// Kills the process as a crash would, without closing its stdin.
 fn kill(pid: Option<u32>) {
-    let killed = pid.map(|pid| {
+    let killed = pid.map(|id| {
         std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
+            .args(["-9", &id.to_string()])
             .status()
     });
     tracing::info!(?pid, ?killed, "killed codex");
@@ -493,7 +493,7 @@ async fn chosen_and_killed(
             }
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "asked {:?} {:?}; codex runs {:?}",
             chosen.model, chosen.effort, a.settings
         ),
@@ -516,7 +516,7 @@ async fn chosen_and_killed(
             }
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "reasoning items={:?} streamed={:?} reply={:?}",
             t.reasoning, t.thought, t.text
         ),
@@ -547,7 +547,7 @@ async fn chosen_and_killed(
             (Some(_), Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "killed after {:?} exit={:?}; resumed {} -> {} reply={:?}",
             killed.turn.streamed.lines().last(),
             killed.exited,
@@ -576,14 +576,14 @@ async fn plan_and_effort(
 ) -> Result<(Verdict, Verdict)> {
     let live = spawn(codex, log_path(fixtures, "server8-plan-effort")).await?;
     let a = live.server.start_thread(thread_opts).await?;
-    let s = single(
+    let planned = single(
         live,
         &a,
         "Use your plan tool (update_plan) to make a plan of exactly three steps: write a.txt, write b.txt, write c.txt. Then update the plan to mark the first step in progress, then update it again marking it completed. Do not run any commands or create files; only update the plan. Then reply done.",
         Plan::Answer(Policy::Decline),
     )
     .await?;
-    let t = &s.turn;
+    let t = &planned.turn;
     let plan = report(
         "14 plan",
         match (
@@ -604,26 +604,26 @@ async fn plan_and_effort(
             }
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "plans={:?} approvals={:?} items={:?} outcome={:?} reply={:?}",
             t.plans, t.approvals, t.items, t.outcome, t.text
         ),
     )?;
-    let s = single_at(
-        s.live,
+    let raised = single_at(
+        planned.live,
         &a,
         "Reply with just the word pong. Use no tools.",
         Some(Effort::High),
         Plan::Answer(Policy::Decline),
     )
     .await?;
-    let t = &s.turn;
+    let raised_turn = &raised.turn;
     let effort = report(
         "15 effort changed",
         match (
-            t.settings.last().map(|settings| settings.effort),
-            &t.outcome,
-            t.text.to_lowercase().find("pong"),
+            raised_turn.settings.last().map(|settings| settings.effort),
+            &raised_turn.outcome,
+            raised_turn.text.to_lowercase().find("pong"),
         ) {
             (
                 Some(Some(Effort::High)),
@@ -632,12 +632,12 @@ async fn plan_and_effort(
             ) => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "settings={:?} outcome={:?} reply={:?}",
-            t.settings, t.outcome, t.text
+            raised_turn.settings, raised_turn.outcome, raised_turn.text
         ),
     )?;
-    let status = s.live.server.shutdown().await?;
+    let status = raised.live.server.shutdown().await?;
     writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     Ok((plan, effort))
 }
@@ -704,7 +704,7 @@ async fn interrupted(
             ) => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "interrupt()={interrupted:?} streamed={:?} output before the interrupt landed {:?} items={:?} outcome={:?}; next turn outcome={:?} reply={:?}",
             t.streamed,
             t.text,
@@ -756,14 +756,29 @@ async fn questions(
 ) -> Result<(Verdict, Verdict, Verdict)> {
     let live = spawn(codex, log_path(fixtures, "server3-questions")).await?;
     let a = live.server.start_thread(thread_opts).await?;
-    let s = single(
+    let (answered, question) = question_answered(live, &a).await?;
+    let (accepted, for_session) =
+        accepted_for_session(answered, &a, scratch).await?;
+    let (after_withdrawal, withdrawn) =
+        question_withdrawn(accepted, &a).await?;
+    let status = after_withdrawal.server.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((question, for_session, withdrawn))
+}
+
+/// Step 7: a question answered.
+async fn question_answered(
+    live: Live,
+    a: &CodexThread,
+) -> Result<(Live, Verdict)> {
+    let asked = single(
         live,
-        &a,
+        a,
         "Use the request_user_input tool to ask me one question: which color do I prefer, with the options Red and Blue. Then reply with only the color I chose.",
         Plan::Answer(Policy::Decline),
     )
     .await?;
-    let t = &s.turn;
+    let t = &asked.turn;
     let question = report(
         "7 question",
         match (
@@ -778,23 +793,33 @@ async fn questions(
             (1, 1, Some(_), Some(TurnOutcome::Completed)) => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "approvals={:?} items={:?} outcome={:?} reply={:?}",
             t.approvals, t.items, t.outcome, t.text
         ),
     )?;
 
-    let s = single(
-        s.live,
-        &a,
+    Ok((asked.live, question))
+}
+
+/// Step 8: a command accepted for the session, then run again without
+/// asking.
+async fn accepted_for_session(
+    live: Live,
+    a: &CodexThread,
+    scratch: &Path,
+) -> Result<(Live, Verdict)> {
+    let accepted = single(
+        live,
+        a,
         "Run exactly this shell command and nothing else: touch t1.txt",
         Plan::Answer(Policy::ApproveForSession),
     )
     .await?;
-    let first = s.turn.approvals.clone();
+    let first = accepted.turn.approvals.clone();
     let again = single(
-        s.live,
-        &a,
+        accepted.live,
+        a,
         "Run exactly this shell command again, and nothing else: touch t1.txt",
         Plan::Answer(Policy::Decline),
     )
@@ -812,7 +837,7 @@ async fn questions(
             }
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "first approvals={first:?} t1.txt {:?}; again approvals={:?} items={:?} outcome={:?}",
             presence(&scratch.join("t1.txt")),
             again.turn.approvals,
@@ -821,9 +846,17 @@ async fn questions(
         ),
     )?;
 
+    Ok((again.live, for_session))
+}
+
+/// Step 9: a question withdrawn by an interrupt.
+async fn question_withdrawn(
+    live: Live,
+    a: &CodexThread,
+) -> Result<(Live, Verdict)> {
     let s = single(
-        again.live,
-        &a,
+        live,
+        a,
         "Use the request_user_input tool to ask me one question: which fruit do I prefer, with the options Apple and Pear. Then reply with only the fruit I chose.",
         Plan::Interrupt(Cue::Approval),
     )
@@ -866,14 +899,12 @@ async fn questions(
             ) => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "approvals={:?} interrupt()={:?} outcome={:?} after the turn={cancelled:?} respond-after={late:?}",
             t.approvals, s.interrupted, t.outcome
         ),
     )?;
-    let status = server.shutdown().await?;
-    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
-    Ok((question, for_session, withdrawn))
+    Ok((Live { server, events }, withdrawn))
 }
 
 /// A native revert removes the second turn, keeps the thread id, and stays
@@ -935,7 +966,7 @@ async fn undo_history(
             ) if prefix == expected => Verdict::Pass,
             _ => Verdict::Fail,
         },
-        format!(
+        &format!(
             "thread={:?} resumed={:?} after={text:?} continued={:?}",
             thread.id, resumed.id, continued.turn.text
         ),
@@ -944,11 +975,14 @@ async fn undo_history(
     Ok(verdict)
 }
 
-async fn run(fixtures: Option<PathBuf>) -> Result<()> {
+async fn run(fixtures_dir: Option<PathBuf>) -> Result<()> {
     fresh_scratch(Path::new(SCRATCH))?;
     let scratch = Path::new(SCRATCH);
-    fixtures.as_ref().map(std::fs::create_dir_all).transpose()?;
-    let fixtures = fixtures.as_deref();
+    fixtures_dir
+        .as_ref()
+        .map(std::fs::create_dir_all)
+        .transpose()?;
+    let fixtures = fixtures_dir.as_deref();
 
     let codex = install(
         Cli::Codex,
@@ -958,25 +992,7 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     )
     .await?;
     let live = spawn(&codex, log_path(fixtures, "server1")).await?;
-    let models = live.server.list_models().await?;
-    let model = models
-        .choices
-        .iter()
-        .find_map(|m| {
-            m.description.strip_prefix("Fast").map(|_| m.id.0.clone())
-        })
-        .context("model/list offers no model described as fast")?;
-    writeln!(
-        std::io::stdout(),
-        "codex {} (userAgent {:?}); model {model} from {:?}",
-        live.server.codex_version().unwrap_or("?"),
-        live.server.user_agent(),
-        models
-            .choices
-            .iter()
-            .map(|m| &m.id.0)
-            .collect::<Vec<&String>>()
-    )?;
+    let model = fast_model(&live).await?;
     // untrusted asks before every command, even `pwd`, whatever the
     // model thinks of the sandbox, and workspace-write gives it no reason to
     // refuse the write.
@@ -989,239 +1005,44 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     };
 
     let a = live.server.start_thread(thread_opts.clone()).await?;
-    let s = single(
-        live,
-        &a,
-        "Create the file a.txt in the current directory containing exactly `hello from s2`. Do nothing else.",
-        Plan::Answer(Policy::Approve),
-    )
-    .await?;
-    let t = &s.turn;
-    let a_txt = scratch.join("a.txt");
-    let approve = report(
-        "1 approve",
-        match (t.approvals.first(), presence(&a_txt), &t.outcome) {
-            (Some(_), Presence::Present, Some(TurnOutcome::Completed)) => {
-                Verdict::Pass
-            }
-            _ => Verdict::Fail,
-        },
-        format!(
-            "approvals={:?} items={:?} a.txt={:?} outcome={:?}",
-            t.approvals,
-            t.items,
-            std::fs::read_to_string(&a_txt).ok(),
-            t.outcome
-        ),
-    )?;
-    let answered_in_1 = t.answered.clone();
-
-    let s = single(
-        s.live,
-        &a,
-        "Create the file b.txt in the current directory containing exactly `nope`. If the request is declined, do not retry; just say so.",
-        Plan::Answer(Policy::Decline),
-    )
-    .await?;
-    let t = &s.turn;
-    let b_txt = scratch.join("b.txt");
-    let decline = report(
-        "2 decline",
-        match (t.approvals.first(), presence(&b_txt), &t.outcome) {
-            (Some(_), Presence::Missing, Some(TurnOutcome::Completed)) => {
-                Verdict::Pass
-            }
-            _ => Verdict::Fail,
-        },
-        format!(
-            "approvals={:?} items={:?} b.txt {:?} outcome={:?} reply={:?}",
-            t.approvals,
-            t.items,
-            presence(&b_txt),
-            t.outcome,
-            t.text
-        ),
-    )?;
-
-    let (live, interrupt) = interrupted(
-        s.live,
+    let (declined, answered_in_1, approve, decline) =
+        approve_and_decline(live, &a, scratch).await?;
+    let (after_start, interrupt) = interrupted(
+        declined,
         &a,
         "3 interrupt at start",
         Cue::Start,
         Expect::Interrupted,
     )
     .await?;
-    let (live, mid_stream) = interrupted(
-        live,
+    let (after_delta, mid_stream) = interrupted(
+        after_start,
         &a,
         "3c interrupt mid-stream",
         Cue::Delta,
         Expect::Interrupted,
     )
     .await?;
-    let (live, at_send) = interrupted(
-        live,
+    let (after_send, at_send) = interrupted(
+        after_delta,
         &a,
         "3d interrupt at send",
         Cue::Send,
         Expect::Either,
     )
     .await?;
-
-    let s = single(
-        live,
+    let (live, withdraw) = approval_withdrawn(after_send, &a, scratch).await?;
+    let (first_exit, two_threads) =
+        two_threads_one_process(live, &thread_opts).await?;
+    let (resume, ids) = resumed_in_a_new_process(
+        &codex,
+        fixtures,
         &a,
-        "Create the file d.txt in the current directory containing exactly `d`. Do nothing else.",
-        Plan::Interrupt(Cue::Approval),
+        thread_opts.clone(),
+        &first_exit,
+        answered_in_1,
     )
     .await?;
-    let t = &s.turn;
-    // Codex withdraws the request only after the turn has completed.
-    let Live { server, mut events } = s.live;
-    let withdrawn =
-        tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
-    let late = match t.answered.first() {
-        Some(id) => Some(server.respond(id.clone(), Decision::Accept).await),
-        None => None,
-    };
-    let withdraw = report(
-        "3b interrupt with an approval open",
-        match (
-            &s.interrupted,
-            &withdrawn,
-            &late,
-            &t.outcome,
-            presence(&scratch.join("d.txt")),
-        ) {
-            (
-                Some(Ok(())),
-                Ok(Some(_)),
-                Some(Err(_)),
-                Some(TurnOutcome::Interrupted),
-                Presence::Missing,
-            ) => Verdict::Pass,
-            _ => Verdict::Fail,
-        },
-        format!(
-            "approvals={:?} interrupt()={:?} items={:?} outcome={:?} after the turn={withdrawn:?} respond-after={late:?}",
-            t.approvals, s.interrupted, t.items, t.outcome
-        ),
-    )?;
-    let live = Live { server, events };
-
-    let b = live.server.start_thread(thread_opts.clone()).await?;
-    let c = live.server.start_thread(thread_opts.clone()).await?;
-    let (tb, tc) = n0_future::future::try_zip(
-        b.send_turn(
-            String::from("Reply with just the word alpha. Use no tools."),
-            None,
-        ),
-        c.send_turn(
-            String::from("Reply with just the word bravo. Use no tools."),
-            None,
-        ),
-    )
-    .await?;
-    let both = Run::drive(
-        live,
-        Plan::Answer(Policy::Decline),
-        Vec::from([
-            Turn::new(b.clone(), tb.clone()),
-            Turn::new(c.clone(), tc.clone()),
-        ]),
-    )
-    .await?;
-    let rb = both.turns.get(&b.id).context("no turn on thread b")?;
-    let rc = both.turns.get(&c.id).context("no turn on thread c")?;
-    let (b_text, c_text) = (rb.text.to_lowercase(), rc.text.to_lowercase());
-    let two_threads = report(
-        "4 two threads, one process",
-        match (
-            &rb.outcome,
-            &rc.outcome,
-            b_text.find("alpha"),
-            b_text.find("bravo"),
-            c_text.find("bravo"),
-            c_text.find("alpha"),
-        ) {
-            (
-                Some(TurnOutcome::Completed),
-                Some(TurnOutcome::Completed),
-                Some(_),
-                None,
-                Some(_),
-                None,
-            ) => Verdict::Pass,
-            _ => Verdict::Fail,
-        },
-        format!(
-            "{} turn {} -> {:?} {:?}; {} turn {} -> {:?} {:?}",
-            b.id.0,
-            tb.0,
-            rb.outcome,
-            rb.text,
-            c.id.0,
-            tc.0,
-            rc.outcome,
-            rc.text
-        ),
-    )?;
-
-    let status = both.live.server.shutdown().await?;
-    let live = spawn(&codex, log_path(fixtures, "server2-resume")).await?;
-    let resumed = live
-        .server
-        .resume_thread(a.id.clone(), thread_opts.clone())
-        .await?;
-    let s = single(
-        live,
-        &resumed,
-        "Which file did you successfully create earlier in this conversation? Answer with just the filename and use no tools.",
-        Plan::Answer(Policy::Decline),
-    )
-    .await?;
-    let resume = report(
-        "5 resume in a new process",
-        match (&resumed.id, s.turn.text.find("a.txt"), &s.turn.outcome) {
-            (id, Some(_), Some(TurnOutcome::Completed)) if id == &a.id => {
-                Verdict::Pass
-            }
-            _ => Verdict::Fail,
-        },
-        format!(
-            "first exit={} resumed {} -> {} reply={:?}",
-            status.describe(),
-            a.id.0,
-            resumed.id.0,
-            s.turn.text
-        ),
-    )?;
-
-    let server = &s.live.server;
-    let bogus = server
-        .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
-        .await;
-    let again = n0_future::stream::iter(answered_in_1)
-        .then(|id| server.respond(id, Decision::Accept))
-        .collect::<Vec<Result<(), Error>>>()
-        .await;
-    let ids = report(
-        "6 unknown and answered ids",
-        match (
-            &bogus,
-            again.first(),
-            again.iter().find_map(|answer| answer.as_ref().ok()),
-        ) {
-            (Err(_), Some(_), None) => Verdict::Pass,
-            _ => Verdict::Fail,
-        },
-        format!(
-            "respond(never-sent)={bogus:?}; re-answering step 1's ids={again:?}"
-        ),
-    )?;
-
-    let status = server.shutdown().await?;
-    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
     let (question, for_session, withdrawn) =
         questions(&codex, scratch, fixtures, thread_opts.clone()).await?;
     let (chosen, reasoning, resumed) =
@@ -1253,6 +1074,287 @@ async fn run(fixtures: Option<PathBuf>) -> Result<()> {
     .count();
     match failed {
         0 => Ok(()),
-        failed => Err(anyhow::Error::msg(format!("{failed} step(s) failed"))),
+        count => Err(anyhow::Error::msg(format!("{count} step(s) failed"))),
     }
+}
+
+/// The first model `model/list` describes as fast, after printing what
+/// Codex this is and every model it offers.
+async fn fast_model(live: &Live) -> Result<String> {
+    let models = live.server.list_models().await?;
+    let model = models
+        .choices
+        .iter()
+        .find_map(|m| {
+            m.description.strip_prefix("Fast").map(|_| m.id.0.clone())
+        })
+        .context("model/list offers no model described as fast")?;
+    writeln!(
+        std::io::stdout(),
+        "codex {} (userAgent {:?}); model {model} from {:?}",
+        live.server.codex_version().unwrap_or("?"),
+        live.server.user_agent(),
+        models
+            .choices
+            .iter()
+            .map(|m| &m.id.0)
+            .collect::<Vec<&String>>()
+    )?;
+    Ok(model)
+}
+
+/// Steps 1 and 2: a write approved, then one declined. Returns the
+/// approvals step 1 answered.
+async fn approve_and_decline(
+    live: Live,
+    a: &CodexThread,
+    scratch: &Path,
+) -> Result<(Live, Vec<ApprovalId>, Verdict, Verdict)> {
+    let approved = single(
+        live,
+        a,
+        "Create the file a.txt in the current directory containing exactly `hello from s2`. Do nothing else.",
+        Plan::Answer(Policy::Approve),
+    )
+    .await?;
+    let t = &approved.turn;
+    let a_txt = scratch.join("a.txt");
+    let approve = report(
+        "1 approve",
+        match (t.approvals.first(), presence(&a_txt), &t.outcome) {
+            (Some(_), Presence::Present, Some(TurnOutcome::Completed)) => {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        &format!(
+            "approvals={:?} items={:?} a.txt={:?} outcome={:?}",
+            t.approvals,
+            t.items,
+            std::fs::read_to_string(&a_txt).ok(),
+            t.outcome
+        ),
+    )?;
+    let answered_in_1 = t.answered.clone();
+
+    let declined = single(
+        approved.live,
+        a,
+        "Create the file b.txt in the current directory containing exactly `nope`. If the request is declined, do not retry; just say so.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let declined_turn = &declined.turn;
+    let b_txt = scratch.join("b.txt");
+    let decline = report(
+        "2 decline",
+        match (
+            declined_turn.approvals.first(),
+            presence(&b_txt),
+            &declined_turn.outcome,
+        ) {
+            (Some(_), Presence::Missing, Some(TurnOutcome::Completed)) => {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        &format!(
+            "approvals={:?} items={:?} b.txt {:?} outcome={:?} reply={:?}",
+            declined_turn.approvals,
+            declined_turn.items,
+            presence(&b_txt),
+            declined_turn.outcome,
+            declined_turn.text
+        ),
+    )?;
+
+    Ok((declined.live, answered_in_1, approve, decline))
+}
+
+/// Step 3b: an interrupt with an approval open.
+async fn approval_withdrawn(
+    live: Live,
+    a: &CodexThread,
+    scratch: &Path,
+) -> Result<(Live, Verdict)> {
+    let s = single(
+        live,
+        a,
+        "Create the file d.txt in the current directory containing exactly `d`. Do nothing else.",
+        Plan::Interrupt(Cue::Approval),
+    )
+    .await?;
+    let t = &s.turn;
+    // Codex withdraws the request only after the turn has completed.
+    let Live { server, mut events } = s.live;
+    let withdrawn =
+        tokio::time::timeout(TURN_TIMEOUT, until_withdrawn(&mut events)).await;
+    let late = match t.answered.first() {
+        Some(id) => Some(server.respond(id.clone(), Decision::Accept).await),
+        None => None,
+    };
+    let withdraw = report(
+        "3b interrupt with an approval open",
+        match (
+            &s.interrupted,
+            &withdrawn,
+            &late,
+            &t.outcome,
+            presence(&scratch.join("d.txt")),
+        ) {
+            (
+                Some(Ok(())),
+                Ok(Some(_)),
+                Some(Err(_)),
+                Some(TurnOutcome::Interrupted),
+                Presence::Missing,
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        &format!(
+            "approvals={:?} interrupt()={:?} items={:?} outcome={:?} after the turn={withdrawn:?} respond-after={late:?}",
+            t.approvals, s.interrupted, t.items, t.outcome
+        ),
+    )?;
+
+    Ok((Live { server, events }, withdraw))
+}
+
+/// Step 4: turns on two threads of one process at once. Returns how the
+/// process exited after it.
+async fn two_threads_one_process(
+    live: Live,
+    thread_opts: &ThreadOptions,
+) -> Result<(String, Verdict)> {
+    let b = live.server.start_thread(thread_opts.clone()).await?;
+    let c = live.server.start_thread(thread_opts.clone()).await?;
+    let (tb, tc) = n0_future::future::try_zip(
+        b.send_turn(
+            String::from("Reply with just the word alpha. Use no tools."),
+            None,
+        ),
+        c.send_turn(
+            String::from("Reply with just the word bravo. Use no tools."),
+            None,
+        ),
+    )
+    .await?;
+    let both = Run::drive(
+        live,
+        Plan::Answer(Policy::Decline),
+        Vec::from([
+            Turn::new(b.clone(), tb.clone()),
+            Turn::new(c.clone(), tc.clone()),
+        ]),
+    )
+    .await?;
+    let on_b = both.turns.get(&b.id).context("no turn on thread b")?;
+    let on_c = both.turns.get(&c.id).context("no turn on thread c")?;
+    let (alpha_reply, bravo_reply) =
+        (on_b.text.to_lowercase(), on_c.text.to_lowercase());
+    let two_threads = report(
+        "4 two threads, one process",
+        match (
+            &on_b.outcome,
+            &on_c.outcome,
+            alpha_reply.find("alpha"),
+            alpha_reply.find("bravo"),
+            bravo_reply.find("bravo"),
+            bravo_reply.find("alpha"),
+        ) {
+            (
+                Some(TurnOutcome::Completed),
+                Some(TurnOutcome::Completed),
+                Some(_),
+                None,
+                Some(_),
+                None,
+            ) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        &format!(
+            "{} turn {} -> {:?} {:?}; {} turn {} -> {:?} {:?}",
+            b.id.0,
+            tb.0,
+            on_b.outcome,
+            on_b.text,
+            c.id.0,
+            tc.0,
+            on_c.outcome,
+            on_c.text
+        ),
+    )?;
+
+    let status = both.live.server.shutdown().await?;
+    Ok((status.describe(), two_threads))
+}
+
+/// Steps 5 and 6, on a second process: the thread resumed, then an
+/// unknown approval id and step 1's answered ones.
+async fn resumed_in_a_new_process(
+    codex: &Path,
+    fixtures: Option<&Path>,
+    original: &CodexThread,
+    thread_opts: ThreadOptions,
+    first_exit: &str,
+    answered_in_1: Vec<ApprovalId>,
+) -> Result<(Verdict, Verdict)> {
+    let live = spawn(codex, log_path(fixtures, "server2-resume")).await?;
+    let resumed = live
+        .server
+        .resume_thread(original.id.clone(), thread_opts)
+        .await?;
+    let asked = single(
+        live,
+        &resumed,
+        "Which file did you successfully create earlier in this conversation? Answer with just the filename and use no tools.",
+        Plan::Answer(Policy::Decline),
+    )
+    .await?;
+    let resume = report(
+        "5 resume in a new process",
+        match (
+            &resumed.id,
+            asked.turn.text.find("a.txt"),
+            &asked.turn.outcome,
+        ) {
+            (id, Some(_), Some(TurnOutcome::Completed))
+                if id == &original.id =>
+            {
+                Verdict::Pass
+            }
+            _ => Verdict::Fail,
+        },
+        &format!(
+            "first exit={first_exit} resumed {} -> {} reply={:?}",
+            original.id.0, resumed.id.0, asked.turn.text
+        ),
+    )?;
+
+    let server = &asked.live.server;
+    let bogus = server
+        .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
+        .await;
+    let again = n0_future::stream::iter(answered_in_1)
+        .then(|id| server.respond(id, Decision::Accept))
+        .collect::<Vec<Result<(), Error>>>()
+        .await;
+    let ids = report(
+        "6 unknown and answered ids",
+        match (
+            &bogus,
+            again.first(),
+            again.iter().find_map(|answer| answer.as_ref().ok()),
+        ) {
+            (Err(_), Some(_), None) => Verdict::Pass,
+            _ => Verdict::Fail,
+        },
+        &format!(
+            "respond(never-sent)={bogus:?}; re-answering step 1's ids={again:?}"
+        ),
+    )?;
+
+    let status = server.shutdown().await?;
+    writeln!(std::io::stdout(), "exit status {}", status.describe())?;
+    Ok((resume, ids))
 }
