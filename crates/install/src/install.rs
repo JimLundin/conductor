@@ -11,11 +11,10 @@ use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agents::pin::{Mismatch, Platform};
+pub use agents::pin::Cli;
+use agents::pin::{Mismatch, Package, Pin};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-use crate::pins;
 
 /// A connection that takes longer than this is to a dead network.
 const CONNECT: Duration = Duration::from_secs(15);
@@ -24,22 +23,6 @@ const STALL: Duration = Duration::from_secs(30);
 /// How often a process waiting for another's install checks the lock.
 const LOCK_POLL: Duration = Duration::from_millis(200);
 const READ_BUFFER: usize = 1_048_576;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cli {
-    Claude,
-    Codex,
-}
-
-impl Cli {
-    #[must_use]
-    pub const fn name(&self) -> &str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-        }
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
@@ -66,51 +49,14 @@ fn unpinned() -> InstallError {
     }
 }
 
-/// How a download becomes the install.
-enum Package {
-    /// The download is the binary.
-    Binary,
-    /// A `.tar.gz` of the whole install directory.
-    Archive,
-}
-
-/// One CLI's pinned download for this platform.
-struct Pin {
-    version: String,
-    url: String,
-    sha256: String,
-    package: Package,
-    /// The binary's path in the install directory.
-    binary: String,
-}
-
 fn pin(cli: Cli) -> Result<Pin, InstallError> {
-    let Platform { claude, codex } =
-        agents::pin::platform(std::env::consts::OS, std::env::consts::ARCH)
-            .ok_or_else(unpinned)?;
-    let exe = std::env::consts::EXE_SUFFIX;
-    match cli {
-        Cli::Claude => Ok(Pin {
-            version: String::from(pins::CLAUDE_VERSION),
-            url: format!(
-                "https://downloads.claude.ai/claude-code-releases/{}/{claude}/claude{exe}",
-                pins::CLAUDE_VERSION
-            ),
-            sha256: pins::claude_sha256(claude).ok_or_else(unpinned)?,
-            package: Package::Binary,
-            binary: format!("claude{exe}"),
-        }),
-        Cli::Codex => Ok(Pin {
-            version: String::from(pins::CODEX_VERSION),
-            url: format!(
-                "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-{codex}.tar.gz",
-                pins::CODEX_VERSION
-            ),
-            sha256: pins::codex_sha256(codex).ok_or_else(unpinned)?,
-            package: Package::Archive,
-            binary: format!("bin/codex{exe}"),
-        }),
-    }
+    agents::pin::pin(
+        cli,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::env::consts::EXE_SUFFIX,
+    )
+    .ok_or_else(unpinned)
 }
 
 /// Makes sure the pinned `cli` is installed under `data_dir` and returns its
@@ -252,7 +198,7 @@ fn remove_others(parent: &Path, keep: &str) -> Result<(), InstallError> {
         .map_err(|error| io(parent, error))?
         .filter_map(Result::ok)
         .filter(|entry| {
-            entry.file_name() != keep && entry.file_name() != "lock"
+            !agents::pin::kept(&entry.file_name().to_string_lossy(), keep)
         })
         .map(|entry| entry.path())
         .collect::<Vec<PathBuf>>();
@@ -452,7 +398,7 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
 
     use super::{Package, Pin, put, sha256};
-    use crate::pins;
+    use agents::pin::pins;
     use claude::check_version;
 
     fn root() -> PathBuf {

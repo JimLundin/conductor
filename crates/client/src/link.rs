@@ -133,11 +133,29 @@ impl fmt::Display for Lost {
     }
 }
 
+/// One dial of a connection attempt's round. A round dials once from the
+/// endpoint the link runs on, and once more from a fresh endpoint if that
+/// dial stalls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Attempt(pub u64);
+
+/// Why a dial did not connect. Errors from the transport arrive as their
+/// descriptions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unreached {
+    Connect(String),
+    /// No fresh endpoint could be bound to dial from.
+    Unbound(String),
+}
+
 /// What happened, as the shell saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
-    /// The dial connected.
-    Connected,
+    /// The dial `attempt` connected, or why not.
+    Dialed {
+        attempt: Attempt,
+        outcome: Result<(), Unreached>,
+    },
     /// The host answered `Hello` with its `Welcome`.
     Welcomed(Welcome),
     /// The subscription is open and its events will follow.
@@ -181,6 +199,17 @@ impl From<Option<Event>> for Input {
 pub enum Effect {
     /// Replace the operation in flight; its outcome is the next input.
     Start(Operation),
+    /// Dial the host from the endpoint the link runs on; the outcome is
+    /// [`Input::Dialed`].
+    Dial(Attempt),
+    /// Bind a fresh endpoint and dial the host from it; the outcome is
+    /// [`Input::Dialed`].
+    Hedge(Attempt),
+    /// Run on the attempt's endpoint, and its connection if it made one,
+    /// from now on.
+    Adopt(Attempt),
+    /// Drop the attempt: its dial, its connection and its endpoint.
+    Retire(Attempt),
     /// Close the connection.
     Close,
     /// Show this status to every handle, and send it as an update.
@@ -191,11 +220,6 @@ pub enum Effect {
 /// The link has one operation in flight at a time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
-    /// Dial the host, and again from a fresh endpoint if the first dial
-    /// hasn't returned after `hedge_after`.
-    Dial {
-        hedge_after: Duration,
-    },
     /// Send `hello` on the connection; no answer `within` is
     /// [`Lost::HelloTimeout`].
     Hello {
@@ -213,7 +237,7 @@ pub enum Operation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Waiting,
-    Dialing,
+    Dialing(Round),
     Greeting,
     Subscribing(Feed),
     Connected(Feed),
@@ -227,11 +251,40 @@ struct Feed {
     live_at: HostSeq,
 }
 
+/// The dials of one round still in play. A failed `base` stays until the
+/// round ends, since the link keeps its endpoint unless another attempt
+/// takes over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Round {
+    base: Attempt,
+    base_dialing: bool,
+    /// The fresh endpoint's dial, while it runs.
+    hedge: Option<Attempt>,
+}
+
+impl Round {
+    fn dialing(&self, attempt: Attempt) -> bool {
+        (attempt == self.base && self.base_dialing)
+            || self.hedge == Some(attempt)
+    }
+
+    /// Every attempt of the round but `kept` that still holds an endpoint.
+    fn others(&self, kept: Attempt) -> Vec<Effect> {
+        [Some(self.base), self.hedge]
+            .into_iter()
+            .flatten()
+            .filter(|attempt| *attempt != kept)
+            .map(Effect::Retire)
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     hello: Hello,
     cursor: Option<Cursor>,
     failures: u32,
+    attempts: u64,
     status: Status,
     phase: Phase,
 }
@@ -246,6 +299,7 @@ impl Link {
             hello,
             cursor: resume,
             failures: 0,
+            attempts: 0,
             status: Status::default(),
             phase: Phase::Waiting,
         };
@@ -286,8 +340,16 @@ impl Link {
                 let shown = self.disconnected(None);
                 join([Vec::from([Effect::Close]), shown, self.dial()])
             }
-            (Phase::Dialing, Input::Connected) => self.greet(),
-            (Phase::Dialing, Input::Lost(lost)) => self.down(&lost),
+            (Phase::Dialing(round), Input::Elapsed) => self.hedge(round),
+            (Phase::Dialing(round), Input::Dialed { attempt, outcome })
+                if round.dialing(attempt) =>
+            {
+                self.dialed(round, attempt, outcome)
+            }
+            // A dial the link no longer waits for: drop what it made.
+            (_, Input::Dialed { attempt, .. }) => {
+                Vec::from([Effect::Retire(attempt)])
+            }
             (Phase::Greeting, Input::Welcomed(welcome)) => {
                 self.welcome(welcome)
             }
@@ -307,14 +369,98 @@ impl Link {
         }
     }
 
+    /// Starts a round: a dial now, and a hedge if it hasn't returned after
+    /// `HEDGE_AFTER`.
     fn dial(&mut self) -> Vec<Effect> {
-        self.phase = Phase::Dialing;
+        let base = self.attempt();
+        self.phase = Phase::Dialing(Round {
+            base,
+            base_dialing: true,
+            hedge: None,
+        });
         let shown = self.set_state(LinkState::Connecting);
         join([
             shown,
-            Vec::from([Effect::Start(Operation::Dial {
-                hedge_after: HEDGE_AFTER,
-            })]),
+            Vec::from([
+                Effect::Dial(base),
+                Effect::Start(Operation::Sleep(HEDGE_AFTER)),
+            ]),
+        ])
+    }
+
+    const fn attempt(&mut self) -> Attempt {
+        let attempt = Attempt(self.attempts);
+        self.attempts = self.attempts.wrapping_add(1);
+        attempt
+    }
+
+    fn hedge(&mut self, round: Round) -> Vec<Effect> {
+        let fresh = self.attempt();
+        self.phase = Phase::Dialing(Round {
+            hedge: Some(fresh),
+            ..round
+        });
+        Vec::from([Effect::Hedge(fresh)])
+    }
+
+    /// A dial of the round returned. The first to connect wins and the
+    /// others are retired. A failure waits for the dial still running; the
+    /// last one ends the round, on the endpoint of the last dial that had
+    /// one.
+    fn dialed(
+        &mut self,
+        round: Round,
+        attempt: Attempt,
+        outcome: Result<(), Unreached>,
+    ) -> Vec<Effect> {
+        let Err(unreached) = outcome else {
+            let won = join([
+                Vec::from([Effect::Adopt(attempt)]),
+                round.others(attempt),
+            ]);
+            return join([won, self.greet()]);
+        };
+        match (attempt == round.base, round) {
+            // The base's endpoint stays until the hedge returns.
+            (true, Round { hedge: Some(_), .. }) => {
+                self.phase = Phase::Dialing(Round {
+                    base_dialing: false,
+                    ..round
+                });
+                Vec::new()
+            }
+            (
+                false,
+                Round {
+                    base_dialing: true, ..
+                },
+            ) => {
+                self.phase = Phase::Dialing(Round {
+                    hedge: None,
+                    ..round
+                });
+                Vec::from([Effect::Retire(attempt)])
+            }
+            _ => self.missed(round, attempt, unreached),
+        }
+    }
+
+    /// The last dial of the round failed too. The link runs on its
+    /// endpoint, or on the base's when it had none.
+    fn missed(
+        &mut self,
+        round: Round,
+        attempt: Attempt,
+        unreached: Unreached,
+    ) -> Vec<Effect> {
+        let (kept, reason) = match unreached {
+            Unreached::Connect(reason) => (attempt, reason),
+            Unreached::Unbound(reason) => (round.base, reason),
+        };
+        join([
+            Vec::from([Effect::Adopt(kept)]),
+            round.others(kept),
+            self.down(&Lost::Connect(reason)),
         ])
     }
 
@@ -496,8 +642,8 @@ mod tests {
     };
 
     use super::{
-        Cursor, Effect, Input, Link, LinkState, Lost, Operation, Status,
-        Stream, Update, backoff,
+        Attempt, Cursor, Effect, Input, Link, LinkState, Lost, Operation,
+        Status, Stream, Unreached, Update, backoff,
     };
 
     fn hello() -> Hello {
@@ -557,10 +703,30 @@ mod tests {
         }
     }
 
-    fn dial() -> Effect {
-        Effect::Start(Operation::Dial {
-            hedge_after: Duration::from_millis(1500),
-        })
+    /// A round's first dial and its hedge timer.
+    fn dial(attempt: u64) -> [Effect; 2] {
+        [
+            Effect::Dial(Attempt(attempt)),
+            Effect::Start(Operation::Sleep(Duration::from_millis(1500))),
+        ]
+    }
+
+    fn connected(attempt: u64) -> Input {
+        Input::Dialed {
+            attempt: Attempt(attempt),
+            outcome: Ok(()),
+        }
+    }
+
+    fn unreached(attempt: u64, why: Unreached) -> Input {
+        Input::Dialed {
+            attempt: Attempt(attempt),
+            outcome: Err(why),
+        }
+    }
+
+    fn no_route(attempt: u64) -> Input {
+        unreached(attempt, Unreached::Connect(String::from("no route")))
     }
 
     fn greeting() -> Effect {
@@ -593,7 +759,7 @@ mod tests {
         walk(
             link,
             Vec::from([
-                Input::Connected,
+                connected(0),
                 Input::Welcomed(welcome(1, 2)),
                 Input::Subscribed,
                 Input::Event(stored(1)),
@@ -605,12 +771,18 @@ mod tests {
 
     fn failed_dials(count: usize, random: u64) -> Vec<Duration> {
         let (start, _) = Link::start(hello(), None);
-        let lost = Input::Lost(Lost::Connect(String::from("no route")));
-        let rounds = (0..count)
-            .flat_map(|_| [lost.clone(), Input::Drawn(random), Input::Elapsed]);
+        let rounds = (0..count).flat_map(|round| {
+            [
+                no_route(u64::try_from(round).unwrap_or(u64::MAX)),
+                Input::Drawn(random),
+                Input::Elapsed,
+            ]
+        });
         walk(start, rounds.collect())
             .1
             .into_iter()
+            .skip(1)
+            .step_by(3)
             .flatten()
             .filter_map(|effect| match effect {
                 Effect::Start(Operation::Sleep(delay)) => Some(delay),
@@ -625,7 +797,7 @@ mod tests {
         let (_, seen) = walk(
             link,
             Vec::from([
-                Input::Connected,
+                connected(0),
                 Input::Welcomed(welcome(1, 2)),
                 Input::Subscribed,
                 Input::Event(stored(1)),
@@ -633,7 +805,7 @@ mod tests {
                 Input::Lost(Lost::Wire(String::from("reset"))),
                 Input::Drawn(0),
                 Input::Elapsed,
-                Input::Connected,
+                connected(1),
                 Input::Welcomed(welcome(1, 3)),
             ]),
         );
@@ -645,9 +817,14 @@ mod tests {
         assert_eq!(
             (first, seen),
             (
-                Vec::from([Effect::Show(connecting.clone()), dial()]),
+                Vec::from([
+                    Effect::Show(connecting.clone()),
+                    dial(0)[0].clone(),
+                    dial(0)[1].clone(),
+                ]),
                 Vec::from([
                     Vec::from([
+                        Effect::Adopt(Attempt(0)),
                         Effect::Show(Status {
                             state: LinkState::Authenticating,
                             ..connecting
@@ -678,9 +855,11 @@ mod tests {
                             LinkState::Connecting,
                             Some("reset")
                         )),
-                        dial(),
+                        dial(1)[0].clone(),
+                        dial(1)[1].clone(),
                     ]),
                     Vec::from([
+                        Effect::Adopt(Attempt(1)),
                         Effect::Show(status(
                             LinkState::Authenticating,
                             Some("reset")
@@ -708,7 +887,7 @@ mod tests {
         let (start, _) = Link::start(hello(), Some(resume));
         let (link, seen) = walk(
             start,
-            Vec::from([Input::Connected, Input::Welcomed(welcome(2, 0))]),
+            Vec::from([connected(0), Input::Welcomed(welcome(2, 0))]),
         );
         assert_eq!(
             (seen.last(), link.cursor()),
@@ -736,7 +915,7 @@ mod tests {
         let (link, _) = Link::start(hello(), Some(resume));
         let (_, seen) = walk(
             link,
-            Vec::from([Input::Connected, Input::Welcomed(welcome(1, 6))]),
+            Vec::from([connected(0), Input::Welcomed(welcome(1, 6))]),
         );
         assert_eq!(
             seen.last(),
@@ -792,7 +971,8 @@ mod tests {
                 Effect::Close,
                 Effect::Show(status(LinkState::Disconnected, None)),
                 Effect::Show(status(LinkState::Connecting, None)),
-                dial(),
+                dial(1)[0].clone(),
+                dial(1)[1].clone(),
             ])])
         );
     }
@@ -800,35 +980,162 @@ mod tests {
     #[test]
     fn a_reconnect_while_backing_off_dials_without_waiting() {
         let (start, _) = Link::start(hello(), None);
-        let (waiting, _) = walk(
-            start,
-            Vec::from([
-                Input::Lost(Lost::Connect(String::from("no route"))),
-                Input::Drawn(0),
-            ]),
-        );
+        let (waiting, _) =
+            walk(start, Vec::from([no_route(0), Input::Drawn(0)]));
         let took = waiting.takes_requests();
         let (dialing, effects) = waiting.step(Input::Reconnect);
         assert_eq!(
-            (took, effects.last(), dialing.takes_requests()),
-            (true, Some(&dial()), false)
+            (took, effects.get(1..), dialing.takes_requests()),
+            (true, Some(&dial(1)[..]), false)
         );
     }
 
     #[test]
-    fn every_dial_hedges_after_one_and_a_half_seconds() {
+    fn every_round_dials_and_arms_its_hedge() {
         let (link, first) = Link::start(hello(), None);
         let (_, seen) = walk(
             link,
-            Vec::from([
-                Input::Lost(Lost::Connect(String::from("stalled"))),
-                Input::Drawn(0),
-                Input::Elapsed,
-            ]),
+            Vec::from([no_route(0), Input::Drawn(0), Input::Elapsed]),
         );
         assert_eq!(
-            [first.last(), seen.last().and_then(|effects| effects.last())],
-            [Some(&dial()), Some(&dial())]
+            [
+                first.get(1..),
+                seen.last().and_then(|effects| effects.get(1..))
+            ],
+            [Some(&dial(0)[..]), Some(&dial(1)[..])]
+        );
+    }
+
+    fn hedged(inputs: Vec<Input>) -> Vec<Vec<Effect>> {
+        let (link, _) = Link::start(hello(), None);
+        let mut all = Vec::from([Input::Elapsed]);
+        all.extend(inputs);
+        walk(link, all).1
+    }
+
+    fn authenticating() -> Effect {
+        Effect::Show(Status {
+            state: LinkState::Authenticating,
+            ..Status::default()
+        })
+    }
+
+    fn stalled(error: &str) -> [Effect; 2] {
+        [
+            Effect::Show(Status {
+                error: Some(format!("connect failed: {error}")),
+                ..Status::default()
+            }),
+            Effect::Start(Operation::Draw),
+        ]
+    }
+
+    #[test]
+    fn a_stalled_dial_hedges_and_the_first_to_connect_wins() {
+        assert_eq!(
+            [
+                hedged(Vec::from([connected(1), connected(0)])),
+                hedged(Vec::from([connected(0), no_route(1)])),
+            ],
+            [
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::from([
+                        Effect::Adopt(Attempt(1)),
+                        Effect::Retire(Attempt(0)),
+                        authenticating(),
+                        greeting(),
+                    ]),
+                    Vec::from([Effect::Retire(Attempt(0))]),
+                ]),
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::from([
+                        Effect::Adopt(Attempt(0)),
+                        Effect::Retire(Attempt(1)),
+                        authenticating(),
+                        greeting(),
+                    ]),
+                    Vec::from([Effect::Retire(Attempt(1))]),
+                ]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_dial_waits_for_the_other() {
+        let [shown, draw] = stalled("no route");
+        assert_eq!(
+            [
+                hedged(Vec::from([no_route(0), connected(1)])),
+                hedged(Vec::from([no_route(1), no_route(0)])),
+                hedged(Vec::from([no_route(0), no_route(1)])),
+            ],
+            [
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::new(),
+                    Vec::from([
+                        Effect::Adopt(Attempt(1)),
+                        Effect::Retire(Attempt(0)),
+                        authenticating(),
+                        greeting(),
+                    ]),
+                ]),
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::from([Effect::Retire(Attempt(1))]),
+                    Vec::from([
+                        Effect::Adopt(Attempt(0)),
+                        shown.clone(),
+                        draw.clone(),
+                    ]),
+                ]),
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::new(),
+                    Vec::from([
+                        Effect::Adopt(Attempt(1)),
+                        Effect::Retire(Attempt(0)),
+                        shown,
+                        draw,
+                    ]),
+                ]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hedge_with_no_endpoint_leaves_the_link_on_its_own() {
+        let unbound =
+            unreached(1, Unreached::Unbound(String::from("no network")));
+        let [shown, draw] = stalled("no network");
+        assert_eq!(
+            [
+                hedged(Vec::from([unbound.clone(), connected(0)])),
+                hedged(Vec::from([no_route(0), unbound])),
+            ],
+            [
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::from([Effect::Retire(Attempt(1))]),
+                    Vec::from([
+                        Effect::Adopt(Attempt(0)),
+                        authenticating(),
+                        greeting(),
+                    ]),
+                ]),
+                Vec::from([
+                    Vec::from([Effect::Hedge(Attempt(1))]),
+                    Vec::new(),
+                    Vec::from([
+                        Effect::Adopt(Attempt(0)),
+                        Effect::Retire(Attempt(1)),
+                        shown,
+                        draw,
+                    ]),
+                ]),
+            ]
         );
     }
 
@@ -855,7 +1162,7 @@ mod tests {
         let (link, _) = Link::start(hello(), None);
         let (_, seen) = walk(
             link,
-            Vec::from([Input::Connected, Input::Lost(Lost::HelloTimeout)]),
+            Vec::from([connected(0), Input::Lost(Lost::HelloTimeout)]),
         );
         let lost = "the host did not complete the hello handshake within 10 \
                     seconds";
@@ -877,10 +1184,8 @@ mod tests {
     fn providers_update_the_status_and_stale_inputs_do_nothing() {
         let (link, adopted) =
             live().step(Input::Providers(providers("signed out")));
-        let (_, stale) = walk(
-            link,
-            Vec::from([Input::Elapsed, Input::Drawn(1), Input::Connected]),
-        );
+        let (_, stale) =
+            walk(link, Vec::from([Input::Elapsed, Input::Drawn(1)]));
         assert_eq!(
             (adopted, stale),
             (
@@ -888,7 +1193,7 @@ mod tests {
                     providers: Some(providers("signed out")),
                     ..status(LinkState::Live, None)
                 })]),
-                Vec::from([Vec::new(), Vec::new(), Vec::new()]),
+                Vec::from([Vec::new(), Vec::new()]),
             )
         );
     }

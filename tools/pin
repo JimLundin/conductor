@@ -5,7 +5,7 @@
     tools/pin codex <version>
 
 Verifies every platform's build with upstream's own checks, then writes the
-provider's pin in crates/install/src/pins.rs, preserving the other provider.
+provider's pin in crates/agents/src/pin/pins.rs, preserving the other provider.
 Claude: manifest.json.sig against Anthropic's release key, then each binary
 against the manifest. Codex: each
 codex-package-<triple>.tar.gz against GitHub's published digest and
@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PINS_RS = ROOT / "crates/install/src/pins.rs"
+PINS_RS = ROOT / "crates/agents/src/pin/pins.rs"
 
 CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
 CLAUDE_KEY = "https://downloads.claude.ai/keys/claude-code.asc"
@@ -154,8 +154,8 @@ def read():
     for name in ("claude", "codex"):
         block = re.search(
             rf'/// Verified: ([^\n]+)\n'
-            rf'pub\(crate\) const {name.upper()}_VERSION: &str = "([^"\n]+)";'
-            rf'.*?pub\(crate\) fn {name}_sha256\(platform: &str\) -> Option<String> {{'
+            rf'pub const {name.upper()}_VERSION: &str = "([^"\n]+)";'
+            rf'.*?pub fn {name}_sha256\(platform: &str\) -> Option<String> {{'
             rf'\s*match platform {{(.*?)\n    }}\n}}', text, re.S)
         if block is None:
             fail(f"cannot read {name}'s generated pin in {PINS_RS}")
@@ -172,9 +172,10 @@ def rust_fn(name, what, pin):
     arms = "".join(f'        "{key}" => Some(String::from("{value}")),\n' for key, value in pin["sha256"].items())
     return (
         f'/// Verified: {pin["verified"]}\n'
-        f'pub(crate) const {name.upper()}_VERSION: &str = "{pin["version"]}";\n\n'
+        f'pub const {name.upper()}_VERSION: &str = "{pin["version"]}";\n\n'
         f"/// The SHA-256 of the {what}.\n"
-        f"pub(crate) fn {name}_sha256(platform: &str) -> Option<String> {{\n"
+        f"#[must_use]\n"
+        f"pub fn {name}_sha256(platform: &str) -> Option<String> {{\n"
         f"    match platform {{\n{arms}        _ => None,\n    }}\n}}\n"
     )
 
@@ -182,6 +183,7 @@ def rust_fn(name, what, pin):
 def write(pins):
     PINS_RS.write_text(
         "//! The pinned CLIs, written by `tools/pin`. Run it again to change a pin.\n\n"
+        "use crate::prelude::*;\n\n"
         + rust_fn("claude", "`claude` binary for a platform named as in Claude's manifest", pins["claude"]) + "\n"
         + rust_fn("codex", "`codex-package-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
     subprocess.run(["rustfmt", "--edition", "2024", str(PINS_RS)], check=True)

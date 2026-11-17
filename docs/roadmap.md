@@ -47,7 +47,7 @@ What is built and what comes next. Update it in the commit that changes it.
   verified `thread/revert` prefixes.
 
 - **Single CLI pin source** (#28). `tools/pin` writes only
-  `crates/install/src/pins.rs`, including upstream verification notes.
+  `crates/agents/src/pin/pins.rs`, including upstream verification notes.
   Fixture and supported-version checks use the compiled pins.
 
 - **Codex start errors** (#19). Failed starts and Continue keep the

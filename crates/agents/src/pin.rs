@@ -1,7 +1,85 @@
 //! The decisions of installing a pinned CLI: which build this platform
-//! takes, and whether a download is the pinned one.
+//! takes, where it goes, whether a download is the pinned one, and what an
+//! install leaves behind.
+
+use alloc::format;
 
 use crate::prelude::*;
+
+pub mod pins;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cli {
+    Claude,
+    Codex,
+}
+
+impl Cli {
+    #[must_use]
+    pub const fn name(&self) -> &str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
+
+/// How a download becomes the install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Package {
+    /// The download is the binary.
+    Binary,
+    /// A `.tar.gz` of the whole install directory.
+    Archive,
+}
+
+/// One CLI's pinned download for a platform.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pin {
+    pub version: String,
+    pub url: String,
+    pub sha256: String,
+    pub package: Package,
+    /// The binary's path in the install directory.
+    pub binary: String,
+}
+
+/// The pinned download of `cli` for the platform the Rust names `os` and
+/// `arch` describe, whose executables end in `exe`.
+#[must_use]
+pub fn pin(cli: Cli, os: &str, arch: &str, exe: &str) -> Option<Pin> {
+    let Platform { claude, codex } = platform(os, arch)?;
+    Some(match cli {
+        Cli::Claude => Pin {
+            version: String::from(pins::CLAUDE_VERSION),
+            url: format!(
+                "https://downloads.claude.ai/claude-code-releases/{}/{claude}/claude{exe}",
+                pins::CLAUDE_VERSION
+            ),
+            sha256: pins::claude_sha256(claude)?,
+            package: Package::Binary,
+            binary: format!("claude{exe}"),
+        },
+        Cli::Codex => Pin {
+            version: String::from(pins::CODEX_VERSION),
+            url: format!(
+                "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-{codex}.tar.gz",
+                pins::CODEX_VERSION
+            ),
+            sha256: pins::codex_sha256(codex)?,
+            package: Package::Archive,
+            binary: format!("bin/codex{exe}"),
+        },
+    })
+}
+
+/// Whether the entry `name` of a CLI's directory stays when `keep` is the
+/// pinned version: the lock and that version do, while older versions and
+/// the downloads and unpacks a crash left behind go.
+#[must_use]
+pub fn kept(name: &str, keep: &str) -> bool {
+    name == keep || name == "lock"
+}
 
 /// What each vendor calls a platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +130,10 @@ pub fn verify(found: String, expected: &str) -> Result<(), Mismatch> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mismatch, Platform, platform, verify};
+    use super::{
+        Cli, Mismatch, Package, Pin, Platform, kept, pin, pins, platform,
+        verify,
+    };
 
     #[test]
     fn each_supported_platform_has_both_vendors_names() {
@@ -75,6 +156,49 @@ mod tests {
                 None,
                 None,
             ]
+        );
+    }
+
+    #[test]
+    fn each_cli_downloads_its_pinned_build_for_the_platform() {
+        let claude = pin(Cli::Claude, "windows", "x86_64", ".exe");
+        let codex = pin(Cli::Codex, "linux", "aarch64", "");
+        assert_eq!(
+            [claude, codex, pin(Cli::Codex, "freebsd", "x86_64", "")],
+            [
+                Some(Pin {
+                    version: String::from(pins::CLAUDE_VERSION),
+                    url: format!(
+                        "https://downloads.claude.ai/claude-code-releases/{}/win32-x64/claude.exe",
+                        pins::CLAUDE_VERSION
+                    ),
+                    sha256: pins::claude_sha256("win32-x64")
+                        .unwrap_or_default(),
+                    package: Package::Binary,
+                    binary: String::from("claude.exe"),
+                }),
+                Some(Pin {
+                    version: String::from(pins::CODEX_VERSION),
+                    url: format!(
+                        "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-aarch64-unknown-linux-musl.tar.gz",
+                        pins::CODEX_VERSION
+                    ),
+                    sha256: pins::codex_sha256("aarch64-unknown-linux-musl")
+                        .unwrap_or_default(),
+                    package: Package::Archive,
+                    binary: String::from("bin/codex"),
+                }),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn an_install_keeps_only_the_lock_and_its_version() {
+        assert_eq!(
+            ["1.0.0", "lock", "0.9.0", "1.0.0.download", "1.0.0.unpack"]
+                .map(|name| kept(name, "1.0.0")),
+            [true, true, false, false, false]
         );
     }
 

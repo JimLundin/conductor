@@ -213,7 +213,9 @@ Each frame is a `u32` length and a postcard body.
   home relay and the auth token (`proto::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
 - A dial that stalls for 1.5 s is hedged with a second dial on a fresh
-  endpoint.
+  endpoint. The first to connect wins and the other is retired; when both
+  fail, the link keeps the endpoint of the last dial that had one.
+  `client::link` decides this per attempt; `net` binds, dials and closes.
 - The subsequent Hello exchange has a 10 s deadline covering stream open,
   write and reply. A timeout closes that connection and retries with the
   link's existing jittered backoff, preserving its cursor. Debug logs for
@@ -515,7 +517,7 @@ against the recorded hash.
    manifest. `tools/pin codex <version>` downloads every platform's package,
    checks each against GitHub's published digest and
    `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
-   `cosign` is installed. Both write only `crates/install/src/pins.rs`,
+   `cosign` is installed. Both write only `crates/agents/src/pin/pins.rs`,
    including the verification result in doc comments. Versions, platform
    hashes and verification provenance stay together in compiled Rust values.
    Updating one provider preserves the other provider's pin.

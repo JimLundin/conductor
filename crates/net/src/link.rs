@@ -1,25 +1,25 @@
 //! [`HostLink`]: one client's connection to one host (architecture §9).
 //!
 //! The link's decisions are the state machine in [`client::link`]. A single
-//! task owns the endpoint, the connection and its streams: it turns what
+//! task owns the endpoints, the connection and its streams: it turns what
 //! they do into an [`Input`], asks the core, and performs each [`Effect`].
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::future::{pending, ready};
 use std::time::Duration;
 
 use crate::wire::{self, WireError};
-use iroh::endpoint::{
-    BindError, ConnectError, Connection, RecvStream, SendStream,
-};
+use iroh::endpoint::{BindError, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use n0_future::boxed::BoxFuture;
 use n0_future::time::{Instant, sleep, timeout};
-use n0_future::{join_all, task};
+use n0_future::{FuturesUnordered, StreamExt, join_all, task};
 
-use client::host_view::HostView;
-pub use client::link::{Cursor, LinkState, Status, Update};
-use client::link::{Effect, Input, Link as Core, Lost, Operation};
+use client::link::{
+    Attempt, Effect, Input, Link as Core, Lost, Operation, Unreached,
+};
+pub use client::link::{Cursor, LinkState, Status, Update, shown_after};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
     Event, Hello, HelloReply, Open, Providers, Subscribe, Ticket, TicketError,
@@ -68,20 +68,6 @@ impl LinkOptions {
             network: Network::Public,
         }
     }
-}
-
-/// What the app shows, its link status and host view, once `update`
-/// arrives.
-#[must_use]
-pub fn shown_after(
-    status: Option<Status>,
-    view: HostView,
-    update: Update,
-) -> (Option<Status>, HostView) {
-    if let Update::Status(next) = &update {
-        tracing::info!(state = ?next.state, error = ?next.error, "link status");
-    }
-    client::link::shown_after(status, view, update)
 }
 
 /// Why a link to a ticket's host did not start.
@@ -144,15 +130,17 @@ impl HostLink {
         ticket: &Ticket,
         options: LinkOptions,
     ) -> Result<(Self, mpsc::Receiver<Update>), StartError> {
-        let started = match Target::of_ticket(ticket) {
-            Ok(target) => {
-                Self::spawn(target, options).await.map_err(StartError::from)
-            }
-            Err(err) => Err(StartError::from(err)),
-        };
-        started.inspect_err(|err| {
+        Self::start_on(ticket, options).await.inspect_err(|err| {
             tracing::error!(%err, "the link did not start");
         })
+    }
+
+    async fn start_on(
+        ticket: &Ticket,
+        options: LinkOptions,
+    ) -> Result<(Self, mpsc::Receiver<Update>), StartError> {
+        let target = Target::of_ticket(ticket)?;
+        Ok(Self::spawn(target, options).await?)
     }
 
     /// Binds an endpoint on `options.network` and starts the link on it. A
@@ -180,6 +168,9 @@ impl HostLink {
             network: options.network,
             addr: target.addr,
             conn: None,
+            attempts: BTreeMap::new(),
+            reached: BTreeMap::new(),
+            dials: FuturesUnordered::new(),
             pending: idle(),
             requests: requests_rx,
             outbox: Outbox {
@@ -268,13 +259,14 @@ type Halves = (SendStream, RecvStream);
 /// How the operation in flight ended.
 enum Done {
     Input(Input),
-    Dialed(Dialed),
     /// The feed's next frame is due on `Halves`.
     Read(Input, Halves),
 }
 
 enum Happening {
     Done(Box<Done>),
+    /// A dial ended; the operation in flight runs on.
+    Dialed(Box<Dialed>),
     Request(Option<Request>),
 }
 
@@ -285,8 +277,13 @@ struct Link {
     network: Network,
     addr: EndpointAddr,
     conn: Option<Connection>,
-    /// The one dial, hello, subscription read, draw or sleep in flight. It
-    /// lives across `select!`s, so a read in progress loses no bytes.
+    /// Each dial's endpoint, until the core adopts or retires the dial.
+    attempts: BTreeMap<Attempt, Endpoint>,
+    /// Each dial's connection, until the core adopts or retires the dial.
+    reached: BTreeMap<Attempt, Connection>,
+    dials: FuturesUnordered<BoxFuture<Dialed>>,
+    /// The one hello, subscription read, draw or sleep in flight. It lives
+    /// across `select!`s, so a read in progress loses no bytes.
     pending: BoxFuture<Done>,
     requests: mpsc::Receiver<Request>,
     outbox: Outbox,
@@ -324,10 +321,14 @@ impl Link {
         if takes_requests {
             tokio::select! {
                 done = &mut self.pending => Happening::Done(Box::new(done)),
+                Some(dialed) = self.dials.next() => Happening::Dialed(Box::new(dialed)),
                 request = self.requests.recv() => Happening::Request(request),
             }
         } else {
-            Happening::Done(Box::new((&mut self.pending).await))
+            tokio::select! {
+                done = &mut self.pending => Happening::Done(Box::new(done)),
+                Some(dialed) = self.dials.next() => Happening::Dialed(Box::new(dialed)),
+            }
         }
     }
 
@@ -339,6 +340,10 @@ impl Link {
         match happening {
             Happening::Done(done) => {
                 let input = self.absorb(*done);
+                self.step(core, input).await
+            }
+            Happening::Dialed(dialed) => {
+                let input = self.dialed(*dialed);
                 self.step(core, input).await
             }
             Happening::Request(Some(request)) => {
@@ -395,6 +400,36 @@ impl Link {
                 self.pending = self.start(operation);
                 Ok(())
             }
+            Effect::Dial(attempt) => {
+                let endpoint = self.endpoint.clone();
+                self.attempts.insert(attempt, endpoint.clone());
+                self.dials.push(Box::pin(dial(
+                    attempt,
+                    endpoint,
+                    self.addr.clone(),
+                    "dial",
+                )));
+                Ok(())
+            }
+            Effect::Hedge(attempt) => {
+                tracing::info!(
+                    "dial stalled; dialing again on a fresh endpoint"
+                );
+                self.dials.push(Box::pin(hedge(
+                    attempt,
+                    self.network,
+                    self.addr.clone(),
+                )));
+                Ok(())
+            }
+            Effect::Adopt(attempt) => {
+                self.adopt(attempt);
+                Ok(())
+            }
+            Effect::Retire(attempt) => {
+                self.retire(attempt);
+                Ok(())
+            }
             Effect::Close => {
                 self.hang_up();
                 Ok(())
@@ -406,12 +441,6 @@ impl Link {
 
     fn start(&self, operation: Operation) -> BoxFuture<Done> {
         match operation {
-            Operation::Dial { hedge_after } => Box::pin(dial_hedged(
-                self.network,
-                self.endpoint.clone(),
-                self.addr.clone(),
-                hedge_after,
-            )),
             Operation::Hello { hello, within } => {
                 self.on_connection(|conn| Box::pin(greet(conn, hello, within)))
             }
@@ -438,7 +467,6 @@ impl Link {
         self.pending = idle();
         match done {
             Done::Input(input) => input,
-            Done::Dialed(dialed) => self.dialed(dialed),
             Done::Read(input, halves) => {
                 self.pending = Box::pin(read(halves));
                 input
@@ -446,15 +474,33 @@ impl Link {
         }
     }
 
+    /// Keeps what the dial left until the core adopts or retires it.
     fn dialed(&mut self, dialed: Dialed) -> Input {
-        self.endpoint = dialed.endpoint;
+        let Dialed {
+            attempt,
+            endpoint,
+            conn,
+        } = dialed;
+        self.attempts.extend(endpoint.map(|bound| (attempt, bound)));
+        let outcome = conn.map(|connected| {
+            self.reached.insert(attempt, connected);
+        });
+        Input::Dialed { attempt, outcome }
+    }
+
+    fn adopt(&mut self, attempt: Attempt) {
+        if let Some(endpoint) = self.attempts.remove(&attempt) {
+            self.endpoint = endpoint;
+        }
+        self.conn = self.reached.remove(&attempt);
+    }
+
+    /// Drops the dial's connection and starts closing its endpoint.
+    fn retire(&mut self, attempt: Attempt) {
+        drop(self.reached.remove(&attempt));
         self.retiring.retain(|endpoint| !endpoint.is_closed());
-        self.retiring.extend(dialed.retired);
-        self.conn = dialed.conn.as_ref().ok().cloned();
-        dialed.conn.map_or_else(
-            |err| Input::Lost(Lost::Connect(err.to_string())),
-            |_| Input::Connected,
-        )
+        self.retiring
+            .extend(self.attempts.remove(&attempt).map(retire));
     }
 
     fn hang_up(&mut self) {
@@ -464,10 +510,12 @@ impl Link {
     }
 
     /// Closes the connection and the endpoint the link runs on, and waits
-    /// out the retired ones.
+    /// out the retired ones and those of dials still running.
     async fn close(&mut self) {
         self.hang_up();
         self.endpoint.close().await;
+        let dialing = std::mem::take(&mut self.attempts);
+        self.retiring.extend(dialing.into_values().map(retire));
         let _ = join_all(self.retiring.iter().map(Endpoint::closed)).await;
     }
 }
@@ -475,6 +523,7 @@ impl Link {
 impl Outbox {
     /// Shows `status` to every handle, and sends it as an update.
     async fn show(&self, status: Status) -> Result<(), Stopped> {
+        tracing::info!(state = ?status.state, error = ?status.error, "link status");
         self.status.send_replace(status.clone());
         self.emit(Update::Status(status)).await
     }
@@ -596,129 +645,52 @@ fn random_command_id() -> Result<CommandId, getrandom::Error> {
     Ok(CommandId(u128::from_le_bytes(bytes)))
 }
 
-/// A dial in flight and the endpoint it runs on.
-struct Attempt {
-    endpoint: Endpoint,
-    connecting: BoxFuture<Result<Connection, ConnectError>>,
+/// How a dial ended, and the endpoint it ran on, if one was bound.
+struct Dialed {
+    attempt: Attempt,
+    endpoint: Option<Endpoint>,
+    conn: Result<Connection, Unreached>,
 }
 
-impl Attempt {
-    fn start(endpoint: Endpoint, addr: EndpointAddr) -> Self {
-        Self {
-            connecting: Box::pin(dial(endpoint.clone(), addr)),
-            endpoint,
-        }
+/// Dials from `endpoint`; `kind` names the dial in the log.
+async fn dial(
+    attempt: Attempt,
+    endpoint: Endpoint,
+    addr: EndpointAddr,
+    kind: &str,
+) -> Dialed {
+    let conn = endpoint
+        .connect(addr, proto::ALPN)
+        .await
+        .map_err(|err| Unreached::Connect(err.to_string()))
+        .inspect(|_| {
+            let id = endpoint.id().fmt_short();
+            tracing::info!(?attempt, endpoint = %id, "{kind} connected");
+        })
+        .inspect_err(|err| tracing::debug!(?attempt, ?err, "{kind} failed"));
+    Dialed {
+        attempt,
+        endpoint: Some(endpoint),
+        conn,
     }
 }
 
-/// How a dial ended, the endpoint the link runs on from now on, and the one
-/// a hedge retired.
-struct Dialed {
-    endpoint: Endpoint,
-    conn: Result<Connection, ConnectError>,
-    retired: Option<Endpoint>,
-}
-
-async fn dial(
-    endpoint: Endpoint,
-    addr: EndpointAddr,
-) -> Result<Connection, ConnectError> {
-    endpoint.connect(addr, proto::ALPN).await
-}
-
-/// Dials from `endpoint`, and from a fresh endpoint too if the first dial
-/// hasn't returned after `hedge_after`.
-async fn dial_hedged(
+/// Dials from a fresh endpoint of `network`.
+async fn hedge(
+    attempt: Attempt,
     network: Network,
-    bound: Endpoint,
     addr: EndpointAddr,
-    hedge_after: Duration,
-) -> Done {
-    let Attempt {
-        endpoint,
-        mut connecting,
-    } = Attempt::start(bound, addr.clone());
-    let dialed = tokio::select! {
-        conn = &mut connecting => Dialed { endpoint, conn, retired: None },
-        () = sleep(hedge_after) => {
-            let first = Attempt { endpoint, connecting };
-            hedge(network, first, addr).await
-        }
-    };
-    Done::Dialed(dialed)
-}
-
-async fn hedge(network: Network, first: Attempt, addr: EndpointAddr) -> Dialed {
-    tracing::info!("dial stalled; dialing again on a fresh endpoint");
+) -> Dialed {
     match platform::bind_endpoint(network).await {
-        Ok(fresh) => race(first, Attempt::start(fresh, addr)).await,
+        Ok(fresh) => dial(attempt, fresh, addr, "hedged dial").await,
         Err(err) => {
             tracing::warn!(%err, "no fresh endpoint to hedge with");
-            finish(first, None).await
-        }
-    }
-}
-
-/// Keeps whichever attempt connects first.
-async fn race(first: Attempt, second: Attempt) -> Dialed {
-    let Attempt {
-        endpoint: first_endpoint,
-        connecting: mut first_connecting,
-    } = first;
-    let Attempt {
-        endpoint: second_endpoint,
-        connecting: mut second_connecting,
-    } = second;
-    tokio::select! {
-        conn = &mut first_connecting => {
-            let second = Attempt {
-                endpoint: second_endpoint,
-                connecting: second_connecting,
-            };
-            settle(first_endpoint, conn, second).await
-        }
-        conn = &mut second_connecting => {
-            let first = Attempt {
-                endpoint: first_endpoint,
-                connecting: first_connecting,
-            };
-            settle(second_endpoint, conn, first).await
-        }
-    }
-}
-
-/// One attempt returned. If it connected, the other is dropped and its
-/// endpoint closed; if it failed, its endpoint is closed and the other
-/// decides.
-async fn settle(
-    endpoint: Endpoint,
-    outcome: Result<Connection, ConnectError>,
-    other: Attempt,
-) -> Dialed {
-    match outcome {
-        Ok(conn) => {
-            tracing::info!(
-                endpoint = %endpoint.id().fmt_short(),
-                "hedged dial connected"
-            );
             Dialed {
-                endpoint,
-                conn: Ok(conn),
-                retired: Some(retire(other.endpoint)),
+                attempt,
+                endpoint: None,
+                conn: Err(Unreached::Unbound(err.to_string())),
             }
         }
-        Err(err) => {
-            tracing::debug!(%err, "one hedged dial failed");
-            finish(other, Some(retire(endpoint))).await
-        }
-    }
-}
-
-async fn finish(attempt: Attempt, retired: Option<Endpoint>) -> Dialed {
-    Dialed {
-        conn: attempt.connecting.await,
-        endpoint: attempt.endpoint,
-        retired,
     }
 }
 
