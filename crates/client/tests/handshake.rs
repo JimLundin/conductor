@@ -7,7 +7,7 @@ use client::{
 };
 use iroh::endpoint::{Connection, ConnectionError, SendStream, presets};
 use iroh::{Endpoint, RelayMode};
-use proto::wire;
+use net::wire;
 use proto::{
     AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq, Open,
     Providers, Welcome,

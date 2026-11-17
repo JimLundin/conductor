@@ -3,11 +3,15 @@
 //!
 //! Binary layout, then base64url without padding:
 //! `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`.
+//!
+//! This checks only the layout; `net::parse` also checks that the id is a
+//! valid key and the relay a valid URL.
 
-use std::fmt;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt;
 
 use data_encoding::BASE64URL_NOPAD;
-use iroh_base::{EndpointId, RelayUrl};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -17,8 +21,8 @@ const TOKEN_LEN: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ticket {
-    pub host: EndpointId,
-    pub relay: RelayUrl,
+    pub host: [u8; ID_LEN],
+    pub relay: String,
     pub token: AuthToken,
 }
 
@@ -47,12 +51,17 @@ pub enum TicketError {
 pub struct WrongToken {}
 
 impl AuthToken {
+    #[must_use]
     pub const fn from_bytes(bytes: [u8; TOKEN_LEN]) -> Self {
         Self(bytes)
     }
 
     /// Checks `self` against the host's token in constant time, so the
     /// time a refusal takes says nothing about the token.
+    ///
+    /// # Errors
+    ///
+    /// [`WrongToken`] when the tokens differ.
     pub fn check(&self, expected: &Self) -> Result<(), WrongToken> {
         match self.0.as_slice().ct_eq(expected.0.as_slice()).unwrap_u8() {
             1 => Ok(()),
@@ -70,22 +79,26 @@ impl fmt::Debug for AuthToken {
 
 impl Ticket {
     /// The ticket as fragment-safe text.
+    #[must_use]
     pub fn to_text(&self) -> String {
-        let bytes = std::iter::once(VERSION)
-            .chain(self.host.as_bytes().iter().copied())
+        let bytes = core::iter::once(VERSION)
+            .chain(self.host)
             .chain(self.token.0)
-            .chain(self.relay.to_string().into_bytes())
+            .chain(self.relay.bytes())
             .collect::<Vec<u8>>();
         BASE64URL_NOPAD.encode(&bytes)
     }
 
+    /// # Errors
+    ///
+    /// The first way `text` departs from the layout.
     pub fn parse(text: &str) -> Result<Self, TicketError> {
         let bytes = BASE64URL_NOPAD
             .decode(text.trim().as_bytes())
             .map_err(|_| TicketError::Encoding)?;
         let (version, rest) =
             bytes.split_first().ok_or(TicketError::Truncated)?;
-        match version.to_owned() {
+        match *version {
             VERSION => Self::parse_fields(rest),
             other => Err(TicketError::Version(other)),
         }
@@ -100,35 +113,31 @@ impl Ticket {
             .split_first_chunk::<TOKEN_LEN>()
             .ok_or(TicketError::Truncated)?;
         let relay =
-            std::str::from_utf8(relay).map_err(|_| TicketError::RelayUrl)?;
+            core::str::from_utf8(relay).map_err(|_| TicketError::RelayUrl)?;
         Ok(Self {
-            host: EndpointId::from_bytes(id)
-                .map_err(|_| TicketError::HostId)?,
-            relay: relay.parse().map_err(|_| TicketError::RelayUrl)?,
-            token: AuthToken(token.to_owned()),
+            host: *id,
+            relay: String::from(relay),
+            token: AuthToken(*token),
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
     use data_encoding::BASE64URL_NOPAD;
-    use iroh_base::EndpointId;
 
     use super::{AuthToken, Ticket, TicketError};
 
     const TOKEN: AuthToken = AuthToken::from_bytes([1; 16]);
 
     fn ticket() -> Ticket {
-        // The ed25519 base point: a fixed, valid public key.
-        let id = std::iter::once(0x58)
-            .chain([0x66; 31])
-            .collect::<Vec<u8>>()
-            .try_into()
-            .unwrap();
         Ticket {
-            host: EndpointId::from_bytes(&id).unwrap(),
-            relay: "https://r.example/".parse().unwrap(),
+            host: core::array::from_fn(|i| if i == 0 { 0x58 } else { 0x66 }),
+            relay: String::from("https://r.example/"),
             token: TOKEN,
         }
     }
@@ -144,7 +153,8 @@ mod tests {
     }
 
     #[test]
-    fn malformed_tickets_are_refused() {
+    fn malformed_tickets_are_refused() -> Result<(), data_encoding::DecodeError>
+    {
         let text = ticket().to_text();
         assert_eq!(Ticket::parse("not base64!"), Err(TicketError::Encoding));
         assert_eq!(
@@ -153,14 +163,15 @@ mod tests {
             ),
             Err(TicketError::Truncated)
         );
-        let bytes = BASE64URL_NOPAD.decode(text.as_bytes()).unwrap();
-        let v1 = std::iter::once(1)
+        let bytes = BASE64URL_NOPAD.decode(text.as_bytes())?;
+        let v1 = core::iter::once(1)
             .chain(bytes.into_iter().skip(1))
             .collect::<Vec<u8>>();
         assert_eq!(
             Ticket::parse(&BASE64URL_NOPAD.encode(&v1)),
             Err(TicketError::Version(1))
         );
+        Ok(())
     }
 
     #[test]

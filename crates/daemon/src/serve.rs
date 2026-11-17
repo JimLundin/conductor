@@ -5,7 +5,7 @@ use iroh::endpoint::{
 };
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
-use proto::wire::{self, WireError};
+use net::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, HelloReply, Open,
     Rejection, SessionId, Subscribe, Welcome,

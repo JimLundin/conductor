@@ -8,17 +8,16 @@ Home Screen. The design is in
 
 ## Writing code
 
-- **All code is subset code.** Everything under `crates/` is written in the
-  Conductor Rust subset, through the pair loop
-  (`.claude/skills/pair/SKILL.md`). The subset, its checker and its
-  proposals live in their own repository, `JimLundin/subset`
-  (`docs/subset.md` there); `subset.toml` here is Conductor's allowlist,
-  and `tools/subset` runs the checker at the pinned revision.
-- **The subset grows only by accepted proposals**, made in the subset
-  repository. When the subset makes code long, log the friction point and
-  write it the long way. Only the owner adds constructs.
-- **Gate.** `tools/check.sh` (fmt, clippy for native and wasm, tests,
-  `tools/subset check`) passes on every commit.
+- **The shared Rust standard.** Code follows the Rust standard in
+  `C:\Users\Jim.Lundin\Projects\standards` (`README.md` there): pedantic
+  clippy with no suppressions, libraries as a pure `no_std` core with a
+  data-only API, and binaries as a thin shell. Relax a check only with a
+  reasoned entry in `exceptions.toml`; never with an `#[allow]` or a weaker
+  config.
+- **Gate.** `tools/check.sh` (the standard's `rust/check.sh`, the run-record
+  IP scrub, and clippy for the wasm crates) passes on every commit. Set
+  `STANDARDS` when the standards checkout is elsewhere. `tools/check.sh
+  full` adds mutation testing and the slow checks.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo

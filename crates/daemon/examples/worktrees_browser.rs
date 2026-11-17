@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 #[derive(Parser)]
 struct Args {
-    #[arg(value_parser = Ticket::parse)]
+    #[arg(value_parser = net::parse)]
     ticket: Ticket,
     directory: PathBuf,
 }
@@ -25,7 +25,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let (link, mut updates) = HostLink::spawn(
-        Target::of_ticket(&args.ticket),
+        Target::of_ticket(&args.ticket)?,
         LinkOptions::new(ClientName(String::from("browser seed"))),
     )
     .await?;

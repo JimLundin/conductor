@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
+net = { path = "../net" }
 n0-future.workspace = true
 proto = { path = "../proto" }
 thiserror.workspace = true
@@ -23,3 +24,6 @@ anyhow.workspace = true
 clap = { version = "4.6.7", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

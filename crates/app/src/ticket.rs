@@ -15,7 +15,7 @@ pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
     let ticket = text
         .rsplit_once("#join=")
         .map_or(text, |(_, ticket)| ticket);
-    Ticket::parse(ticket)
+    net::parse(ticket)
 }
 
 /// `#join=<ticket>` on first open, saved to local storage and removed from
@@ -63,7 +63,7 @@ pub fn initial() -> Result<Opening, TicketError> {
     let hash = window.location().hash().unwrap_or_default();
     match hash.strip_prefix("#join=") {
         Some(text) => {
-            let ticket = Ticket::parse(text)?;
+            let ticket = net::parse(text)?;
             save(&ticket);
             let path = window.location().pathname().unwrap_or_default();
             if let Ok(history) = window.history() {
@@ -81,7 +81,7 @@ pub fn initial() -> Result<Opening, TicketError> {
 
 fn opening(saved: Option<String>) -> Result<Opening, TicketError> {
     match saved {
-        Some(text) => Ticket::parse(&text).map(Opening::Host),
+        Some(text) => net::parse(&text).map(Opening::Host),
         None => Ok(Opening::Unpaired),
     }
 }

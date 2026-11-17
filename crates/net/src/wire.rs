@@ -17,27 +17,27 @@ pub enum WireError {
     #[error("could not open a stream: {0}")]
     Open(#[from] iroh::endpoint::ConnectionError),
     #[error("{0}")]
-    Frame(#[from] crate::FrameError),
+    Frame(#[from] proto::FrameError),
 }
 
 pub async fn write<T: Serialize>(
     send: &mut SendStream,
     msg: &T,
 ) -> Result<(), WireError> {
-    Ok(send.write_all(&crate::encode(msg)?).await?)
+    Ok(send.write_all(&proto::encode(msg)?).await?)
 }
 
 /// `Ok(None)` when the peer finished the stream between frames.
 pub async fn read<T: DeserializeOwned>(
     recv: &mut RecvStream,
 ) -> Result<Option<T>, WireError> {
-    let mut header = [0u8; crate::HEADER_LEN];
+    let mut header = [0u8; proto::HEADER_LEN];
     match recv.read_exact(&mut header).await {
         Ok(()) => {
-            let mut body = std::iter::repeat_n(0u8, crate::body_len(header)?)
+            let mut body = std::iter::repeat_n(0u8, proto::body_len(header)?)
                 .collect::<Vec<u8>>();
             recv.read_exact(&mut body).await?;
-            Ok(Some(crate::decode(&body)?))
+            Ok(Some(proto::decode(&body)?))
         }
         Err(ReadExactError::FinishedEarly(0)) => Ok(None),
         Err(err) => Err(err.into()),

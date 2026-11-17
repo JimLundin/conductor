@@ -216,7 +216,11 @@ async fn run_link(
     mut link: Signal<Link>,
 ) {
     let options = LinkOptions::new(client::platform::client_name());
-    match HostLink::spawn(Target::of_ticket(&ticket), options).await {
+    let target = match Target::of_ticket(&ticket) {
+        Ok(target) => target,
+        Err(err) => return tracing::error!(%err, "the ticket names no host"),
+    };
+    match HostLink::spawn(target, options).await {
         Ok((handle, updates)) => {
             link.set(Link::Live(Rc::new(handle)));
             let Err(err) = follow(updates, status, view).await;

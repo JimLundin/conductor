@@ -1,6 +1,6 @@
 //! The wire protocol between a client and `conductord` (architecture §5): the
-//! types, the frame codec, and [`wire`], which reads and writes frames on iroh
-//! streams. It compiles natively and to wasm.
+//! types and the frame codec. It is the pure core: `no_std`, with the stream
+//! I/O in the `net` crate.
 //!
 //! Every bi-stream starts with one [`Open`] frame from the client. The first
 //! stream of a connection must be [`Open::Hello`], answered by one
@@ -16,15 +16,20 @@
 //! including a variant added at the end. Renaming a variant or a field
 //! doesn't change the bytes and needs no bump.
 
+#![cfg_attr(not(test), no_std)]
+
+extern crate alloc;
+
 mod frame;
-mod relay;
 mod ticket;
-pub mod wire;
+
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
-pub use relay::without_root_dot;
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
@@ -257,16 +262,16 @@ pub enum CodexCredential {
     },
 }
 
-impl std::fmt::Debug for ClaudeCredential {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ClaudeCredential {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Gateway { .. } => write!(f, "Gateway"),
         }
     }
 }
 
-impl std::fmt::Debug for CodexCredential {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for CodexCredential {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Provider { .. } => write!(f, "Provider"),
         }

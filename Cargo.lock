@@ -138,6 +138,7 @@ version = "0.1.0"
 dependencies = [
  "client",
  "dioxus",
+ "net",
  "proto",
  "tokio",
  "tracing",
@@ -564,6 +565,7 @@ dependencies = [
  "getrandom 0.4.3",
  "iroh",
  "n0-future",
+ "net",
  "proto",
  "thiserror 2.0.21",
  "tokio",
@@ -871,6 +873,7 @@ dependencies = [
  "getrandom 0.4.3",
  "iroh",
  "n0-future",
+ "net",
  "postcard",
  "proto",
  "qrcode",
@@ -2911,6 +2914,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "iroh",
+ "iroh-base",
+ "proto",
+ "serde",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
 name = "netdev"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3540,8 +3555,6 @@ name = "proto"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
- "iroh",
- "iroh-base",
  "postcard",
  "serde",
  "subtle",

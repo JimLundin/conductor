@@ -18,11 +18,11 @@ use iroh::{Endpoint, EndpointAddr};
 use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{StreamExt, join_all, task};
-use proto::wire::{self, WireError};
+use net::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
     Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers,
-    Subscribe, Ticket, Welcome,
+    Subscribe, Ticket, TicketError, Welcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -46,12 +46,14 @@ pub struct Target {
 }
 
 impl Target {
-    pub fn of_ticket(ticket: &Ticket) -> Self {
-        Self {
-            addr: EndpointAddr::new(ticket.host)
-                .with_relay_url(proto::without_root_dot(&ticket.relay)),
+    /// # Errors
+    ///
+    /// The [`TicketError`] of [`net::address`].
+    pub fn of_ticket(ticket: &Ticket) -> Result<Self, TicketError> {
+        Ok(Self {
+            addr: net::address(ticket)?,
             token: ticket.token,
-        }
+        })
     }
 }
 

@@ -308,8 +308,8 @@ async fn host(
         token,
     };
     let ticket = Ticket {
-        host: endpoint.id(),
-        relay,
+        host: *endpoint.id().as_bytes(),
+        relay: relay.to_string(),
         token,
     };
     let router = Router::builder(endpoint)
@@ -377,7 +377,11 @@ fn announce(
     let join = format!("{web_url}#join={text}");
     let mut out = std::io::stdout();
     writeln!(out, "data dir: {}", data_dir.display())?;
-    writeln!(out, "host id:  {}", ticket.host)?;
+    writeln!(
+        out,
+        "host id:  {}",
+        data_encoding::HEXLOWER.encode(&ticket.host)
+    )?;
     writeln!(out, "relay:    {}", ticket.relay)?;
     writeln!(out, "ticket:   {text}")?;
     writeln!(out, "join:     {join}")?;
@@ -416,11 +420,11 @@ fn announce(
 
 /// n0's public relays without the root dot. A host advertises its home relay
 /// to peers, and a browser that dials the dotted name fails `WebKit`'s
-/// certificate check (`proto::without_root_dot`).
+/// certificate check (`net::without_root_dot`).
 fn n0_relays() -> iroh::RelayMap {
     iroh::defaults::prod::default_relay_map()
         .urls::<Vec<RelayUrl>>()
         .iter()
-        .map(proto::without_root_dot)
+        .map(net::without_root_dot)
         .collect()
 }

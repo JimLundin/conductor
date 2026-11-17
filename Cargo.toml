@@ -8,18 +8,46 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 anyhow = "1.0.104"
-data-encoding = "2.11"
+data-encoding = { version = "2.11", default-features = false, features = ["alloc"] }
 getrandom = "0.4"
 iroh = { version = "1.4.1", default-features = false }
 iroh-base = { version = "1.4.1", default-features = false, features = ["key"] }
 n0-future = "0.3.2"
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }
 serde_json = "1.0.154"
-thiserror = "2.0.21"
+thiserror = { version = "2.0.21", default-features = false }
 tokio = { version = "1.54.1", features = ["process", "io-util", "sync", "macros", "rt-multi-thread", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.29.2", features = ["v4"] }
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+shadow_reuse = "deny"
+shadow_same = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+exit = "deny"
+
+[profile.mutants]
+inherits = "test"
+debug = "none"
 
 # Debug info is most of a dev build's size. Line tables keep panics and
 # backtraces readable for our code; dependencies carry none.

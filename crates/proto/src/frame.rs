@@ -2,6 +2,8 @@
 //! Callers own the I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`],
 //! read that many bytes, pass them to [`decode`].
 
+use alloc::vec::Vec;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 

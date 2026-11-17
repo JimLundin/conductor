@@ -2507,7 +2507,7 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
         .await
         .unwrap();
     let (mut send_half, mut recv_half) = conn.open_bi().await.unwrap();
-    proto::wire::write(
+    net::wire::write(
         &mut send_half,
         &proto::Open::Command(proto::Command {
             id: proto::CommandId(1),
@@ -2517,7 +2517,7 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() {
     .await
     .unwrap();
     assert_eq!(
-        proto::wire::read::<proto::HelloReply>(&mut recv_half)
+        net::wire::read::<proto::HelloReply>(&mut recv_half)
             .await
             .unwrap(),
         Some(proto::HelloReply::Refused {
@@ -3407,7 +3407,7 @@ async fn authenticated(
         .await
         .unwrap();
     let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    proto::wire::write(
+    net::wire::write(
         &mut send,
         &proto::Open::Hello(proto::Hello {
             client: test_client(),
@@ -3417,7 +3417,7 @@ async fn authenticated(
     .await
     .unwrap();
     send.finish().unwrap();
-    let welcome = proto::wire::read::<proto::HelloReply>(&mut recv)
+    let welcome = net::wire::read::<proto::HelloReply>(&mut recv)
         .await
         .unwrap()
         .unwrap();
@@ -3434,11 +3434,11 @@ async fn retry_command(
     command: &proto::Command,
 ) -> CommandResult {
     let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    proto::wire::write(&mut send, &proto::Open::Command(command.clone()))
+    net::wire::write(&mut send, &proto::Open::Command(command.clone()))
         .await
         .unwrap();
     send.finish().unwrap();
-    proto::wire::read::<CommandResult>(&mut recv)
+    net::wire::read::<CommandResult>(&mut recv)
         .await
         .unwrap()
         .unwrap()

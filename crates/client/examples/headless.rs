@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 
 #[derive(Parser)]
 struct Args {
-    #[arg(value_parser = Ticket::parse)]
+    #[arg(value_parser = net::parse)]
     ticket: Ticket,
     #[arg(long, value_enum, default_value_t = ProviderChoice::Claude)]
     provider: ProviderChoice,
@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
 async fn run(args: Args) -> anyhow::Result<()> {
     let start = Instant::now();
     let (link, updates) = HostLink::spawn(
-        Target::of_ticket(&args.ticket),
+        Target::of_ticket(&args.ticket)?,
         LinkOptions::new(ClientName(String::from("headless"))),
     )
     .await?;

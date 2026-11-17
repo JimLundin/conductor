@@ -19,11 +19,6 @@ What is built and what comes next. Update it in the commit that changes it.
   and connections remain usable. Credential retries retain their final
   durable `Providers` receipt.
 
-- **Subset v15** (JimLundin/subset#5). The checker pins `b02997b`. Local
-  closures, array receivers and structural patterns remove repeated code.
-  The receiver drain uses owner-accepted proposal 0058's eager pull iterator.
-  Returned error factories (0059) remain proposed.
-
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
   actual turn. The phone shows bounded immutable diffs and can undo files
@@ -32,22 +27,10 @@ What is built and what comes next. Update it in the commit that changes it.
   in their original directory. Claude uses UUID prefix forks, Codex uses
   verified `thread/revert` prefixes.
 
-- **Subset v14** (#24) adopted accepted local
-  closures, structural and range patterns, immutable domain arrays, shared
-  slice outputs and unbounded domain generics. Wire conversions also gain
-  scoped boolean patterns, Serde defaults and fallback variants; const
-  embedded strings and typed error sources are allowed. Actor setup and
-  blocking-library calls remain friction points in JimLundin/subset#5.
-- **Subset v10** introduced one shared `ask<M, T>` free function in a crate
-  whose actor handles share a stopped error type (subset issue #3).
-
 - **Single CLI pin source** (#28). `tools/pin` writes only
   `crates/agents/src/pins.rs`, including upstream verification notes.
   Fixture and supported-version checks use the compiled pins.
 
-- **Subset v9** (#24) introduced shape-based wire enums, optional fields
-  omitted by serde, wire booleans and `@` patterns.
-  The adapters use the accepted wire constructs to remove duplicate shapes.
 - **Codex start errors** (#19). Failed starts and Continue keep the
   app-server’s JSON-RPC error or last nonempty stderr line.
 - **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,

@@ -490,8 +490,7 @@ against the recorded hash.
    `cosign` is installed. Both write only `crates/agents/src/pins.rs`,
    including the verification result in doc comments. Versions, platform
    hashes and verification provenance stay together in compiled Rust values.
-   Subset v14 also permits `include_str!` in const initializers (proposal
-   0056). Updating one provider preserves the other provider's pin.
+   Updating one provider preserves the other provider's pin.
 2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
    is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
    package unpacked whole, with `bin/codex`. It downloads to a temporary
