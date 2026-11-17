@@ -1,15 +1,16 @@
 //! Replayable workspace checkpoints and the durable undo phases.
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
 use proto::{
     Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor,
     UndoAvailability, Workspace,
 };
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct Undo {
-    pub(crate) selected: CheckpointId,
-    pub(crate) restored: CheckpointId,
-    pub(crate) history: HistoryAnchor,
+    pub selected: CheckpointId,
+    pub restored: CheckpointId,
+    pub history: HistoryAnchor,
 }
 
 #[derive(Debug, Clone)]
@@ -20,22 +21,23 @@ pub enum Recovery {
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
-    pub(crate) history: HistoryAnchor,
-    pub(crate) turn_start: Option<proto::HostSeq>,
+    pub history: HistoryAnchor,
+    pub turn_start: Option<proto::HostSeq>,
 }
 
 pub struct Book {
-    pub(crate) workspace: Option<Workspace>,
-    pub(crate) checkpoints: BTreeMap<CheckpointId, Checkpoint>,
-    pub(crate) active: Vec<CheckpointId>,
-    pub(crate) highwater: CheckpointId,
-    pub(crate) recovery: Option<Recovery>,
-    pub(crate) resume: Option<HistoryAnchor>,
-    pub(crate) snapshot: Option<Snapshot>,
+    pub workspace: Option<Workspace>,
+    pub checkpoints: BTreeMap<CheckpointId, Checkpoint>,
+    pub active: Vec<CheckpointId>,
+    pub highwater: CheckpointId,
+    pub recovery: Option<Recovery>,
+    pub resume: Option<HistoryAnchor>,
+    pub snapshot: Option<Snapshot>,
 }
 
 impl Book {
-    pub(crate) fn replay(events: &[Event]) -> Self {
+    #[must_use]
+    pub fn replay(events: &[Event]) -> Self {
         Self {
             workspace: replay_workspace(events),
             checkpoints: replay_checkpoints(events),
@@ -47,10 +49,8 @@ impl Book {
         }
     }
 
-    pub(crate) fn availability(
-        &self,
-        history: &HistoryAnchor,
-    ) -> UndoAvailability {
+    #[must_use]
+    pub fn availability(&self, history: &HistoryAnchor) -> UndoAvailability {
         match history {
             HistoryAnchor::Codex { .. } => match self
                 .active
@@ -70,7 +70,8 @@ impl Book {
         }
     }
 
-    pub(crate) fn last(&self) -> Option<&Checkpoint> {
+    #[must_use]
+    pub fn last(&self) -> Option<&Checkpoint> {
         self.active.last().and_then(|id| self.checkpoints.get(id))
     }
 }
@@ -193,6 +194,7 @@ fn replay_resume(events: &[Event]) -> Option<HistoryAnchor> {
     })
 }
 
+#[must_use]
 pub fn availability(
     parent: Option<&Checkpoint>,
     history: &HistoryAnchor,

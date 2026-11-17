@@ -1,7 +1,6 @@
 //! `conductord`: the host daemon. It serves the event log and the sessions
 //! over iroh (`conductord host`).
 
-mod checkpoints;
 pub mod codex_hub;
 pub mod credentials;
 pub mod log;
@@ -10,7 +9,6 @@ pub mod serve;
 pub mod session;
 pub mod start;
 mod storage;
-mod tasks;
 mod workspace;
 
 use std::io::{ErrorKind, Write};

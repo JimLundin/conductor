@@ -30,10 +30,11 @@ use proto::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
-use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
 use crate::codex_hub::{CodexHub, HubError, Routed};
 use crate::log::Log;
-use crate::{tasks, workspace};
+use crate::workspace;
+use host::checkpoints::{Book, Recovery, Snapshot, Undo};
+use host::tasks;
 
 /// How the host runs Claude. Built once in `main`.
 #[derive(Debug, Clone)]
@@ -1158,7 +1159,13 @@ impl SessionActor {
     }
 
     async fn checklist(&mut self, steps: Vec<PlanStep>) -> Result<(), Stopped> {
-        let synced = tasks::synced(&self.tasks, steps, self.id);
+        let ids = tasks::kept(&self.tasks, &steps)
+            .into_iter()
+            .map(|kept| {
+                kept.unwrap_or_else(|| proto::TaskId(ulid::Ulid::new().into()))
+            })
+            .collect();
+        let synced = tasks::synced(steps, ids, self.id);
         if synced == self.tasks {
             Ok(())
         } else {

@@ -1,25 +1,24 @@
 //! A session's tasks, kept in step with its agent's checklist. Each update
 //! from the agent is the whole list; the host keeps its own ids across them.
 
+use crate::prelude::*;
 use agents::PlanStep;
 use proto::{SessionId, Task, TaskId};
 
-/// The tasks `holder` holds once its agent rewrote the checklist as `steps`.
-/// A step keeps the id of the first task with its text that no earlier
-/// step took; failing that, when the list kept its length, of the task at
-/// its position, unless a step took that one by its text; otherwise it is
-/// a new task. A task no step keeps is dropped.
+/// The tasks `holder` holds once its agent rewrote the checklist as
+/// `steps`, the nth with the nth of `ids`: the ids [`kept`] found, and new
+/// ones where it found none. A task no step keeps is dropped.
+#[must_use]
 pub fn synced(
-    held: &[Task],
     steps: Vec<PlanStep>,
+    ids: Vec<TaskId>,
     holder: SessionId,
 ) -> Vec<Task> {
-    let ids = kept(held, &steps);
     steps
         .into_iter()
         .zip(ids)
         .map(|(step, id)| Task {
-            id: id.unwrap_or_else(|| TaskId(ulid::Ulid::new().into())),
+            id,
             text: step.text,
             status: step.status,
             holder,
@@ -28,7 +27,12 @@ pub fn synced(
 }
 
 /// Each step's task id, if it keeps one.
-fn kept(held: &[Task], steps: &[PlanStep]) -> Vec<Option<TaskId>> {
+///
+/// A step keeps the id of the first task with its text that no earlier step took; failing that, when the
+/// list kept its length, of the task at its position, unless a step took
+/// that one by its text; otherwise it is a new task.
+#[must_use]
+pub fn kept(held: &[Task], steps: &[PlanStep]) -> Vec<Option<TaskId>> {
     let by_text =
         steps
             .iter()
@@ -123,11 +127,8 @@ mod tests {
             text: String::from("b"),
             status: TaskStatus::Completed,
         };
-        let tasks = synced(
-            &held(&[(1, "a"), (2, "b")]),
-            Vec::from([done]),
-            SessionId(7),
-        );
+        let tasks =
+            synced(Vec::from([done]), Vec::from([TaskId(2)]), SessionId(7));
         assert_eq!(
             tasks,
             [Task {

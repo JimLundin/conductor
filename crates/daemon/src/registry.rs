@@ -919,7 +919,7 @@ async fn recover_checkpoint(
     id: SessionId,
     events: &[Event],
 ) -> Result<(), Stopped> {
-    let book = crate::checkpoints::Book::replay(events);
+    let book = host::checkpoints::Book::replay(events);
     let started = book
         .snapshot
         .as_ref()
