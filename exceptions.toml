@@ -76,22 +76,22 @@ rule = "clippy::useless_format"
 reason = "rsx! expands each \"{text}\" node to format!"
 
 [[exception]]
-path = "crates/app/src/main.rs"
+path = "crates/app/src/ui.rs"
 rule = "clippy::disallowed_types"
 reason = "rsx! caches each template in a OnceLock static"
 
 [[exception]]
-path = "crates/app/src/main.rs"
+path = "crates/app/src/ui.rs"
 rule = "clippy::empty_enums"
 reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
 
 [[exception]]
-path = "crates/app/src/main.rs"
+path = "crates/app/src/ui.rs"
 rule = "clippy::shadow_reuse"
 reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
 
 [[exception]]
-path = "crates/app/src/main.rs"
+path = "crates/app/src/ui.rs"
 rule = "clippy::useless_format"
 reason = "rsx! expands each \"{text}\" node to format!"
 
@@ -136,11 +136,11 @@ rule = "clippy::useless_format"
 reason = "rsx! expands each \"{text}\" node to format!"
 
 [[exception]]
-path = "crates/app/src/main.rs"
+path = "crates/app/src/ui.rs"
 rule = "clippy::volatile_composites"
 reason = "asset! reads its link section with read_volatile"
 
 [[exception]]
-path = "crates/app/src/main.rs"
+path = "crates/app/src/ui.rs"
 rule = "clippy::future_not_send"
 reason = "the link tasks run on the single-threaded UI executor and hold Dioxus signals and an Rc'd link"

@@ -19,6 +19,8 @@ use n0_future::boxed::{BoxFuture, BoxStream};
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{StreamExt, join_all, task};
 use net::wire::{self, WireError};
+
+use crate::host_view::HostView;
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
     Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Open, Providers,
@@ -113,6 +115,33 @@ pub enum Update {
     Event(Event),
 }
 
+/// What the app shows, its link status and host view, once `update`
+/// arrives.
+#[must_use]
+pub fn shown_after(
+    status: Option<Status>,
+    view: HostView,
+    update: Update,
+) -> (Option<Status>, HostView) {
+    match update {
+        Update::Status(next) => {
+            tracing::info!(state = ?next.state, error = ?next.error, "link status");
+            (Some(next), view)
+        }
+        Update::Reset(_) => (status, HostView::empty()),
+        Update::Event(event) => (status, view.apply(event)),
+    }
+}
+
+/// Why a link to a ticket's host did not start.
+#[derive(Debug, thiserror::Error)]
+pub enum StartError {
+    #[error("{0}")]
+    Ticket(#[from] TicketError),
+    #[error("could not start iroh: {0}")]
+    Bind(#[from] BindError),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SendError {
     #[error("not connected to the host")]
@@ -153,6 +182,28 @@ enum Request {
 }
 
 impl HostLink {
+    /// Starts a link to the host `ticket` names, and logs why when it
+    /// can't.
+    ///
+    /// # Errors
+    ///
+    /// [`StartError::Ticket`] when the ticket names no host, and
+    /// [`StartError::Bind`] when iroh can't start.
+    pub async fn start(
+        ticket: &Ticket,
+        options: LinkOptions,
+    ) -> Result<(Self, mpsc::Receiver<Update>), StartError> {
+        let started = match Target::of_ticket(ticket) {
+            Ok(target) => {
+                Self::spawn(target, options).await.map_err(StartError::from)
+            }
+            Err(err) => Err(StartError::from(err)),
+        };
+        started.inspect_err(|err| {
+            tracing::error!(%err, "the link did not start");
+        })
+    }
+
     /// Binds an endpoint on `options.network` and starts the link on it. A
     /// dial that stalls is retried on a fresh endpoint of the same network,
     /// and the link then runs on whichever connected and closes the other.

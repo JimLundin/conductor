@@ -9,6 +9,7 @@ pub mod new_session;
 pub mod platform;
 
 pub use link::{
-    Cursor, HostLink, LinkOptions, LinkState, SendError, Status, Target, Update,
+    Cursor, HostLink, LinkOptions, LinkState, SendError, StartError, Status,
+    Target, Update, shown_after,
 };
 pub use platform::Network;
