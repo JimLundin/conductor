@@ -15,7 +15,7 @@ use crate::{Link, PaneHeader, Screen, send};
 
 /// The last segment of a host path, which names the project. The host's OS
 /// may separate with either slash.
-pub(crate) fn short(path: &HostPath) -> &str {
+pub fn short(path: &HostPath) -> &str {
     path.0
         .rsplit(['/', '\\'])
         .find(|part| !part.is_empty())

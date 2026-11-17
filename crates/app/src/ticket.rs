@@ -28,17 +28,17 @@ mod storage {
             .and_then(|window| window.local_storage().ok().flatten())
     }
 
-    pub(crate) fn get() -> Option<String> {
+    pub fn get() -> Option<String> {
         local().and_then(|storage| storage.get_item(KEY).ok().flatten())
     }
 
-    pub(crate) fn set(text: &str) {
+    pub fn set(text: &str) {
         if let Some(storage) = local() {
             let _ = storage.set_item(KEY, text);
         }
     }
 
-    pub(crate) fn remove() {
+    pub fn remove() {
         if let Some(storage) = local() {
             let _ = storage.remove_item(KEY);
         }
