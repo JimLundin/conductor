@@ -14,6 +14,7 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 
 use anyhow::Context;
+use host::secret::Secret;
 use install::Home;
 use iroh::SecretKey;
 use proto::{AuthToken, Epoch};
@@ -50,62 +51,65 @@ pub fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
 }
 
 /// Loads 32 secret bytes from `<data_dir>/<name>` as hex, creating them on
-/// first run, readable by the owner only. A new key is written whole beside
-/// the file and then linked to its name, which fails if the name exists, so
-/// of two first starts one key wins and the other start reads it.
+/// first run, readable by the owner only.
 fn load_or_create_secret(
     data_dir: &Path,
     name: &str,
 ) -> anyhow::Result<[u8; 32]> {
     let path = data_dir.join(name);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => data_encoding::HEXLOWER
-            .decode(text.trim().as_bytes())
-            .ok()
-            .and_then(|bytes| bytes.try_into().ok())
-            .with_context(|| {
-                format!("{} is not 64 hex digits", path.display())
-            }),
-        Err(err) => match err.kind() {
-            ErrorKind::NotFound => {
-                let key = random_key()?;
-                std::fs::create_dir_all(data_dir)?;
-                let next =
-                    data_dir.join(format!("{name}.{}.new", std::process::id()));
-                write_private(
-                    &next,
-                    data_encoding::HEXLOWER.encode(&key).as_bytes(),
-                )
-                .with_context(|| format!("writing {}", next.display()))?;
-                let linked = std::fs::hard_link(&next, &path);
-                let _ = std::fs::remove_file(&next);
-                match linked {
-                    Ok(()) => {
-                        sync_dir(data_dir).map(|()| key).with_context(|| {
-                            format!("syncing {}", data_dir.display())
-                        })
-                    }
-                    Err(err) => match err.kind() {
-                        ErrorKind::AlreadyExists => {
-                            load_or_create_secret(data_dir, name)
-                        }
-                        _ => Err(err).with_context(|| {
-                            format!("creating {}", path.display())
-                        }),
-                    },
-                }
-            }
-            _ => {
-                Err(err).with_context(|| format!("reading {}", path.display()))
-            }
-        },
+    let text = read_if_exists(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    match host::secret::stored(text.as_deref()) {
+        Secret::Key(key) => Ok(key),
+        Secret::Malformed => Err(anyhow::Error::msg(format!(
+            "{} is not 64 hex digits",
+            path.display()
+        ))),
+        Secret::Missing => create_secret(data_dir, name, &path),
     }
 }
 
-/// Transcripts outlive Claude Code's default 30-day sweep; Conductor deletes
-/// a transcript with its session (§6.2).
-const CLAUDE_SETTINGS: &str = "{\n  \"cleanupPeriodDays\": 36500\n}\n";
-const CODEX_CONFIG: &str = "check_for_update_on_startup = false\n";
+/// A new key is written whole beside the file and then linked to its
+/// name, which fails if the name exists, so of two first starts one key
+/// wins and the other start reads it.
+fn create_secret(
+    data_dir: &Path,
+    name: &str,
+    path: &Path,
+) -> anyhow::Result<[u8; 32]> {
+    let key = random_key()?;
+    std::fs::create_dir_all(data_dir)?;
+    let next = data_dir.join(format!("{name}.{}.new", std::process::id()));
+    write_private(&next, data_encoding::HEXLOWER.encode(&key).as_bytes())
+        .with_context(|| format!("writing {}", next.display()))?;
+    let linked = link_new(&next, path);
+    let _ = std::fs::remove_file(&next);
+    if linked.with_context(|| format!("creating {}", path.display()))? {
+        sync_dir(data_dir)
+            .with_context(|| format!("syncing {}", data_dir.display()))?;
+        Ok(key)
+    } else {
+        load_or_create_secret(data_dir, name)
+    }
+}
+
+/// The file's text, or `None` when there is no file.
+fn read_if_exists(path: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Links `link` to `original`, or says it already exists.
+fn link_new(original: &Path, link: &Path) -> std::io::Result<bool> {
+    match std::fs::hard_link(original, link) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(err),
+    }
+}
 
 /// The CLIs' private homes under `<data_dir>/home` (§6.2).
 pub struct Homes {
@@ -113,8 +117,7 @@ pub struct Homes {
     pub codex: Home,
 }
 
-/// Creates the private homes, writing each CLI's config on first run only,
-/// since the CLIs edit their own config too.
+/// Creates the private homes, each with its CLI's config.
 ///
 /// # Errors
 ///
@@ -122,34 +125,12 @@ pub struct Homes {
 pub fn homes(data_dir: &Path) -> anyhow::Result<Homes> {
     let claude = data_dir.join("home").join("claude");
     let codex = data_dir.join("home").join("codex");
-    std::fs::create_dir_all(&claude)
-        .with_context(|| format!("creating {}", claude.display()))?;
-    std::fs::create_dir_all(&codex)
-        .with_context(|| format!("creating {}", codex.display()))?;
-    write_once(&claude.join("settings.json"), CLAUDE_SETTINGS)?;
-    write_once(&codex.join("config.toml"), CODEX_CONFIG)?;
     Ok(Homes {
-        claude: Home::Private(claude),
-        codex: Home::Private(codex),
+        claude: claude_cli::private_home(claude.clone())
+            .with_context(|| format!("creating {}", claude.display()))?,
+        codex: codex_cli::private_home(codex.clone())
+            .with_context(|| format!("creating {}", codex.display()))?,
     })
-}
-
-fn write_once(path: &Path, contents: &str) -> anyhow::Result<()> {
-    let opened = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path);
-    match opened {
-        Ok(mut file) => file
-            .write_all(contents.as_bytes())
-            .with_context(|| format!("writing {}", path.display())),
-        Err(err) => match err.kind() {
-            ErrorKind::AlreadyExists => Ok(()),
-            _ => {
-                Err(err).with_context(|| format!("creating {}", path.display()))
-            }
-        },
-    }
 }
 
 /// Writes a new file and syncs it to disk. A stale file at `path` is

@@ -19,7 +19,11 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use proto::Credentials;
 
-const FORMAT: u8 = 1;
+pub use host::registry::Stored;
+
+/// Format 2 keys the credentials by provider; a format 1 store reads as
+/// one that doesn't open, which a Clear moves aside.
+const FORMAT: u8 = 2;
 const PURPOSE: &[u8] = b"conductor credentials 1";
 const NONCE_LEN: usize = 24;
 
@@ -27,15 +31,6 @@ pub struct Store {
     dir: PathBuf,
     path: PathBuf,
     cipher: XChaCha20Poly1305,
-}
-
-/// What the store held when the host started.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Stored {
-    Opened(Credentials),
-    /// The file exists and doesn't open, for this reason. The host runs
-    /// without either provider until a Clear moves it aside.
-    Unreadable(String),
 }
 
 impl Store {

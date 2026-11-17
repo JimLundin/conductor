@@ -11,8 +11,8 @@
 use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
 use agents::{Note, Step};
 use proto::{
-    ClaudeCredential, CloseReason, Effort, HistoryAnchor, HostPath, Models,
-    SessionId as Session,
+    ClaudeCredential, CloseReason, Credential, Credentials, Effort,
+    HistoryAnchor, HostPath, Models, Provider, SessionId as Session,
 };
 
 use crate::prelude::*;
@@ -153,11 +153,11 @@ impl Runtime {
             (Command::Start(start), _) => self.start(start),
             (Command::Models, _) => Vec::from([Effect::Probe]),
             (Command::Credentials(credentials), _) => {
-                let note =
-                    unprotected(credentials.claude.as_ref(), self.sandbox);
-                core::iter::once(Effect::Credential(credentials.claude))
+                let claude = credential(&credentials);
+                let note = unprotected(claude.as_ref(), self.sandbox);
+                core::iter::once(Effect::Credential(claude))
                     .chain(note.map(Effect::Log))
-                    .chain(emit(Outcome::Configured(Ok(()))))
+                    .chain(emit(Outcome::Configured(Ok(None))))
                     .collect()
             }
             (Command::Shutdown, true) => Vec::from([Effect::Shutdown]),
@@ -372,13 +372,23 @@ fn resume(
     }
 }
 
+/// Claude's credential among the host's.
+#[must_use]
+pub fn credential(credentials: &Credentials) -> Option<ClaudeCredential> {
+    match credentials.of(Provider::Claude) {
+        Some(Credential::Claude(claude)) => Some(claude.clone()),
+        Some(Credential::Codex(_)) | None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClaudeCredential, ClientName, CloseReason, Credentials, Decision,
-        Effort, HistoryAnchor, HostPath, ModelId, SessionId as Session,
+        ClaudeCredential, ClientName, CloseReason, Credential, Credentials,
+        Decision, Effort, HistoryAnchor, HostPath, ModelId,
+        SessionId as Session,
     };
     use serde_json::json;
 
@@ -689,21 +699,19 @@ mod tests {
             base_url: text("https://gateway.example"),
             token: text("secret"),
         };
-        let credentials = Credentials {
-            claude: Some(gateway),
-            codex: None,
-        };
+        let credentials =
+            Credentials::none().set(Credential::Claude(gateway.clone()));
         let mut runtime = Runtime::new(Sandbox::Missing);
-        let seen = runtime
-            .step(Input::Command(Command::Credentials(credentials.clone())));
+        let seen =
+            runtime.step(Input::Command(Command::Credentials(credentials)));
         assert_eq!(
             seen,
             Vec::from([
-                Effect::Credential(credentials.claude),
+                Effect::Credential(Some(gateway)),
                 Effect::Log(Note::warn(text(
                     "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them"
                 ))),
-                Effect::Emit(Event::Outcome(Outcome::Configured(Ok(())))),
+                Effect::Emit(Event::Outcome(Outcome::Configured(Ok(None)))),
             ])
         );
     }

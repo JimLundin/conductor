@@ -51,8 +51,14 @@ pub(crate) fn CredentialsPane(
     link: Signal<Link>,
     on_back: EventHandler<()>,
 ) -> Element {
-    let claude = providers.as_ref().map(|known| known.claude.clone());
-    let codex = providers.as_ref().map(|known| known.codex.clone());
+    let claude = providers
+        .as_ref()
+        .and_then(|known| known.of(Provider::Claude))
+        .cloned();
+    let codex = providers
+        .as_ref()
+        .and_then(|known| known.of(Provider::Codex))
+        .cloned();
     rsx! {
         section { class: "pane new-pane",
             PaneHeader { title: "Credentials", subtitle: "How {host} reaches each agent's model.", on_back }

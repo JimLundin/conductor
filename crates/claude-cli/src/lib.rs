@@ -6,9 +6,11 @@
 //! those decisions, and runs each agent behind a `runtime::Runtime`.
 
 mod agent;
+mod home;
 mod session;
 
 pub use agent::{ClaudeLaunch, starter};
+pub use home::private_home;
 pub use session::{
     ClaudeOptions, ClaudeSession, Error, auth_status, cli, login, sandbox,
 };

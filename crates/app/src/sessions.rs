@@ -19,8 +19,8 @@
 
 use client::host_view::{Attention, HostView, SessionView, UndoState};
 use client::new_session::{
-    Attempt, PROVIDERS, ProviderNote, Refusal, default_label, efforts,
-    kept_effort, label, models, note,
+    Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort, label,
+    models, note,
 };
 use dioxus::prelude::*;
 use proto::{
@@ -164,9 +164,10 @@ pub(crate) fn NewSession(
     };
     let provider_note = note(
         provider(),
-        providers.as_ref().map(|known| known.of(provider())),
+        providers.as_ref().and_then(|known| known.of(provider())),
     );
-    let offered = models(providers.as_ref().map(|known| known.of(provider())));
+    let offered =
+        models(providers.as_ref().and_then(|known| known.of(provider())));
     let effort_options = efforts(&offered, model().as_ref());
     let start = match (attempt(), directory().trim()) {
         (Attempt::Starting, _) => Start::Busy,
@@ -186,7 +187,7 @@ pub(crate) fn NewSession(
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",
-                        for (choice, state) in PROVIDERS.iter().map(|choice| (*choice, word(providers.as_ref().map(|known| known.of(*choice))))) {
+                        for (choice, state) in Provider::ALL.map(|choice| (choice, word(providers.as_ref().and_then(|known| known.of(choice))))) {
                             label { class: "segment", "data-available": "{state}",
                                 input {
                                     r#type: "radio",

@@ -59,7 +59,11 @@ pub(crate) fn SessionPane(
         .as_ref()
         .map_or_else(|| String::from("default model"), |model| model.0.clone());
     let offered = efforts(
-        &models(providers.as_ref().map(|known| known.of(session.provider))),
+        &models(
+            providers
+                .as_ref()
+                .and_then(|known| known.of(session.provider)),
+        ),
         session.model.as_ref(),
     );
     let checkpoints = session.checkpoints.clone();

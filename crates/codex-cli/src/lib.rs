@@ -7,10 +7,12 @@
 
 mod agent;
 mod config;
+mod home;
 mod hub;
 mod server;
 
 pub use agent::starter;
+pub use home::private_home;
 pub use hub::{Hub, Thread};
 pub use server::{
     CodexServer, CodexThread, Error, ServerOptions, cli, login, login_status,

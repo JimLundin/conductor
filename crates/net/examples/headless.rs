@@ -337,16 +337,17 @@ impl Session {
                 let kind = match &result {
                     CommandResult::Providers(providers) => {
                         match providers.of(self.provider) {
-                            Availability::Available {
+                            Some(Availability::Available {
                                 auth: Auth::Gateway { .. },
                                 ..
-                            } => Ok("gateway"),
-                            Availability::Available { .. }
-                            | Availability::Unavailable { .. } => {
-                                Err(anyhow::Error::msg(
-                                    "the host does not report the gateway",
-                                ))
-                            }
+                            }) => Ok("gateway"),
+                            Some(
+                                Availability::Available { .. }
+                                | Availability::Unavailable { .. },
+                            )
+                            | None => Err(anyhow::Error::msg(
+                                "the host does not report the gateway",
+                            )),
                         }
                     }
                     CommandResult::Rejected(rejection) => {

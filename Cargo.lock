@@ -900,6 +900,7 @@ dependencies = [
  "claude",
  "claude-cli",
  "client",
+ "codex",
  "codex-cli",
  "data-encoding",
  "directories",
@@ -2005,6 +2006,7 @@ name = "host"
 version = "0.1.0"
 dependencies = [
  "agents",
+ "data-encoding",
  "proto",
 ]
 

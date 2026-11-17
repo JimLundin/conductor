@@ -4,6 +4,7 @@
 //! relays off so the test needs no network.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -21,7 +22,7 @@ use codex_cli::{Hub, ServerOptions};
 use daemon::Stopped;
 use daemon::credentials::{Store, Stored};
 use daemon::log::Log;
-use daemon::registry::{Launcher, Launchers, OwnSignIn, Registry};
+use daemon::registry::{Launcher, Launchers, Offer, OwnSignIn, Registry};
 use daemon::serve::Conductor;
 use install::Home;
 use iroh::endpoint::presets;
@@ -97,20 +98,25 @@ fn fake_codex() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fallible<Fixture> {
-    host_of(Launchers {
-        claude: Launcher::Ready {
-            start: claude_cli::starter(ClaudeLaunch {
-                claude_path,
-                home: Home::User,
-                credential: None,
-                probe: target_tmp()?.join("probe"),
-            }),
-            own: OwnSignIn::Unmanaged,
-            models: models(),
-            chosen: None,
-        },
-        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-    })
+    host_of(Launchers::from([
+        (
+            Provider::Claude,
+            Launcher::Ready {
+                start: claude_cli::starter(ClaudeLaunch {
+                    claude_path,
+                    home: Home::User,
+                    credential: None,
+                    probe: target_tmp()?.join("probe"),
+                }),
+                own: OwnSignIn::Unmanaged,
+                offer: offer(models()),
+            },
+        ),
+        (
+            Provider::Codex,
+            Launcher::Unavailable(String::from(UNAVAILABLE)),
+        ),
+    ]))
     .await
 }
 
@@ -125,15 +131,20 @@ async fn codex_host(recording: &str) -> Fallible<(Fixture, PathBuf)> {
         cwd: server.clone(),
         stdout_log: None,
     });
-    let fixture = host_of(Launchers {
-        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        codex: Launcher::Ready {
-            start: codex_cli::starter(hub),
-            own: OwnSignIn::Unmanaged,
-            models: models(),
-            chosen: None,
-        },
-    })
+    let fixture = host_of(Launchers::from([
+        (
+            Provider::Claude,
+            Launcher::Unavailable(String::from(UNAVAILABLE)),
+        ),
+        (
+            Provider::Codex,
+            Launcher::Ready {
+                start: codex_cli::starter(hub),
+                own: OwnSignIn::Unmanaged,
+                offer: offer(models()),
+            },
+        ),
+    ]))
     .await?;
     Ok((fixture, server))
 }
@@ -225,20 +236,25 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
     let (store, stored) = Store::open(data)?;
     let registry = Registry::spawn(
         log.clone(),
-        Launchers {
-            claude: Launcher::Ready {
-                start: claude_cli::starter(ClaudeLaunch {
-                    claude_path: fake_claude(),
-                    home: Home::User,
-                    credential: None,
-                    probe: data.join("probe"),
-                }),
-                own: OwnSignIn::Unmanaged,
-                models: models(),
-                chosen: None,
-            },
-            codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        },
+        Launchers::from([
+            (
+                Provider::Claude,
+                Launcher::Ready {
+                    start: claude_cli::starter(ClaudeLaunch {
+                        claude_path: fake_claude(),
+                        home: Home::User,
+                        credential: None,
+                        probe: data.join("probe"),
+                    }),
+                    own: OwnSignIn::Unmanaged,
+                    offer: offer(models()),
+                },
+            ),
+            (
+                Provider::Codex,
+                Launcher::Unavailable(String::from(UNAVAILABLE)),
+            ),
+        ]),
         store,
         stored,
     );
@@ -386,6 +402,14 @@ fn start(provider: Provider, directory: &Path) -> CommandBody {
 
 /// What every test host's CLIs offer: a default with two efforts and a
 /// model with one.
+fn offer(listed: Models) -> Offer {
+    Offer {
+        listed,
+        named: None,
+        chosen: None,
+    }
+}
+
 fn models() -> Models {
     Models {
         choices: Vec::from([
@@ -422,15 +446,21 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
     assert_eq!(link.status().host, Some(String::from("test-host")));
     assert_eq!(
         link.status().providers,
-        Some(Providers {
-            claude: Availability::Available {
-                auth: Auth::Unmanaged,
-                models: models(),
-            },
-            codex: Availability::Unavailable {
-                reason: String::from(UNAVAILABLE),
-            },
-        })
+        Some(Providers(BTreeMap::from([
+            (
+                Provider::Claude,
+                Availability::Available {
+                    auth: Auth::Unmanaged,
+                    models: models(),
+                }
+            ),
+            (
+                Provider::Codex,
+                Availability::Unavailable {
+                    reason: String::from(UNAVAILABLE),
+                }
+            )
+        ])))
     );
 
     let cases = Vec::from([
@@ -2213,33 +2243,43 @@ async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
     std::fs::create_dir_all(data.join("probe"))?;
     std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n"))?;
     let credential = match Store::open(data)?.1 {
-        Stored::Opened(credentials) => credentials.claude,
+        Stored::Opened(credentials) => {
+            claude::runtime::credential(&credentials)
+        }
         Stored::Unreadable(_) => None,
     };
-    let launchers = Launchers {
-        claude: Launcher::Ready {
-            start: claude_cli::starter(ClaudeLaunch {
-                claude_path: fake_claude(),
-                home: homes.claude,
-                credential,
-                probe: data.join("probe"),
-            }),
-            own: OwnSignIn::Missing,
-            models: models(),
-            chosen: None,
-        },
-        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-    };
+    let launchers = Launchers::from([
+        (
+            Provider::Claude,
+            Launcher::Ready {
+                start: claude_cli::starter(ClaudeLaunch {
+                    claude_path: fake_claude(),
+                    home: homes.claude,
+                    credential,
+                    probe: data.join("probe"),
+                }),
+                own: OwnSignIn::Missing,
+                offer: offer(models()),
+            },
+        ),
+        (
+            Provider::Codex,
+            Launcher::Unavailable(String::from(UNAVAILABLE)),
+        ),
+    ]);
     serve(endpoint().await?, launchers, data).await
 }
 
 fn with_claude(claude: Availability) -> Providers {
-    Providers {
-        claude,
-        codex: Availability::Unavailable {
-            reason: String::from(UNAVAILABLE),
-        },
-    }
+    Providers(BTreeMap::from([
+        (Provider::Claude, claude),
+        (
+            Provider::Codex,
+            Availability::Unavailable {
+                reason: String::from(UNAVAILABLE),
+            },
+        ),
+    ]))
 }
 
 fn gateway(models: Models) -> Availability {
@@ -2390,12 +2430,15 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
 }
 
 fn with_codex(codex: Availability) -> Providers {
-    Providers {
-        claude: Availability::Unavailable {
-            reason: String::from(UNAVAILABLE),
-        },
-        codex,
-    }
+    Providers(BTreeMap::from([
+        (
+            Provider::Claude,
+            Availability::Unavailable {
+                reason: String::from(UNAVAILABLE),
+            },
+        ),
+        (Provider::Codex, codex),
+    ]))
 }
 
 /// How Codex signs in and the models it offers, by id, with the default
@@ -2404,18 +2447,20 @@ fn codex_offer(
     result: CommandResult,
 ) -> Option<(Auth, Option<String>, Vec<String>)> {
     match result {
-        CommandResult::Providers(Providers {
-            codex: Availability::Available { auth, models },
-            ..
-        }) => Some((
-            auth,
-            models.default.map(|model| model.0),
-            models
-                .choices
-                .into_iter()
-                .map(|choice| choice.id.0)
-                .collect(),
-        )),
+        CommandResult::Providers(Providers(mut providers)) => {
+            match providers.remove(&Provider::Codex) {
+                Some(Availability::Available { auth, models }) => Some((
+                    auth,
+                    models.default.map(|model| model.0),
+                    models
+                        .choices
+                        .into_iter()
+                        .map(|choice| choice.id.0)
+                        .collect(),
+                )),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -2471,15 +2516,20 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         cwd: server.clone(),
         stdout_log: None,
     });
-    let launchers = Launchers {
-        claude: Launcher::Unavailable(String::from(UNAVAILABLE)),
-        codex: Launcher::Ready {
-            start: codex_cli::starter(hub),
-            own: OwnSignIn::Missing,
-            models: models(),
-            chosen: None,
-        },
-    };
+    let launchers = Launchers::from([
+        (
+            Provider::Claude,
+            Launcher::Unavailable(String::from(UNAVAILABLE)),
+        ),
+        (
+            Provider::Codex,
+            Launcher::Ready {
+                start: codex_cli::starter(hub),
+                own: OwnSignIn::Missing,
+                offer: offer(models()),
+            },
+        ),
+    ]);
     let fx = serve(endpoint().await?, launchers, &data).await?;
     let (link, mut updates, welcomed) = live(&fx).await?;
     assert_eq!(welcomed, Some(with_codex(no_credential())));
@@ -3605,8 +3655,7 @@ fn refresh_claude(home: Home, data: &Path) -> Launcher {
             probe: data.join("probe"),
         }),
         own: OwnSignIn::Unmanaged,
-        models: models(),
-        chosen: None,
+        offer: offer(models()),
     }
 }
 
@@ -3702,10 +3751,12 @@ async fn assert_failed_refresh_then_clear(
     )
     .await?;
     let reason = match failed {
-        CommandResult::Providers(Providers {
-            claude: Availability::Unavailable { reason },
-            ..
-        }) => Some(reason),
+        CommandResult::Providers(Providers(mut providers)) => {
+            match providers.remove(&Provider::Claude) {
+                Some(Availability::Unavailable { reason }) => Some(reason),
+                _ => None,
+            }
+        }
         _ => None,
     }
     .ok_or("expected a value")?;
@@ -3734,10 +3785,16 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let data = data_dir("refresh-claude")?;
     let source = scratch("refresh-claude", "claude-approve.jsonl")?;
     let probe = held_claude_probe(&data)?;
-    let launchers = Launchers {
-        claude: refresh_claude(daemon::homes(&data)?.claude, &data),
-        codex: Launcher::Unavailable(String::from(UNAVAILABLE)),
-    };
+    let launchers = Launchers::from([
+        (
+            Provider::Claude,
+            refresh_claude(daemon::homes(&data)?.claude, &data),
+        ),
+        (
+            Provider::Codex,
+            Launcher::Unavailable(String::from(UNAVAILABLE)),
+        ),
+    ]);
     let fx = refresh_host(&data, &source, launchers.clone()).await?;
     let desktop = endpoint().await?;
     let conn = authenticated(&desktop, &fx.target).await?;
@@ -3835,7 +3892,9 @@ async fn assert_clearing_codex_closes_its_session(
     )
     .await?;
     let unavailable = match cleared {
-        CommandResult::Providers(providers) => Some(providers.codex),
+        CommandResult::Providers(providers) => {
+            providers.of(Provider::Codex).cloned()
+        }
         _ => None,
     };
     assert_eq!(unavailable, Some(no_credential()));
@@ -3868,15 +3927,17 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let fx = refresh_host(
         &data,
         &source,
-        Launchers {
-            claude: refresh_claude(homes.claude, &data),
-            codex: Launcher::Ready {
-                start: codex_cli::starter(hub),
-                own: OwnSignIn::Missing,
-                models: models(),
-                chosen: None,
-            },
-        },
+        Launchers::from([
+            (Provider::Claude, refresh_claude(homes.claude, &data)),
+            (
+                Provider::Codex,
+                Launcher::Ready {
+                    start: codex_cli::starter(hub),
+                    own: OwnSignIn::Missing,
+                    offer: offer(models()),
+                },
+            ),
+        ]),
     )
     .await?;
     let desktop = endpoint().await?;
@@ -3887,10 +3948,10 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let (phone, mut updates, offered) =
         tokio::time::timeout(RESPONSIVE, live(&fx)).await??;
     assert_eq!(
-        offered.ok_or("expected a value")?.codex,
-        Availability::Unavailable {
+        offered.ok_or("expected a value")?.of(Provider::Codex),
+        Some(&Availability::Unavailable {
             reason: String::from(REFRESHING)
-        }
+        })
     );
     assert_eq!(
         continue_refresh_session(&phone).await?,

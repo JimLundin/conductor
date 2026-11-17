@@ -631,8 +631,8 @@ impl LogActor {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Auth, Availability, Epoch, EventKind, HostSeq, Models, Providers,
-        SessionId, Welcome,
+        Auth, Availability, Epoch, EventKind, HostSeq, Models, Provider,
+        Providers, SessionId, Welcome,
     };
 
     use super::Log;
@@ -650,15 +650,24 @@ mod tests {
     }
 
     fn providers() -> Providers {
-        Providers {
-            claude: Availability::Available {
-                auth: Auth::SignedIn,
-                models: Models::none(),
-            },
-            codex: Availability::Unavailable {
-                reason: String::from("no codex"),
-            },
-        }
+        Providers(
+            [
+                (
+                    Provider::Claude,
+                    Availability::Available {
+                        auth: Auth::SignedIn,
+                        models: Models::none(),
+                    },
+                ),
+                (
+                    Provider::Codex,
+                    Availability::Unavailable {
+                        reason: String::from("no codex"),
+                    },
+                ),
+            ]
+            .into(),
+        )
     }
 
     #[tokio::test]

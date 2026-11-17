@@ -274,7 +274,7 @@ enum Done {
 }
 
 enum Happening {
-    Done(Done),
+    Done(Box<Done>),
     Request(Option<Request>),
 }
 
@@ -323,11 +323,11 @@ impl Link {
     async fn next(&mut self, takes_requests: bool) -> Happening {
         if takes_requests {
             tokio::select! {
-                done = &mut self.pending => Happening::Done(done),
+                done = &mut self.pending => Happening::Done(Box::new(done)),
                 request = self.requests.recv() => Happening::Request(request),
             }
         } else {
-            Happening::Done((&mut self.pending).await)
+            Happening::Done(Box::new((&mut self.pending).await))
         }
     }
 
@@ -338,7 +338,7 @@ impl Link {
     ) -> Result<Core, Stopped> {
         match happening {
             Happening::Done(done) => {
-                let input = self.absorb(done);
+                let input = self.absorb(*done);
                 self.step(core, input).await
             }
             Happening::Request(Some(request)) => {

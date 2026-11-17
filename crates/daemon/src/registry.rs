@@ -1,104 +1,44 @@
-//! The registry: the one place a `StartSession` and a `Continue` are
-//! checked and a session is found by its id.
+//! The registry's actor: the one place a `StartSession` and a `Continue`
+//! are checked and a session is found by its id.
+//!
+//! Its decisions are `host::registry`'s; the actor keeps the store, the
+//! sessions' tasks and the providers' refreshes, and performs what the
+//! registry decides.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::path::Path;
 
 use agents::runtime::Command;
-use n0_future::MaybeFuture;
-use n0_future::boxed::BoxFuture;
+use host::registry::{Job, Launch, Listing, Refreshed};
+use host::restore::{Created, Interrupted, Recovery, events_of};
 use proto::{
-    Auth, Availability, ClientName, CloseReason, CodexCredential,
-    CommandResult, Credential, Credentials, Effort, Event, EventKind, HostPath,
-    ModelId, Models, Provider, Providers, Rejection, SessionId, TurnOutcome,
+    Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
+    Credentials, Effort, Event, EventKind, HistoryAnchor, HostPath, ModelId,
+    Models, Provider, Providers, Rejection, RequestId, Resolution, SessionId,
+    TurnOutcome, UndoAvailability, Workspace,
 };
 use runtime::{Runtime, Starter};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
 
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use host::session::{Choice, choose};
-
 use crate::session::Session;
+use crate::workspace::GitError;
 
-/// How the host runs each provider. Built once in `main`.
-#[derive(Debug, Clone)]
-pub struct Launchers {
-    pub claude: Launcher,
-    pub codex: Launcher,
-}
+pub use host::registry::{Offer, OwnSignIn};
 
-#[derive(Debug, Clone)]
-pub enum Launcher {
-    /// The CLI runs, `start` starts its agents, and it signs in as `own`
-    /// says when the host stores no credential for it. `models` is what it
-    /// listed when the host started; the registry lists them again when the
-    /// credential changes. `chosen` (`--claude-model`, `--codex-model`)
-    /// comes before the CLI's own default.
-    Ready {
-        start: Starter,
-        own: OwnSignIn,
-        models: Models,
-        chosen: Option<ModelId>,
-    },
-    /// The host can't run this provider's sessions, for this reason.
-    Unavailable(String),
-}
+/// How the host runs a provider.
+pub type Launcher = host::registry::Launcher<Starter>;
 
-impl Launcher {
-    /// An agent's runtime: one whose commands all fail when the provider
-    /// is unavailable.
-    fn runtime(&self) -> Runtime {
-        match self {
-            Self::Ready { start, .. } => start.start(),
-            Self::Unavailable(reason) => Runtime::refusing(reason.clone()),
-        }
-    }
-}
+/// How the host runs each provider it knows of. Built once in `main`.
+pub type Launchers = BTreeMap<Provider, Launcher>;
 
-/// What a CLI signs in with when the host stores no credential for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnSignIn {
-    /// The private home is signed in (`conductord login`).
-    SignedIn,
-    /// A CLI given on the command line, signed in however it is.
-    Unmanaged,
-    /// Nothing: the provider is unavailable until it gets a credential.
-    Missing,
-}
-
-impl OwnSignIn {
-    fn auth(self) -> Result<Auth, String> {
-        match self {
-            Self::SignedIn => Ok(Auth::SignedIn),
-            Self::Unmanaged => Ok(Auth::Unmanaged),
-            Self::Missing => Err(String::from("no credential configured")),
-        }
-    }
-}
-
-impl Launchers {
-    const fn of(&self, provider: Provider) -> &Launcher {
-        match provider {
-            Provider::Claude => &self.claude,
-            Provider::Codex => &self.codex,
-        }
-    }
-
-    fn with(self, provider: Provider, launcher: Launcher) -> Self {
-        match provider {
-            Provider::Claude => Self {
-                claude: launcher,
-                ..self
-            },
-            Provider::Codex => Self {
-                codex: launcher,
-                ..self
-            },
-        }
-    }
-}
+type Reply = oneshot::Sender<CommandResult>;
+type Core = host::registry::Registry<Starter, Session, Reply>;
+type Effect = host::registry::Effect<Starter, Reply>;
 
 #[derive(Debug, Clone)]
 pub struct Registry {
@@ -114,7 +54,7 @@ enum RegistryMsg {
         model: Option<ModelId>,
         effort: Option<Effort>,
         by: ClientName,
-        reply: oneshot::Sender<CommandResult>,
+        reply: Reply,
     },
     Continue {
         session: SessionId,
@@ -129,158 +69,19 @@ enum RegistryMsg {
     },
     SetCredential {
         credential: Credential,
-        reply: oneshot::Sender<CommandResult>,
+        reply: Reply,
     },
     ClearCredential {
         provider: Provider,
-        reply: oneshot::Sender<CommandResult>,
+        reply: Reply,
     },
-}
-
-enum RecoverTurn {
-    Running,
-    Idle,
-}
-enum RecoverAgent {
-    Running,
-    Closed,
 }
 
 struct RegistryActor {
     log: Log,
-    launchers: Launchers,
     store: Store,
-    stored: Stored,
-    sessions: BTreeMap<SessionId, (Provider, Session)>,
-    claude_refresh: ProviderRefresh,
-    codex_refresh: ProviderRefresh,
-}
-
-#[derive(Clone)]
-struct RefreshJob {
-    id: ulid::Ulid,
-    provider: Provider,
-    launcher: Launcher,
-    credentials: Credentials,
-}
-
-struct Refreshed {
-    id: ulid::Ulid,
-    provider: Provider,
-    models: Result<Models, String>,
-}
-
-enum RefreshState {
-    Idle,
-    Pending {
-        latest: Box<RefreshJob>,
-        replies: Vec<oneshot::Sender<CommandResult>>,
-    },
-    Failed(String),
-}
-
-struct ProviderRefresh {
-    state: RefreshState,
-    future: MaybeFuture<BoxFuture<Refreshed>>,
-}
-
-struct RefreshCompletion {
-    models: Result<Models, String>,
-    replies: Vec<oneshot::Sender<CommandResult>>,
-}
-
-impl ProviderRefresh {
-    fn new() -> Self {
-        Self {
-            state: RefreshState::Idle,
-            future: MaybeFuture::None,
-        }
-    }
-
-    fn schedule(
-        &mut self,
-        latest: RefreshJob,
-        reply: oneshot::Sender<CommandResult>,
-    ) {
-        let replies =
-            match std::mem::replace(&mut self.state, RefreshState::Idle) {
-                RefreshState::Pending { mut replies, .. } => {
-                    replies.push(reply);
-                    replies
-                }
-                RefreshState::Idle | RefreshState::Failed(_) => {
-                    self.future =
-                        MaybeFuture::Some(Box::pin(refresh(latest.clone())));
-                    Vec::from([reply])
-                }
-            };
-        self.state = RefreshState::Pending {
-            latest: Box::new(latest),
-            replies,
-        };
-    }
-
-    fn finish(&mut self, result: Refreshed) -> Option<RefreshCompletion> {
-        match std::mem::replace(&mut self.state, RefreshState::Idle) {
-            RefreshState::Pending { latest, replies }
-                if latest.id == result.id =>
-            {
-                self.state = match &result.models {
-                    Ok(_) => RefreshState::Idle,
-                    Err(reason) => RefreshState::Failed(reason.clone()),
-                };
-                Some(RefreshCompletion {
-                    models: result.models,
-                    replies,
-                })
-            }
-            RefreshState::Pending { latest, replies } => {
-                self.future = MaybeFuture::Some(Box::pin(refresh(
-                    latest.as_ref().clone(),
-                )));
-                self.state = RefreshState::Pending { latest, replies };
-                None
-            }
-            state @ (RefreshState::Idle | RefreshState::Failed(_)) => {
-                self.state = state;
-                None
-            }
-        }
-    }
-
-    fn ready(&self) -> Result<(), String> {
-        match &self.state {
-            RefreshState::Idle => Ok(()),
-            RefreshState::Pending { .. } => {
-                Err(String::from("refreshing provider models"))
-            }
-            RefreshState::Failed(reason) => Err(reason.clone()),
-        }
-    }
-}
-
-async fn refresh(job: RefreshJob) -> Refreshed {
-    Refreshed {
-        id: job.id,
-        provider: job.provider,
-        models: refresh_models(job).await,
-    }
-}
-
-/// The provider's agents take the credentials, and then it lists what it
-/// offers with them.
-async fn refresh_models(job: RefreshJob) -> Result<Models, String> {
-    let mut runtime = job.launcher.runtime();
-    runtime
-        .ask(Command::Credentials(job.credentials.clone()))
-        .await
-        .configured()?;
-    configured(
-        &job.launcher,
-        job.provider,
-        &Stored::Opened(job.credentials),
-    )?;
-    runtime.ask(Command::Models).await.models()
+    core: Core,
+    refreshes: JoinSet<Refreshed>,
 }
 
 impl Registry {
@@ -295,12 +96,9 @@ impl Registry {
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
-            launchers,
             store,
-            stored,
-            sessions: BTreeMap::new(),
-            claude_refresh: ProviderRefresh::new(),
-            codex_refresh: ProviderRefresh::new(),
+            core: Core::new(launchers, stored),
+            refreshes: JoinSet::new(),
         };
         let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
@@ -371,8 +169,8 @@ impl Registry {
         self.ask(|reply| RegistryMsg::Providers { reply }).await
     }
 
-    /// Stores the credential and answers with the providers it changes. A
-    /// new Codex credential restarts the shared app-server.
+    /// Stores the credential and answers with the providers it changes,
+    /// once the provider has refreshed.
     ///
     /// # Errors
     ///
@@ -420,8 +218,7 @@ impl RegistryActor {
         loop {
             let msg = tokio::select! {
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
-                result = &mut self.claude_refresh.future => RegistryMsg::Refreshed(result),
-                result = &mut self.codex_refresh.future => RegistryMsg::Refreshed(result),
+                Some(Ok(result)) = self.refreshes.join_next() => RegistryMsg::Refreshed(result),
             };
             self.on(msg).await?;
         }
@@ -430,7 +227,10 @@ impl RegistryActor {
     async fn on(&mut self, msg: RegistryMsg) -> Result<(), Stopped> {
         match msg {
             RegistryMsg::Restore => self.restore().await?,
-            RegistryMsg::Refreshed(result) => self.refreshed(result),
+            RegistryMsg::Refreshed(result) => {
+                let effects = self.core.refreshed(result);
+                self.perform(effects);
+            }
             RegistryMsg::Start {
                 provider,
                 directory,
@@ -445,275 +245,129 @@ impl RegistryActor {
                 let _ = reply.send(result);
             }
             RegistryMsg::Continue { session, reply } => {
-                let relaunch = match self.sessions.get(&session) {
-                    None => Err(Rejection::UnknownSession),
-                    Some((known, handle)) => {
-                        let provider = *known;
-                        self.ready(provider)
-                            .map(|_| (handle.clone(), self.models(provider)))
-                            .map_err(|reason| Rejection::ProviderUnavailable {
-                                reason,
-                            })
-                    }
-                };
-                let _ = reply.send(relaunch);
+                let _ = reply.send(self.core.relaunch(session));
             }
             RegistryMsg::Find { session, reply } => {
-                let found = self
-                    .sessions
-                    .get(&session)
-                    .map(|(_, handle)| handle.clone());
-                let _ = reply.send(found);
+                let _ = reply.send(self.core.find(session));
             }
             RegistryMsg::Providers { reply } => {
-                let _ = reply.send(self.providers());
+                let _ = reply.send(self.core.providers());
             }
             RegistryMsg::SetCredential { credential, reply } => {
-                let provider = credential.provider();
-                match (credential.check(), &self.stored) {
-                    (Err(reason), _) => {
-                        let _ = reply.send(CommandResult::Rejected(
-                            Rejection::InvalidCredential { reason },
-                        ));
-                    }
-                    // Saving now would overwrite the other provider's.
-                    (Ok(()), Stored::Unreadable(reason)) => {
-                        let _ = reply.send(CommandResult::Rejected(
-                            Rejection::CredentialNotSaved {
-                                reason: reason.clone(),
-                            },
-                        ));
-                    }
-                    (Ok(()), Stored::Opened(credentials)) => {
-                        let next = credentials.clone().set(credential);
-                        self.store(provider, next, reply);
-                    }
-                }
+                let effects = self.core.set_credential(credential, reply);
+                self.perform(effects);
             }
             RegistryMsg::ClearCredential { provider, reply } => {
-                match self.readable() {
-                    Ok(credentials) => {
-                        self.store(
-                            provider,
-                            credentials.clear(provider),
-                            reply,
-                        );
-                    }
-                    Err(reason) => {
-                        let _ = reply.send(CommandResult::Rejected(
-                            Rejection::CredentialNotSaved { reason },
-                        ));
-                    }
-                }
+                let effects = self.core.clear_credential(provider, reply);
+                self.perform(effects);
             }
         }
         Ok(())
+    }
+
+    /// Performs the effects in order, each effect's own effects before the
+    /// next.
+    fn perform(&mut self, mut effects: Vec<Effect>) {
+        effects.reverse();
+        while let Some(effect) = effects.pop() {
+            let more = self.effect(effect);
+            effects.extend(more.into_iter().rev());
+        }
+    }
+
+    fn effect(&mut self, effect: Effect) -> Vec<Effect> {
+        match effect {
+            Effect::Reply(reply, result) => {
+                let _ = reply.send(result);
+                Vec::new()
+            }
+            Effect::MoveAside { provider, reply } => {
+                let moved = self
+                    .store
+                    .move_aside()
+                    .map(|aside| {
+                        tracing::warn!(aside = %aside.display(), "moved the unreadable credential store aside");
+                    })
+                    .map_err(|err| format!("{err:#}"));
+                self.core.moved_aside(provider, reply, moved)
+            }
+            Effect::Save {
+                provider,
+                credentials,
+                reply,
+            } => {
+                let saved = self
+                    .store
+                    .save(&credentials)
+                    .map_err(|err| format!("{err:#}"));
+                self.core.saved(provider, credentials, reply, saved)
+            }
+            Effect::Refresh(job) => {
+                self.refreshes.spawn(refresh(job));
+                Vec::new()
+            }
+            Effect::Log(note) => {
+                runtime::log(&note);
+                Vec::new()
+            }
+        }
     }
 
     async fn restore(&mut self) -> Result<(), Stopped> {
         let history = self.log.history().await?;
-        let created = history
-            .iter()
-            .filter(|event| {
-                matches!(event.kind, EventKind::SessionCreated { .. })
-            })
-            .cloned()
-            .collect::<Vec<Event>>();
-        for event in created {
-            self.restore_session(event, &history).await?;
+        for created in host::restore::created(&history) {
+            self.restore_session(created, &history).await?;
         }
         Ok(())
     }
 
+    /// Recovers the session from the restart, then keeps it, its agent
+    /// not running.
     async fn restore_session(
         &mut self,
-        event: Event,
+        created: Created,
         history: &[Event],
     ) -> Result<(), Stopped> {
-        if let EventKind::SessionCreated {
+        let Created {
+            session: id,
             provider,
             directory,
-            model,
-            effort,
-            ..
-        } = event.kind
-        {
-            let id = event.session;
-            let events = history
-                .iter()
-                .filter(|event| event.session == id)
-                .cloned()
-                .collect::<Vec<Event>>();
-            let choice = replay_choice(Choice { model, effort }, &events);
-            let conversation = match events.iter().find(|event| {
-                matches!(event.kind, EventKind::UserMessage { .. })
-            }) {
-                Some(_) => self.log.saved_conversation(id).await?,
-                None => None,
-            };
-            withdraw_open_requests(&self.log, id, &events).await?;
-            interrupt_running_turn(&self.log, id, &events).await?;
-            close_running_agent(&self.log, id, &events).await?;
-            let recovered = self
-                .log
-                .history()
-                .await?
-                .into_iter()
-                .filter(|event| event.session == id)
-                .collect::<Vec<Event>>();
-            let runtime = self.launchers.of(provider).runtime();
-            let session = Session::restore(
-                id,
-                directory,
-                choice,
-                (runtime, conversation),
-                &recovered,
-                self.log.clone(),
-            );
-            self.sessions.insert(id, (provider, session));
-        }
+            choice,
+        } = created;
+        let recovery = Recovery::of(choice, &events_of(id, history));
+        let conversation = self.conversation(id, recovery.talked).await?;
+        withdraw(&self.log, id, recovery.withdrawn).await?;
+        interrupt(&self.log, id, recovery.interrupted, recovery.checkpoint)
+            .await?;
+        close(&self.log, id, recovery.closed).await?;
+        let recovered = events_of(id, &self.log.history().await?);
+        let runtime = self
+            .core
+            .launcher(provider)
+            .map_or_else(Runtime::refusing, |start| start.start());
+        let session = Session::restore(
+            id,
+            directory,
+            recovery.choice,
+            (runtime, conversation),
+            &recovered,
+            self.log.clone(),
+        );
+        self.core.admit(id, provider, session);
         Ok(())
     }
 
-    /// The stored credentials. A store that doesn't open is moved aside
-    /// first, which is how a Clear recovers it from the phone.
-    fn readable(&mut self) -> Result<Credentials, String> {
-        match &self.stored {
-            Stored::Opened(credentials) => Ok(credentials.clone()),
-            Stored::Unreadable(_) => {
-                let aside = self
-                    .store
-                    .move_aside()
-                    .map_err(|err| format!("{err:#}"))?;
-                tracing::warn!(aside = %aside.display(), "moved the unreadable credential store aside");
-                self.stored = Stored::Opened(Credentials::none());
-                Ok(Credentials::none())
-            }
-        }
-    }
-
-    fn store(
-        &mut self,
-        provider: Provider,
-        next: Credentials,
-        reply: oneshot::Sender<CommandResult>,
-    ) {
-        if let Err(err) = self.store.save(&next) {
-            let _ = reply.send(CommandResult::Rejected(
-                Rejection::CredentialNotSaved {
-                    reason: format!("{err:#}"),
-                },
-            ));
+    /// The conversation the host saved for a session a turn started in.
+    async fn conversation(
+        &self,
+        id: SessionId,
+        talked: bool,
+    ) -> Result<Option<String>, Stopped> {
+        if talked {
+            self.log.saved_conversation(id).await
         } else {
-            tracing::info!(?provider, "stored a credential change");
-            let job = RefreshJob {
-                id: ulid::Ulid::new(),
-                provider,
-                launcher: self.launchers.of(provider).clone(),
-                credentials: next.clone(),
-            };
-            self.stored = Stored::Opened(next);
-            match provider {
-                Provider::Claude => {
-                    self.claude_refresh.schedule(job, reply);
-                }
-                Provider::Codex => self.codex_refresh.schedule(job, reply),
-            }
+            Ok(None)
         }
-    }
-
-    fn refreshed(&mut self, result: Refreshed) {
-        let provider = result.provider;
-        let completed = match provider {
-            Provider::Claude => self.claude_refresh.finish(result),
-            Provider::Codex => self.codex_refresh.finish(result),
-        };
-        if let Some(RefreshCompletion {
-            models: listed,
-            replies,
-        }) = completed
-        {
-            match (listed, self.launchers.of(provider)) {
-                (
-                    Ok(models),
-                    Launcher::Ready {
-                        start, own, chosen, ..
-                    },
-                ) => {
-                    let ready = Launcher::Ready {
-                        models,
-                        start: start.clone(),
-                        own: own.to_owned(),
-                        chosen: chosen.clone(),
-                    };
-                    self.launchers =
-                        self.launchers.clone().with(provider, ready);
-                }
-                (Err(reason), _) => {
-                    tracing::warn!(%reason, ?provider, "provider refresh failed");
-                }
-                (Ok(_), Launcher::Unavailable(_)) => {}
-            }
-            let result = CommandResult::Providers(self.providers());
-            for reply in replies {
-                let _ = reply.send(result.clone());
-            }
-        }
-    }
-
-    fn providers(&self) -> Providers {
-        Providers {
-            claude: self.availability(Provider::Claude),
-            codex: self.availability(Provider::Codex),
-        }
-    }
-
-    fn availability(&self, provider: Provider) -> Availability {
-        match self.ready(provider) {
-            Ok((_, auth)) => Availability::Available {
-                auth,
-                models: self.models(provider),
-            },
-            Err(reason) => Availability::Unavailable { reason },
-        }
-    }
-
-    /// What the CLI lists with the current credential. The default is the
-    /// model a Codex provider credential names, as its gateway serves that
-    /// one, then `chosen`, then the CLI's own.
-    fn models(&self, provider: Provider) -> Models {
-        let (listed, chosen) = match self.launchers.of(provider) {
-            Launcher::Ready { models, chosen, .. } => {
-                (models.clone(), chosen.clone())
-            }
-            Launcher::Unavailable(_) => (Models::none(), None),
-        };
-        let credential = match (provider, &self.stored) {
-            (
-                Provider::Codex,
-                Stored::Opened(Credentials {
-                    codex: Some(CodexCredential::Provider { model, .. }),
-                    ..
-                }),
-            ) => Some(ModelId(model.clone())),
-            (_, _) => None,
-        };
-        Models {
-            default: credential.or(chosen).or(listed.default),
-            ..listed
-        }
-    }
-
-    /// How `provider`'s agents start and how it signs in, or why it can't.
-    /// A stored credential comes first, then the CLI's own sign-in. A store
-    /// that doesn't open may hold a credential, so it never falls back to
-    /// the sign-in.
-    fn ready(&self, provider: Provider) -> Result<(Starter, Auth), String> {
-        match provider {
-            Provider::Claude => self.claude_refresh.ready()?,
-            Provider::Codex => self.codex_refresh.ready()?,
-        }
-        configured(self.launchers.of(provider), provider, &self.stored)
     }
 
     async fn start(
@@ -724,26 +378,32 @@ impl RegistryActor {
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         // `read_dir` fails for a missing path and for a file alike.
-        let ready = self.ready(provider).map(|(start, _)| start);
+        let exists = std::fs::read_dir(&directory.0).is_ok();
         let (model, effort) = asked;
-        match (
-            std::fs::read_dir(&directory.0),
-            ready,
-            choose(&self.models(provider), model, effort),
-        ) {
-            (Err(_), _, _) => {
-                Ok(CommandResult::Rejected(Rejection::NoSuchDirectory))
-            }
-            (Ok(_), Err(reason), _) => {
-                Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
-                    reason,
-                }))
-            }
-            (Ok(_), Ok(_), Err(reason)) => {
-                Ok(CommandResult::Rejected(Rejection::NotOffered { reason }))
-            }
-            (Ok(_), Ok(start), Ok(choice)) => {
-                let id = SessionId(u128::from(ulid::Ulid::new()));
+        match self.core.start(provider, exists, model, effort) {
+            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+            Ok(launch) => self.create(provider, directory, launch, by).await,
+        }
+    }
+
+    /// Makes the session's workspace and first checkpoint, logs them, and
+    /// starts the session.
+    async fn create(
+        &mut self,
+        provider: Provider,
+        directory: HostPath,
+        launch: Launch<Starter>,
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        match prepare(self.store.dir(), &directory, id).await {
+            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+            Ok((workspace, commit)) => {
+                let Launch {
+                    start,
+                    choice,
+                    offered,
+                } = launch;
                 let created = EventKind::SessionCreated {
                     provider,
                     directory: directory.clone(),
@@ -751,258 +411,165 @@ impl RegistryActor {
                     model: choice.model.clone(),
                     effort: choice.effort,
                 };
-                match crate::workspace::create(self.store.dir(), &directory, id)
-                    .await
-                {
-                    Err(crate::workspace::GitError::NotRepository) => {
-                        Ok(CommandResult::Rejected(Rejection::NotGitRepository))
-                    }
-                    Err(err) => Ok(CommandResult::Rejected(
-                        Rejection::WorkspaceFailure {
-                            reason: err.to_string(),
-                        },
-                    )),
-                    Ok(workspace) => match crate::workspace::snapshot(
-                        &workspace,
-                        id,
-                        proto::CheckpointId(0),
-                        None,
-                    )
-                    .await
-                    {
-                        Err(err) => Ok(CommandResult::Rejected(
-                            Rejection::WorkspaceFailure {
-                                reason: err.to_string(),
-                            },
-                        )),
-                        Ok(commit) => {
-                            self.log.append(id, created).await?;
-                            let workspace_event = self
-                                .log
-                                .record(
-                                    id,
-                                    EventKind::WorkspaceCreated { workspace },
-                                )
-                                .await?;
-                            let checkpoint_event = self
-                                .log
-                                .record(
-                                    id,
-                                    EventKind::CheckpointCreated {
-                                        checkpoint: proto::Checkpoint {
-                                            id: proto::CheckpointId(0),
-                                            parent: None,
-                                            turn_start: None,
-                                            commit,
-                                            history: proto::HistoryAnchor::Fresh,
-                                            undo: proto::UndoAvailability::Unavailable {
-                                                reason: String::from(
-                                                    "initial checkpoint has no turn",
-                                                ),
-                                            },
-                                        },
-                                    },
-                                )
-                                .await?;
-                            let offered = self.models(provider);
-                            let session = Session::spawn(
-                                id,
-                                directory,
-                                choice,
-                                (start.start(), offered),
-                                self.log.clone(),
-                                &[workspace_event, checkpoint_event],
-                            );
-                            self.sessions.insert(id, (provider, session));
-                            Ok(CommandResult::Started { session: id })
-                        }
-                    },
-                }
+                self.log.append(id, created).await?;
+                let workspace_event = self
+                    .log
+                    .record(id, EventKind::WorkspaceCreated { workspace })
+                    .await?;
+                let checkpoint = initial_checkpoint(commit);
+                let checkpoint_event = self
+                    .log
+                    .record(id, EventKind::CheckpointCreated { checkpoint })
+                    .await?;
+                let session = Session::spawn(
+                    id,
+                    directory,
+                    choice,
+                    (start.start(), offered),
+                    self.log.clone(),
+                    &[workspace_event, checkpoint_event],
+                );
+                self.core.admit(id, provider, session);
+                Ok(CommandResult::Started { session: id })
             }
         }
     }
 }
 
-async fn withdraw_open_requests(
-    log: &Log,
-    id: SessionId,
-    events: &[Event],
-) -> Result<(), Stopped> {
-    let open = events
-        .iter()
-        .filter_map(|event| match &event.kind {
-            EventKind::RequestOpened { request, .. }
-            | EventKind::QuestionAsked { request, .. } => {
-                Some(request.to_owned())
-            }
-            _ => None,
-        })
-        .filter(|request| {
-            !events
-                .iter()
-                .filter_map(|event| match &event.kind {
-                    EventKind::RequestResolved { request, .. } => Some(request),
-                    _ => None,
-                })
-                .any(|resolved| resolved == request)
-        })
-        .collect::<Vec<proto::RequestId>>();
-    for request in open {
-        log.append(
-            id,
-            EventKind::RequestResolved {
-                request,
-                resolution: proto::Resolution::Withdrawn,
-            },
-        )
-        .await?;
+/// The provider's agents take the credentials, and then it lists what it
+/// offers with them, if it then signs in.
+async fn refresh(job: Job<Starter>) -> Refreshed {
+    Refreshed {
+        id: job.id,
+        provider: job.provider,
+        listing: listing(job.start, job.credentials, job.signs_in).await,
     }
-    Ok(())
 }
 
-async fn interrupt_running_turn(
-    log: &Log,
-    id: SessionId,
-    events: &[Event],
-) -> Result<(), Stopped> {
-    let running =
-        events.iter().rev().find_map(|event| match &event.kind {
-            EventKind::UserMessage { .. }
-            | EventKind::NativeTurnStarted { .. } => Some(RecoverTurn::Running),
-            EventKind::TurnCompleted { .. }
-            | EventKind::SessionClosed { .. } => Some(RecoverTurn::Idle),
-            _ => None,
-        });
-    if matches!(running, Some(RecoverTurn::Running)) {
-        recover_checkpoint(log, id, events).await?;
-        log.append(
-            id,
-            EventKind::TurnCompleted {
-                outcome: TurnOutcome::Interrupted,
-            },
-        )
-        .await?;
-    }
-    Ok(())
+async fn listing(
+    start: Starter,
+    credentials: Credentials,
+    signs_in: Result<(), String>,
+) -> Result<Listing, String> {
+    let mut runtime = start.start();
+    let named = runtime
+        .ask(Command::Credentials(credentials))
+        .await
+        .configured()?;
+    signs_in?;
+    let models = runtime.ask(Command::Models).await.models()?;
+    Ok(Listing { models, named })
 }
 
-async fn close_running_agent(
-    log: &Log,
+/// The session's workspace and the commit of its first checkpoint.
+async fn prepare(
+    data_dir: &Path,
+    directory: &HostPath,
     id: SessionId,
-    events: &[Event],
-) -> Result<(), Stopped> {
-    let closed = events.iter().rev().find_map(|event| match &event.kind {
-        EventKind::SessionClosed { .. } => Some(RecoverAgent::Closed),
-        EventKind::SessionCreated { .. } | EventKind::SessionReady => {
-            Some(RecoverAgent::Running)
-        }
-        _ => None,
-    });
-    if matches!(closed, Some(RecoverAgent::Running)) {
-        log.append(
-            id,
-            EventKind::SessionClosed {
-                reason: CloseReason::Stopped {
-                    reason: String::from("the host restarted"),
-                },
-            },
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn recover_checkpoint(
-    log: &Log,
-    id: SessionId,
-    events: &[Event],
-) -> Result<(), Stopped> {
-    let book = host::checkpoints::Book::replay(events);
-    let started = book
-        .snapshot
-        .as_ref()
-        .map(|snapshot| (snapshot.history.clone(), snapshot.turn_start));
-    match (started, book.workspace.as_ref(), book.recovery.as_ref()) {
-        (Some((history, turn_start)), Some(workspace), None) => {
-            let next = book.highwater.next();
-            log.append(id, EventKind::CheckpointReserved { checkpoint: next })
-                .await?;
-            log.barrier().await?;
-            match crate::workspace::snapshot(
-                workspace,
-                id,
-                next,
-                book.last().map(|checkpoint| checkpoint.commit.as_str()),
-            )
+) -> Result<(Workspace, String), Rejection> {
+    let workspace = crate::workspace::create(data_dir, directory, id)
+        .await
+        .map_err(refused)?;
+    let commit =
+        crate::workspace::snapshot(&workspace, id, CheckpointId(0), None)
             .await
-            {
-                Ok(commit) => {
-                    let undo = book.availability(&history);
-                    log.append(
-                        id,
-                        EventKind::CheckpointCreated {
-                            checkpoint: proto::Checkpoint {
-                                id: next,
-                                parent: book
-                                    .last()
-                                    .map(|checkpoint| checkpoint.id),
-                                turn_start,
-                                commit,
-                                history,
-                                undo,
-                            },
-                        },
-                    )
-                    .await
-                }
-                Err(err) => {
-                    log.append(
-                        id,
-                        EventKind::Error {
-                            message: format!(
-                                "interrupted turn checkpoint failed: {err}"
-                            ),
-                        },
-                    )
-                    .await
-                }
-            }
-        }
-        _ => Ok(()),
+            .map_err(|err| Rejection::WorkspaceFailure {
+                reason: err.to_string(),
+            })?;
+    Ok((workspace, commit))
+}
+
+fn refused(err: GitError) -> Rejection {
+    match err {
+        GitError::NotRepository => Rejection::NotGitRepository,
+        GitError::Failed(reason) => Rejection::WorkspaceFailure { reason },
     }
 }
 
-fn replay_choice(created: Choice, events: &[Event]) -> Choice {
-    events
-        .iter()
-        .fold(created, |current, event| match &event.kind {
-            EventKind::ModelChanged { model, effort, .. } => Choice {
-                model: model.clone(),
-                effort: effort.to_owned(),
-            },
-            EventKind::EffortChanged { effort } => Choice {
-                effort: Some(effort.to_owned()),
-                ..current
-            },
-            _ => current,
-        })
+fn initial_checkpoint(commit: String) -> Checkpoint {
+    Checkpoint {
+        id: CheckpointId(0),
+        parent: None,
+        turn_start: None,
+        commit,
+        history: HistoryAnchor::Fresh,
+        undo: UndoAvailability::Unavailable {
+            reason: String::from("initial checkpoint has no turn"),
+        },
+    }
 }
 
-fn configured(
-    launcher: &Launcher,
-    provider: Provider,
-    stored: &Stored,
-) -> Result<(Starter, Auth), String> {
-    match (launcher, stored) {
-        (Launcher::Unavailable(reason), _)
-        | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => {
-            Err(reason.clone())
+async fn withdraw(
+    log: &Log,
+    id: SessionId,
+    open: Vec<RequestId>,
+) -> Result<(), Stopped> {
+    for request in open {
+        let withdrawn = EventKind::RequestResolved {
+            request,
+            resolution: Resolution::Withdrawn,
+        };
+        log.append(id, withdrawn).await?;
+    }
+    Ok(())
+}
+
+async fn interrupt(
+    log: &Log,
+    id: SessionId,
+    interrupted: bool,
+    turn: Option<Interrupted>,
+) -> Result<(), Stopped> {
+    if interrupted {
+        checkpoint(log, id, turn).await?;
+        let outcome = TurnOutcome::Interrupted;
+        log.append(id, EventKind::TurnCompleted { outcome }).await?;
+    }
+    Ok(())
+}
+
+async fn close(log: &Log, id: SessionId, closed: bool) -> Result<(), Stopped> {
+    if closed {
+        let reason = host::restore::restarted();
+        log.append(id, EventKind::SessionClosed { reason }).await?;
+    }
+    Ok(())
+}
+
+/// Snapshots an interrupted turn's files, when it has a workspace.
+async fn checkpoint(
+    log: &Log,
+    id: SessionId,
+    interrupted: Option<Interrupted>,
+) -> Result<(), Stopped> {
+    let Some(turn) = interrupted else {
+        return Ok(());
+    };
+    let reserved = turn.reserved;
+    log.append(
+        id,
+        EventKind::CheckpointReserved {
+            checkpoint: reserved,
+        },
+    )
+    .await?;
+    log.barrier().await?;
+    let snapshot = crate::workspace::snapshot(
+        &turn.workspace,
+        id,
+        reserved,
+        turn.base.as_deref(),
+    )
+    .await;
+    match snapshot {
+        Ok(commit) => {
+            let checkpoint = turn.checkpoint(commit);
+            log.append(id, EventKind::CheckpointCreated { checkpoint })
+                .await
         }
-        (Launcher::Ready { start, own, .. }, Stored::Opened(credentials)) => {
-            credentials
-                .auth(provider)
-                .map_or_else(|| own.auth(), Ok)
-                .map(|auth| (start.clone(), auth))
+        Err(err) => {
+            let message = format!("interrupted turn checkpoint failed: {err}");
+            log.append(id, EventKind::Error { message }).await
         }
     }
 }
@@ -1018,7 +585,7 @@ mod tests {
         ToolCallId, TurnOutcome,
     };
 
-    use super::{Launcher, Launchers, OwnSignIn, Registry};
+    use super::{Launcher, Launchers, Offer, OwnSignIn, Registry};
     use crate::credentials::Store;
     use crate::log::Log;
     use crate::session::Order;
@@ -1033,8 +600,11 @@ mod tests {
                 probe: directory.join("probe"),
             }),
             own: OwnSignIn::Unmanaged,
-            models: Models::none(),
-            chosen: None,
+            offer: Offer {
+                listed: Models::none(),
+                named: None,
+                chosen: None,
+            },
         }
     }
 
@@ -1076,10 +646,10 @@ mod tests {
         let (store, stored) = Store::open(&directory)?;
         let registry = Registry::spawn(
             second.clone(),
-            Launchers {
-                claude: launcher(&directory),
-                codex: Launcher::Unavailable(String::from("test")),
-            },
+            Launchers::from([
+                (Provider::Claude, launcher(&directory)),
+                (Provider::Codex, Launcher::Unavailable(String::from("test"))),
+            ]),
             store,
             stored,
         );
@@ -1152,14 +722,18 @@ mod tests {
             .conversation(id, String::from("restored-native-conversation"))
             .await?;
         first
-            .welcome(proto::Providers {
-                claude: proto::Availability::Unavailable {
-                    reason: String::from("test"),
-                },
-                codex: proto::Availability::Unavailable {
-                    reason: String::from("test"),
-                },
-            })
+            .welcome(proto::Providers(
+                Provider::ALL
+                    .map(|provider| {
+                        (
+                            provider,
+                            proto::Availability::Unavailable {
+                                reason: String::from("test"),
+                            },
+                        )
+                    })
+                    .into(),
+            ))
             .await
             .map(|welcome| welcome.epoch)
     }

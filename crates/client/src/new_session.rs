@@ -5,8 +5,6 @@ use proto::{
     Availability, CommandResult, Effort, ModelId, Models, Provider, Rejection,
 };
 
-pub const PROVIDERS: &[Provider] = &[Provider::Claude, Provider::Codex];
-
 #[must_use]
 pub fn label(provider: Provider) -> String {
     String::from(match provider {

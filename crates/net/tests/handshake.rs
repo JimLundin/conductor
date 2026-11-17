@@ -8,7 +8,7 @@ use net::wire;
 use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq, Open,
-    Providers, Welcome,
+    Provider, Providers, Welcome,
 };
 use tokio::sync::mpsc;
 
@@ -84,10 +84,11 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
             host: String::from("test-host"),
             epoch: Epoch(11),
             head_seq: HostSeq(0),
-            providers: Providers {
-                claude: unavailable.clone(),
-                codex: unavailable,
-            },
+            providers: Providers(
+                Provider::ALL
+                    .map(|provider| (provider, unavailable.clone()))
+                    .into(),
+            ),
         }),
     )
     .await?;

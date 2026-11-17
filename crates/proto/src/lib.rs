@@ -23,6 +23,7 @@ extern crate alloc;
 mod frame;
 mod ticket;
 
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -35,7 +36,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/11";
+pub const ALPN: &[u8] = b"conductor/12";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -121,12 +122,10 @@ pub struct Welcome {
     pub providers: Providers,
 }
 
-/// Whether the host can run each provider, and how it signs in.
+/// Whether the host can run each provider, and how it signs in. A host
+/// lists every provider it knows of.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Providers {
-    pub claude: Availability,
-    pub codex: Availability,
-}
+pub struct Providers(pub BTreeMap<Provider, Availability>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Availability {
@@ -229,16 +228,13 @@ pub enum Auth {
     Unmanaged,
 }
 
-/// The credentials a host stores, one per provider.
+/// The credentials a host stores, at most one per provider.
 ///
 /// This is the unit the fleet config (§6.5) carries to every host. Other
 /// kinds, an API key and the Claude subscription token, become variants of
 /// each provider's enum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Credentials {
-    pub claude: Option<ClaudeCredential>,
-    pub codex: Option<CodexCredential>,
-}
+pub struct Credentials(BTreeMap<Provider, Credential>);
 
 /// One provider's credential, as `SetCredential` carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,61 +285,34 @@ impl core::fmt::Debug for CodexCredential {
 impl Credentials {
     #[must_use]
     pub const fn none() -> Self {
-        Self {
-            claude: None,
-            codex: None,
-        }
+        Self(BTreeMap::new())
     }
 
     /// These credentials with `credential` in its provider's place.
     #[must_use]
-    pub fn set(self, credential: Credential) -> Self {
-        match credential {
-            Credential::Claude(claude) => Self {
-                claude: Some(claude),
-                ..self
-            },
-            Credential::Codex(codex) => Self {
-                codex: Some(codex),
-                ..self
-            },
-        }
+    pub fn set(mut self, credential: Credential) -> Self {
+        self.0.insert(credential.provider(), credential);
+        self
     }
 
     #[must_use]
-    pub fn clear(self, provider: Provider) -> Self {
-        match provider {
-            Provider::Claude => Self {
-                claude: None,
-                ..self
-            },
-            Provider::Codex => Self {
-                codex: None,
-                ..self
-            },
-        }
+    pub fn clear(mut self, provider: Provider) -> Self {
+        self.0.remove(&provider);
+        self
+    }
+
+    #[must_use]
+    pub fn of(&self, provider: Provider) -> Option<&Credential> {
+        self.0.get(&provider)
     }
 
     /// What `Welcome` may say about a provider's credential: its kind and
     /// base URL.
     #[must_use]
     pub fn auth(&self, provider: Provider) -> Option<Auth> {
-        match provider {
-            Provider::Claude => {
-                self.claude.as_ref().map(|claude| match claude {
-                    ClaudeCredential::Gateway { base_url, .. } => {
-                        Auth::Gateway {
-                            base_url: base_url.clone(),
-                        }
-                    }
-                })
-            }
-            Provider::Codex => self.codex.as_ref().map(|codex| match codex {
-                CodexCredential::Provider { base_url, .. } => Auth::Gateway {
-                    base_url: base_url.clone(),
-                },
-            }),
-        }
+        self.of(provider).map(|credential| Auth::Gateway {
+            base_url: String::from(credential.base_url()),
+        })
     }
 }
 
@@ -364,13 +333,7 @@ impl Credential {
     ///
     /// Why the base URL is refused.
     pub fn check(&self) -> Result<(), String> {
-        let base_url = match self {
-            Self::Claude(ClaudeCredential::Gateway { base_url, .. })
-            | Self::Codex(CodexCredential::Provider { base_url, .. }) => {
-                base_url
-            }
-        };
-        let url = url::Url::parse(base_url)
+        let url = url::Url::parse(self.base_url())
             .map_err(|err| format!("the base URL: {err}"))?;
         match (
             url.scheme(),
@@ -390,13 +353,22 @@ impl Credential {
     }
 }
 
-impl Providers {
-    #[must_use]
-    pub const fn of(&self, provider: Provider) -> &Availability {
-        match provider {
-            Provider::Claude => &self.claude,
-            Provider::Codex => &self.codex,
+impl Credential {
+    fn base_url(&self) -> &str {
+        match self {
+            Self::Claude(ClaudeCredential::Gateway { base_url, .. })
+            | Self::Codex(CodexCredential::Provider { base_url, .. }) => {
+                base_url
+            }
         }
+    }
+}
+
+impl Providers {
+    /// `None` when the host doesn't know of `provider`.
+    #[must_use]
+    pub fn of(&self, provider: Provider) -> Option<&Availability> {
+        self.0.get(&provider)
     }
 }
 
@@ -438,10 +410,26 @@ pub struct HostPath(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientName(pub String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The providers a host may run: the one place they are listed.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub enum Provider {
     Claude,
     Codex,
+}
+
+impl Provider {
+    pub const ALL: [Self; 2] = [Self::Claude, Self::Codex];
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::registry::{Launcher, Launchers, OwnSignIn, Registry};
+use crate::registry::{Launcher, Launchers, Offer, OwnSignIn, Registry};
 use crate::serve::Conductor;
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -16,7 +16,7 @@ use install::{Cli, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{Credentials, ModelId, Models, Ticket};
+use proto::{ModelId, Models, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::Starter;
@@ -124,7 +124,8 @@ async fn serve_host(args: HostArgs) -> anyhow::Result<()> {
         &stored,
     )
     .await;
-    let launchers = Launchers { claude, codex };
+    let launchers =
+        Launchers::from([(Provider::Claude, claude), (Provider::Codex, codex)]);
     let Hosted { router, log } =
         host(data_dir, web_url, name, launchers, store, stored).await?;
     let ended = tokio::select! {
@@ -153,14 +154,14 @@ async fn claude_launcher(
     let start = claude_cli::starter(ClaudeLaunch {
         claude_path: claude_path.clone(),
         home: home.clone(),
-        credential: credentials(stored).claude,
+        credential: claude::runtime::credential(&stored.credentials()),
         probe: data_dir.join("probe"),
     });
     match runs(claude_cli::cli(&claude_path, home)).await {
         Ok(cli) => {
             let own = own_sign_in(origin, status).await;
             let listed = start.models().await;
-            ready(cli, start, own, (listed, model))
+            ready(cli, start, own, listed, (None, model))
         }
         Err(reason) => unavailable(reason),
     }
@@ -180,12 +181,14 @@ async fn codex_launcher(
     };
     let version = codex_cli::cli(&codex_path, &home);
     let status = codex_cli::login_status(&codex_path, &home);
+    let credential = codex::runtime::credential(&stored.credentials());
+    let named = credential.as_ref().map(codex::runtime::default_model);
     // The app-server's own working directory is the data dir;
     // each thread runs in its session's directory.
     let start = codex_cli::starter(Hub::spawn(ServerOptions {
         codex_path,
         home,
-        credential: credentials(stored).codex,
+        credential,
         cwd: data_dir.to_path_buf(),
         stdout_log: None,
     }));
@@ -193,18 +196,9 @@ async fn codex_launcher(
         Ok(cli) => {
             let own = own_sign_in(origin, status).await;
             let listed = start.models().await;
-            ready(cli, start, own, (listed, model))
+            ready(cli, start, own, listed, (named, model))
         }
         Err(reason) => unavailable(reason),
-    }
-}
-
-/// What the store held when the host started; a store that doesn't open
-/// gives the CLIs none, and leaves the providers unavailable.
-fn credentials(stored: &Stored) -> Credentials {
-    match stored {
-        Stored::Opened(credentials) => credentials.clone(),
-        Stored::Unreadable(_) => Credentials::none(),
     }
 }
 
@@ -351,17 +345,19 @@ async fn runs(
     }
 }
 
-/// A CLI that runs offers the models it `listed`, with `chosen`
-/// (`--claude-model`, `--codex-model`) as the one a session gets when it
-/// names none. A CLI that could not list them, for instance because it is
-/// not signed in yet, offers only the default.
+/// A CLI that runs offers the models it `listed`, with the model the
+/// stored credential `named`, then `chosen` (`--claude-model`,
+/// `--codex-model`), as the one a session gets when it names none. A CLI
+/// that could not list them, for instance because it is not signed in
+/// yet, offers only the default.
 fn ready(
     cli: (String, String),
     start: Starter,
     own: OwnSignIn,
-    models: (Result<Models, String>, Option<String>),
+    listed: Result<Models, String>,
+    defaults: (Option<ModelId>, Option<String>),
 ) -> Launcher {
-    let (listed, chosen) = models;
+    let (named, chosen) = defaults;
     let models = listed.unwrap_or_else(|reason| {
         tracing::warn!(%reason, "the CLI listed no models");
         Models::none()
@@ -371,8 +367,11 @@ fn ready(
     Launcher::Ready {
         start,
         own,
-        models,
-        chosen: chosen.map(ModelId),
+        offer: Offer {
+            listed: models,
+            named,
+            chosen: chosen.map(ModelId),
+        },
     }
 }
 

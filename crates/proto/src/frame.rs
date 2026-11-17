@@ -65,13 +65,15 @@ pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeMap;
+
     use super::{HEADER_LEN, body_len, decode, encode};
     use crate::{
         Auth, AuthToken, Availability, ClientName, CodexCredential, Command,
         CommandBody, CommandId, CommandResult, Credential, Decision, Effort,
         Epoch, Event, EventKind, Hello, HelloReply, HostSeq, ModelChoice,
-        ModelId, Models, Open, Providers, Rejection, RequestId, Resolution,
-        SessionId, Subscribe, TurnOutcome, Welcome,
+        ModelId, Models, Open, Provider, Providers, Rejection, RequestId,
+        Resolution, SessionId, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -160,8 +162,8 @@ mod tests {
                 host: String::from("desk"),
                 epoch: Epoch(1),
                 head_seq: HostSeq(0),
-                providers: Providers {
-                    claude: Availability::Available {
+                providers: Providers(BTreeMap::from([
+                    (Provider::Claude, Availability::Available {
                         auth: Auth::Gateway {
                             base_url: String::from("u"),
                         },
@@ -174,15 +176,15 @@ mod tests {
                             }]),
                             default: Some(ModelId(String::from("h"))),
                         },
-                    },
-                    codex: Availability::Unavailable {
+                    }),
+                    (Provider::Codex, Availability::Unavailable {
                         reason: String::from("no"),
-                    },
-                },
+                    }),
+                ])),
             }))
             ?,
             frame(
-                b"\x00\x04desk\x01\x00\x00\x00\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x02no"
+                b"\x00\x04desk\x01\x00\x02\x00\x00\x00\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x02no"
             )
         );
         assert_eq!(

@@ -10,7 +10,10 @@
 
 use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
 use agents::{Note, Step};
-use proto::{CloseReason, CodexCredential, Effort, HistoryAnchor, Models};
+use proto::{
+    CloseReason, CodexCredential, Credential, Credentials, Effort,
+    HistoryAnchor, ModelId, Models, Provider,
+};
 
 use crate::hub::Routed;
 use crate::prelude::*;
@@ -99,6 +102,8 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Runtime {
     running: bool,
+    /// The default model of the credential being set.
+    configuring: Option<ModelId>,
 }
 
 const NOT_RUNNING: &str = "the agent is not running";
@@ -106,7 +111,10 @@ const NOT_RUNNING: &str = "the agent is not running";
 impl Runtime {
     #[must_use]
     pub const fn new() -> Self {
-        Self { running: false }
+        Self {
+            running: false,
+            configuring: None,
+        }
     }
 
     pub fn step(&mut self, input: Input) -> Vec<Effect> {
@@ -127,7 +135,10 @@ impl Runtime {
                 })))
             }
             Input::Models(listed) => emit(Outcome::Models(listed)),
-            Input::Configured(taken) => emit(Outcome::Configured(taken)),
+            Input::Configured(taken) => {
+                let default = self.configuring.take();
+                emit(Outcome::Configured(taken.map(|()| default)))
+            }
             Input::Event(Some(routed)) => self.routed(routed),
             Input::Event(None) => self.ended(),
         }
@@ -140,7 +151,9 @@ impl Runtime {
             }
             (Command::Models, _) => Vec::from([Effect::Models]),
             (Command::Credentials(credentials), _) => {
-                Vec::from([Effect::Credential(credentials.codex)])
+                let codex = credential(&credentials);
+                self.configuring = codex.as_ref().map(default_model);
+                Vec::from([Effect::Credential(codex)])
             }
             (Command::Shutdown, _) => {
                 self.running = false;
@@ -261,6 +274,24 @@ const fn answered(then: Then, outcome: Result<(), String>) -> Outcome {
     }
 }
 
+/// Codex's credential among the host's.
+#[must_use]
+pub fn credential(credentials: &Credentials) -> Option<CodexCredential> {
+    match credentials.of(Provider::Codex) {
+        Some(Credential::Codex(codex)) => Some(codex.clone()),
+        Some(Credential::Claude(_)) | None => None,
+    }
+}
+
+/// The model a credential makes the default: a model provider's gateway
+/// serves the one it names.
+#[must_use]
+pub fn default_model(credential: &CodexCredential) -> ModelId {
+    match credential {
+        CodexCredential::Provider { model, .. } => ModelId(model.clone()),
+    }
+}
+
 fn call(call: Call, then: Then) -> Vec<Effect> {
     Vec::from([Effect::Call { call, then }])
 }
@@ -274,8 +305,9 @@ mod tests {
     use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClientName, CloseReason, Decision as Chosen, Effort, HistoryAnchor,
-        HostPath, ModelId, SessionId,
+        ClientName, CloseReason, CodexCredential, Credential, Credentials,
+        Decision as Chosen, Effort, HistoryAnchor, HostPath, ModelId,
+        SessionId,
     };
     use serde_json::json;
 
@@ -504,6 +536,38 @@ mod tests {
                     Effect::Release,
                 ]),
             )
+        );
+    }
+
+    #[test]
+    fn credentials_reach_the_hub_and_report_the_model_they_name() {
+        let gateway = CodexCredential::Provider {
+            name: text("gateway"),
+            base_url: text("https://gateway.example"),
+            key: text("secret"),
+            model: text("gw-model"),
+        };
+        let credentials =
+            Credentials::none().set(Credential::Codex(gateway.clone()));
+        let mut runtime = Runtime::new();
+        assert_eq!(
+            walk(
+                &mut runtime,
+                Vec::from([
+                    Input::Command(Command::Credentials(credentials)),
+                    Input::Configured(Ok(())),
+                    Input::Command(Command::Credentials(Credentials::none())),
+                    Input::Configured(Ok(())),
+                ]),
+            ),
+            Vec::from([
+                Vec::from([Effect::Credential(Some(gateway))]),
+                outcome(Outcome::Configured(Ok(Some(ModelId(text(
+                    "gw-model"
+                )))))),
+                Vec::from([Effect::Credential(None)]),
+                outcome(Outcome::Configured(Ok(None))),
+            ])
         );
     }
 }

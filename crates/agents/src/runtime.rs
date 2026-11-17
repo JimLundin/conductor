@@ -89,7 +89,9 @@ pub enum Outcome {
     Turns(Result<Vec<String>, String>),
     Reverted(Result<(), String>),
     Models(Result<Models, String>),
-    Configured(Result<(), String>),
+    /// The credentials took, and make this model the provider's default
+    /// when they name one.
+    Configured(Result<Option<ModelId>, String>),
     ShutDown(Result<(), String>),
 }
 
@@ -133,11 +135,12 @@ impl Outcome {
         }
     }
 
-    /// Whether a [`Command::Credentials`] took.
+    /// Whether a [`Command::Credentials`] took, and the default model they
+    /// name.
     ///
     /// # Errors
     /// Why the provider refused them, or that this answers another command.
-    pub fn configured(self) -> Result<(), String> {
+    pub fn configured(self) -> Result<Option<ModelId>, String> {
         match self {
             Self::Configured(taken) => taken,
             other => Err(unexpected(&other)),
@@ -182,12 +185,12 @@ mod tests {
         assert_eq!(
             (
                 Outcome::Models(Ok(Models::none())).models(),
-                Outcome::Configured(Ok(())).configured(),
+                Outcome::Configured(Ok(None)).configured(),
                 Outcome::ShutDown(Ok(())).configured(),
             ),
             (
                 Ok(Models::none()),
-                Ok(()),
+                Ok(None),
                 Err(String::from(
                     "the agent answered another command: ShutDown(Ok(()))"
                 )),

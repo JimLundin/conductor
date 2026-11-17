@@ -491,7 +491,8 @@ mod tests {
 
     use proto::{
         AuthToken, Availability, ClientName, Epoch, Event, EventKind, Hello,
-        HelloReply, HostSeq, Providers, SessionId, Subscribe, Welcome,
+        HelloReply, HostSeq, Provider, Providers, SessionId, Subscribe,
+        Welcome,
     };
 
     use super::{
@@ -510,10 +511,11 @@ mod tests {
         let unavailable = Availability::Unavailable {
             reason: String::from(reason),
         };
-        Providers {
-            claude: unavailable.clone(),
-            codex: unavailable,
-        }
+        Providers(
+            Provider::ALL
+                .map(|provider| (provider, unavailable.clone()))
+                .into(),
+        )
     }
 
     fn welcome(epoch: u64, head: u64) -> Welcome {
