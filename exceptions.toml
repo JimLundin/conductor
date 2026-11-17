@@ -77,18 +77,3 @@ reason = "choosing each CLI, its sign-in and its models is still decided during 
 path = "crates/daemon/src/lib.rs"
 rule = "shell"
 reason = "loading or creating the key and token still decides inline; the decision moves into host"
-
-[[exception]]
-path = "crates/net/src/link.rs"
-rule = "shell"
-reason = "the hedged dial still races and settles its attempts in net; the rest of the link is client's state machine"
-
-[[exception]]
-path = "crates/net/src/wire.rs"
-rule = "shell"
-reason = "reading a frame still decides between a finished stream and an error beside the read"
-
-[[exception]]
-path = "crates/net/src/platform/mod.rs"
-rule = "shell"
-reason = "the endpoint setup still picks relays per network inline"

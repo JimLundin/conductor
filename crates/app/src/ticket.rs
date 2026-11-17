@@ -59,25 +59,34 @@ pub fn forget() {
 }
 
 pub fn initial() -> Result<Opening, TicketError> {
-    let Some(window) = web_sys::window() else {
-        return Ok(Opening::Unpaired);
-    };
+    web_sys::window().map_or(Ok(Opening::Unpaired), |window| opened(&window))
+}
+
+/// The join link in the address bar, else the saved host.
+fn opened(window: &web_sys::Window) -> Result<Opening, TicketError> {
     let hash = window.location().hash().unwrap_or_default();
-    match hash.strip_prefix("#join=") {
-        Some(text) => {
-            let ticket = net::parse(text)?;
-            save(&ticket);
-            let path = window.location().pathname().unwrap_or_default();
-            if let Ok(history) = window.history() {
-                let _ = history.replace_state_with_url(
-                    &web_sys::wasm_bindgen::JsValue::NULL,
-                    "",
-                    Some(&path),
-                );
-            }
-            Ok(Opening::Host(ticket))
-        }
-        None => opening(storage::get()),
+    hash.strip_prefix("#join=")
+        .map_or_else(|| opening(storage::get()), |text| joined(window, text))
+}
+
+fn joined(
+    window: &web_sys::Window,
+    text: &str,
+) -> Result<Opening, TicketError> {
+    let ticket = net::parse(text)?;
+    save(&ticket);
+    clear_hash(window);
+    Ok(Opening::Host(ticket))
+}
+
+fn clear_hash(window: &web_sys::Window) {
+    let path = window.location().pathname().unwrap_or_default();
+    if let Ok(history) = window.history() {
+        let _ = history.replace_state_with_url(
+            &web_sys::wasm_bindgen::JsValue::NULL,
+            "",
+            Some(&path),
+        );
     }
 }
 

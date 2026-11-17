@@ -110,12 +110,37 @@ pub enum ReplyState {
     Done,
 }
 
+impl ReplyState {
+    /// The class the transcript draws a reply with.
+    #[must_use]
+    pub const fn class(self) -> &'static str {
+        match self {
+            Self::Done => "reply",
+            Self::Streaming => "reply streaming",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolState {
     Running,
     Finished(ToolOutcome),
     /// The turn or the session ended before the call finished.
     Stopped,
+}
+
+impl ToolState {
+    /// How the transcript names the call's state.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Finished(ToolOutcome::Succeeded) => "succeeded",
+            Self::Finished(ToolOutcome::Failed) => "failed",
+            Self::Finished(ToolOutcome::Declined) => "declined",
+            Self::Stopped => "stopped",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +160,13 @@ pub enum Approval {
 pub enum RequestState {
     Open,
     Resolved(Resolution),
+}
+
+impl RequestState {
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        matches!(self, Self::Open)
+    }
 }
 
 /// An in-place change to an earlier item. Asking, resolving and finishing

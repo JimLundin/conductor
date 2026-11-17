@@ -27,7 +27,7 @@ use dioxus::prelude::*;
 use proto::{
     Answer, Change, CloseReason, CommandBody, CommandResult, Decision, Effort,
     Providers, Question, RequestId, Resolution, Selection, SessionId, Task,
-    TaskStatus, ToolKind, ToolOutcome, TurnOutcome,
+    TaskStatus, ToolKind, TurnOutcome,
 };
 
 use crate::checkpoints::TurnChanges;
@@ -320,7 +320,7 @@ fn TranscriptItem(
             }
         },
         Item::Reply { text, state } => rsx! {
-            p { class: match state { ReplyState::Done => "reply", ReplyState::Streaming => "reply streaming" }, "{text}" }
+            p { class: state.class(), "{text}" }
         },
         // Collapsed: the summary is the "Thinking…" line while it streams.
         // The live region is a span, so the summary stays a disclosure.
@@ -347,78 +347,15 @@ fn TranscriptItem(
         },
         Item::Tool {
             tool,
-            state: tool_state,
+            state,
             approval,
             ..
-        } => {
-            let state = match tool_state {
-                ToolState::Running => "running",
-                ToolState::Finished(ToolOutcome::Succeeded) => "succeeded",
-                ToolState::Finished(ToolOutcome::Failed) => "failed",
-                ToolState::Finished(ToolOutcome::Declined) => "declined",
-                ToolState::Stopped => "stopped",
-            };
-            match approval {
-                Approval::NotAsked => rsx! { ToolLine { tool, state } },
-                // One section for the open and the resolved card, so the
-                // focus a button moves to it stays when the buttons go.
-                Approval::Asked {
-                    request,
-                    reason,
-                    for_session,
-                    state: request_state,
-                } => {
-                    let open = match request_state {
-                        RequestState::Open => "true",
-                        RequestState::Resolved(_) => "false",
-                    };
-                    rsx! {
-                        section { class: "request", "data-open": "{open}", id: "{card_id(request)}", tabindex: "-1",
-                            match request_state {
-                                RequestState::Open => rsx! {
-                                    p { class: "request-title", "Allow this?" }
-                                    ToolLine { tool, state }
-                                    Reason { reason }
-                                    div { class: "actions",
-                                        button { class: "deny", onclick: move |_| decide_and_focus(on_decide, request, Decision::Deny), "Deny" }
-                                        button { class: "approve", onclick: move |_| decide_and_focus(on_decide, request, Decision::Approve), "Approve" }
-                                    }
-                                    {for_session.map_or_else(|| rsx! {}, |allows| rsx! {
-                                        button { class: "for-session", onclick: move |_| decide_and_focus(on_decide, request, Decision::ApproveForSession),
-                                            span { class: "for-session-title", "Allow for this session" }
-                                            span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
-                                        }
-                                    })}
-                                },
-                                RequestState::Resolved(resolution) => rsx! {
-                                    ToolLine { tool, state }
-                                    Reason { reason }
-                                    p { class: "resolved", role: "status", "{resolved(&resolution)}" }
-                                },
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        } => rsx! { ToolItem { tool, state, approval, on_decide } },
         Item::Question {
             request,
             questions,
             state,
-        } => {
-            let open = match state {
-                RequestState::Open => "true",
-                RequestState::Resolved(_) => "false",
-            };
-            rsx! {
-                section { class: "question", "data-open": "{open}", id: "{card_id(request)}", tabindex: "-1",
-                    match state {
-                        RequestState::Open => rsx! { QuestionForm { request, questions, on_answer } },
-                        RequestState::Resolved(resolution) => rsx! { Answered { questions, resolution } },
-                    }
-                }
-            }
-        }
+        } => rsx! { QuestionItem { request, questions, state, on_answer } },
         Item::TurnCompleted(outcome) => {
             let (attr, text) = match outcome {
                 TurnOutcome::Completed => {
@@ -595,6 +532,75 @@ fn OptionButton(
 }
 
 /// A tool call's outcome and what it acts on.
+/// A tool call, and the approval card when it asked for one.
+#[component]
+fn ToolItem(
+    tool: ToolKind,
+    state: ToolState,
+    approval: Approval,
+    on_decide: EventHandler<(RequestId, Decision)>,
+) -> Element {
+    let state = state.label();
+    match approval {
+        Approval::NotAsked => rsx! { ToolLine { tool, state } },
+        // One section for the open and the resolved card, so the
+        // focus a button moves to it stays when the buttons go.
+        Approval::Asked {
+            request,
+            reason,
+            for_session,
+            state: request_state,
+        } => {
+            let open = request_state.is_open();
+            rsx! {
+                section { class: "request", "data-open": "{open}", id: "{card_id(request)}", tabindex: "-1",
+                    match request_state {
+                        RequestState::Open => rsx! {
+                            p { class: "request-title", "Allow this?" }
+                            ToolLine { tool, state }
+                            Reason { reason }
+                            div { class: "actions",
+                                button { class: "deny", onclick: move |_| decide_and_focus(on_decide, request, Decision::Deny), "Deny" }
+                                button { class: "approve", onclick: move |_| decide_and_focus(on_decide, request, Decision::Approve), "Approve" }
+                            }
+                            {for_session.map_or_else(|| rsx! {}, |allows| rsx! {
+                                button { class: "for-session", onclick: move |_| decide_and_focus(on_decide, request, Decision::ApproveForSession),
+                                    span { class: "for-session-title", "Allow for this session" }
+                                    span { class: "for-session-allows", "Allows " code { "{allows}" } " until the session ends" }
+                                }
+                            })}
+                        },
+                        RequestState::Resolved(resolution) => rsx! {
+                            ToolLine { tool, state }
+                            Reason { reason }
+                            p { class: "resolved", role: "status", "{resolved(&resolution)}" }
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Questions the agent asked: the form while open, then the answers.
+#[component]
+fn QuestionItem(
+    request: RequestId,
+    questions: Vec<Question>,
+    state: RequestState,
+    on_answer: EventHandler<(RequestId, Vec<Answer>)>,
+) -> Element {
+    let open = state.is_open();
+    rsx! {
+        section { class: "question", "data-open": "{open}", id: "{card_id(request)}", tabindex: "-1",
+            match state {
+                RequestState::Open => rsx! { QuestionForm { request, questions, on_answer } },
+                RequestState::Resolved(resolution) => rsx! { Answered { questions, resolution } },
+            }
+        }
+    }
+}
+
 #[component]
 fn ToolLine(tool: ToolKind, state: String) -> Element {
     rsx! {
