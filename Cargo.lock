@@ -907,6 +907,7 @@ dependencies = [
  "host",
  "install",
  "iroh",
+ "log",
  "n0-future",
  "net",
  "postcard",

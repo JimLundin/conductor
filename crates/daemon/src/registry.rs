@@ -19,9 +19,9 @@ use tokio::sync::{mpsc, oneshot};
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
-use crate::session::{
-    Choice, ClaudeLaunch, CodexLaunch, Launch, Session, choose, list_models,
-};
+use host::session::{Choice, choose};
+
+use crate::session::{ClaudeLaunch, CodexLaunch, Launch, Session, list_models};
 
 /// How the host runs each provider. Built once in `main`.
 #[derive(Debug, Clone)]
