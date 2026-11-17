@@ -16,6 +16,9 @@ Home Screen. The design is in
   in its `Cargo.toml`; its decisions belong in a core crate. Relax a check
   only with a reasoned entry in `exceptions.toml`; never with an `#[allow]`
   or a weaker config.
+- **No API is stable.** Every crate is internal to this workspace. Change a
+  public API whenever a clearer shape appears, and update its callers in
+  the same change; never keep an old shape for compatibility.
 - **Gate.** `tools/check.sh` (the standard's `rust/check.sh`, the run-record
   IP scrub, and clippy for the wasm crates) passes on every commit. Set
   `STANDARDS` when the standards checkout is elsewhere. `tools/check.sh
