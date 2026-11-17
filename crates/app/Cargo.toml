@@ -6,12 +6,12 @@ license.workspace = true
 publish = false
 
 [dependencies]
-client = { path = "../client" }
 net = { path = "../net" }
 dioxus = { version = "0.7.10", default-features = false, features = ["launch", "lib", "logger"] }
 proto = { path = "../proto" }
 tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
 tracing = { workspace = true, features = ["std"] }
+ui = { path = "../ui" }
 web-sys = { version = "0.3.107", features = ["Window", "Location", "Storage", "History"] }
 
 [features]

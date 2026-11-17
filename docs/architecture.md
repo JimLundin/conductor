@@ -1239,8 +1239,15 @@ The owner settled these on 2026-11-12.
 ## 8. The app (`crates/app`)
 
 Dioxus web, routed through the URL fragment so GitHub Pages never serves an
-unknown path. Signals wrap `HostView`; the markup renders what the client
-decides.
+unknown path. The app is model, update, view over the pure `no_std` `ui`
+crate. `ui::State` holds the pane shown, the drafts and forms, and the
+host's `HostView` and link `Status`. `ui::update` turns each `Intent` (what
+a person does, a link update, a command's answer) into the next state and
+`Effect`s as data: send a command, save or forget the ticket, move the
+focus. `ui::view` describes the whole `Screen`, down to each string, class
+and enabled flag, and which pane a phone shows. The Dioxus components only
+draw that description and turn events into intents; one signal in the app
+shell holds the state and performs the effects.
 
 We port T3 Code's designs, not its code (`apps/web/src/components/`):
 

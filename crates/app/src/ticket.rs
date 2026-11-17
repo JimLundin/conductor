@@ -1,13 +1,7 @@
 //! Where the host ticket comes from: the join link, then local storage.
 
 use proto::{Ticket, TicketError};
-
-/// What the app opens on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Opening {
-    Host(Ticket),
-    Unpaired,
-}
+use ui::Opening;
 
 /// Accepts what a person pastes: the whole join link, or the bare ticket.
 pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {

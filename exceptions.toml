@@ -31,12 +31,12 @@ rule = "clippy::useless_format"
 reason = "rsx! expands each \"{text}\" node to format!"
 
 [[exception]]
-path = "crates/app/src/ui.rs"
+path = "crates/app/src/shell.rs"
 rule = "clippy::volatile_composites"
 reason = "asset! reads its link section with read_volatile"
 
 [[exception]]
-path = "crates/app/src/ui.rs"
+path = "crates/app/src/shell.rs"
 rule = "clippy::future_not_send"
 reason = "the link tasks run on the single-threaded UI executor and hold Dioxus signals and an Rc'd link"
 

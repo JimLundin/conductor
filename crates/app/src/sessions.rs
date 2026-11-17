@@ -17,204 +17,95 @@
     reason = "rsx! expands each \"{text}\" node to format!"
 )]
 
-use client::host_view::{Attention, HostView, SessionView, UndoState};
-use client::new_session::{
-    Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort, label,
-    models, note,
-};
 use dioxus::prelude::*;
-use proto::{
-    Availability, CommandBody, CommandResult, Effort, HostPath, ModelId,
-    Provider, Providers, SessionId,
-};
+use ui::{FormIntent, Intent, Listing, Place};
 
-use crate::{Link, PaneHeader, Screen, send};
-
-/// The last segment of a host path, which names the project. The host's OS
-/// may separate with either slash.
-pub fn short(path: &HostPath) -> &str {
-    path.0
-        .rsplit(['/', '\\'])
-        .find(|part| !part.is_empty())
-        .unwrap_or(&path.0)
-}
+use crate::{PaneHeader, Shell};
 
 #[component]
-pub(crate) fn SessionList(
-    view: Signal<HostView>,
-    screen: Screen,
-    on_select: EventHandler<Screen>,
-) -> Element {
-    let host = view.read();
-    let rows = host
-        .recent()
-        .into_iter()
-        .filter_map(|id| {
-            host.sessions.get(&id).cloned().map(|session| (id, session))
-        })
-        .collect::<Vec<(SessionId, SessionView)>>();
+pub fn SessionList(list: ui::SessionList) -> Element {
+    let shell = use_context::<Shell>();
     rsx! {
         nav { class: "sidebar",
             header { class: "list-head",
                 h1 { "Sessions" }
                 button {
                     class: "new",
-                    "aria-current": screen == Screen::NewSession,
-                    onclick: move |_| on_select(Screen::NewSession),
+                    "aria-current": list.new_current,
+                    onclick: move |_| shell.dispatch(Intent::Show(Place::NewSession)),
                     "New session"
                 }
             }
-            match rows.first() {
-                Some(_) => rsx! {
+            match list.listing {
+                Listing::Rows(rows) => rsx! {
                     ul { class: "session-list",
-                        for (id, session) in rows {
-                            SessionRow { key: "{id.0}", id, session, screen, on_select }
+                        for row in rows {
+                            SessionRow { key: "{row.key}", row }
                         }
                     }
                 },
-                None => rsx! { p { class: "list-empty", "No sessions yet. Start one in a directory on the host." } },
+                Listing::Empty(text) => rsx! { p { class: "list-empty", "{text}" } },
             }
         }
     }
 }
 
 #[component]
-fn SessionRow(
-    id: SessionId,
-    session: SessionView,
-    screen: Screen,
-    on_select: EventHandler<Screen>,
-) -> Element {
-    let (status, text, badge) = match (&session.undo, session.attention()) {
-        (UndoState::Undoing(_), _) => (
-            String::from("undoing"),
-            String::from("undoing"),
-            String::new(),
-        ),
-        (UndoState::Failed { .. }, _) => (
-            String::from("recovering"),
-            String::from("recovery needed"),
-            String::new(),
-        ),
-        (_, Attention::Quiet) => {
-            (session.status.word(), session.status.word(), String::new())
-        }
-        (_, Attention::Requests(1)) => (
-            String::from("approval"),
-            String::from("needs you"),
-            String::from("1"),
-        ),
-        (_, Attention::Requests(open)) => (
-            String::from("approval"),
-            format!("{open} requests need you"),
-            format!("{open}"),
-        ),
-    };
+fn SessionRow(row: ui::SessionRow) -> Element {
+    let shell = use_context::<Shell>();
+    let id = row.id;
     rsx! {
         li {
             button {
                 class: "session-row",
-                "data-status": "{status}",
-                "aria-current": screen == Screen::Session(id),
-                onclick: move |_| on_select(Screen::Session(id)),
+                "data-status": "{row.status}",
+                "aria-current": row.current,
+                onclick: move |_| shell.dispatch(Intent::Show(Place::Session(id))),
                 span { class: "dot", "aria-hidden": "true" }
                 span { class: "row-text",
-                    span { class: "row-title", "{short(&session.directory)}" }
-                    span { class: "row-sub", "{label(session.provider)}, {text}" }
-                    if let Some(workspace) = session.workspace {
-                        span { class: "row-branch", "{workspace.branch}" }
+                    span { class: "row-title", "{row.title}" }
+                    span { class: "row-sub", "{row.sub}" }
+                    if let Some(branch) = row.branch {
+                        span { class: "row-branch", "{branch}" }
                     }
                 }
-                span { class: "badge", "{badge}" }
+                span { class: "badge", "{row.badge}" }
             }
         }
     }
 }
 
 #[component]
-pub(crate) fn NewSession(
-    view: Signal<HostView>,
-    providers: Option<Providers>,
-    link: Signal<Link>,
-    on_back: EventHandler<()>,
-    on_started: EventHandler<SessionId>,
-) -> Element {
-    let mut provider = use_signal(|| Provider::Claude);
-    let mut model = use_signal(|| None::<ModelId>);
-    let mut effort = use_signal(|| None::<Effort>);
-    let mut directory = use_signal(String::new);
-    let attempt = use_signal(|| Attempt::Editing);
-    let host = view.read();
-    let suggestions = host.directories();
-    let (directory_error, provider_error, form_error) = match &attempt() {
-        Attempt::Refused(Refusal::Directory) => (
-            Some(String::from(
-                "There is no directory at that path on the host.",
-            )),
-            None,
-            None,
-        ),
-        Attempt::Refused(Refusal::Provider(reason)) => {
-            (None, Some(reason.clone()), None)
-        }
-        Attempt::Refused(Refusal::Other(message)) => {
-            (None, None, Some(message.clone()))
-        }
-        Attempt::Editing | Attempt::Starting => (None, None, None),
-    };
-    let provider_note = note(
-        provider(),
-        providers.as_ref().and_then(|known| known.of(provider())),
-    );
-    let offered =
-        models(providers.as_ref().and_then(|known| known.of(provider())));
-    let effort_options = efforts(&offered, model().as_ref());
-    let start = match (attempt(), directory().trim()) {
-        (Attempt::Starting, _) => Start::Busy,
-        (_, "") => Start::Empty,
-        (_, _) => Start::Ready,
-    };
+pub fn NewSession(form: ui::NewSessionForm) -> Element {
+    let shell = use_context::<Shell>();
+    let change = move |intent| shell.dispatch(Intent::Form(intent));
     rsx! {
         section { class: "pane new-pane",
-            PaneHeader { title: "New session", subtitle: "Runs on the host, in a directory you choose.", on_back }
+            PaneHeader { title: "New session", subtitle: "Runs on the host, in a directory you choose." }
             form {
                 class: "new-session",
                 onsubmit: move |event: FormEvent| {
                     event.prevent_default();
-                    let path = HostPath(directory().trim().to_string());
-                    begin(link, attempt, (provider(), model(), effort()), path, on_started);
+                    change(FormIntent::Start);
                 },
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",
-                        for (choice, state) in Provider::ALL.map(|choice| (choice, word(providers.as_ref().and_then(|known| known.of(choice))))) {
-                            label { class: "segment", "data-available": "{state}",
+                        for choice in form.providers {
+                            label { class: "segment", "data-available": choice.state,
                                 input {
                                     r#type: "radio",
                                     name: "provider",
-                                    checked: provider() == choice,
-                                    // Another provider offers other models.
-                                    onchange: move |_| {
-                                        provider.set(choice);
-                                        model.set(None);
-                                        effort.set(None);
-                                    },
+                                    checked: choice.checked,
+                                    onchange: move |_| change(FormIntent::PickProvider(choice.provider)),
                                 }
-                                span { class: "segment-name", "{label(choice)}" }
-                                span { class: "segment-state", "{state}" }
+                                span { class: "segment-name", "{choice.label}" }
+                                span { class: "segment-state", "{choice.state}" }
                             }
                         }
                     }
-                    match (provider_error, provider_note) {
-                        (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => rsx! {
-                            Hint { error: format!("{} can't run on this host: {reason}", label(provider())) }
-                        },
-                        (None, ProviderNote::WritesUnasked) => rsx! {
-                            p { class: "hint muted",
-                                "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-                            }
-                        },
-                        (None, ProviderNote::Nothing) => rsx! {},
+                    if let Some(hint) = form.provider_hint {
+                        Hint { hint }
                     }
                 }
                 div { class: "choices",
@@ -222,35 +113,16 @@ pub(crate) fn NewSession(
                         span { class: "field-label", "Model" }
                         select {
                             name: "model",
-                            // An effort the new model doesn't take goes back to its default.
-                            onchange: move |event| {
-                                let picked = offered.find(&ModelId(event.value())).map(|choice| choice.id.clone());
-                                effort.set(kept_effort(&offered, picked.as_ref(), effort()));
-                                model.set(picked);
-                            },
-                            option { value: "", selected: model().is_none(), "{default_label(&offered)}" }
-                            for choice in offered.choices.clone() {
-                                option {
-                                    value: "{choice.id.0}",
-                                    selected: Some(&choice.id) == model().as_ref(),
-                                    "{choice.name}"
-                                }
-                            }
+                            onchange: move |event| change(FormIntent::PickModel(event.value())),
+                            Options { choices: form.models }
                         }
                     }
                     label { class: "field",
                         span { class: "field-label", "Effort" }
                         select {
                             name: "effort",
-                            onchange: move |event| effort.set(Effort::parse(&event.value())),
-                            option { value: "", selected: effort().is_none(), "Default" }
-                            for offered_effort in effort_options {
-                                option {
-                                    value: "{offered_effort.wire()}",
-                                    selected: Some(offered_effort) == effort(),
-                                    "{offered_effort.wire()}"
-                                }
-                            }
+                            onchange: move |event| change(FormIntent::PickEffort(event.value())),
+                            Options { choices: form.efforts }
                         }
                     }
                 }
@@ -265,95 +137,73 @@ pub(crate) fn NewSession(
                         autocorrect: "off",
                         spellcheck: "false",
                         enterkeyhint: "go",
-                        "aria-invalid": directory_error.is_some(),
-                        value: "{directory}",
-                        oninput: move |event| directory.set(event.value()),
+                        "aria-invalid": form.directory_invalid,
+                        value: "{form.directory}",
+                        oninput: move |event| change(FormIntent::TypeDirectory(event.value())),
                     }
-                    Hint { error: directory_error.clone() }
+                    if let Some(hint) = form.directory_error {
+                        Hint { hint }
+                    }
                 }
-                match suggestions.first() {
-                    Some(_) => rsx! {
-                        div { class: "suggestions",
-                            p { class: "field-label", "Recent" }
-                            ul {
-                                for path in suggestions {
-                                    li {
-                                        button {
-                                            r#type: "button",
-                                            class: "suggestion",
-                                            onclick: move |_| directory.set(path.0.clone()),
-                                            span { class: "suggestion-name", "{short(&path)}" }
-                                            span { class: "suggestion-path", "{path.0}" }
-                                        }
-                                    }
-                                }
+                if let Some(suggestions) = form.suggestions {
+                    div { class: "suggestions",
+                        p { class: "field-label", "Recent" }
+                        ul {
+                            for suggestion in suggestions {
+                                Suggestion { suggestion }
                             }
                         }
-                    },
-                    None => rsx! {},
+                    }
                 }
-                Hint { error: form_error }
+                if let Some(hint) = form.error {
+                    Hint { hint }
+                }
                 button {
                     r#type: "submit",
                     class: "start",
-                    disabled: !matches!(start, Start::Ready),
-                    match start {
-                        Start::Busy => "Starting…",
-                        Start::Empty | Start::Ready => "Start session",
-                    }
+                    disabled: form.start_disabled,
+                    "{form.start_label}"
                 }
             }
         }
     }
 }
 
-/// Whether the form can be sent.
-enum Start {
-    Empty,
-    Ready,
-    Busy,
+/// The `option`s of a `select`.
+#[component]
+pub fn Options(choices: Vec<ui::Choice>) -> Element {
+    rsx! {
+        for choice in choices {
+            option {
+                value: "{choice.value}",
+                selected: choice.selected,
+                disabled: choice.disabled,
+                "{choice.label}"
+            }
+        }
+    }
 }
 
 #[component]
-fn Hint(error: Option<String>) -> Element {
-    error.map_or_else(
-        || rsx! {},
-        |message| rsx! { p { class: "hint error", role: "alert", "{message}" } },
-    )
-}
-
-fn begin(
-    link: Signal<Link>,
-    mut attempt: Signal<Attempt>,
-    choice: (Provider, Option<ModelId>, Option<Effort>),
-    directory: HostPath,
-    on_started: EventHandler<SessionId>,
-) {
-    let (provider, model, effort) = choice;
-    attempt.set(Attempt::Starting);
-    spawn(async move {
-        let answer = send(
-            link(),
-            CommandBody::StartSession {
-                provider,
-                directory,
-                model,
-                effort,
-            },
-        )
-        .await;
-        if let Ok(CommandResult::Started { session }) = &answer {
-            on_started(SessionId(session.0));
+fn Suggestion(suggestion: ui::Suggestion) -> Element {
+    let shell = use_context::<Shell>();
+    let path = suggestion.path.clone();
+    rsx! {
+        li {
+            button {
+                r#type: "button",
+                class: "suggestion",
+                onclick: move |_| shell.dispatch(Intent::Form(FormIntent::TypeDirectory(path.clone()))),
+                span { class: "suggestion-name", "{suggestion.name}" }
+                span { class: "suggestion-path", "{suggestion.path}" }
+            }
         }
-        attempt.set(Attempt::answered(answer));
-    });
+    }
 }
 
-/// The provider's state in one word, for the form's text and `data-available`.
-fn word(availability: Option<&Availability>) -> String {
-    String::from(match availability {
-        Some(Availability::Available { .. }) => "available",
-        Some(Availability::Unavailable { .. }) => "unavailable",
-        None => "unknown",
-    })
+#[component]
+pub fn Hint(hint: ui::Hint) -> Element {
+    rsx! {
+        p { class: hint.class, role: hint.role, "{hint.text}" }
+    }
 }
