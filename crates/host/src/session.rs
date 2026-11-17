@@ -1,0 +1,2029 @@
+//! One session's decisions, as a state machine: its turn, its open
+//! requests, its effort, its tasks, its checkpoints and the phases of an
+//! undo.
+//!
+//! `daemon` owns the agent, the log and the workspace. It turns what they do
+//! into an [`Input`], steps the session, and performs each [`Effect`] in
+//! order. A [`Call`] comes last among the effects of a step, and its outcome
+//! is the next input, so the session finishes one order or agent step before
+//! it takes the next.
+//!
+//! The session outlives its agent. When the agent's process exits, the
+//! session is closed and keeps its conversation's id, and a `Start` order
+//! starts the agent again on it with the provider's resume.
+
+use core::mem;
+
+use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
+use crate::prelude::*;
+use crate::tasks;
+use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
+use proto::{
+    Checkpoint, CheckpointDiff, CheckpointId, ClientName, CloseReason,
+    CommandResult, Decision, Effort, Event, EventKind, HistoryAnchor, HostPath,
+    HostSeq, ModelId, Models, Provider, Rejection, RequestId, Resolution,
+    SessionId, Task, TaskId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
+    UndoAvailability, Workspace,
+};
+
+/// The model and effort a session runs with, chosen when it starts; a
+/// `SetEffort` changes the effort. `None` leaves the CLI's default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub model: Option<ModelId>,
+    pub effort: Option<Effort>,
+}
+
+/// The model and effort a session asked for, checked against what the
+/// provider offers.
+///
+/// No model is the default. An effort must be one the
+/// model lists, unless the host knows nothing of the model (a default from
+/// `--claude-model` or a Codex credential that the CLI didn't list).
+///
+/// # Errors
+///
+/// Says why when the host doesn't offer the model or the model doesn't
+/// take the effort.
+pub fn choose(
+    models: &Models,
+    model: Option<ModelId>,
+    effort: Option<Effort>,
+) -> Result<Choice, String> {
+    let chosen = model.map_or_else(
+        || Ok(models.default.clone()),
+        |asked| {
+            models
+                .find(&asked)
+                .map(|choice| Some(choice.id.clone()))
+                .ok_or_else(|| {
+                    format!("this host doesn't offer the model {}", asked.0)
+                })
+        },
+    )?;
+    match effort {
+        Some(asked) => {
+            takes(models, chosen.as_ref(), asked).map(|taken| Choice {
+                model: chosen,
+                effort: Some(taken),
+            })
+        }
+        None => Ok(Choice {
+            model: chosen,
+            effort: None,
+        }),
+    }
+}
+
+/// `effort`, if `model` (`None`: the default) takes it: one of the efforts
+/// the host lists for it, or any effort when the host doesn't list the
+/// model.
+fn takes(
+    models: &Models,
+    model: Option<&ModelId>,
+    effort: Effort,
+) -> Result<Effort, String> {
+    model
+        .or(models.default.as_ref())
+        .and_then(|id| models.find(id))
+        .map_or(Ok(effort), |choice| {
+            choice
+                .efforts
+                .iter()
+                .find(|&&offered| offered == effort)
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "{} doesn't take the effort {}",
+                        choice.name,
+                        effort.wire()
+                    )
+                })
+        })
+}
+
+/// A command for one session, already routed to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Order {
+    Send {
+        text: String,
+        by: ClientName,
+    },
+    Interrupt,
+    Diff(CheckpointId),
+    /// Undoes the turns from `checkpoint` on, restarting the session's
+    /// `provider` if it must. A Claude fork made for it takes `fork` as its
+    /// conversation's id.
+    Undo {
+        checkpoint: CheckpointId,
+        provider: Provider,
+        fork: String,
+    },
+    Reply {
+        request: RequestId,
+        reply: Reply,
+        by: ClientName,
+    },
+    /// Starts the agent, resuming the conversation if the session has one:
+    /// when the session starts, and on `Continue`. `offered` is what the
+    /// provider offers now.
+    Start {
+        provider: Provider,
+        offered: Models,
+    },
+    /// Sets the effort of later turns, if the session's model in these
+    /// models takes it. The agent gets it when the next turn starts.
+    Effort(Effort, Models),
+}
+
+/// What happened, as the shell saw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Input {
+    Order(Order),
+    Step(Step),
+    /// The host stopped the agent, for this reason.
+    Stopped(String),
+    /// The agent's events ended.
+    Exited,
+    /// The outcome of [`Call::Record`].
+    Recorded(HostSeq),
+    /// The commit [`Call::Snapshot`] made.
+    Snapshotted(Result<String, String>),
+    Diffed(Result<CheckpointDiff, String>),
+    /// The log's events, for [`Call::History`].
+    History(Vec<Event>),
+    /// The ids [`Call::Mint`] asked for.
+    Minted(Vec<TaskId>),
+    /// Whether the directory of [`Call::Exists`] can be read.
+    Exists(bool),
+    /// The conversation of the agent [`Call::Start`] started.
+    Started(Result<String, Unstarted>),
+    /// The Codex thread's turns, oldest first, for [`Call::Turns`].
+    Turns(Result<Vec<String>, String>),
+    /// The outcome of a call that answers nothing else.
+    Done(Result<(), String>),
+}
+
+/// Why an agent didn't start. `missing` is the conversation it was asked to
+/// resume, when the provider has no such conversation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unstarted {
+    pub message: String,
+    pub missing: Option<String>,
+}
+
+/// What the shell does next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// Append the event to the log.
+    Emit(EventKind),
+    /// Save the conversation the session resumes after the host restarts.
+    Conversation(String),
+    /// Commit what the log staged, before the workspace or the agent
+    /// changes.
+    Barrier,
+    Trace(&'static str),
+    /// Drop the agent: its process has gone.
+    Release,
+    /// Answer the order.
+    Reply(CommandResult),
+    Call(Call),
+}
+
+/// An effect whose outcome is the next [`Input`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Call {
+    /// Append the event to the log and answer its seq.
+    Record(EventKind),
+    /// Snapshot the worktree as `checkpoint`, after `previous`'s commit.
+    Snapshot {
+        workspace: Workspace,
+        checkpoint: CheckpointId,
+        previous: Option<String>,
+    },
+    /// Check that the worktree can be restored to `commit`.
+    Preflight {
+        workspace: Workspace,
+        commit: String,
+    },
+    Restore {
+        workspace: Workspace,
+        commit: String,
+    },
+    Diff(Box<Compared>),
+    History,
+    /// This many new task ids.
+    Mint(usize),
+    Exists(HostPath),
+    /// Start an agent in place of the one running, if it starts.
+    Start(Launching),
+    /// Change Claude's effort in its process, before a turn.
+    SetEffort(Effort),
+    /// Start a turn. Codex changes to `effort` with it.
+    Send {
+        text: String,
+        effort: Option<Effort>,
+    },
+    Interrupt(NativeTurn),
+    Answer {
+        native: NativeRequest,
+        reply: Reply,
+        by: ClientName,
+    },
+    /// Drop the agent, shutting a Claude down first.
+    Shutdown,
+    Turns,
+    /// Revert the Codex thread to before this turn.
+    Revert(String),
+}
+
+/// A checkpoint whose changes since its parent the shell lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Compared {
+    pub workspace: Workspace,
+    pub checkpoint: Checkpoint,
+    pub parent: Checkpoint,
+}
+
+/// How to start an agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launching {
+    pub directory: HostPath,
+    pub choice: Choice,
+    pub resume: Resume,
+}
+
+/// Which conversation an agent starts on, by its provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    Claude(ClaudeResume),
+    /// The Codex thread to resume, or a new one.
+    Codex(Option<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaudeResume {
+    Fresh,
+    Session(String),
+    /// A new conversation `target` with `source`'s messages through
+    /// `through`.
+    Fork {
+        source: String,
+        through: String,
+        target: String,
+    },
+}
+
+impl Resume {
+    const fn provider(&self) -> Provider {
+        match self {
+            Self::Claude(_) => Provider::Claude,
+            Self::Codex(_) => Provider::Codex,
+        }
+    }
+
+    fn session(&self) -> Option<&str> {
+        match self {
+            Self::Claude(ClaudeResume::Session(session)) => Some(session),
+            _ => None,
+        }
+    }
+}
+
+/// The agent as the session knows it: its conversation and the effort it
+/// runs with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Agent {
+    /// No agent runs: it exited, the host stopped it, or it never started.
+    Down,
+    Up {
+        provider: Provider,
+        conversation: String,
+        effort: Option<Effort>,
+    },
+}
+
+impl Agent {
+    fn conversation(&self) -> Option<String> {
+        match self {
+            Self::Up { conversation, .. } => Some(conversation.clone()),
+            Self::Down => None,
+        }
+    }
+
+    const fn effort(&self) -> Option<Effort> {
+        match self {
+            Self::Up { effort, .. } => *effort,
+            Self::Down => None,
+        }
+    }
+}
+
+/// An interrupt that arrived before the agent began the turn. Sent then, it
+/// would be lost (docs/architecture.md §5.1), so it waits for `TurnStarted`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Held {
+    Nothing,
+    Interrupt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Turn {
+    Idle,
+    /// The message is sent and the agent has not begun the turn yet.
+    Starting(Held),
+    Running(NativeTurn),
+}
+
+/// First decision wins (architecture §8). A resolved request keeps its
+/// resolution, so a late answer is told who made the first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pending {
+    Open { native: NativeRequest, asked: Asked },
+    Resolved(Resolution),
+}
+
+impl Pending {
+    const fn native(&self) -> Option<&NativeRequest> {
+        match self {
+            Self::Open { native, .. } => Some(native),
+            Self::Resolved(_) => None,
+        }
+    }
+}
+
+/// What an open request waits for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Asked {
+    /// A decision on tool call `call`. `for_session` is what approving for
+    /// the session allows, if the agent offers it.
+    Approval {
+        call: ToolCallId,
+        for_session: Option<String>,
+    },
+    /// One answer for each of `count` questions.
+    Question { count: usize },
+}
+
+/// The call the session waits on, and what follows it.
+enum Flow {
+    Idle,
+    Saving(Saving),
+    /// The user's message is being logged; `text` goes to the agent next.
+    Recording(String),
+    /// Claude changes its effort before `text` goes to it.
+    Retuning(String, Effort),
+    /// The message is being sent, changing the agent's effort to this.
+    Sending(Option<Effort>),
+    /// An agent call whose failure is logged as an error, then the reply.
+    Noting(Option<CommandResult>),
+    Minting(Vec<PlanStep>, Vec<Option<TaskId>>),
+    Diffing,
+    Starting(Starting),
+    Preflighting(UndoOrder),
+    /// Finding the directory to restore the agent's history in.
+    Locating(Undoing, HistoryAnchor),
+    /// Claude stops, to start again at the history.
+    Restarting(Undoing, HostPath, HistoryAnchor),
+    Listing(Revert),
+    Reverting(Revert),
+    Checking(Revert),
+    /// The agent restored in another directory stops.
+    Leaving(Undoing, HistoryAnchor),
+    Retasking(Undoing, HistoryAnchor),
+    Restoring(Undoing),
+}
+
+struct Saving {
+    checkpoint: CheckpointId,
+    parent: Option<CheckpointId>,
+    snapshot: Snapshot,
+    then: Saved,
+}
+
+/// What a snapshot was taken for.
+enum Saved {
+    Start(Provider, Models),
+    Send(String, ClientName),
+    TurnEnded(TurnOutcome),
+    Closed(CloseReason),
+}
+
+/// The agent start in flight, the attempts left if it finds its
+/// conversation missing, and what it was started for.
+struct Starting {
+    attempt: Resume,
+    rest: Vec<Resume>,
+    directory: HostPath,
+    then: Launched,
+}
+
+enum Launched {
+    Ready,
+    Revert(Revert),
+    Restart(Undoing, HostPath, HistoryAnchor),
+    Complete(Undoing),
+}
+
+struct UndoOrder {
+    checkpoint: CheckpointId,
+    provider: Provider,
+    fork: String,
+}
+
+struct Undoing {
+    undo: Undo,
+    provider: Provider,
+}
+
+/// A Codex thread being reverted to before `turn`, in `directory`.
+struct Revert {
+    undoing: Undoing,
+    directory: HostPath,
+    conversation: String,
+    turn: String,
+}
+
+pub struct Session {
+    id: SessionId,
+    directory: HostPath,
+    choice: Choice,
+    agent: Agent,
+    /// The conversation a start resumes, once a turn has started in it.
+    /// Before that the CLI has written no history to resume.
+    conversation: Option<String>,
+    turn: Turn,
+    requests: BTreeMap<RequestId, Pending>,
+    last_request: RequestId,
+    book: Book,
+    turn_start: Option<HostSeq>,
+    boundary: Option<String>,
+    /// Tool calls the user denied, whose failed result means `Declined`.
+    declined: Vec<ToolCallId>,
+    /// The tasks the session holds, from its agent's checklist.
+    tasks: Vec<Task>,
+    flow: Flow,
+}
+
+impl Session {
+    /// The session `history` logged, with no agent running. A request
+    /// still open in it was the gone agent's, so it counts as withdrawn.
+    #[must_use]
+    pub fn restore(
+        id: SessionId,
+        directory: HostPath,
+        choice: Choice,
+        conversation: Option<String>,
+        history: &[Event],
+    ) -> Self {
+        let replayed = Book::replay(history);
+        let resume = resumed(&replayed, conversation.as_ref(), history);
+        let book = Book { resume, ..replayed };
+        Self {
+            id,
+            directory: book
+                .workspace
+                .as_ref()
+                .map_or(directory, |workspace| workspace.directory.clone()),
+            choice,
+            agent: Agent::Down,
+            book,
+            turn_start: None,
+            boundary: None,
+            conversation,
+            turn: Turn::Idle,
+            requests: replay_requests(history),
+            last_request: history
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::RequestOpened { request, .. }
+                    | EventKind::QuestionAsked { request, .. } => {
+                        Some(request.to_owned())
+                    }
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(RequestId(0)),
+            declined: Vec::new(),
+            tasks: last_tasks(history.iter()),
+            flow: Flow::Idle,
+        }
+    }
+
+    #[must_use]
+    pub fn step(mut self, input: Input) -> (Self, Vec<Effect>) {
+        let flow = mem::replace(&mut self.flow, Flow::Idle);
+        let effects = self.on(flow, input);
+        (self, effects)
+    }
+
+    fn on(&mut self, flow: Flow, input: Input) -> Vec<Effect> {
+        match (flow, input) {
+            (Flow::Idle, Input::Order(order)) => self.order(order),
+            (Flow::Idle, Input::Step(step)) => self.agent_step(step),
+            (Flow::Idle, Input::Stopped(reason)) => {
+                self.agent_step(Step::Closed(CloseReason::Stopped { reason }))
+            }
+            (Flow::Idle, Input::Exited) => {
+                self.agent_step(Step::Closed(CloseReason::Exited {
+                    status: String::from("the agent's events ended"),
+                }))
+            }
+            (Flow::Saving(saving), Input::Snapshotted(taken)) => {
+                self.snapshotted(saving, taken)
+            }
+            (Flow::Recording(text), Input::Recorded(seq)) => {
+                self.recorded(text, seq)
+            }
+            (Flow::Retuning(text, effort), Input::Done(retuned)) => {
+                self.retuned(text, effort, retuned)
+            }
+            (Flow::Sending(change), Input::Done(sent)) => {
+                self.sent(change, sent)
+            }
+            (Flow::Noting(then), Input::Done(called)) => noted(called, then),
+            (Flow::Minting(steps, kept), Input::Minted(ids)) => {
+                self.minted(steps, kept, ids)
+            }
+            (Flow::Diffing, Input::Diffed(diff)) => answer(diffed(diff)),
+            (Flow::Starting(starting), Input::Started(started)) => {
+                self.started(starting, started)
+            }
+            (Flow::Preflighting(order), Input::Done(checked)) => {
+                self.preflighted(&order, checked)
+            }
+            (Flow::Locating(undoing, history), Input::Exists(exists)) => {
+                self.located(undoing, history, exists)
+            }
+            (
+                Flow::Restarting(undoing, directory, history),
+                Input::Done(stopped),
+            ) => self.restart(undoing, directory, history, stopped),
+            (Flow::Listing(revert), Input::Turns(listed)) => {
+                self.listed(revert, listed)
+            }
+            (Flow::Reverting(revert), Input::Done(reverted)) => {
+                self.reverted(revert, reverted)
+            }
+            (Flow::Checking(revert), Input::Turns(listed)) => {
+                self.checked(revert, listed)
+            }
+            (Flow::Leaving(undoing, history), Input::Done(left)) => {
+                self.history_restored(undoing, left.map(|()| history))
+            }
+            (Flow::Retasking(undoing, history), Input::History(events)) => {
+                self.retasked(undoing, history, &events)
+            }
+            (Flow::Restoring(undoing), Input::Done(restored)) => {
+                self.files_restored(undoing, restored)
+            }
+            (waiting, _) => {
+                self.flow = waiting;
+                Vec::new()
+            }
+        }
+    }
+
+    fn order(&mut self, order: Order) -> Vec<Effect> {
+        match order {
+            Order::Diff(checkpoint) => self.diff(checkpoint),
+            Order::Undo {
+                checkpoint,
+                provider,
+                fork,
+            } => self.undo(UndoOrder {
+                checkpoint,
+                provider,
+                fork,
+            }),
+            other => match &self.book.recovery {
+                Some(_) => rejected(Rejection::UndoInProgress),
+                None => self.normal_order(other),
+            },
+        }
+    }
+
+    fn normal_order(&mut self, order: Order) -> Vec<Effect> {
+        match (order, &self.turn, &self.agent) {
+            (Order::Start { provider, offered }, _, Agent::Down) => {
+                self.save(Saved::Start(provider, offered))
+            }
+            // Continue is idempotent: the agent already runs.
+            (Order::Start { .. }, _, _) => answer(CommandResult::Accepted),
+            // A closed session takes it too: `Continue` starts at it.
+            (Order::Effort(effort, offered), _, _) => {
+                self.set_effort(effort, &offered)
+            }
+            (_, _, Agent::Down) => rejected(Rejection::SessionClosed),
+            (Order::Send { text, by }, Turn::Idle, _) => {
+                self.save(Saved::Send(text, by))
+            }
+            (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
+                rejected(Rejection::TurnInProgress)
+            }
+            (Order::Interrupt, Turn::Idle, _) => {
+                rejected(Rejection::NoTurnRunning)
+            }
+            (Order::Interrupt, Turn::Starting(_), _) => {
+                self.turn = Turn::Starting(Held::Interrupt);
+                Vec::from([
+                    Effect::Trace(
+                        "holding the interrupt until the turn starts",
+                    ),
+                    Effect::Reply(CommandResult::Accepted),
+                ])
+            }
+            (Order::Interrupt, Turn::Running(native), _) => {
+                let call = Call::Interrupt(native.clone());
+                self.flow = Flow::Noting(Some(CommandResult::Accepted));
+                Vec::from([Effect::Call(call)])
+            }
+            (Order::Reply { request, reply, by }, _, _) => {
+                self.reply(request, reply, by)
+            }
+            (Order::Diff(_) | Order::Undo { .. }, _, _) => {
+                rejected(Rejection::CheckpointUnavailable)
+            }
+        }
+    }
+
+    /// A model the provider no longer offers, after a credential change,
+    /// gives way to its default, and the log says so.
+    fn offered(&mut self, offered: &Models) -> Vec<Effect> {
+        match self.choice.model.clone().filter(|model| {
+            offered.default.as_ref() != Some(model)
+                && offered.find(model).is_none()
+        }) {
+            Some(gone) => {
+                let choice = choose(offered, None, self.choice.effort)
+                    .unwrap_or_else(|_| Choice {
+                        model: offered.default.clone(),
+                        effort: None,
+                    });
+                let reason = format!(
+                    "Model changed to {}: {} is not offered by the current credential",
+                    choice.model.as_ref().map_or_else(
+                        || String::from("the default model"),
+                        |model| model.0.clone()
+                    ),
+                    gone.0
+                );
+                self.choice = choice.clone();
+                Vec::from([Effect::Emit(EventKind::ModelChanged {
+                    model: choice.model,
+                    effort: choice.effort,
+                    reason,
+                })])
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// The same effort again is `Accepted` and logs nothing.
+    fn set_effort(&mut self, effort: Effort, offered: &Models) -> Vec<Effect> {
+        match (
+            takes(offered, self.choice.model.as_ref(), effort),
+            self.choice.effort,
+        ) {
+            (Err(reason), _) => rejected(Rejection::NotOffered { reason }),
+            (Ok(taken), Some(current)) if taken == current => {
+                answer(CommandResult::Accepted)
+            }
+            (Ok(_), _) => {
+                self.choice.effort = Some(effort);
+                Vec::from([
+                    Effect::Emit(EventKind::EffortChanged { effort }),
+                    Effect::Reply(CommandResult::Accepted),
+                ])
+            }
+        }
+    }
+
+    fn recorded(&mut self, text: String, seq: HostSeq) -> Vec<Effect> {
+        self.turn_start = Some(seq);
+        self.book.snapshot = Some(Snapshot {
+            history: HistoryAnchor::Unknown,
+            turn_start: self.turn_start,
+        });
+        self.boundary = None;
+        let change = changed(self.choice.effort, self.agent.effort());
+        match (&self.agent, change) {
+            (
+                Agent::Up {
+                    provider: Provider::Claude,
+                    ..
+                },
+                Some(effort),
+            ) => {
+                self.flow = Flow::Retuning(text, effort);
+                Vec::from([Effect::Call(Call::SetEffort(effort))])
+            }
+            _ => self.send(text, change),
+        }
+    }
+
+    fn retuned(
+        &mut self,
+        text: String,
+        effort: Effort,
+        retuned: Result<(), String>,
+    ) -> Vec<Effect> {
+        match retuned {
+            Ok(()) => {
+                if let Agent::Up {
+                    effort: running, ..
+                } = &mut self.agent
+                {
+                    *running = Some(effort);
+                }
+                self.send(text, None)
+            }
+            Err(message) => self.sent(None, Err(message)),
+        }
+    }
+
+    /// Starts a turn, at the session's effort if the agent runs another:
+    /// Claude changed it in its process first, Codex changes it with the
+    /// turn. Codex returns the turn's id too; the session takes it from
+    /// `TurnStarted`, which an interrupt must wait for anyway.
+    fn send(&mut self, text: String, change: Option<Effort>) -> Vec<Effect> {
+        self.flow = Flow::Sending(change);
+        Vec::from([Effect::Call(Call::Send {
+            text,
+            effort: change,
+        })])
+    }
+
+    /// A message the agent never got starts no turn.
+    fn sent(
+        &mut self,
+        change: Option<Effort>,
+        sent: Result<(), String>,
+    ) -> Vec<Effect> {
+        match sent {
+            Ok(()) => {
+                if let Agent::Up { effort, .. } = &mut self.agent {
+                    *effort = change.or(*effort);
+                }
+                self.conversation = self.agent.conversation();
+                self.turn = Turn::Starting(Held::Nothing);
+                join(
+                    self.conversation.clone().map(Effect::Conversation),
+                    [Effect::Reply(CommandResult::Accepted)],
+                )
+            }
+            Err(message) => Vec::from([
+                Effect::Emit(EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Failed { message },
+                }),
+                Effect::Reply(CommandResult::Accepted),
+            ]),
+        }
+    }
+
+    fn reply(
+        &mut self,
+        request: RequestId,
+        reply: Reply,
+        by: ClientName,
+    ) -> Vec<Effect> {
+        match self.requests.get(&request).cloned() {
+            None | Some(Pending::Resolved(Resolution::Withdrawn)) => {
+                rejected(Rejection::UnknownRequest)
+            }
+            Some(Pending::Resolved(
+                Resolution::Decided { by: first, .. }
+                | Resolution::Answered { by: first, .. },
+            )) => rejected(Rejection::AlreadyResolved { by: first }),
+            Some(Pending::Open { native, asked }) => match fits(&asked, &reply)
+            {
+                Err(reason) => rejected(Rejection::WrongReply { reason }),
+                Ok(()) => self.resolve(request, (native, asked), reply, by),
+            },
+        }
+    }
+
+    fn resolve(
+        &mut self,
+        request: RequestId,
+        (native, asked): (NativeRequest, Asked),
+        reply: Reply,
+        by: ClientName,
+    ) -> Vec<Effect> {
+        if let (Asked::Approval { call, .. }, Reply::Decide(Decision::Deny)) =
+            (asked, &reply)
+            && !self.declined.contains(&call)
+        {
+            self.declined.push(call);
+        }
+        let resolution = match reply.clone() {
+            Reply::Decide(decision) => Resolution::Decided {
+                decision,
+                by: by.clone(),
+            },
+            Reply::Answer(answers) => Resolution::Answered {
+                answers,
+                by: by.clone(),
+            },
+        };
+        self.requests
+            .insert(request, Pending::Resolved(resolution.clone()));
+        self.flow = Flow::Noting(Some(CommandResult::Accepted));
+        Vec::from([
+            Effect::Emit(EventKind::RequestResolved {
+                request,
+                resolution,
+            }),
+            Effect::Call(Call::Answer { native, reply, by }),
+        ])
+    }
+
+    fn agent_step(&mut self, step: Step) -> Vec<Effect> {
+        match step {
+            Step::Emit(kind) => Vec::from([Effect::Emit(kind)]),
+            Step::Open {
+                native,
+                call,
+                tool,
+                reason,
+                for_session,
+            } => {
+                let asked = Asked::Approval {
+                    call: call.clone(),
+                    for_session: for_session.clone(),
+                };
+                let request = self.open(native, asked);
+                Vec::from([Effect::Emit(EventKind::RequestOpened {
+                    request,
+                    call,
+                    tool,
+                    reason,
+                    for_session,
+                })])
+            }
+            Step::Ask { native, questions } => {
+                let asked = Asked::Question {
+                    count: questions.len(),
+                };
+                let request = self.open(native, asked);
+                Vec::from([Effect::Emit(EventKind::QuestionAsked {
+                    request,
+                    questions,
+                })])
+            }
+            Step::ToolFinished { call, outcome } => {
+                self.tool_finished(call, outcome)
+            }
+            Step::Withdraw(native) => self.withdraw(&native),
+            Step::Checklist(steps) => self.checklist(steps),
+            // A request still open when the turn ends can't be answered any
+            // more: Codex withdraws it only after `TurnCompleted`, and an
+            // answer in between would log a decision for a command that
+            // never runs. Its later withdrawal then finds nothing open.
+            Step::HistoryBoundary(boundary) => self.history_boundary(boundary),
+            Step::TurnEnded(outcome) => {
+                self.checkpoint(Saved::TurnEnded(outcome))
+            }
+            Step::TurnStarted(native) => self.turn_started(native),
+            // Nothing the gone agent asked can be answered, and a turn it
+            // ran is over; clients mark both when they see the close.
+            Step::Closed(reason) => match &self.turn {
+                Turn::Running(_) => self.checkpoint(Saved::Closed(reason)),
+                Turn::Idle | Turn::Starting(_) => self.closed(reason),
+            },
+        }
+    }
+
+    fn tool_finished(
+        &mut self,
+        call: ToolCallId,
+        outcome: ToolOutcome,
+    ) -> Vec<Effect> {
+        let denied = self.declined.iter().position(|denied| denied == &call);
+        let finished = match (outcome, denied) {
+            (ToolOutcome::Failed, Some(_)) => ToolOutcome::Declined,
+            (reported, _) => reported,
+        };
+        self.declined.retain(|denied| denied != &call);
+        Vec::from([Effect::Emit(EventKind::ToolCall {
+            call,
+            phase: ToolPhase::Finished { outcome: finished },
+        })])
+    }
+
+    fn history_boundary(&mut self, boundary: Option<String>) -> Vec<Effect> {
+        self.boundary = boundary;
+        match &self.boundary {
+            Some(_) => {
+                let history = self.anchor(None);
+                self.book.resume = Some(history.clone());
+                Vec::from([Effect::Emit(EventKind::HistoryMaterialized {
+                    history,
+                })])
+            }
+            None => Vec::new(),
+        }
+    }
+
+    fn checklist(&mut self, steps: Vec<PlanStep>) -> Vec<Effect> {
+        let kept = tasks::kept(&self.tasks, &steps);
+        match kept.iter().filter(|id| id.is_none()).count() {
+            0 => self.minted(steps, kept, Vec::new()),
+            count => {
+                self.flow = Flow::Minting(steps, kept);
+                Vec::from([Effect::Call(Call::Mint(count))])
+            }
+        }
+    }
+
+    fn minted(
+        &mut self,
+        steps: Vec<PlanStep>,
+        kept: Vec<Option<TaskId>>,
+        minted: Vec<TaskId>,
+    ) -> Vec<Effect> {
+        let mut fresh = minted.into_iter();
+        let ids = kept
+            .into_iter()
+            .filter_map(|id| id.or_else(|| fresh.next()))
+            .collect();
+        let synced = tasks::synced(steps, ids, self.id);
+        self.retask(synced)
+    }
+
+    fn retask(&mut self, tasks: Vec<Task>) -> Vec<Effect> {
+        if tasks == self.tasks {
+            Vec::new()
+        } else {
+            self.tasks.clone_from(&tasks);
+            Vec::from([Effect::Emit(EventKind::TasksChanged { tasks })])
+        }
+    }
+
+    fn turn_ended(&mut self, outcome: TurnOutcome) -> Vec<Effect> {
+        self.turn = Turn::Idle;
+        self.turn_start = None;
+        let open = self
+            .requests
+            .iter()
+            .filter(|(_, pending)| matches!(pending, Pending::Open { .. }))
+            .map(|(request, _)| request)
+            .copied()
+            .collect::<BTreeSet<RequestId>>();
+        let withdrawn = open
+            .into_iter()
+            .flat_map(|request| self.withdrawn(request))
+            .collect::<Vec<Effect>>();
+        join(
+            [Effect::Emit(EventKind::TurnCompleted { outcome })],
+            withdrawn,
+        )
+    }
+
+    fn turn_started(&mut self, native: NativeTurn) -> Vec<Effect> {
+        self.turn_start = match &self.turn {
+            Turn::Idle => None,
+            Turn::Starting(_) | Turn::Running(_) => self.turn_start,
+        };
+        self.boundary = None;
+        self.conversation = self.agent.conversation();
+        let saved = self.conversation.clone().map(Effect::Conversation);
+        let materialized = match (&self.book.workspace, &self.agent) {
+            (
+                Some(_),
+                Agent::Up {
+                    provider: Provider::Codex,
+                    ..
+                },
+            ) => {
+                let history = self.anchor(Some(&native));
+                self.book.resume = Some(history.clone());
+                Some(Effect::Emit(EventKind::HistoryMaterialized { history }))
+            }
+            _ => None,
+        };
+        let started = self.book.workspace.is_some().then(|| {
+            let history = self.anchor(Some(&native));
+            self.book.snapshot = Some(Snapshot {
+                history: history.clone(),
+                turn_start: self.turn_start,
+            });
+            Effect::Emit(EventKind::NativeTurnStarted {
+                history,
+                turn_start: self.turn_start,
+            })
+        });
+        let before =
+            mem::replace(&mut self.turn, Turn::Running(native.clone()));
+        let held = match before {
+            Turn::Starting(Held::Interrupt) => {
+                self.flow = Flow::Noting(None);
+                Vec::from([
+                    Effect::Trace(
+                        "the turn started: sending the held interrupt",
+                    ),
+                    Effect::Call(Call::Interrupt(native)),
+                ])
+            }
+            Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => {
+                Vec::new()
+            }
+        };
+        join(join(join(saved, materialized), started), held)
+    }
+
+    fn closed(&mut self, reason: CloseReason) -> Vec<Effect> {
+        self.agent = Agent::Down;
+        self.turn = Turn::Idle;
+        self.turn_start = None;
+        self.declined.clear();
+        for pending in self.requests.values_mut() {
+            if let Pending::Open { .. } = pending {
+                *pending = Pending::Resolved(Resolution::Withdrawn);
+            }
+        }
+        Vec::from([
+            Effect::Release,
+            Effect::Emit(EventKind::SessionClosed { reason }),
+        ])
+    }
+
+    fn anchor(&self, native: Option<&NativeTurn>) -> HistoryAnchor {
+        match &self.agent {
+            Agent::Up {
+                provider: Provider::Claude,
+                conversation,
+                ..
+            } => HistoryAnchor::Claude {
+                conversation: conversation.clone(),
+                message: self.boundary.clone(),
+            },
+            Agent::Up {
+                provider: Provider::Codex,
+                conversation,
+                ..
+            } => HistoryAnchor::Codex {
+                conversation: conversation.clone(),
+                turn: native.map(|turn| turn.0.clone()),
+            },
+            Agent::Down => {
+                self.book.resume.clone().unwrap_or(HistoryAnchor::Fresh)
+            }
+        }
+    }
+
+    /// Takes the running turn's snapshot, then goes on with `then`.
+    fn checkpoint(&mut self, then: Saved) -> Vec<Effect> {
+        if let Turn::Running(native) = &self.turn {
+            self.book.snapshot = Some(Snapshot {
+                history: self.anchor(Some(native)),
+                turn_start: self.turn_start,
+            });
+        }
+        self.save(then)
+    }
+
+    /// Saves the pending snapshot as a checkpoint, if there is one, then
+    /// goes on with `then`.
+    fn save(&mut self, then: Saved) -> Vec<Effect> {
+        match self.book.workspace.clone().zip(self.book.snapshot.clone()) {
+            Some((workspace, snapshot)) => {
+                let previous = self.book.last().cloned();
+                let checkpoint = self.book.highwater.next();
+                self.book.highwater = checkpoint;
+                self.flow = Flow::Saving(Saving {
+                    checkpoint,
+                    parent: previous.as_ref().map(|last| last.id),
+                    snapshot,
+                    then,
+                });
+                Vec::from([
+                    Effect::Emit(EventKind::CheckpointReserved { checkpoint }),
+                    Effect::Barrier,
+                    Effect::Call(Call::Snapshot {
+                        workspace,
+                        checkpoint,
+                        previous: previous.map(|last| last.commit),
+                    }),
+                ])
+            }
+            None => self.saved(then, Ok(())),
+        }
+    }
+
+    fn snapshotted(
+        &mut self,
+        saving: Saving,
+        taken: Result<String, String>,
+    ) -> Vec<Effect> {
+        let Saving {
+            checkpoint,
+            parent,
+            snapshot,
+            then,
+        } = saving;
+        match taken {
+            Ok(commit) => {
+                let undo = self.book.availability(&snapshot.history);
+                let created = Checkpoint {
+                    id: checkpoint,
+                    parent,
+                    turn_start: snapshot.turn_start,
+                    commit,
+                    history: snapshot.history,
+                    undo,
+                };
+                self.book.active.push(checkpoint);
+                self.book.checkpoints.insert(checkpoint, created.clone());
+                self.book.snapshot = None;
+                join(
+                    [Effect::Emit(EventKind::CheckpointCreated {
+                        checkpoint: created,
+                    })],
+                    self.saved(then, Ok(())),
+                )
+            }
+            Err(reason) => self.saved(then, Err(reason)),
+        }
+    }
+
+    fn saved(&mut self, then: Saved, saved: Result<(), String>) -> Vec<Effect> {
+        match (then, saved) {
+            (Saved::Start(provider, offered), Ok(())) => {
+                let changed = self.offered(&offered);
+                let attempts = attempts(
+                    provider,
+                    self.book.resume.clone(),
+                    self.conversation.clone(),
+                );
+                let directory = self.directory.clone();
+                join(changed, self.start(directory, attempts, Launched::Ready))
+            }
+            (Saved::Send(text, by), Ok(())) => {
+                self.flow = Flow::Recording(text.clone());
+                Vec::from([Effect::Call(Call::Record(
+                    EventKind::UserMessage { text, by },
+                ))])
+            }
+            (Saved::Start(..) | Saved::Send(..), Err(reason)) => {
+                rejected(Rejection::WorkspaceFailure { reason })
+            }
+            (Saved::TurnEnded(outcome), taken) => {
+                join(checkpoint_failed(taken), self.turn_ended(outcome))
+            }
+            (Saved::Closed(reason), taken) => {
+                join(checkpoint_failed(taken), self.closed(reason))
+            }
+        }
+    }
+
+    fn start(
+        &mut self,
+        directory: HostPath,
+        (attempt, rest): (Resume, Vec<Resume>),
+        then: Launched,
+    ) -> Vec<Effect> {
+        let call = Call::Start(Launching {
+            directory: directory.clone(),
+            choice: self.choice.clone(),
+            resume: attempt.clone(),
+        });
+        self.flow = Flow::Starting(Starting {
+            attempt,
+            rest,
+            directory,
+            then,
+        });
+        Vec::from([Effect::Call(call)])
+    }
+
+    /// An agent that finds the conversation it resumes missing starts on
+    /// the next attempt, if there is one.
+    fn started(
+        &mut self,
+        starting: Starting,
+        started: Result<String, Unstarted>,
+    ) -> Vec<Effect> {
+        let Starting {
+            attempt,
+            rest,
+            directory,
+            then,
+        } = starting;
+        let mut left = rest.into_iter();
+        match (started, left.next()) {
+            (Err(unstarted), Some(next))
+                if unstarted.missing.is_some()
+                    && unstarted.missing.as_deref() == attempt.session() =>
+            {
+                self.start(directory, (next, left.collect()), then)
+            }
+            (Ok(conversation), _) => {
+                self.agent = Agent::Up {
+                    provider: attempt.provider(),
+                    conversation: conversation.clone(),
+                    effort: self.choice.effort,
+                };
+                self.launched(then, Ok(conversation))
+            }
+            (Err(unstarted), _) => self.launched(then, Err(unstarted.message)),
+        }
+    }
+
+    fn launched(
+        &mut self,
+        then: Launched,
+        started: Result<String, String>,
+    ) -> Vec<Effect> {
+        match (then, started) {
+            (Launched::Ready, Ok(conversation)) => Vec::from([
+                Effect::Conversation(conversation),
+                Effect::Emit(EventKind::SessionReady),
+                Effect::Reply(CommandResult::Accepted),
+            ]),
+            (Launched::Ready, Err(message)) => Vec::from([
+                Effect::Emit(EventKind::SessionClosed {
+                    reason: CloseReason::FailedToStart { message },
+                }),
+                Effect::Reply(CommandResult::Accepted),
+            ]),
+            (Launched::Revert(revert), Ok(_)) => self.list(revert),
+            (
+                Launched::Restart(undoing, directory, history),
+                Ok(conversation),
+            ) => {
+                self.conversation = None;
+                join(
+                    [Effect::Conversation(conversation)],
+                    self.restored(undoing, &directory, Ok(history)),
+                )
+            }
+            (Launched::Complete(undoing), Ok(_)) => {
+                self.finish_undo(&undoing.undo)
+            }
+            (
+                Launched::Revert(Revert {
+                    undoing, directory, ..
+                })
+                | Launched::Restart(undoing, directory, _),
+                Err(reason),
+            ) => self.restored(undoing, &directory, Err(reason)),
+            (Launched::Complete(undoing), Err(reason)) => {
+                self.undo_failed(undoing.undo.selected, reason)
+            }
+        }
+    }
+
+    fn diff(&mut self, id: CheckpointId) -> Vec<Effect> {
+        match self
+            .book
+            .workspace
+            .as_ref()
+            .zip(self.book.checkpoints.get(&id))
+            .and_then(|(workspace, checkpoint)| {
+                checkpoint
+                    .parent
+                    .and_then(|parent| self.book.checkpoints.get(&parent))
+                    .map(|parent| {
+                        Call::Diff(Box::new(Compared {
+                            workspace: workspace.clone(),
+                            checkpoint: checkpoint.clone(),
+                            parent: parent.clone(),
+                        }))
+                    })
+            }) {
+            Some(call) => {
+                self.flow = Flow::Diffing;
+                Vec::from([Effect::Call(call)])
+            }
+            None => rejected(Rejection::CheckpointUnavailable),
+        }
+    }
+
+    fn plan(
+        &self,
+        selected: CheckpointId,
+        fork: &str,
+    ) -> Result<Undo, Rejection> {
+        match (&self.book.recovery, &self.turn) {
+            (Some(Recovery::Native(undo) | Recovery::Files(undo)), _)
+                if undo.selected == selected =>
+            {
+                Ok(undo.clone())
+            }
+            (Some(_), _) => Err(Rejection::UndoInProgress),
+            (None, Turn::Idle) => self.fresh_plan(selected, fork),
+            (None, Turn::Starting(_) | Turn::Running(_)) => {
+                Err(Rejection::TurnInProgress)
+            }
+        }
+    }
+
+    fn fresh_plan(
+        &self,
+        selected: CheckpointId,
+        fork: &str,
+    ) -> Result<Undo, Rejection> {
+        let checkpoint = self
+            .book
+            .active
+            .contains(&selected)
+            .then(|| self.book.checkpoints.get(&selected))
+            .flatten()
+            .ok_or(Rejection::CheckpointUnavailable)?;
+        let parent = match &checkpoint.undo {
+            UndoAvailability::Unavailable { .. } => None,
+            UndoAvailability::Available => checkpoint
+                .parent
+                .and_then(|id| self.book.checkpoints.get(&id)),
+        }
+        .ok_or(Rejection::CheckpointUnavailable)?;
+        Ok(Undo {
+            selected,
+            restored: parent.id,
+            history: undo_history(&parent.history, &checkpoint.history, fork)?,
+        })
+    }
+
+    /// The workspace and the commit of checkpoint `restored`.
+    fn restore_point(
+        &self,
+        restored: CheckpointId,
+    ) -> Option<(Workspace, String)> {
+        self.book
+            .workspace
+            .clone()
+            .zip(self.book.checkpoints.get(&restored))
+            .map(|(workspace, checkpoint)| {
+                (workspace, checkpoint.commit.clone())
+            })
+    }
+
+    fn undo(&mut self, order: UndoOrder) -> Vec<Effect> {
+        match self.plan(order.checkpoint, &order.fork) {
+            Err(reason) => rejected(reason),
+            Ok(undo) => {
+                match (&self.book.recovery, self.restore_point(undo.restored)) {
+                    (Some(_), _) => self.execute_undo(&order),
+                    (None, Some((workspace, commit))) => {
+                        self.flow = Flow::Preflighting(order);
+                        Vec::from([Effect::Call(Call::Preflight {
+                            workspace,
+                            commit,
+                        })])
+                    }
+                    (None, None) => rejected(Rejection::CheckpointUnavailable),
+                }
+            }
+        }
+    }
+
+    fn preflighted(
+        &mut self,
+        order: &UndoOrder,
+        checked: Result<(), String>,
+    ) -> Vec<Effect> {
+        match checked {
+            Ok(()) => self.execute_undo(order),
+            Err(reason) => rejected(Rejection::WorkspaceFailure { reason }),
+        }
+    }
+
+    fn execute_undo(&mut self, order: &UndoOrder) -> Vec<Effect> {
+        match self.plan(order.checkpoint, &order.fork) {
+            Err(reason) => rejected(reason),
+            Ok(undo) => {
+                let begun = self.begin_undo(&undo);
+                let undoing = Undoing {
+                    undo,
+                    provider: order.provider,
+                };
+                join(begun, self.recover(undoing))
+            }
+        }
+    }
+
+    fn begin_undo(&mut self, undo: &Undo) -> Vec<Effect> {
+        if self.book.recovery.is_some() {
+            return Vec::new();
+        }
+        self.book.recovery = Some(Recovery::Native(undo.clone()));
+        Vec::from([
+            Effect::Emit(EventKind::UndoStarted {
+                checkpoint: undo.selected,
+                restore: undo.restored,
+                history: undo.history.clone(),
+            }),
+            Effect::Barrier,
+        ])
+    }
+
+    fn recover(&mut self, undoing: Undoing) -> Vec<Effect> {
+        match self.book.recovery.clone() {
+            Some(Recovery::Native(plan)) => {
+                self.flow = Flow::Locating(undoing, plan.history);
+                Vec::from([Effect::Call(Call::Exists(self.directory.clone()))])
+            }
+            Some(Recovery::Files(plan)) => {
+                self.history_restored(undoing, Ok(plan.history))
+            }
+            None => self.history_restored(
+                undoing,
+                Err(String::from("undo has no durable plan")),
+            ),
+        }
+    }
+
+    /// The agent's history is restored in the session's directory, or in
+    /// the worktree when that directory is gone.
+    fn located(
+        &mut self,
+        undoing: Undoing,
+        history: HistoryAnchor,
+        exists: bool,
+    ) -> Vec<Effect> {
+        let directory = match (exists, &self.book.workspace) {
+            (false, Some(workspace)) => workspace.worktree.clone(),
+            _ => self.directory.clone(),
+        };
+        match history {
+            HistoryAnchor::Codex {
+                conversation,
+                turn: Some(turn),
+            } => {
+                let attempts = attempts(
+                    undoing.provider,
+                    Some(HistoryAnchor::Codex {
+                        conversation: conversation.clone(),
+                        turn: None,
+                    }),
+                    None,
+                );
+                let revert = Revert {
+                    undoing,
+                    directory: directory.clone(),
+                    conversation,
+                    turn,
+                };
+                self.start(directory, attempts, Launched::Revert(revert))
+            }
+            HistoryAnchor::Fresh | HistoryAnchor::ClaudeFork { .. } => {
+                self.agent = Agent::Down;
+                self.flow = Flow::Restarting(undoing, directory, history);
+                Vec::from([Effect::Call(Call::Shutdown)])
+            }
+            _ => self.restored(
+                undoing,
+                &directory,
+                Err(String::from("native undo boundary is unavailable")),
+            ),
+        }
+    }
+
+    /// Claude stopped; it starts again in `directory` at `history`.
+    fn restart(
+        &mut self,
+        undoing: Undoing,
+        directory: HostPath,
+        history: HistoryAnchor,
+        stopped: Result<(), String>,
+    ) -> Vec<Effect> {
+        match stopped {
+            Ok(()) => {
+                let attempts =
+                    attempts(undoing.provider, Some(history.clone()), None);
+                let then =
+                    Launched::Restart(undoing, directory.clone(), history);
+                self.start(directory, attempts, then)
+            }
+            Err(reason) => self.restored(undoing, &directory, Err(reason)),
+        }
+    }
+
+    fn list(&mut self, revert: Revert) -> Vec<Effect> {
+        match &self.agent {
+            Agent::Up {
+                provider: Provider::Codex,
+                ..
+            } => {
+                self.flow = Flow::Listing(revert);
+                Vec::from([Effect::Call(Call::Turns)])
+            }
+            _ => self.restored(
+                revert.undoing,
+                &revert.directory,
+                Err(String::from("Codex undo started another provider")),
+            ),
+        }
+    }
+
+    fn listed(
+        &mut self,
+        revert: Revert,
+        listed: Result<Vec<String>, String>,
+    ) -> Vec<Effect> {
+        match listed {
+            Ok(before) if before.contains(&revert.turn) => {
+                let call = Call::Revert(revert.turn.clone());
+                self.flow = Flow::Reverting(revert);
+                Vec::from([Effect::Call(call)])
+            }
+            Ok(_) => self.reverted(revert, Ok(())),
+            Err(reason) => {
+                self.restored(revert.undoing, &revert.directory, Err(reason))
+            }
+        }
+    }
+
+    fn reverted(
+        &mut self,
+        revert: Revert,
+        reverted: Result<(), String>,
+    ) -> Vec<Effect> {
+        match reverted {
+            Ok(()) => {
+                self.flow = Flow::Checking(revert);
+                Vec::from([Effect::Call(Call::Turns)])
+            }
+            Err(reason) => {
+                self.restored(revert.undoing, &revert.directory, Err(reason))
+            }
+        }
+    }
+
+    /// The reverted thread's turns must be those of the checkpoints kept.
+    fn checked(
+        &mut self,
+        revert: Revert,
+        listed: Result<Vec<String>, String>,
+    ) -> Vec<Effect> {
+        let desired = self.kept_turns(revert.undoing.undo.restored);
+        let history = listed.and_then(|after| {
+            (after == desired)
+                .then(|| HistoryAnchor::Codex {
+                    conversation: revert.conversation,
+                    turn: desired.last().cloned(),
+                })
+                .ok_or_else(|| {
+                    String::from(
+                        "native history does not match the retained turn prefix",
+                    )
+                })
+        });
+        self.restored(revert.undoing, &revert.directory, history)
+    }
+
+    fn kept_turns(&self, restored: CheckpointId) -> Vec<String> {
+        self.book
+            .active
+            .iter()
+            .filter(|id| id <= &&restored)
+            .filter_map(|id| self.book.checkpoints.get(id))
+            .filter_map(|checkpoint| match &checkpoint.history {
+                HistoryAnchor::Codex {
+                    turn: Some(kept), ..
+                } => Some(kept.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// An agent restored outside the session's directory stops, so the
+    /// session starts it again in its own.
+    fn restored(
+        &mut self,
+        undoing: Undoing,
+        directory: &HostPath,
+        restored: Result<HistoryAnchor, String>,
+    ) -> Vec<Effect> {
+        match restored {
+            Ok(history) if directory != &self.directory => {
+                self.agent = Agent::Down;
+                self.flow = Flow::Leaving(undoing, history);
+                Vec::from([Effect::Call(Call::Shutdown)])
+            }
+            other => self.history_restored(undoing, other),
+        }
+    }
+
+    fn history_restored(
+        &mut self,
+        undoing: Undoing,
+        restored: Result<HistoryAnchor, String>,
+    ) -> Vec<Effect> {
+        match (restored, &self.book.recovery) {
+            (Err(reason), _) => self.undo_failed(undoing.undo.selected, reason),
+            (Ok(history), Some(Recovery::Native(_))) => {
+                let event = EventKind::UndoHistoryRestored {
+                    checkpoint: undoing.undo.selected,
+                    history: history.clone(),
+                };
+                self.flow = Flow::Retasking(undoing, history);
+                Vec::from([Effect::Emit(event), Effect::Call(Call::History)])
+            }
+            (Ok(_), _) => self.restore_files(undoing),
+        }
+    }
+
+    /// The tasks go back to how they were when the restored checkpoint was
+    /// taken, and the undo's native phase is durable.
+    fn retasked(
+        &mut self,
+        undoing: Undoing,
+        history: HistoryAnchor,
+        events: &[Event],
+    ) -> Vec<Effect> {
+        let tasks =
+            self.retask(tasks_before(events, self.id, undoing.undo.restored));
+        self.book.resume = Some(history.clone());
+        self.book.recovery = Some(Recovery::Files(Undo {
+            history,
+            ..undoing.undo
+        }));
+        join(join(tasks, [Effect::Barrier]), self.restore_files(undoing))
+    }
+
+    fn restore_files(&mut self, undoing: Undoing) -> Vec<Effect> {
+        match self.restore_point(undoing.undo.restored) {
+            Some((workspace, commit)) => {
+                self.flow = Flow::Restoring(undoing);
+                Vec::from([Effect::Call(Call::Restore { workspace, commit })])
+            }
+            None => self.undo_failed(
+                undoing.undo.selected,
+                String::from("restore checkpoint is unavailable"),
+            ),
+        }
+    }
+
+    fn files_restored(
+        &mut self,
+        undoing: Undoing,
+        restored: Result<(), String>,
+    ) -> Vec<Effect> {
+        match (restored, &self.agent) {
+            (Err(reason), _) => self.undo_failed(undoing.undo.selected, reason),
+            (Ok(()), Agent::Down) => {
+                let attempts = attempts(
+                    undoing.provider,
+                    self.book.resume.clone(),
+                    self.conversation.clone(),
+                );
+                let directory = self.directory.clone();
+                self.start(directory, attempts, Launched::Complete(undoing))
+            }
+            (Ok(()), Agent::Up { .. }) => self.finish_undo(&undoing.undo),
+        }
+    }
+
+    fn finish_undo(&mut self, undo: &Undo) -> Vec<Effect> {
+        self.book.active.retain(|id| id <= &undo.restored);
+        self.book.recovery = None;
+        self.book.snapshot = None;
+        self.turn_start = None;
+        self.boundary = None;
+        Vec::from([
+            Effect::Emit(EventKind::TurnsUndone {
+                checkpoint: undo.selected,
+                restored: undo.restored,
+            }),
+            Effect::Reply(CommandResult::Accepted),
+        ])
+    }
+
+    fn undo_failed(
+        &mut self,
+        checkpoint: CheckpointId,
+        reason: String,
+    ) -> Vec<Effect> {
+        self.flow = Flow::Idle;
+        Vec::from([
+            Effect::Emit(EventKind::UndoFailed {
+                checkpoint,
+                reason: reason.clone(),
+            }),
+            Effect::Reply(CommandResult::Rejected(Rejection::UndoFailed {
+                reason,
+            })),
+        ])
+    }
+
+    /// Stores a new request open under the next id.
+    fn open(&mut self, native: NativeRequest, asked: Asked) -> RequestId {
+        let request = self.last_request.next();
+        self.last_request = request;
+        self.requests
+            .insert(request, Pending::Open { native, asked });
+        request
+    }
+
+    fn withdraw(&mut self, native: &NativeRequest) -> Vec<Effect> {
+        self.requests
+            .iter()
+            .find(|(_, pending)| pending.native() == Some(native))
+            .map(|(request, _)| *request)
+            .map_or_else(Vec::new, |request| self.withdrawn(request))
+    }
+
+    fn withdrawn(&mut self, request: RequestId) -> Vec<Effect> {
+        self.requests
+            .insert(request, Pending::Resolved(Resolution::Withdrawn));
+        Vec::from([Effect::Emit(EventKind::RequestResolved {
+            request,
+            resolution: Resolution::Withdrawn,
+        })])
+    }
+}
+
+/// Whether `reply` answers what the request asked, and if not, why.
+fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
+    match (asked, reply) {
+        (
+            Asked::Approval {
+                for_session: None, ..
+            },
+            Reply::Decide(Decision::ApproveForSession),
+        ) => Err(String::from(
+            "the agent offers no approval for the session here",
+        )),
+        (Asked::Approval { .. }, Reply::Decide(_)) => Ok(()),
+        (Asked::Approval { .. }, Reply::Answer(_)) => {
+            Err(String::from("an approval takes a decision, not answers"))
+        }
+        (Asked::Question { .. }, Reply::Decide(_)) => {
+            Err(String::from("a question takes answers, not a decision"))
+        }
+        (Asked::Question { count }, Reply::Answer(answers))
+            if &answers.len() == count =>
+        {
+            Ok(())
+        }
+        (Asked::Question { count }, Reply::Answer(answers)) => {
+            Err(format!("{} answers for {count} questions", answers.len()))
+        }
+    }
+}
+
+/// The effort the agent should change to before its next turn, if it runs
+/// another than `wanted`.
+fn changed(wanted: Option<Effort>, running: Option<Effort>) -> Option<Effort> {
+    wanted.filter(|&effort| running != Some(effort))
+}
+
+/// What an undo restores the agent's history to: a fresh conversation, a
+/// fork of Claude's through the parent's last message, or Codex's turn.
+fn undo_history(
+    parent: &HistoryAnchor,
+    checkpoint: &HistoryAnchor,
+    fork: &str,
+) -> Result<HistoryAnchor, Rejection> {
+    match (parent, checkpoint) {
+        (HistoryAnchor::Fresh, _) => Ok(HistoryAnchor::Fresh),
+        (
+            HistoryAnchor::Claude {
+                conversation,
+                message: Some(message),
+            },
+            _,
+        ) => Ok(HistoryAnchor::ClaudeFork {
+            source: conversation.clone(),
+            through: message.clone(),
+            target: String::from(fork),
+        }),
+        (
+            _,
+            HistoryAnchor::Codex {
+                conversation,
+                turn: Some(turn),
+            },
+        ) => Ok(HistoryAnchor::Codex {
+            conversation: conversation.clone(),
+            turn: Some(turn.clone()),
+        }),
+        _ => Err(Rejection::CheckpointUnavailable),
+    }
+}
+
+/// The resumes to try in turn when starting `provider`'s agent at
+/// `history`, else on the saved `conversation`; each after the first only
+/// when the one before finds its conversation missing.
+///
+/// A fork whose target already exists resumes the target instead, and a
+/// missing Claude conversation with no observed message starts fresh.
+fn attempts(
+    provider: Provider,
+    history: Option<HistoryAnchor>,
+    conversation: Option<String>,
+) -> (Resume, Vec<Resume>) {
+    match provider {
+        Provider::Claude => {
+            let fallback = matches!(
+                history,
+                Some(HistoryAnchor::Claude { message: None, .. })
+            );
+            match claude_resume(history, conversation) {
+                ClaudeResume::Fork {
+                    source,
+                    through,
+                    target,
+                } => (
+                    Resume::Claude(ClaudeResume::Session(target.clone())),
+                    Vec::from([Resume::Claude(ClaudeResume::Fork {
+                        source,
+                        through,
+                        target,
+                    })]),
+                ),
+                ClaudeResume::Session(session) if fallback => (
+                    Resume::Claude(ClaudeResume::Session(session)),
+                    Vec::from([Resume::Claude(ClaudeResume::Fresh)]),
+                ),
+                resume => (Resume::Claude(resume), Vec::new()),
+            }
+        }
+        Provider::Codex => (
+            Resume::Codex(match history {
+                Some(HistoryAnchor::Fresh) => None,
+                Some(HistoryAnchor::Codex {
+                    conversation: native,
+                    ..
+                }) => Some(native),
+                _ => conversation,
+            }),
+            Vec::new(),
+        ),
+    }
+}
+
+fn claude_resume(
+    history: Option<HistoryAnchor>,
+    conversation: Option<String>,
+) -> ClaudeResume {
+    match history {
+        Some(HistoryAnchor::Fresh) => ClaudeResume::Fresh,
+        Some(HistoryAnchor::ClaudeFork {
+            source,
+            through,
+            target,
+        }) => ClaudeResume::Fork {
+            source,
+            through,
+            target,
+        },
+        Some(HistoryAnchor::Claude {
+            conversation: native,
+            ..
+        }) => ClaudeResume::Session(native),
+        _ => conversation.map_or(ClaudeResume::Fresh, ClaudeResume::Session),
+    }
+}
+
+/// Where a restored session resumes. A fresh restart that took a message
+/// resumes the conversation the host saved for it.
+fn resumed(
+    replayed: &Book,
+    conversation: Option<&String>,
+    history: &[Event],
+) -> Option<HistoryAnchor> {
+    let last = history.iter().rev().find(|event| {
+        matches!(
+            event.kind,
+            EventKind::UserMessage { .. }
+                | EventKind::UndoHistoryRestored { .. }
+        )
+    });
+    match (&replayed.resume, conversation, last) {
+        (
+            Some(HistoryAnchor::Fresh),
+            Some(saved),
+            Some(Event {
+                kind: EventKind::UserMessage { .. },
+                ..
+            }),
+        ) => history.iter().find_map(|event| match event.kind {
+            EventKind::SessionCreated {
+                provider: Provider::Claude,
+                ..
+            } => Some(HistoryAnchor::Claude {
+                conversation: saved.clone(),
+                message: None,
+            }),
+            EventKind::SessionCreated {
+                provider: Provider::Codex,
+                ..
+            } => Some(HistoryAnchor::Codex {
+                conversation: saved.clone(),
+                turn: None,
+            }),
+            _ => None,
+        }),
+        _ => replayed.resume.clone(),
+    }
+}
+
+fn replay_requests(history: &[Event]) -> BTreeMap<RequestId, Pending> {
+    history
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::RequestOpened { request, .. }
+            | EventKind::QuestionAsked { request, .. } => Some((
+                request.to_owned(),
+                Pending::Resolved(Resolution::Withdrawn),
+            )),
+            EventKind::RequestResolved {
+                request,
+                resolution,
+            } => Some((
+                request.to_owned(),
+                Pending::Resolved(resolution.clone()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn last_tasks<'events>(
+    history: impl DoubleEndedIterator<Item = &'events Event>,
+) -> Vec<Task> {
+    history
+        .rev()
+        .find_map(|event| match &event.kind {
+            EventKind::TasksChanged { tasks } => Some(tasks.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// The tasks `session` held when checkpoint `restored` was taken: the last
+/// `TasksChanged` before it, or none.
+fn tasks_before(
+    history: &[Event],
+    session: SessionId,
+    restored: CheckpointId,
+) -> Vec<Task> {
+    let taken = history.iter().find_map(|event| match &event.kind {
+        EventKind::CheckpointCreated { checkpoint }
+            if checkpoint.id == restored =>
+        {
+            Some(event.seq)
+        }
+        _ => None,
+    });
+    last_tasks(
+        history.iter().filter(|event| {
+            event.session == session && Some(event.seq) < taken
+        }),
+    )
+}
+
+fn checkpoint_failed(saved: Result<(), String>) -> Option<Effect> {
+    saved.err().map(|message| {
+        Effect::Emit(EventKind::Error {
+            message: format!("checkpoint failed: {message}"),
+        })
+    })
+}
+
+/// An agent call that failed after the command was accepted is logged as
+/// an `Error`, since the command's effects are already in the log.
+fn noted(
+    called: Result<(), String>,
+    then: Option<CommandResult>,
+) -> Vec<Effect> {
+    join(
+        called
+            .err()
+            .map(|message| Effect::Emit(EventKind::Error { message })),
+        then.map(Effect::Reply),
+    )
+}
+
+fn diffed(diff: Result<CheckpointDiff, String>) -> CommandResult {
+    diff.map_or_else(
+        |reason| {
+            CommandResult::Rejected(Rejection::WorkspaceFailure { reason })
+        },
+        CommandResult::Diff,
+    )
+}
+
+fn answer(result: CommandResult) -> Vec<Effect> {
+    Vec::from([Effect::Reply(result)])
+}
+
+fn rejected(rejection: Rejection) -> Vec<Effect> {
+    answer(CommandResult::Rejected(rejection))
+}
+
+fn join(
+    first: impl IntoIterator<Item = Effect>,
+    then: impl IntoIterator<Item = Effect>,
+) -> Vec<Effect> {
+    first.into_iter().chain(then).collect()
+}
+
+#[cfg(test)]
+mod tests;

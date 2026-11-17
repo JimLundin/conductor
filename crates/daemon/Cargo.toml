@@ -22,6 +22,7 @@ data-encoding.workspace = true
 directories = "6.0.0"
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
+log = "0.4.35"
 net = { path = "../net" }
 n0-future.workspace = true
 postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
