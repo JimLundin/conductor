@@ -102,7 +102,7 @@ async fn execute(
         .map_err(|error| failure("git timeout", &error.to_string()))?
 }
 
-async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
+pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
     let output = execute(&mut git(path, args)).await?;
     host::workspace::text(output, args.first().copied().unwrap_or("git"))
 }

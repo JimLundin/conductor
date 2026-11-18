@@ -24,7 +24,7 @@ use proto::{
     Answer, Auth, Availability, Change, CheckpointId, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Event, EventKind,
     HostPath, HostSeq, InstanceId, Provider, Question, RequestId, SessionId,
-    Ticket, TurnOutcome,
+    StartAt, Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -380,7 +380,7 @@ impl Session {
             .link
             .send(CommandBody::StartSession {
                 instance: self.instance(),
-                directory: self.directory.clone(),
+                at: StartAt::Directory(self.directory.clone()),
                 model: None,
                 effort: None,
             })

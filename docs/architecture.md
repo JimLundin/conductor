@@ -496,6 +496,8 @@ until someone re-records them by hand (§6.2).
   killed when their owning tasks are dropped.
 - **Planned tables:** `raw_events` (provider wire for remapping), `roster`
   and `push_tokens`, when their features land.
+- **The home's state:** the home's remote and the checkouts found, in
+  `<data>/home.state` (postcard), outside the log (§5.4).
 - **Worktrees and checkpoints (built):** new sessions require a committed
   Git repository and get `<data>/worktrees/<ulid>` on `conductor/<ulid>`,
   initially from committed HEAD. The original working tree and index stay
@@ -534,6 +536,56 @@ until someone re-records them by hand (§6.2).
   Send and Continue, allows immutable diffs and retry of the same target,
   and never silently discards the pending undo. Legacy sessions without
   workspace events continue in their original directory without checkpoints.
+
+### 5.4 The home and its projects (built)
+
+The home (`docs/home.md`) is the owner's git repository of projects,
+standards and, later, issues and work, cloned on every host. Built so far
+is home step 3: the clone, its sync, and each project's checkouts.
+
+- **The home's files.** `projects/<project>/project.toml` lists each
+  project with its `name`, `remote` (absent when local only), `root` (the
+  first commit of its first-parent history), default `branch`, `profiles`,
+  and `path`, where the owner usually checks it out relative to the home.
+  The `home` core crate parses them (`home::project`), matches checkouts
+  (`home::checkout`), says where the clone stands (`home::sync`) and builds
+  what the host reports. It is a core of its own rather than part of
+  `host`: the home is fleet-wide data in its own files, which issues and
+  work will add to, apart from the host's session machinery.
+- **The clone.** `conductord host --home <remote>` gives the host the
+  home, which it stores in `<data>/home.state`, so later starts need no
+  flag. One task, `daemon::home::HomeClone`, owns the clone in
+  `<data>/home-repo` (`<data>/home` holds the instances' private homes) and
+  runs plain `git`, as the workspaces do. It clones when there is no clone
+  and otherwise pulls (`git pull --rebase`, which fast-forwards; a rebase
+  that stops is aborted) every five minutes, on `SyncHome`, and before a
+  read that needs it (a session started in a project, a clone) unless it
+  tried within 30 seconds. A failure is state, not an error:
+  `proto::HomeSync` is `Syncing` (first clone), `Synced`, `Behind` (a
+  clone, but the last pull failed) or `Failed` (no clone), with
+  `Home.synced`, the last successful sync. What the home looks like now is
+  on a watch channel, so `Welcome.home` never waits on a pull, and each
+  change reaches clients as `Feed::Home`, which replaces the last.
+- **Checkouts.** A local repository is a project's checkout when its `HEAD`
+  history has the project's root commit and its `origin` is the project's
+  remote, compared without scheme, user, `.git` or case; a local-only
+  project's checkouts have no `origin`. The host probes, in order, the
+  checkouts it found before, then in each search root (`--projects <dir>`,
+  repeatable) each project's `path` and each directory, then its own
+  clones, running `rev-parse --show-toplevel`, `rev-list --max-parents=0
+  HEAD` and `remote get-url origin` in each; the decisions are
+  `home::checkout`. A project may have several checkouts on a host
+  (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in
+  `<data>/home.state`. `CloneProject` clones a project with a remote into
+  `<data>/projects/<project>` (`Project.cloning` is `Running`, then `Idle`
+  or `Failed`). The host only reads the checkouts it finds; sessions run in
+  worktrees made from them (§5.3).
+- **Sessions in a project.** `StartSession { at: StartAt::Directory |
+  StartAt::Project }`: a project starts in its first checkout, or is
+  refused with `NoHome`, `UnknownProject` or `NotCheckedOut`. The session
+  stores no project of its own: its worktree's repository, which
+  `WorkspaceCreated` records, is the checkout, and the app finds the
+  project from it (home §2.2).
 
 ## 6. Planned: the fleet
 
@@ -1455,6 +1507,14 @@ ticket.
   sessions. Forgetting the last host returns to the pairing screen. A Home
   Screen app on iOS has its own storage and can't receive a join link from
   the camera, so it pairs from its own form.
+- **Projects** (§5.4). *Projects* in the band shows each host's home, how
+  it syncs and a *Sync* button, then each project the homes list, with its
+  checkouts on each host that lists it and *Clone here* where it has none
+  and a remote. The status's `home` comes from `Welcome` and `Feed::Home`.
+  The new-session form offers the chosen host's projects, those with no
+  checkout there disabled, or a directory; a picked project hides the
+  directory. A session whose worktree's repository is a project's checkout
+  is listed by the project's name.
 - **Storage.** Local storage keeps `conductor.hosts`, a JSON object keyed
   by each host's endpoint id in hex, holding its ticket text and name
   (`ui::encode`, `ui::decode`). The first launch after the single-host app

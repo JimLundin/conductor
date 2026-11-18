@@ -10,7 +10,7 @@ use clap::Parser;
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     ClientName, CommandBody, CommandResult, EventKind, HostPath, InstanceId,
-    Provider, SessionId, Ticket,
+    Provider, SessionId, StartAt, Ticket,
 };
 use tokio::sync::mpsc;
 
@@ -33,7 +33,9 @@ async fn main() -> anyhow::Result<()> {
     let session = match link
         .send(CommandBody::StartSession {
             instance: InstanceId::named(Provider::Claude.name()),
-            directory: HostPath(args.directory.display().to_string()),
+            at: StartAt::Directory(HostPath(
+                args.directory.display().to_string(),
+            )),
             model: None,
             effort: None,
         })

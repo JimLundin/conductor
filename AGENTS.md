@@ -50,7 +50,9 @@ Home Screen. The design is in
   (`proto::Credential`); each provider's core reads its own. Only the
   binary, `crates/conductord`, wires the providers in. Its flags are
   `conductord host --cli <provider>=<path> --model <provider>=<model>`
-  (each repeatable, the defaults of that provider's instances) and
+  (each repeatable, the defaults of that provider's instances), `--home
+  <remote>` (the home, `docs/home.md`, stored once given) and `--projects
+  <dir>` (repeatable, where it looks for checkouts), and
   `conductord login <instance>`; build it with `cargo build -p
   conductord`. Keep provider-specific code out of `daemon`, `host`,
   `proto`, `client`, `ui` and `app`.

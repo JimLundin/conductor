@@ -1,8 +1,10 @@
 mod hosts;
+mod projects;
 
 use alloc::collections::BTreeMap;
 
 use client::link::{LinkState, Status, Update};
+use proto::StartAt;
 use proto::{
     Auth, AuthToken, Availability, Catalog, Checkpoint, CheckpointDiff,
     CheckpointFile, CheckpointId, ClientName, CloseReason, CommandBody,
@@ -172,6 +174,7 @@ fn signing_in(
             instances: Some(instances),
             catalog: catalog(),
             sign_ins,
+            home: None,
             error: None,
         }),
     )
@@ -224,7 +227,8 @@ fn pane(state: &State) -> Option<SessionPane> {
         Detail::Placeholder(_)
         | Detail::Pair(_)
         | Detail::NewSession(_)
-        | Detail::Credentials(_) => None,
+        | Detail::Credentials(_)
+        | Detail::Projects(_) => None,
     })
 }
 
@@ -251,6 +255,7 @@ fn form(state: &State) -> Option<NewSessionForm> {
         Detail::Placeholder(_)
         | Detail::Pair(_)
         | Detail::Credentials(_)
+        | Detail::Projects(_)
         | Detail::Session(_) => None,
     })
 }
@@ -1131,7 +1136,7 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
             Some((true, "Starting…")),
             Vec::from([CommandBody::StartSession {
                 instance: id("claude"),
-                directory: HostPath(text("/src/x")),
+                at: StartAt::Directory(HostPath(text("/src/x"))),
                 model: Some(ModelId(text("opus"))),
                 effort: Some(Effort::High),
             }]),
@@ -1298,6 +1303,7 @@ fn pane_of(state: &State) -> Option<crate::CredentialsPane> {
         Detail::Placeholder(_)
         | Detail::Pair(_)
         | Detail::NewSession(_)
+        | Detail::Projects(_)
         | Detail::Session(_) => None,
     })
 }
@@ -1475,7 +1481,7 @@ fn the_new_session_form_lists_each_instance_and_starts_on_the_one_picked() {
             ])),
             Vec::from([CommandBody::StartSession {
                 instance: id("claude-api"),
-                directory: HostPath(text("/src/x")),
+                at: StartAt::Directory(HostPath(text("/src/x"))),
                 model: None,
                 effort: None,
             }]),

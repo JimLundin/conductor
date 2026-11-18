@@ -194,10 +194,11 @@ mod tests {
                     }),
                 ])),
                 catalog: Catalog::default(),
+                home: None,
             }))
             ?,
             frame(
-                b"\x00\x04desk\x01\x00\x02\x06claude\x01C\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x05codex\x01X\x01\x01\x02no\x00"
+                b"\x00\x04desk\x01\x00\x02\x06claude\x01C\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x05codex\x01X\x01\x01\x02no\x00\x00"
             )
         );
         assert_eq!(

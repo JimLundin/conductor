@@ -13,6 +13,7 @@ use proto::{CommandResult, Effort, SessionId, Ticket, TicketError};
 use crate::credentials::{CredentialsScreen, Forms};
 use crate::host::{Host, HostId, by_name};
 use crate::new_session::{Form, NewSessionForm};
+use crate::projects::{self, ProjectsScreen};
 use crate::saved::{Saved, decode};
 use crate::session::{Pane, SessionPane};
 use crate::sessions::{self, SessionList};
@@ -59,6 +60,7 @@ pub struct HostsScreen {
     /// The pairing form is shown.
     pub add_current: bool,
     pub credentials_current: bool,
+    pub projects_current: bool,
     pub list: SessionList,
     pub detail: Detail,
 }
@@ -77,6 +79,7 @@ pub enum Detail {
     Pair(Pair),
     NewSession(Box<NewSessionForm>),
     Credentials(Box<CredentialsScreen>),
+    Projects(Box<ProjectsScreen>),
     Session(Box<SessionPane>),
 }
 
@@ -175,6 +178,13 @@ impl State {
                 (Self { form, ..self }, effects)
             }
             Intent::Credential(host, change) => self.credential(host, change),
+            Intent::Project(host, change) => {
+                let at = At {
+                    host,
+                    visit: self.visit,
+                };
+                (self, change.send(at))
+            }
             Intent::Session(change) => self.session(change),
             Intent::Replied(reply, answer) => self.replied(reply, answer),
         }
@@ -194,6 +204,7 @@ impl State {
             Place::Sessions
             | Place::NewSession
             | Place::Credentials
+            | Place::Projects
             | Place::Session(..) => self,
         };
         Self {
@@ -428,10 +439,12 @@ impl State {
                 Detail::Pair(_)
                 | Detail::NewSession(_)
                 | Detail::Credentials(_)
+                | Detail::Projects(_)
                 | Detail::Session(_) => "detail",
             },
             add_current: self.place == Place::AddHost,
             credentials_current: self.place == Place::Credentials,
+            projects_current: self.place == Place::Projects,
             list: sessions::list(&self.hosts, self.place),
             detail,
         }))
@@ -468,6 +481,9 @@ impl State {
                         .collect(),
                 }))
             }
+            (Place::Projects, _) => Detail::Projects(Box::new(
+                projects::screen(&self.hosts, self.notice.clone()),
+            )),
             (Place::Session(..), Some((host, id, session))) => {
                 let known = self.hosts.get(&host);
                 let catalog = known.map_or_default(Host::catalog);

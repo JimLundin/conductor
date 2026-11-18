@@ -13,7 +13,7 @@ use std::path::Path;
 
 use host::log::{Begun, Effect, Kind, Log as Core, Ticket};
 use proto::{
-    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
+    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -112,6 +112,7 @@ enum LogMsg {
     Welcome {
         instances: Instances,
         catalog: Catalog,
+        home: Option<Home>,
         reply: oneshot::Sender<Welcome>,
     },
     Subscribe {
@@ -277,7 +278,7 @@ impl Log {
     }
 
     /// The log's head as of now, for a client the registry says can run
-    /// `instances`.
+    /// `instances`, with the host's `home`.
     ///
     /// # Errors
     ///
@@ -286,10 +287,12 @@ impl Log {
         &self,
         instances: Instances,
         catalog: Catalog,
+        home: Option<Home>,
     ) -> Result<Welcome, Stopped> {
         self.ask(|reply| LogMsg::Welcome {
             instances,
             catalog,
+            home,
             reply,
         })
         .await
@@ -402,9 +405,10 @@ impl LogActor {
             LogMsg::Welcome {
                 instances,
                 catalog,
+                home,
                 reply,
             } => {
-                let _ = reply.send(self.core.welcome(instances, catalog));
+                let _ = reply.send(self.core.welcome(instances, catalog, home));
             }
             LogMsg::Subscribe { after, reply } => {
                 let _ = reply.send(Subscription {
@@ -557,13 +561,14 @@ mod tests {
         .await?;
         log.append(SessionId(1), message("a")).await?;
         assert_eq!(
-            log.welcome(instances(), Catalog::default()).await?,
+            log.welcome(instances(), Catalog::default(), None).await?,
             Welcome {
                 host: String::from("test"),
                 epoch: Epoch(5),
                 head_seq: HostSeq(2),
                 instances: instances(),
                 catalog: Catalog::default(),
+                home: None,
             }
         );
         let seen = [

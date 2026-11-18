@@ -13,6 +13,7 @@ mod credentials;
 mod host;
 mod new_session;
 mod prelude;
+mod projects;
 mod saved;
 mod session;
 mod sessions;
@@ -38,6 +39,10 @@ pub use credentials::{
 pub use host::{HostId, StatusLine};
 pub use new_session::{
     Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,
+};
+pub use projects::{
+    CheckoutRow, CloneButton, HomeLine, ProjectGroup, ProjectIntent,
+    ProjectsScreen, when,
 };
 pub use saved::{Saved, Stored, decode, encode};
 pub use session::{
@@ -70,6 +75,7 @@ pub enum Place {
     AddHost,
     NewSession,
     Credentials,
+    Projects,
     Session(HostId, SessionId),
 }
 
@@ -81,7 +87,8 @@ impl Place {
             Self::Sessions
             | Self::AddHost
             | Self::NewSession
-            | Self::Credentials => None,
+            | Self::Credentials
+            | Self::Projects => None,
         }
     }
 }
@@ -102,6 +109,8 @@ pub enum Intent {
     DismissNotice,
     Form(FormIntent),
     Credential(HostId, CredentialIntent),
+    /// A home command for this host.
+    Project(HostId, ProjectIntent),
     /// Acts on the session shown.
     Session(SessionIntent),
     /// A host's answer to a command an [`Effect::Send`] sent, or why none

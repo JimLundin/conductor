@@ -1,5 +1,6 @@
 //! The form that starts a session: the host it runs on, then one of that
-//! host's instances, its model and effort, and the directory there.
+//! host's instances, its model and effort, and one of the host's projects
+//! or a directory there.
 
 use alloc::collections::BTreeMap;
 
@@ -9,8 +10,8 @@ use client::new_session::{
     models, note,
 };
 use proto::{
-    Availability, CommandBody, CommandResult, Effort, HostPath, InstanceId,
-    Instances, ModelId,
+    Availability, CommandBody, CommandResult, Effort, Home, HostPath,
+    InstanceId, Instances, ModelId, ProjectId, StartAt,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -29,6 +30,8 @@ pub enum FormIntent {
     PickModel(String),
     /// An effort's word; empty for the default.
     PickEffort(String),
+    /// A project's id; empty for a directory.
+    PickProject(String),
     TypeDirectory(String),
     Start,
 }
@@ -43,6 +46,11 @@ pub struct NewSessionForm {
     pub instance_hint: Option<Hint>,
     pub models: Vec<Choice>,
     pub efforts: Vec<Choice>,
+    /// A directory first, then each project the host's home lists; none
+    /// on a host with no home.
+    pub projects: Option<Vec<Choice>>,
+    /// The directory field shows unless a project is picked.
+    pub directory_shown: bool,
     pub directory: String,
     pub directory_invalid: bool,
     pub directory_error: Option<Hint>,
@@ -95,6 +103,8 @@ pub struct Form {
     instance: Option<InstanceId>,
     model: Option<ModelId>,
     effort: Option<Effort>,
+    /// `None` starts in the directory.
+    project: Option<ProjectId>,
     directory: String,
     attempt: Attempt,
 }
@@ -113,6 +123,7 @@ impl Form {
             instance: None,
             model: None,
             effort: None,
+            project: None,
             directory: String::new(),
             attempt: Attempt::Editing,
         }
@@ -135,6 +146,7 @@ impl Form {
                         instance: None,
                         model: None,
                         effort: None,
+                        project: None,
                         ..self
                     },
                     Vec::new(),
@@ -174,18 +186,33 @@ impl Form {
                 },
                 Vec::new(),
             ),
+            FormIntent::PickProject(id) => (
+                Self {
+                    project: (!id.is_empty()).then_some(ProjectId(id)),
+                    ..self
+                },
+                Vec::new(),
+            ),
             FormIntent::TypeDirectory(directory) => {
                 (Self { directory, ..self }, Vec::new())
             }
             FormIntent::Start => {
-                let Some(((host, _), instance)) =
+                let Some(((host, known), instance)) =
                     chosen.zip(self.chosen(instances).cloned())
                 else {
                     return (self, Vec::new());
                 };
+                let at = self.project(known.home()).map_or_else(
+                    || {
+                        StartAt::Directory(HostPath(
+                            self.directory.trim().to_owned(),
+                        ))
+                    },
+                    |project| StartAt::Project(project.clone()),
+                );
                 let body = CommandBody::StartSession {
                     instance,
-                    directory: HostPath(self.directory.trim().to_owned()),
+                    at,
                     model: self.model.clone(),
                     effort: self.effort,
                 };
@@ -223,6 +250,15 @@ impl Form {
                 .find(|(_, host)| host.live())
                 .or_else(|| listed.first())
                 .copied()
+        })
+    }
+
+    /// The project a person picked, if the host's home still lists it.
+    fn project<'a>(&'a self, home: Option<&Home>) -> Option<&'a ProjectId> {
+        self.project.as_ref().filter(|id| {
+            home.is_some_and(|known| {
+                known.projects.iter().any(|project| &project.id == *id)
+            })
         })
     }
 
@@ -282,16 +318,19 @@ impl Form {
                 path: path.0.clone(),
             })
             .collect::<Vec<Suggestion>>();
+        let home = chosen.and_then(|(_, host)| host.home());
+        let project = self.project(home);
+        let placed = project.is_some() || !self.directory.trim().is_empty();
         let (start_disabled, start_label) =
-            match (&self.attempt, self.directory.trim(), picked) {
+            match (&self.attempt, placed, picked) {
                 (Attempt::Starting, _, _) => (true, "Starting…"),
-                (_, "", _) | (_, _, None) => (true, "Start session"),
-                (_, _, Some(_)) => (false, "Start session"),
+                (_, false, _) | (_, _, None) => (true, "Start session"),
+                (_, true, Some(_)) => (false, "Start session"),
             };
         let status = picked.and_then(|id| instances?.of(id));
         NewSessionForm {
             subtitle: String::from(
-                "Runs on the host you choose, in a directory there.",
+                "Runs on the host you choose, in one of its projects or a directory there.",
             ),
             hosts: by_name(hosts)
                 .into_iter()
@@ -320,6 +359,8 @@ impl Form {
             efforts: self
                 .effort_choices(&efforts(&offered, self.model.as_ref())),
             models: self.model_choices(&offered),
+            projects: home.map(|known| project_choices(known, project)),
+            directory_shown: project.is_none(),
             directory: self.directory.clone(),
             directory_invalid: directory_error.is_some(),
             directory_error: directory_error.map(alert),
@@ -365,8 +406,28 @@ impl Form {
     }
 }
 
-/// A refusal of the instance, else why the host can't run it, else what
-/// its provider's plugin says of it.
+/// A directory first, then each project the home lists; one with no
+/// checkout on the host says so and can't be picked.
+fn project_choices(home: &Home, picked: Option<&ProjectId>) -> Vec<Choice> {
+    let first = Choice {
+        value: String::new(),
+        label: String::from("A directory"),
+        selected: picked.is_none(),
+        disabled: false,
+    };
+    let listed = home.projects.iter().map(|project| Choice {
+        value: project.id.0.clone(),
+        label: if project.checkouts.is_empty() {
+            format!("{} (not checked out)", project.name)
+        } else {
+            project.name.clone()
+        },
+        selected: Some(&project.id) == picked,
+        disabled: project.checkouts.is_empty(),
+    });
+    core::iter::once(first).chain(listed).collect()
+}
+
 /// A host in the host picker; one whose link isn't live says so.
 fn host_choice(
     id: HostId,
@@ -386,6 +447,8 @@ fn host_choice(
     }
 }
 
+/// A refusal of the instance, else why the host can't run it, else what
+/// its provider's plugin says of it.
 fn instance_hint(
     refused: Option<String>,
     note: ProviderNote,

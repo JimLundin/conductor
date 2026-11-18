@@ -156,26 +156,38 @@ pub fn NewSession(form: ui::NewSessionForm) -> Element {
                         }
                     }
                 }
-                label { class: "field",
-                    span { class: "field-label", "Directory" }
-                    input {
-                        r#type: "text",
-                        name: "directory",
-                        placeholder: "/home/you/src/project",
-                        autocomplete: "off",
-                        autocapitalize: "off",
-                        autocorrect: "off",
-                        spellcheck: "false",
-                        enterkeyhint: "go",
-                        "aria-invalid": form.directory_invalid,
-                        value: "{form.directory}",
-                        oninput: move |event| change(FormIntent::TypeDirectory(event.value())),
-                    }
-                    if let Some(hint) = form.directory_error {
-                        Hint { hint }
+                if let Some(projects) = form.projects {
+                    label { class: "field",
+                        span { class: "field-label", "Project" }
+                        select {
+                            name: "project",
+                            onchange: move |event| change(FormIntent::PickProject(event.value())),
+                            Options { choices: projects }
+                        }
                     }
                 }
-                if let Some(suggestions) = form.suggestions {
+                if form.directory_shown {
+                    label { class: "field",
+                        span { class: "field-label", "Directory" }
+                        input {
+                            r#type: "text",
+                            name: "directory",
+                            placeholder: "/home/you/src/project",
+                            autocomplete: "off",
+                            autocapitalize: "off",
+                            autocorrect: "off",
+                            spellcheck: "false",
+                            enterkeyhint: "go",
+                            "aria-invalid": form.directory_invalid,
+                            value: "{form.directory}",
+                            oninput: move |event| change(FormIntent::TypeDirectory(event.value())),
+                        }
+                        if let Some(hint) = form.directory_error {
+                            Hint { hint }
+                        }
+                    }
+                }
+                if let Some(suggestions) = form.suggestions.filter(|_| form.directory_shown) {
                     div { class: "suggestions",
                         p { class: "field-label", "Recent" }
                         ul {

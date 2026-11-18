@@ -59,6 +59,15 @@ struct HostArgs {
     /// none, such as `claude=haiku`. Defaults to the CLI's.
     #[arg(long = "model", value_name = "PROVIDER=MODEL", value_parser = host::start::setting)]
     models: Vec<(Provider, String)>,
+    /// The home's git remote (docs/home.md), such as
+    /// `https://github.com/JimLundin/home.git`. The host clones it into its
+    /// data dir and keeps it there; the host remembers it, so give it once.
+    #[arg(long, value_name = "REMOTE")]
+    home: Option<String>,
+    /// A directory to look for the home's projects in: each directory in
+    /// it, and each project's usual path under it. Give it once for each.
+    #[arg(long = "projects", value_name = "DIR")]
+    projects: Vec<PathBuf>,
 }
 
 #[tokio::main]
@@ -78,6 +87,8 @@ async fn main() -> anyhow::Result<()> {
                 data_dir: args.data_dir,
                 name: args.name,
                 web_url: args.web_url,
+                home: args.home,
+                projects: args.projects,
             };
             daemon::start::serve(hosting, plugins(args.clis, args.models)).await
         }

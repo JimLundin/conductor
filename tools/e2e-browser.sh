@@ -13,7 +13,9 @@
 # credentials forms and a second Claude instance added from the app
 # (credentials, WebKit), Claude signed in from the app on the fake's sign-in
 # (sign-in, WebKit), two hosts paired in one app with a session started on
-# each (hosts, Chromium), and the screenshots of the
+# each (hosts, Chromium), a home's projects with a checkout found and one
+# cloned from the app and a session started in a project (projects,
+# Chromium), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
 # and docs/p1/screens/phone-light-tasks.png. Every scenario runs even after
@@ -269,6 +271,55 @@ two_hosts() {
   expect laptop 1 'serve: command client="iPhone"' "laptop's session started on laptop"
 }
 
+# listed <home> <id> <remote> <source>: the project's project.toml in the
+# home, with the source's root commit and branch, usually at <id>.
+listed() {
+  local root branch
+  root=$(git -C "$4" rev-list --max-parents=0 HEAD)
+  branch=$(git -C "$4" symbolic-ref --short HEAD)
+  mkdir -p "$1/projects/$2"
+  printf 'name = "%s"\nremote = "%s"\nroot = "%s"\nbranch = "%s"\nprofiles = ["rust"]\npath = "%s"\n' \
+    "$2" "$3" "$root" "$branch" "$2" >"$1/projects/$2/project.toml"
+}
+
+projects_scenario() {
+  local at=$scratch/projects
+  # Each project's one commit holds a file of its own, so their roots differ.
+  for name in alpha beta; do
+    mkdir -p "$at/sources/$name"
+    git -C "$at/sources/$name" init -q
+    echo "$name" >"$at/sources/$name/$name.txt"
+    git -C "$at/sources/$name" add .
+    git -C "$at/sources/$name" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm "$name" -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
+    git clone -q --bare "$at/sources/$name" "$at/$name-remote.git"
+  done
+  # The person's own checkout of alpha, holding the session's recording.
+  git clone -q "file://$at/alpha-remote.git" "$at/roots/alpha"
+  cp "$recordings/claude-approve.jsonl" "$at/roots/alpha/stdout.jsonl"
+  mkdir -p "$at/sources/home"
+  git -C "$at/sources/home" init -q
+  listed "$at/sources/home" alpha "file://$at/alpha-remote.git" "$at/sources/alpha"
+  listed "$at/sources/home" beta "file://$at/beta-remote.git" "$at/sources/beta"
+  git -C "$at/sources/home" add .
+  git -C "$at/sources/home" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm 'list alpha and beta' -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
+  git clone -q --bare "$at/sources/home" "$at/home-remote.git"
+  start_host projects-host --home "file://$at/home-remote.git" --projects "$at/roots"
+  echo
+  echo "## Projects, a clone from the app and a session in a project, chromium"
+  run chromium projects "$scratch/projects.png" "$at"
+  echo
+  echo "## Projects, host log"
+  host_log projects-host
+  echo
+  expect projects-host 1 'body: CloneProject { project: ProjectId("beta") }' 'the clone reached the host'
+  expect projects-host 1 'at: Project(ProjectId("alpha"))' 'the session started in alpha'
+  [ -e "$scratch/projects-host/projects/beta/.git" ] || { echo "FAILED: host projects-host: beta was not cloned into the data dir"; return 1; }
+  echo "ok: host projects-host: beta was cloned into the data dir"
+  [ -z "$(git -C "$at/roots/alpha" status --porcelain --untracked-files=no)" ] ||
+    { echo "FAILED: host projects-host: the person's checkout changed"; return 1; }
+  echo "ok: host projects-host: the person's checkout is untouched"
+}
+
 screens() {
   # conductor runs, held mid-reply; scratch's CLI hangs up as the session
   # starts; notes is never sent a message.
@@ -320,6 +371,7 @@ out=docs/p1/browser-run.txt
   scenario "credentials, webkit" credentials
   scenario "sign-in, webkit" sign_in
   scenario "hosts, chromium" two_hosts
+  scenario "projects, chromium" projects_scenario
   scenario "screens, chromium" screens
   echo
   echo "## Summary"

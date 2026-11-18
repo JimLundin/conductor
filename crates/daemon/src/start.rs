@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::credentials::Store;
+use crate::home::{HomeClone, Homing};
 use crate::log::Log;
 use crate::registry::{Builder, Launcher, Launchers, Registry, Setup};
 use crate::serve::Conductor;
@@ -119,6 +120,10 @@ pub struct Hosting {
     /// The web app's URL; the printed join link is this plus
     /// `#join=<ticket>`.
     pub web_url: String,
+    /// The home's remote; `None` keeps the one the host stored, if any.
+    pub home: Option<String>,
+    /// The directories the host looks for project checkouts in.
+    pub projects: Vec<PathBuf>,
 }
 
 /// Serves this host's sessions over iroh with `plugins`' providers, and
@@ -132,6 +137,8 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         data_dir: given,
         name,
         web_url,
+        home: remote,
+        projects,
     } = hosting;
     let data_dir = data_dir_or_default(given)?;
     let (store, stored) = Store::open(&data_dir)?;
@@ -149,7 +156,13 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         builder: builder(plugins.clone(), data_dir.clone()),
         signer: signer(plugins, data_dir.clone()),
     };
-    let Hosted { router, log } = listen(data_dir, web_url, name, setup).await?;
+    let home = HomeClone::spawn(Homing {
+        data_dir: data_dir.clone(),
+        remote,
+        roots: projects,
+    });
+    let Hosted { router, log } =
+        listen(data_dir, web_url, (name, home), setup).await?;
     let ended = tokio::select! {
         result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
         () = log.stopped() => Err(anyhow::Error::from(crate::Stopped {})),
@@ -355,7 +368,7 @@ struct Hosted {
 async fn listen(
     data_dir: PathBuf,
     web_url: String,
-    name: String,
+    (name, home): (String, HomeClone),
     setup: Setup,
 ) -> anyhow::Result<Hosted> {
     let endpoint = Endpoint::builder(presets::N0)
@@ -375,6 +388,7 @@ async fn listen(
     let conductor = Conductor {
         log: log.clone(),
         registry: Registry::spawn(log.clone(), setup),
+        home,
         token,
     };
     let ticket = Ticket {

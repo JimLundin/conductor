@@ -5,8 +5,8 @@ use proto::{
 };
 
 use super::{
-    Admission, Configure, Ledger, Order, Relaunch, Route, SignInOrder, Stream,
-    admit, route, stream,
+    Admission, Configure, HomeOrder, Ledger, Order, Relaunch, Route,
+    SignInOrder, Stream, admit, route, stream,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -157,6 +157,46 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
         )
     );
     assert_eq!(send.ledger(), Ledger::Session);
+}
+
+#[test]
+fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
+    let project = || proto::ProjectId(String::from("conductor"));
+    let routed = [
+        CommandBody::SyncHome,
+        CommandBody::CloneProject { project: project() },
+    ]
+    .map(|body| route(body, phone()));
+    assert_eq!(
+        routed.each_ref().map(Route::ledger),
+        [Ledger::Unrecorded; 2]
+    );
+    assert_eq!(
+        routed,
+        [
+            Route::Home(HomeOrder::Sync),
+            Route::Home(HomeOrder::Clone(project())),
+        ]
+    );
+    let started = route(
+        CommandBody::StartSession {
+            instance: InstanceId::named("claude"),
+            at: proto::StartAt::Project(project()),
+            model: None,
+            effort: Some(Effort::High),
+        },
+        phone(),
+    );
+    assert_eq!(started.ledger(), Ledger::Session);
+    assert_eq!(
+        started,
+        Route::Start {
+            instance: InstanceId::named("claude"),
+            at: proto::StartAt::Project(project()),
+            choice: (None, Some(Effort::High)),
+            by: phone(),
+        }
+    );
 }
 
 #[test]

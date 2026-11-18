@@ -12,7 +12,7 @@ use alloc::format;
 use core::mem;
 
 use proto::{
-    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
+    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
 };
 
@@ -156,13 +156,19 @@ impl Log {
     }
 
     #[must_use]
-    pub fn welcome(&self, instances: Instances, catalog: Catalog) -> Welcome {
+    pub fn welcome(
+        &self,
+        instances: Instances,
+        catalog: Catalog,
+        home: Option<Home>,
+    ) -> Welcome {
         Welcome {
             host: self.name.clone(),
             epoch: self.epoch,
             head_seq: self.head(),
             instances,
             catalog,
+            home,
         }
     }
 

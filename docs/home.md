@@ -1,6 +1,7 @@
 # The home: projects, issues and work across the fleet
 
-Status: design, decisions in §9. Step 1 of §8 is built; the rest is not yet.
+Status: design, decisions in §9. Steps 1 to 3 of §8 are built; the rest is
+not yet.
 It extends the fleet plan (architecture §6) with what the fleet works *on*.
 
 ## 1. What it adds
@@ -148,7 +149,8 @@ Host (each machine)        its own store and log
 The home is the owner's home repository, `JimLundin/home`, which already
 holds `standards/`, the shared `AGENTS.md` and the list of projects
 (`repos.sh` and the table in `AGENTS.md`). Every host keeps a clone in
-`<data>/home`. Adopting it takes a few changes there:
+`<data>/home-repo` (not `<data>/home`, which holds each instance's private
+CLI home). Adopting it takes a few changes there:
 
 - `projects/<project>/` holds the tracker. Today the project repositories
   themselves are checked out beside `standards/` and ignored by the home's
@@ -285,7 +287,8 @@ records: their output belongs to the parent's attempt.
 
 1. Sub-agents in the session model (host only; no home needed). Done.
 2. The app with several hosts. Done.
-3. The home repository: clone, sync, and projects with checkouts.
+3. The home repository: clone, sync, and projects with checkouts. Done
+   (architecture §5.4).
 4. Worktrees as their own entity: sessions run in one, one turn at a time,
    and cleaning after the work ends or seven idle days (§2.4).
 5. Issues: create, edit, status, notes, in the app.

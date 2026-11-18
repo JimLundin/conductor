@@ -6,7 +6,7 @@ use alloc::collections::BTreeMap;
 use client::link::{LinkState, Status, Update};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, EventKind,
-    HostPath, HostSeq, Instances, Provider, SessionId, Ticket,
+    HostPath, HostSeq, Instances, Provider, SessionId, StartAt, Ticket,
 };
 
 use super::{
@@ -43,6 +43,7 @@ fn named(
             instances: Some(instances),
             catalog: catalog(),
             sign_ins: BTreeMap::new(),
+            home: None,
             error: match state {
                 LinkState::Live => None,
                 LinkState::Disconnected
@@ -420,7 +421,7 @@ fn a_new_session_picks_a_host_then_one_of_its_instances() {
                 host: HOST,
                 body: CommandBody::StartSession {
                     instance: id("claude"),
-                    directory: HostPath(text("/src/x")),
+                    at: StartAt::Directory(HostPath(text("/src/x"))),
                     model: None,
                     effort: None,
                 },

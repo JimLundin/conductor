@@ -842,7 +842,10 @@ mod tests {
         );
         let instances = registry.instances().await?;
         assert_eq!(
-            second.welcome(instances, registry.catalog()).await?.epoch,
+            second
+                .welcome(instances, registry.catalog(), None)
+                .await?
+                .epoch,
             epoch
         );
         assert_recovered(&second.subscribe(HostSeq(4)).await?.replay);
@@ -910,7 +913,11 @@ mod tests {
             .conversation(id, String::from("restored-native-conversation"))
             .await?;
         first
-            .welcome(proto::Instances::default(), proto::Catalog::default())
+            .welcome(
+                proto::Instances::default(),
+                proto::Catalog::default(),
+                None,
+            )
             .await
             .map(|welcome| welcome.epoch)
     }

@@ -10,12 +10,14 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandResult, Event, Feed as Frame,
-    HelloReply, Open, Rejection, SessionId, SignIn, Subscribe, Welcome,
+    AuthToken, ClientName, Command, CommandResult, Effort, Event,
+    Feed as Frame, HelloReply, Home, InstanceId, ModelId, Open, Rejection,
+    SessionId, SignIn, StartAt, Subscribe, Welcome,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::Stopped;
+use crate::home::HomeClone;
 use crate::log::{BeginCommand, Log};
 use crate::registry::Registry;
 
@@ -23,6 +25,7 @@ use crate::registry::Registry;
 pub struct Conductor {
     pub log: Log,
     pub registry: Registry,
+    pub home: HomeClone,
     /// A placeholder for architecture §4's device certificates: every client
     /// must present the token from the ticket.
     pub token: AuthToken,
@@ -43,6 +46,8 @@ enum StreamError {
 /// What a subscription does next.
 enum Upcoming {
     Frame(Frame),
+    /// Nothing to send: the home changed to none.
+    Quiet,
     /// The client fell behind or the log or the registry stopped: end the
     /// stream, and the client resubscribes from its cursor.
     Resubscribe,
@@ -60,6 +65,7 @@ struct Feed {
     first: std::vec::IntoIter<Frame>,
     live: broadcast::Receiver<Event>,
     sign_ins: broadcast::Receiver<SignIn>,
+    home: watch::Receiver<Option<Home>>,
 }
 
 impl ProtocolHandler for Conductor {
@@ -122,8 +128,10 @@ impl Conductor {
         let connection = conn.stable_id();
         let instances = self.registry.instances().await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome instances ready");
-        let welcome =
-            self.log.welcome(instances, self.registry.catalog()).await?;
+        let welcome = self
+            .log
+            .welcome(instances, self.registry.catalog(), self.home.shown())
+            .await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome log ready");
         Ok(welcome)
     }
@@ -205,14 +213,31 @@ impl Conductor {
             }
             Route::Start {
                 instance,
-                directory,
+                at,
                 choice,
                 by,
-            } => self.registry.start(instance, directory, choice, by).await,
+            } => self.start(instance, at, choice, by).await,
             Route::Configure(configure) => {
                 self.registry.configure(configure).await
             }
             Route::SignIn(order) => self.registry.sign_in(order).await,
+            Route::Home(order) => self.home.order(order).await,
+        }
+    }
+
+    /// Starts a session in a directory, or in a project's checkout.
+    async fn start(
+        &self,
+        instance: InstanceId,
+        at: StartAt,
+        choice: (Option<ModelId>, Option<Effort>),
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        match self.home.place(at).await? {
+            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+            Ok(directory) => {
+                self.registry.start(instance, directory, choice, by).await
+            }
         }
     }
 
@@ -258,17 +283,21 @@ impl Conductor {
                     "subscribed"
                 );
                 let (running, sign_ins) = self.registry.watch().await?;
+                let mut home = self.home.watch();
+                let current = home.borrow_and_update().clone();
                 let first = subscription
                     .replay
                     .into_iter()
                     .map(Frame::Event)
                     .chain(running.into_iter().map(Frame::SignIn))
+                    .chain(current.into_iter().map(Frame::Home))
                     .collect::<Vec<Frame>>();
                 let feed = Feed {
                     send,
                     first: first.into_iter(),
                     live: subscription.live,
                     sign_ins,
+                    home,
                 };
                 let result = feed.run(conn).await;
                 tracing::info!(?result, "subscription ended");
@@ -287,6 +316,7 @@ impl Feed {
                 Upcoming::Frame(frame) => {
                     wire::write(&mut self.send, &frame).await?;
                 }
+                Upcoming::Quiet => {}
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
                 Upcoming::Gone => break Ok(()),
             }
@@ -300,6 +330,10 @@ impl Feed {
             tokio::select! {
                 next = self.live.recv() => upcoming(next.map(Frame::Event)),
                 next = self.sign_ins.recv() => upcoming(next.map(Frame::SignIn)),
+                changed = self.home.changed() => changed.map_or(
+                    Upcoming::Resubscribe,
+                    |()| self.home.borrow_and_update().clone().map_or(Upcoming::Quiet, |home| Upcoming::Frame(Frame::Home(home))),
+                ),
                 // Without this, an idle feed would outlive its connection.
                 _ = conn.closed() => Upcoming::Gone,
             }

@@ -6,6 +6,7 @@
 
 mod checkpoints;
 mod credentials;
+mod projects;
 mod session;
 mod sessions;
 mod shell;

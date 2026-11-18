@@ -21,6 +21,7 @@ use client::host_view::{
 use codex_cli::{Hub, ServerOptions};
 use daemon::Stopped;
 use daemon::credentials::{Store, Stored};
+use daemon::home::{HomeClone, Homing};
 use daemon::log::Log;
 use daemon::registry::{
     Builder, Launcher, Launchers, Offer, OwnSignIn, Registry, Setup,
@@ -38,11 +39,11 @@ use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
     EventKind, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
-    Instances, ModelChoice, ModelId, Models, Provider, Question,
+    Instances, ModelChoice, ModelId, Models, ProjectId, Provider, Question,
     QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
-    SessionId, SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome,
-    Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
+    SubagentOutcome, Task, TaskId, TaskStatus, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::net::UdpSocket;
@@ -103,7 +104,11 @@ fn fake_codex() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fallible<Fixture> {
-    host_of(launchers([
+    host_of(claude_only(claude_path)?).await
+}
+
+fn claude_only(claude_path: PathBuf) -> Fallible<Launchers> {
+    Ok(launchers([
         (
             Provider::Claude,
             Launcher::Ready {
@@ -122,7 +127,28 @@ async fn host_with(claude_path: PathBuf) -> Fallible<Fixture> {
             Launcher::Unavailable(String::from(UNAVAILABLE)),
         ),
     ]))
-    .await
+}
+
+/// A host on the fake Claude whose home is at `remote`, looking for
+/// checkouts in `roots`, and its data dir.
+async fn host_at_home(
+    remote: String,
+    roots: Vec<PathBuf>,
+) -> Fallible<(Fixture, PathBuf)> {
+    let endpoint = endpoint().await?;
+    let data = data_dir(&endpoint.id().to_string())?;
+    let (store, stored) = Store::open(&data)?;
+    let home = HomeClone::spawn(Homing {
+        data_dir: data.clone(),
+        remote: Some(remote),
+        roots,
+    });
+    let log = Log::spawn(String::from("test-host"), Epoch(11));
+    let launchers = claude_only(fake_claude())?;
+    let fixture =
+        serve_home(endpoint, setup(launchers, store, stored), log, home)
+            .await?;
+    Ok((fixture, data))
 }
 
 /// A host whose Codex app-server is the stand-in, playing `recording` from
@@ -205,10 +231,30 @@ async fn serve_log(
     serve_setup(endpoint, setup(launchers, store, stored), log).await
 }
 
+/// A host with no home.
 async fn serve_setup(
     endpoint: Endpoint,
     setup: Setup,
     log: Log,
+) -> Fallible<Fixture> {
+    let home = homeless(setup.store.dir());
+    serve_home(endpoint, setup, log, home).await
+}
+
+/// The home task of a host given no home.
+fn homeless(data: &Path) -> HomeClone {
+    HomeClone::spawn(Homing {
+        data_dir: data.to_path_buf(),
+        remote: None,
+        roots: Vec::new(),
+    })
+}
+
+async fn serve_home(
+    endpoint: Endpoint,
+    setup: Setup,
+    log: Log,
+    home: HomeClone,
 ) -> Fallible<Fixture> {
     let registry = Registry::spawn(log.clone(), setup);
     let _ = tokio::time::timeout(STEP, registry.instances())
@@ -223,6 +269,7 @@ async fn serve_setup(
     let conductor = Conductor {
         log: log.clone(),
         registry,
+        home,
         token: AuthToken::from_bytes(TOKEN),
     };
     let router = Router::builder(endpoint)
@@ -288,6 +335,7 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
             Conductor {
                 log: log.clone(),
                 registry,
+                home: homeless(data),
                 token,
             },
         )
@@ -410,7 +458,7 @@ async fn host() -> Fallible<Fixture> {
 fn start(provider: Provider, directory: &Path) -> CommandBody {
     CommandBody::StartSession {
         instance: instance(provider),
-        directory: HostPath(directory.display().to_string()),
+        at: StartAt::Directory(HostPath(directory.display().to_string())),
         model: None,
         effort: None,
     }
@@ -2884,7 +2932,7 @@ async fn two_claude_instances_keep_their_own_credentials_and_homes() -> Fallible
             &link,
             CommandBody::StartSession {
                 instance: api.clone(),
-                directory: HostPath(on_api.display().to_string()),
+                at: StartAt::Directory(HostPath(on_api.display().to_string())),
                 model: None,
                 effort: None,
             },
@@ -2942,7 +2990,7 @@ fn start_with(
 ) -> CommandBody {
     CommandBody::StartSession {
         instance: instance(provider),
-        directory: HostPath(directory.display().to_string()),
+        at: StartAt::Directory(HostPath(directory.display().to_string())),
         model: Some(ModelId(String::from(model))),
         effort: Some(effort),
     }
@@ -5906,5 +5954,296 @@ async fn a_sign_in_from_the_app_signs_the_instance_in_and_stores_no_code()
         (false, 2, 1, Vec::new(), Vec::new()),
         "{logged}"
     );
+    Ok(())
+}
+
+/// A bare copy of the repository at `source`, as `name.git` beside it, and
+/// its `file://` URL.
+fn bare(source: &Path, name: &str) -> Fallible<(PathBuf, String)> {
+    let parent = source.parent().ok_or("a repository has a parent")?;
+    let target = parent.join(format!("{name}-remote.git"));
+    git(
+        parent,
+        &[
+            "clone",
+            "--bare",
+            "--quiet",
+            &source.display().to_string(),
+            &target.display().to_string(),
+        ],
+    )?;
+    let url = format!("file://{}", target.display());
+    Ok((target, url))
+}
+
+/// A committed repository at `dir` and its root commit.
+fn rooted(dir: &Path) -> Fallible<String> {
+    std::fs::create_dir_all(dir)?;
+    committed_repository(dir)?;
+    Ok(git(dir, &["rev-list", "--max-parents=0", "HEAD"])?
+        .trim()
+        .to_owned())
+}
+
+/// A project's `project.toml` in the home at `home`.
+fn listed_project(
+    home: &Path,
+    id: &str,
+    fields: (&str, &str, &str),
+) -> Fallible {
+    let (remote, root, branch) = fields;
+    let folder = home.join("projects").join(id);
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(
+        folder.join("project.toml"),
+        format!(
+            "name = \"{id}\"\nremote = \"{remote}\"\nroot = \"{root}\"\n\
+             branch = \"{branch}\"\nprofiles = [\"rust\"]\npath = \"{id}\"\n"
+        ),
+    )?;
+    Ok(())
+}
+
+/// The home as the link has it, once it is as `done` wants.
+async fn home_until(
+    link: &HostLink,
+    updates: &mut mpsc::Receiver<Update>,
+    done: impl Fn(&proto::Home) -> bool,
+) -> Fallible<proto::Home> {
+    loop {
+        if let Some(home) = link.status().home.filter(&done) {
+            break Ok(home);
+        }
+        let _ = next(updates).await?;
+    }
+}
+
+fn checkouts_of(home: &proto::Home, id: &str) -> Vec<proto::Checkout> {
+    home.projects
+        .iter()
+        .find(|project| project.id.0 == id)
+        .map_or_else(Vec::new, |project| project.checkouts.clone())
+}
+
+fn found(path: &Path, origin: proto::Origin) -> Fallible<proto::Checkout> {
+    Ok(proto::Checkout {
+        path: HostPath(std::fs::canonicalize(path)?.display().to_string()),
+        origin,
+    })
+}
+
+/// A home listing alpha and beta, each with a bare remote, and a search
+/// root holding the person's checkout of alpha, which matches; one with
+/// alpha's remote but other history, and one with alpha's history but
+/// another remote, which don't.
+struct Homeland {
+    scratch: PathBuf,
+    roots: PathBuf,
+    branch: String,
+    home_bare: PathBuf,
+    home_url: String,
+}
+
+fn homeland() -> Fallible<Homeland> {
+    let scratch = target_tmp()?
+        .join(format!("conductor-home-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let sources = scratch.join("sources");
+    let roots = scratch.join("roots");
+    std::fs::create_dir_all(&roots)?;
+    let alpha_root = rooted(&sources.join("alpha"))?;
+    let beta_root = rooted(&sources.join("beta"))?;
+    let branch =
+        git(&sources.join("alpha"), &["symbolic-ref", "--short", "HEAD"])?
+            .trim()
+            .to_owned();
+    let (_, alpha) = bare(&sources.join("alpha"), "alpha")?;
+    let (_, beta) = bare(&sources.join("beta"), "beta")?;
+    git(&roots, &["clone", "--quiet", &alpha, "alpha"])?;
+    let impostor = roots.join("impostor");
+    let _ = rooted(&impostor)?;
+    std::fs::write(
+        impostor.join("other.txt"),
+        "other history
+",
+    )?;
+    git(&impostor, &["add", "other.txt"])?;
+    git(&impostor, &["commit", "--quiet", "--amend", "--no-edit"])?;
+    git(&impostor, &["remote", "add", "origin", &alpha])?;
+    let fork_source = sources.join("alpha").display().to_string();
+    git(&roots, &["clone", "--quiet", &fork_source, "fork"])?;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-approve.jsonl"),
+        roots.join("alpha").join("stdout.jsonl"),
+    )?;
+    let home_source = sources.join("home");
+    std::fs::create_dir_all(&home_source)?;
+    git(&home_source, &["init", "--quiet"])?;
+    listed_project(&home_source, "alpha", (&alpha, &alpha_root, &branch))?;
+    listed_project(&home_source, "beta", (&beta, &beta_root, &branch))?;
+    git(&home_source, &["add", "projects"])?;
+    git(
+        &home_source,
+        &[
+            "commit",
+            "--quiet",
+            "-m",
+            "list alpha and beta
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+        ],
+    )?;
+    let (home_bare, home_url) = bare(&home_source, "home")?;
+    Ok(Homeland {
+        scratch,
+        roots,
+        branch,
+        home_bare,
+        home_url,
+    })
+}
+
+fn clone_project(id: &str) -> CommandBody {
+    CommandBody::CloneProject {
+        project: ProjectId(String::from(id)),
+    }
+}
+
+/// beta, with no checkout, is cloned into the data dir; an unknown project
+/// is refused.
+async fn clones_beta(
+    link: &HostLink,
+    updates: &mut mpsc::Receiver<Update>,
+    data: &Path,
+) -> Fallible<proto::Home> {
+    assert_eq!(
+        send(link, clone_project("beta")).await?,
+        CommandResult::Accepted
+    );
+    let cloned = home_until(link, updates, |home| {
+        !checkouts_of(home, "beta").is_empty()
+    })
+    .await?;
+    assert_eq!(
+        checkouts_of(&cloned, "beta"),
+        [found(
+            &data.join("projects").join("beta"),
+            proto::Origin::Cloned
+        )?]
+    );
+    assert_eq!(
+        send(link, clone_project("gamma")).await?,
+        CommandResult::Rejected(Rejection::UnknownProject)
+    );
+    Ok(cloned)
+}
+
+/// A session in alpha starts in the person's checkout, which stays as it
+/// was; an unknown project is refused.
+async fn starts_in_alpha(
+    link: &HostLink,
+    updates: &mut mpsc::Receiver<Update>,
+    land: &Homeland,
+) -> Fallible {
+    let in_project = |id: &str| CommandBody::StartSession {
+        instance: instance(Provider::Claude),
+        at: StartAt::Project(ProjectId(String::from(id))),
+        model: None,
+        effort: None,
+    };
+    assert_eq!(
+        send(link, in_project("gamma")).await?,
+        CommandResult::Rejected(Rejection::UnknownProject)
+    );
+    let session = started_session(&send(link, in_project("alpha")).await?)?;
+    let events = events_until(updates, Until::Ready).await?;
+    let alpha = land.roots.join("alpha");
+    let checkout = std::fs::canonicalize(&alpha)?.display().to_string();
+    let placed = events
+        .iter()
+        .filter(|event| event.session == session)
+        .filter_map(|event| match &event.kind {
+            EventKind::SessionCreated { directory, .. } => {
+                Some(directory.0.clone())
+            }
+            EventKind::WorkspaceCreated { workspace } => {
+                Some(workspace.repository.0.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<String>>();
+    assert_eq!(placed, [checkout.clone(), checkout]);
+    // The fake CLI keeps its control files beside the recording, untracked.
+    assert_eq!(
+        (
+            git(&alpha, &["status", "--porcelain", "--untracked-files=no"])?,
+            git(&alpha, &["branch", "--show-current"])?,
+        ),
+        (
+            String::new(),
+            format!(
+                "{}
+",
+                land.branch
+            )
+        ),
+        "the person's checkout is untouched"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started()
+-> Fallible {
+    let land = homeland()?;
+    let (fx, data) =
+        host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
+            .await?;
+    let (link, mut updates) = link(fx.target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let synced = home_until(&link, &mut updates, |home| {
+        home.sync == proto::HomeSync::Synced && home.projects.len() == 2
+    })
+    .await?;
+    assert_eq!(
+        (
+            synced.remote.as_str(),
+            synced.synced.is_some(),
+            data.join("home-repo/projects/alpha/project.toml").exists(),
+        ),
+        (land.home_url.as_str(), true, true)
+    );
+    assert_eq!(
+        (
+            checkouts_of(&synced, "alpha"),
+            checkouts_of(&synced, "beta")
+        ),
+        (
+            Vec::from([found(
+                &land.roots.join("alpha"),
+                proto::Origin::Found
+            )?]),
+            Vec::new()
+        )
+    );
+    let _ = clones_beta(&link, &mut updates, &data).await?;
+    starts_in_alpha(&link, &mut updates, &land).await?;
+
+    std::fs::rename(&land.home_bare, land.scratch.join("home.gone"))?;
+    assert_eq!(
+        send(&link, CommandBody::SyncHome).await?,
+        CommandResult::Accepted
+    );
+    let behind = home_until(&link, &mut updates, |home| {
+        matches!(home.sync, proto::HomeSync::Behind { .. })
+    })
+    .await?;
+    // The clone stays as of its last sync, with its projects.
+    assert_eq!((behind.synced.is_some(), behind.projects.len()), (true, 2));
+    assert!(behind.synced >= synced.synced);
+    link.stop().await?;
+    fx.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
 }

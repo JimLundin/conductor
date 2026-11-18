@@ -164,7 +164,7 @@ fn Hosts(hosts: ui::HostsScreen) -> Element {
             Link { key: "{dial.key}", dial }
         }
         div { class: "app", "data-screen": hosts.shown,
-            Band { add_current: hosts.add_current, credentials_current: hosts.credentials_current }
+            Band { add_current: hosts.add_current, credentials_current: hosts.credentials_current, projects_current: hosts.projects_current }
             div { class: "panes",
                 SessionList { list: hosts.list }
                 main { class: "detail",
@@ -185,6 +185,9 @@ fn Hosts(hosts: ui::HostsScreen) -> Element {
                         },
                         Detail::Credentials(screen) => rsx! {
                             crate::credentials::CredentialsScreen { screen: *screen }
+                        },
+                        Detail::Projects(screen) => rsx! {
+                            crate::projects::ProjectsScreen { screen: *screen }
                         },
                         Detail::Session(pane) => rsx! {
                             crate::session::SessionPane { key: "{pane.key}", pane: *pane }
@@ -235,11 +238,21 @@ pub fn PaneHeader(
 }
 
 #[component]
-fn Band(add_current: bool, credentials_current: bool) -> Element {
+fn Band(
+    add_current: bool,
+    credentials_current: bool,
+    projects_current: bool,
+) -> Element {
     let shell = use_context::<Shell>();
     rsx! {
         header { class: "band",
             span { class: "band-title", "Conductor" }
+            button {
+                class: "projects",
+                "aria-current": projects_current,
+                onclick: move |_| shell.dispatch(Intent::Show(Place::Projects)),
+                "Projects"
+            }
             button {
                 class: "credentials",
                 "aria-current": credentials_current,

@@ -6,7 +6,7 @@ use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
 use client::host_view::{Attention, SessionView, UndoState};
-use proto::{Catalog, HostPath, Instances, SessionId};
+use proto::{Catalog, HostPath, Instances, Project, SessionId};
 
 use crate::Place;
 use crate::host::{Host, HostId, StatusLine, by_name};
@@ -66,10 +66,14 @@ fn group(id: HostId, host: &Host, place: Place) -> HostGroup {
         .recent()
         .into_iter()
         .filter_map(|session| {
-            host.view
-                .sessions
-                .get(&session)
-                .map(|shown| row((id, session), shown, place, known))
+            host.view.sessions.get(&session).map(|shown| {
+                row(
+                    (id, session),
+                    shown,
+                    place,
+                    (known, host.project_of(shown)),
+                )
+            })
         })
         .collect::<Vec<SessionRow>>();
     HostGroup {
@@ -85,11 +89,12 @@ fn group(id: HostId, host: &Host, place: Place) -> HostGroup {
     }
 }
 
+/// A session's row, titled by its project, else its directory.
 fn row(
     (host, id): (HostId, SessionId),
     session: &SessionView,
     place: Place,
-    known: (Option<&Instances>, &Catalog),
+    (known, project): ((Option<&Instances>, &Catalog), Option<&Project>),
 ) -> SessionRow {
     let (status, text, badge) = match (&session.undo, session.attention()) {
         (UndoState::Undoing(_), _) => (
@@ -122,7 +127,10 @@ fn row(
         key: format!("{}", id.0),
         status,
         current: place == Place::Session(host, id),
-        title: short(&session.directory).to_owned(),
+        title: project.map_or_else(
+            || short(&session.directory).to_owned(),
+            |known| known.name.clone(),
+        ),
         sub: format!("{}, {text}", agent(session, known)),
         branch: session
             .workspace

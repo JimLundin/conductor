@@ -18,7 +18,7 @@ use core::time::Duration;
 use crate::host_view::HostView;
 use crate::prelude::*;
 use proto::{
-    Catalog, Epoch, Event, EventKind, Feed as Frame, Hello, HelloReply,
+    Catalog, Epoch, Event, EventKind, Feed as Frame, Hello, HelloReply, Home,
     HostSeq, InstanceId, Instances, SignIn, SignInStep, Subscribe, Welcome,
 };
 
@@ -53,6 +53,9 @@ pub struct Status {
     /// Where each instance's sign-in from the app stands, since the last
     /// `Welcome`. A cancelled one has none.
     pub sign_ins: BTreeMap<InstanceId, SignInStep>,
+    /// The host's home and its projects, from the last `Welcome` or a later
+    /// `Feed::Home`. `None` on a host given no home.
+    pub home: Option<Home>,
     /// Why the last connection ended, until the next one is live.
     pub error: Option<String>,
 }
@@ -169,6 +172,8 @@ pub enum Input {
     Subscribed,
     Event(Event),
     SignIn(SignIn),
+    /// The host's home changed to this.
+    Home(Home),
     Lost(Lost),
     /// The random number [`Operation::Draw`] asked for.
     Drawn(u64),
@@ -198,6 +203,7 @@ impl From<Option<Frame>> for Input {
         match frame {
             Some(Frame::Event(event)) => Self::Event(event),
             Some(Frame::SignIn(sign_in)) => Self::SignIn(sign_in),
+            Some(Frame::Home(home)) => Self::Home(home),
             None => Self::Lost(Lost::HostClosed(Stream::Subscription)),
         }
     }
@@ -372,6 +378,10 @@ impl Link {
             (Phase::Connected(_), Input::SignIn(sign_in)) => {
                 self.signs_in(sign_in)
             }
+            (Phase::Connected(_), Input::Home(home)) => self.publish(Status {
+                home: Some(home),
+                ..self.status.clone()
+            }),
             (
                 Phase::Greeting | Phase::Subscribing(_) | Phase::Connected(_),
                 Input::Lost(lost),
@@ -500,6 +510,7 @@ impl Link {
             instances: Some(welcome.instances),
             catalog: welcome.catalog,
             sign_ins: BTreeMap::new(),
+            home: welcome.home,
             state: LinkState::CatchingUp,
             ..self.status.clone()
         });
@@ -711,6 +722,7 @@ mod tests {
             head_seq: HostSeq(head),
             instances: instances("test"),
             catalog: Catalog::default(),
+            home: None,
         }
     }
 
@@ -742,6 +754,7 @@ mod tests {
             instances: Some(instances("test")),
             catalog: Catalog::default(),
             sign_ins: BTreeMap::new(),
+            home: None,
             error: error.map(String::from),
         }
     }
@@ -1237,6 +1250,43 @@ mod tests {
                     ..status(LinkState::Live, None)
                 })]),
                 Vec::from([Vec::new(), Vec::new()]),
+            )
+        );
+    }
+
+    #[test]
+    fn the_home_comes_with_the_welcome_and_each_frame_replaces_it() {
+        let home = |sync| proto::Home {
+            remote: String::from("file:///home.git"),
+            synced: Some(5),
+            sync,
+            projects: Vec::new(),
+        };
+        let (link, _) = Link::start(hello(), None);
+        let (welcomed, shown) =
+            link.step(connected(0)).0.step(Input::Welcomed(Welcome {
+                home: Some(home(proto::HomeSync::Syncing)),
+                ..welcome(1, 0)
+            }));
+        let (subscribed, _) = welcomed.step(Input::Subscribed);
+        let (_, changed) = subscribed.step(Input::from(Some(
+            proto::Feed::Home(home(proto::HomeSync::Synced)),
+        )));
+        let homes = |effects: &[Effect]| {
+            effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    Effect::Show(status) => status.home.clone(),
+                    _ => None,
+                })
+                .map(|known| known.sync)
+                .collect::<Vec<proto::HomeSync>>()
+        };
+        assert_eq!(
+            (homes(&shown), homes(&changed)),
+            (
+                Vec::from([proto::HomeSync::Syncing, proto::HomeSync::Syncing]),
+                Vec::from([proto::HomeSync::Synced]),
             )
         );
     }

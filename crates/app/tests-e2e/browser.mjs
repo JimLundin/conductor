@@ -38,6 +38,9 @@
 //             paired in one app: a Claude session started on each from the
 //             one form, each listed under its own host, both kept across a
 //             reload, desk paired again, and laptop forgotten.
+//   projects  A host whose home lists alpha, checked out in <dir>/roots,
+//             and beta, cloned from the projects view; then a Claude
+//             session started in alpha from the form's project picker.
 
 import { chromium, webkit } from 'playwright';
 
@@ -731,6 +734,36 @@ if (scenario === 'turn') {
     }
     await context.close();
   }
+} else if (scenario === 'projects') {
+  const project = (id) => page.locator(`.project[data-project="${id}"]`);
+  await page.getByRole('button', { name: 'Projects', exact: true }).click();
+  await page.locator('.home-line[data-sync="synced"]').waitFor({ timeout: 30_000 });
+  const home = await page.locator('.home-line .home-state').innerText();
+  check(/^Home synced \d{4}-\d\d-\d\d \d\d:\d\d UTC from file:\/\/.*home-remote\.git\.$/.test(home), `the host's home is synced ("${home}")`);
+  check(
+    (await project('alpha').locator('.checkout[data-checkout="checked-out"] .checkout-path').innerText()) === `${dir}/roots/alpha`,
+    "alpha's checkout was found in the search root, by its root commit and remote",
+  );
+  check((await project('beta').locator('.checkout').getAttribute('data-checkout')) === 'missing', 'beta is not checked out');
+  await page.getByRole('button', { name: 'Clone beta on conductor' }).click();
+  await project('beta').locator('.checkout[data-checkout="checked-out"]').waitFor({ timeout: 30_000 });
+  const cloned = await project('beta').locator('.checkout-path').innerText();
+  check(cloned.endsWith('/projects-host/projects/beta (cloned here)'), `beta was cloned into the host's data dir ("${cloned}")`);
+  await page.screenshot({ path: out });
+  log(`screenshot ${out}`);
+
+  await back();
+  await page.getByRole('button', { name: 'New session' }).click();
+  const choices = await page.locator('select[name="project"] option').allInnerTexts();
+  check(choices.join(', ') === 'A directory, alpha, beta', `the form offers the host's projects (${choices.join(', ')})`);
+  await page.locator('.segment', { hasText: 'Claude Code' }).click();
+  await page.locator('select[name="project"]').selectOption({ label: 'alpha' });
+  check((await page.locator('input[name="directory"]').count()) === 0, 'a picked project hides the directory');
+  await page.getByRole('button', { name: 'Start session' }).click();
+  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
+  check((await pane.locator('.pane-title p').innerText()) === `${dir}/roots/alpha on conductor`, "the session runs in alpha's checkout");
+  await back();
+  check((await page.locator('.row-title').allInnerTexts()).join(', ') === 'alpha', 'the session is listed by its project');
 } else if (scenario === 'hosts') {
   const secondJoin = process.env.SECOND_JOIN;
   const group = (name) => page.locator('.host-group', { has: page.locator('.status .host', { hasText: new RegExp(`^${name}$`) }) });

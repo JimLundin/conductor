@@ -123,7 +123,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   color: var(--band-ink);
   font-weight: 500;
 }
-.band .credentials { margin-left: auto; }
+.band .projects { margin-left: auto; }
 .band button[aria-current="true"] { text-decoration: underline; text-underline-offset: 0.3em; }
 
 /* Each host's group in the list: its name and link state, then its
@@ -149,6 +149,20 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .status[data-state="Live"] .dot { background: var(--green); }
 .status .host { color: var(--ink); font-weight: 600; }
 .status .error { flex-basis: 100%; color: var(--red); font-size: 0.75rem; }
+/* The projects view: each host's home, then each project's checkouts. */
+.homes, .checkouts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.75rem; }
+.home-line, .checkout { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; }
+.home-line > div { flex: 1; min-width: 0; }
+.home-host, .checkout-host { font-weight: 600; }
+.home-state { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.875rem; overflow-wrap: anywhere; }
+.home-line[data-sync="behind"] .home-state, .home-line[data-sync="failed"] .home-state { color: var(--red); }
+.project { padding-top: 1.4rem; margin-top: 1.4rem; border-top: 1px solid var(--line); }
+.project h2 { margin: 0; font-size: 1.0625rem; font-weight: 650; }
+.project .hint { margin: 0.2rem 0 0.75rem; }
+.checkout-path { font-size: 0.8125rem; overflow-wrap: anywhere; }
+.checkout-state { color: var(--muted); font-size: 0.875rem; }
+.checkout[data-checkout="failed"] .checkout-state { color: var(--red); }
+.projects-pane .clear { min-height: 44px; background: var(--surface); color: var(--ink); box-shadow: inset 0 1px 0 var(--line), inset 0 0 0 1px var(--line); }
 .host-credentials + .host-credentials { margin-top: 2rem; }
 .host-credentials > .credential-head h2 { font-size: 1.2rem; }
 

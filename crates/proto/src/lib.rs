@@ -22,6 +22,7 @@ extern crate alloc;
 
 mod credential;
 mod frame;
+mod home;
 mod instance;
 mod sign_in;
 mod ticket;
@@ -36,6 +37,9 @@ pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
+pub use home::{
+    Checkout, Cloning, Home, HomeSync, Origin, Project, ProjectId, StartAt,
+};
 pub use instance::{Instance, InstanceId, InstanceStatus, Instances, Roster};
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
@@ -43,13 +47,15 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/16";
+pub const ALPN: &[u8] = b"conductor/17";
 
-/// One frame of a subscription: a logged event, or where a sign-in stands.
+/// One frame of a subscription: a logged event, where a sign-in stands, or
+/// the host's home as it is now, which replaces the one before.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Feed {
     Event(Event),
     SignIn(SignIn),
+    Home(Home),
 }
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
@@ -148,6 +154,8 @@ pub struct Welcome {
     /// How each provider presents itself and the credentials it takes.
     /// Unlike `instances` it doesn't change while the host runs.
     pub catalog: Catalog,
+    /// `None` on a host given no home. `Feed::Home` brings each change.
+    pub home: Option<Home>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,9 +350,10 @@ pub struct Command {
 pub enum CommandBody {
     /// `None` takes the instance's default model, or the CLI's default
     /// effort for the model.
+    /// A session in a project starts in its first checkout on the host.
     StartSession {
         instance: InstanceId,
-        directory: HostPath,
+        at: StartAt,
         model: Option<ModelId>,
         effort: Option<Effort>,
     },
@@ -431,6 +440,15 @@ pub enum CommandBody {
     CancelSignIn {
         instance: InstanceId,
     },
+    /// Pulls the home now. `Accepted` once it has; how it went is in the
+    /// home's `sync`.
+    SyncHome,
+    /// Clones the project into the host's data dir, for a project with no
+    /// checkout here. `Accepted` once it has; how it went is in the
+    /// project's `cloning`.
+    CloneProject {
+        project: ProjectId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -512,6 +530,13 @@ pub enum Rejection {
     SignInRunning,
     /// No sign-in runs on the instance, or it takes no code now.
     NoCodeAsked,
+    /// The host was given no home.
+    NoHome,
+    UnknownProject,
+    /// The project has no checkout on the host.
+    NotCheckedOut,
+    /// The project is local only: there is no remote to clone.
+    NoRemote,
 }
 
 impl Rejection {
@@ -563,6 +588,18 @@ impl Rejection {
             Self::NoCodeAsked => {
                 String::from("its sign-in isn't waiting for a code")
             }
+            Self::NoHome => String::from(
+                "the host has no home; start it with --home <remote>",
+            ),
+            Self::UnknownProject => {
+                String::from("the host's home lists no such project")
+            }
+            Self::NotCheckedOut => String::from(
+                "the project isn't checked out on the host; clone it there first",
+            ),
+            Self::NoRemote => String::from(
+                "the project is local only, so there is nothing to clone",
+            ),
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }

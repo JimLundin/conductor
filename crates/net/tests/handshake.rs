@@ -92,6 +92,7 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
                 [(InstanceId::named("agent"), unavailable)].into(),
             ),
             catalog: proto::Catalog::default(),
+            home: None,
         }),
     )
     .await?;

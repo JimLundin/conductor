@@ -77,13 +77,14 @@ fn the_welcome_names_the_head_and_a_subscription_needs_the_epoch() {
         reason: String::from("no claude"),
     });
     assert_eq!(
-        log.welcome(listed.clone(), proto::Catalog::default()),
+        log.welcome(listed.clone(), proto::Catalog::default(), None),
         Welcome {
             host: String::from("test"),
             epoch: Epoch(5),
             head_seq: HostSeq(1),
             instances: listed,
             catalog: proto::Catalog::default(),
+            home: None,
         }
     );
     let from = |epoch| Subscribe {
@@ -279,7 +280,8 @@ fn a_restored_log_continues_from_its_head() {
                 auth: proto::Auth::SignedIn,
                 models: Models::none(),
             }),
-            proto::Catalog::default()
+            proto::Catalog::default(),
+            None,
         )
         .head_seq,
         HostSeq(8)

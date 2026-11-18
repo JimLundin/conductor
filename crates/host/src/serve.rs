@@ -5,8 +5,8 @@
 use agents::Reply;
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
-    Credential, Effort, HostPath, InstanceId, ModelId, Models, Open, Provider,
-    Rejection, RequestId, SessionId, SignInCode, Subscribe,
+    Credential, Effort, InstanceId, ModelId, Models, Open, ProjectId, Provider,
+    Rejection, RequestId, SessionId, SignInCode, StartAt, Subscribe,
 };
 
 use crate::prelude::*;
@@ -150,12 +150,20 @@ pub enum Route {
     Relaunch(SessionId, Relaunch),
     Start {
         instance: InstanceId,
-        directory: HostPath,
+        at: StartAt,
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     },
     Configure(Configure),
     SignIn(SignInOrder),
+    Home(HomeOrder),
+}
+
+/// A command about the host's clone of the home.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeOrder {
+    Sync,
+    Clone(ProjectId),
 }
 
 /// A command about an instance's sign-in from the app.
@@ -190,8 +198,9 @@ pub enum Configure {
 /// id answers the first result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ledger {
-    /// A read, or a sign-in command, whose code must reach no store: run
-    /// it every time.
+    /// A read, a sign-in command, whose code must reach no store, or a
+    /// home command, which brings the home up to date whenever it runs:
+    /// run it every time.
     Unrecorded,
     /// Runs alone, with its events in one transaction with its receipt.
     Session,
@@ -204,9 +213,9 @@ impl Route {
     #[must_use]
     pub const fn ledger(&self) -> Ledger {
         match self {
-            Self::Order(_, Order::Diff(_)) | Self::SignIn(_) => {
-                Ledger::Unrecorded
-            }
+            Self::Order(_, Order::Diff(_))
+            | Self::SignIn(_)
+            | Self::Home(_) => Ledger::Unrecorded,
             Self::Configure(_) => Ledger::Credential,
             Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
                 Ledger::Session
@@ -228,15 +237,19 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         } => Route::Relaunch(session, Relaunch::Undo(checkpoint)),
         CommandBody::StartSession {
             instance,
-            directory,
+            at,
             model,
             effort,
         } => Route::Start {
             instance,
-            directory,
+            at,
             choice: (model, effort),
             by,
         },
+        CommandBody::SyncHome => Route::Home(HomeOrder::Sync),
+        CommandBody::CloneProject { project } => {
+            Route::Home(HomeOrder::Clone(project))
+        }
         CommandBody::Continue { session } => {
             Route::Relaunch(session, Relaunch::Continue)
         }

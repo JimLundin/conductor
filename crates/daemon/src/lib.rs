@@ -3,6 +3,7 @@
 //! [`runtime::Plugin`], knowing no provider by name.
 
 pub mod credentials;
+pub mod home;
 pub mod log;
 pub mod registry;
 pub mod serve;

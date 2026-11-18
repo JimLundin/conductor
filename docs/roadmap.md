@@ -6,8 +6,8 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
-  `agents`, `claude`, `codex` and `host`; `net`, `daemon`, `conductord`,
-  `runtime`, `claude-cli`, `codex-cli`, `install` and `app` declare
+  `agents`, `claude`, `codex`, `host`, `home` and `ui`; `net`, `daemon`,
+  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install` and `app` declare
   themselves the shell.
   `client` holds the host link's state machine, and `host` holds
   checkpoints and tasks. Next: the shell still makes most decisions, and
@@ -107,6 +107,22 @@ What is built and what comes next. Update it in the commit that changes it.
   section per host with *Forget this host*, and a new session picks a host,
   then one of its instances. *Add host* takes a join link or ticket;
   pairing a host again replaces its ticket. No protocol change.
+- **The home and its projects** (home step 3, architecture §5.4). The home
+  repository `JimLundin/home` lists each project in
+  `projects/<project>/project.toml` (remote, root commit, branch, profiles,
+  usual path), which its `repos.sh` and `AGENTS.md` table now read. A host
+  given `--home <remote>` (stored, so given once) clones it into
+  `<data>/home-repo` and pulls it every five minutes, on *Sync* and before
+  a read that needs it; offline and failed pulls are its state (`Synced`,
+  `Behind`, `Failed`). It finds each project's checkouts by root commit and
+  remote in its `--projects <dir>` roots, keeps them in `<data>/home.state`,
+  and clones one from the app into `<data>/projects/<project>`. The new
+  `home` core crate holds the decisions. `StartSession` takes a project or
+  a directory (ALPN `conductor/17`); the app has a *Projects* view and a
+  project picker in the new-session form. Next: worktrees as their own
+  entity (home step 4). *Try:* start a host with `--home
+  https://github.com/JimLundin/home.git --projects <your projects dir>`,
+  open *Projects*, clone a project you lack, and start a session in it.
 
 ## Next
 

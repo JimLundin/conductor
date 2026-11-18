@@ -4,10 +4,12 @@
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::host_view::HostView;
+use client::host_view::{HostView, SessionView};
 use client::link::{LinkState, Status, Update, shown_after};
 use data_encoding::HEXLOWER;
-use proto::{Catalog, InstanceId, Instances, SignInStep, Ticket};
+use proto::{
+    Catalog, Home, InstanceId, Instances, Project, SignInStep, Ticket,
+};
 
 /// A host's endpoint id, which keys it everywhere the app keeps hosts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -107,6 +109,24 @@ impl Host {
         self.status
             .as_ref()
             .map_or_default(|known| known.catalog.clone())
+    }
+
+    /// Its home and projects, once it has said; none on a host with no
+    /// home.
+    pub fn home(&self) -> Option<&Home> {
+        self.status.as_ref().and_then(|known| known.home.as_ref())
+    }
+
+    /// The project a session runs in: the one with a checkout at its
+    /// worktree's repository.
+    pub fn project_of(&self, session: &SessionView) -> Option<&Project> {
+        let repository = &session.workspace.as_ref()?.repository;
+        self.home()?.projects.iter().find(|project| {
+            project
+                .checkouts
+                .iter()
+                .any(|checkout| &checkout.path == repository)
+        })
     }
 
     pub fn sign_ins(&self) -> BTreeMap<InstanceId, SignInStep> {
