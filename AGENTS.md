@@ -22,7 +22,9 @@ Home Screen. The design is in
 - **Gate.** `tools/check.sh [commit|step|release]` runs the standard's
   `rust/check.sh`, which also runs Conductor's suites in `checks.toml`: the
   run-record IP scrub and clippy for the wasm crates at `commit`, and the
-  browser suite (`tools/e2e-browser.sh`) at `release`. Run `commit` before
+  browser suite (`tools/e2e-browser.sh`) at `step` when the web app's
+  crates (`app`, `ui`, `net`, `proto`, `client`) or the script change, and
+  at `release`. Run `commit` before
   each commit and `step` (the default) before merging a task branch;
   `release` adds mutation testing and the slow checks, only in CI or when
   asked. It checks only what changed since the merge base with `main`
