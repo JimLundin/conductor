@@ -20,31 +20,86 @@
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
 # and docs/p1/screens/phone-light-tasks.png, or the same under $E2E_RECORD
 # (the gate's suite writes them to target/). Every scenario runs even after
-# one fails; the script exits non-zero if any did.
+# one fails; the script exits non-zero if any did. A failed scenario's record
+# carries its host logs, and its page is shot to target/e2e-failures. Each
+# browser wait is on what the page shows, bounded by E2E_PATIENCE ms per wait
+# and E2E_DEADLINE ms per scenario (crates/app/tests-e2e/browser.mjs). The
+# web build is reused while the files it is built from are unchanged.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
-port=${PORT:-8080}
 recordings=$PWD/fixtures/e2e
 record=${E2E_RECORD:-docs/p1}
 mkdir -p "$record/screens"
 claude=$PWD/crates/claude-cli/tests/fake-claude.sh
-
 target=$(tools/target-dir)
-(cd crates/app && dx build --platform web --release >/dev/null)
+# A failed scenario's page, as it was when it failed.
+export E2E_FAILURES=$target/e2e-failures
+rm -rf "$E2E_FAILURES"
+mkdir -p "$E2E_FAILURES"
+
+# app_tree: the git tree of the files the web build reads, as they are on
+# disk: the workspace crates the app depends on, and the workspace's
+# manifests, lock and toolchain. It is staged in an index of its own, so the
+# checkout's index is untouched.
+app_tree() {
+  local crates
+  mapfile -t crates < <(cargo metadata -q --format-version 1 | python3 -I -c '
+import json, os, sys
+meta = json.load(sys.stdin)
+members = set(meta["workspace_members"])
+packages = {p["id"]: p for p in meta["packages"]}
+deps = {n["id"]: n["dependencies"] for n in meta["resolve"]["nodes"]}
+todo = [i for i in members if packages[i]["name"] == "app"]
+seen = set()
+while todo:
+    i = todo.pop()
+    if i not in seen:
+        seen.add(i)
+        todo += [d for d in deps[i] if d in members]
+for i in sorted(seen):
+    print(os.path.relpath(os.path.dirname(packages[i]["manifest_path"]), meta["workspace_root"]))
+')
+  GIT_INDEX_FILE=$target/e2e-app.index git add -A -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo "${crates[@]}" ':!crates/app/tests-e2e'
+  GIT_INDEX_FILE=$target/e2e-app.index git write-tree
+}
+
+# The web build, reused while the tree it was built from, and dx, are the same.
+web=$target/dx/app/release/web
+built="$(app_tree) $(dx --version)"
+if [ -d "$web/public" ] && [ "$(cat "$web/built-from" 2>/dev/null)" = "$built" ]; then
+  echo "reusing the web build of $built" >&2
+else
+  rm -f "$web/built-from"
+  (cd crates/app && dx build --platform web --release >/dev/null)
+  echo "$built" >"$web/built-from"
+fi
 site=$(mktemp -d)
 ln -s "$target/dx/app/release/web/public" "$site/conductor"
 (cd crates/app/tests-e2e && [ -d node_modules ] || npm install --silent)
 cargo build -q -p conductord
 
-python3 -m http.server "$port" --bind 127.0.0.1 --directory "$site" >/dev/null 2>&1 &
-server=$!
 # Fixed session paths, which the screenshots show, so a rerun that changes
-# nothing redraws nothing. Two runs at once would share it.
-scratch=/tmp/conductor-e2e
+# nothing redraws nothing. A second run, from another worktree too, waits
+# for the first rather than share them; nothing started in the background
+# holds the lock. Checkouts from before the lock used /tmp/conductor-e2e
+# and port 8080 without one, so this run keeps clear of both.
+scratch=/tmp/conductor-browser-e2e
+exec 9>"$scratch.lock"
+flock -n 9 || { echo "waiting for the browser run that holds $scratch.lock" >&2; flock 9; }
 rm -rf "$scratch"
 mkdir -p "$scratch"
+server=
 trap 'kill "$server" 2>/dev/null || true; rm -rf "$site" "$scratch"' EXIT
+
+# The site on a port of its own, or $PORT, once it listens.
+python3 -u -m http.server "${PORT:-0}" --bind 127.0.0.1 --directory "$site" >"$scratch/site.log" 2>&1 9>&- &
+server=$!
+until port=$(grep -om1 'port [0-9]*' "$scratch/site.log"); do
+  kill -0 "$server" 2>/dev/null || { cat "$scratch/site.log"; exit 1; }
+  sleep 0.1
+done
+port=${port#port }
 
 # repo <dir>: a Git repository with one commit, which a session needs to
 # start (its worktree branches from it).
@@ -83,8 +138,9 @@ start_host() {
   "$target"/debug/conductord host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" \
     --cli claude="$claude" --cli codex="${codex:-$scratch/no-codex}" "$@" \
-    >"$scratch/$name.log" 2>&1 &
+    >"$scratch/$name.log" 2>&1 9>&- &
   hosts+=($!)
+  names+=("$name")
   until grep -q '^join:' "$scratch/$name.log"; do
     kill -0 "${hosts[-1]}" 2>/dev/null || { cat "$scratch/$name.log"; return 1; }
     sleep 0.5
@@ -124,7 +180,6 @@ turn_in() {
   echo
   echo "## Turn, $1"
   turn_run "$1" turn "$scratch/$1.png"
-  sleep 2
   echo
   echo "## Turn, $1, host log"
   host_log "turn-$1"
@@ -335,6 +390,18 @@ screens() {
   run chromium screens "$record/screens" "$scratch/screens"
 }
 
+# failed_logs <status>: after a failure, each of the scenario's host logs,
+# which the scenario shows only once its browser part passed.
+failed_logs() {
+  [ "$1" -eq 0 ] && return
+  local name
+  for name in "${names[@]}"; do
+    echo
+    echo "## $name, host log at the failure"
+    host_log "$name"
+  done
+}
+
 # scenario <name> <function>: runs the function in a shell of its own that
 # stops at its first failure and stops its hosts, and records the outcome.
 # The shell must not run as a condition, where errexit is off.
@@ -345,7 +412,8 @@ scenario() {
   (
     set -e
     hosts=()
-    trap 'kill "${hosts[@]}" 2>/dev/null || true' EXIT
+    names=()
+    trap 'failed_logs $?; kill "${hosts[@]}" 2>/dev/null || true' EXIT
     "$2"
   )
   status=$?

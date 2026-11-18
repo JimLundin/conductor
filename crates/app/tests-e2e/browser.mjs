@@ -57,6 +57,15 @@ const check = (ok, what) => {
   log(`ok: ${what}`);
 };
 
+// Every wait is on something the page or the host shows, so none needs a
+// tight bound: each may take up to PATIENCE, which only a broken step uses
+// up, and the whole scenario up to DEADLINE.
+const PATIENCE = Number(process.env.E2E_PATIENCE ?? 120_000);
+const DEADLINE = Number(process.env.E2E_DEADLINE ?? 600_000);
+setTimeout(() => {
+  throw new Error(`FAILED: the scenario took longer than ${DEADLINE / 1000}s`);
+}, DEADLINE).unref();
+
 const engine = process.env.ENGINE ?? 'chromium';
 const browser = await { chromium, webkit }[engine].launch();
 log(`engine: ${engine} ${browser.version()}, scenario: ${scenario}`);
@@ -70,12 +79,16 @@ const context = await browser.newContext({
   hasTouch: true,
   userAgent: IPHONE_UA,
 });
+context.setDefaultTimeout(PATIENCE);
 const page = await context.newPage();
 const consoleErrors = [];
 const linkErrors = [];
+const consoleTail = [];
 const watch = (p) => {
   p.on('console', (msg) => {
     const text = msg.text();
+    consoleTail.push(`[${((Date.now() - t0) / 1000).toFixed(3).padStart(7)}s] ${msg.type()}: ${text.replace(/%c|color:.*$/gs, '')}`);
+    if (consoleTail.length > 60) consoleTail.shift();
     if (msg.type() === 'error') consoleErrors.push(text);
     if (/link status/.test(text) && /error = Some/.test(text)) linkErrors.push(text.replace(/%c|color:.*$/gs, ''));
   });
@@ -83,9 +96,43 @@ const watch = (p) => {
 };
 watch(page);
 
+// A failed step leaves the page as it was, its status line and what the
+// app last logged, so a failure under load says what the page was waiting on.
+process.on('uncaughtException', async (error) => {
+  log(String(error?.stack ?? error));
+  const failures = process.env.E2E_FAILURES;
+  try {
+    log(`status line at failure: "${(await status.allInnerTexts()).join(' | ').replace(/\s+/g, ' ')}"`);
+    if (failures) {
+      const shot = `${failures}/${scenario}-${engine}.png`;
+      await page.screenshot({ path: shot, fullPage: true, timeout: 10_000 });
+      log(`failure screenshot ${shot}`);
+    }
+  } catch (e) {
+    log(`no failure screenshot: ${e.message}`);
+  }
+  log('last console lines:');
+  for (const line of consoleTail) console.log(`    ${line}`);
+  process.exit(1);
+});
+
 const status = page.locator('header.status');
 const statusLine = async () => (await status.innerText()).replace(/\s+/g, ' ');
-const waitFor = (selector, timeout) => page.locator(selector).waitFor({ timeout });
+const waitFor = (selector) => page.locator(selector).waitFor();
+/// Waits until the page has painted and its finite animations and
+/// transitions have ended, so a screenshot shows where they settle.
+const settled = (p = page) =>
+  p.evaluate(async () => {
+    const frame = () => new Promise((painted) => requestAnimationFrame(painted));
+    await frame();
+    await frame();
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().endTime !== Infinity)
+        .map((a) => a.finished.catch(() => {})),
+    );
+  });
 
 const pane = page.locator('.session-pane');
 /// Back to the session list; only a phone has the button.
@@ -96,7 +143,7 @@ const back = async (p = page) => {
 const openRow = async (title, p = page) => {
   await back(p);
   await p.locator('.session-row', { has: p.locator('.row-title', { hasText: new RegExp(`^${title}$`) }) }).click();
-  await p.locator('.session-pane').waitFor({ timeout: 10_000 });
+  await p.locator('.session-pane').waitFor({ timeout: PATIENCE });
 };
 /// Starts a session from the New session form and waits until it takes a
 /// message or has closed.
@@ -107,7 +154,7 @@ const startSession = async (agent, directory, host) => {
   await page.locator('.segment', { hasText: agent }).click();
   await page.locator('input[name="directory"]').fill(directory);
   await page.getByRole('button', { name: 'Start session' }).click();
-  await pane.locator(`.composer textarea[placeholder="Message ${agent}"], .closed-note`).waitFor({ timeout: 20_000 });
+  await pane.locator(`.composer textarea[placeholder="Message ${agent}"], .closed-note`).waitFor({ timeout: PATIENCE });
   log(`started a ${agent} session in ${directory}${host ? ` on ${host}` : ''}`);
 };
 const send = async (prompt) => {
@@ -131,20 +178,24 @@ const turn = async ({ beforeApprove = async () => {} } = {}) => {
   await startSession('Claude Code', dir);
   await send(PROMPT);
   const approve = pane.locator('.request[data-open="true"] button.approve');
-  await approve.waitFor({ timeout: 30_000 });
+  await approve.waitFor({ timeout: PATIENCE });
   log(`approval card: "${(await pane.locator('.request[data-open="true"]').innerText()).replace(/\s+/g, ' ')}"`);
   await beforeApprove();
+  // Each text the streaming reply shows, recorded in the page as it renders,
+  // so a busy machine can't step over a delta between two reads.
+  await page.evaluate(() => {
+    const streamed = new Set();
+    window.streamed = streamed;
+    new MutationObserver(() => {
+      const reply = document.querySelector('.session-pane .reply.streaming');
+      if (reply) streamed.add(reply.innerText);
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
   await approve.tap();
   log('tapped Approve');
-  const reply = pane.locator('.reply.streaming');
-  await reply.waitFor({ timeout: 20_000 });
-  const seen = new Set();
-  while (seen.size < 3 && (await reply.count()) > 0) {
-    seen.add(await reply.innerText().catch(() => ''));
-    await page.waitForTimeout(40);
-  }
-  check(seen.size >= 3, `deltas rendered live (${seen.size} distinct partial texts seen)`);
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
+  const seen = await page.evaluate(() => window.streamed.size);
+  check(seen >= 3, `deltas rendered live (${seen} distinct partial texts seen)`);
   check((await text('.user .bubble')) === PROMPT, 'the message shows once');
   check((await text('.tool .tool-detail')) === WRITTEN, 'one tool card, for the written file');
   check((await text('.tool .tool-name')) === 'Write', 'the card names the change a Write');
@@ -157,7 +208,7 @@ const turn = async ({ beforeApprove = async () => {} } = {}) => {
 log(`open ${joinUrl.replace(/#join=.*/, '#join=<ticket>')}`);
 const opened = Date.now();
 await page.goto(joinUrl);
-await waitFor('header.status[data-state="Live"]', 60_000);
+await waitFor('header.status[data-state="Live"]');
 log(`Live ${Date.now() - opened}ms after navigation (first connect)`);
 log(`status line: "${await statusLine()}"`);
 
@@ -195,42 +246,43 @@ if (scenario === 'turn') {
 
   const reloaded = Date.now();
   await page.goto(joinUrl.replace(/#join=.*/, ''));
-  await waitFor('header.status[data-state="Live"]', 60_000);
+  await waitFor('header.status[data-state="Live"]');
   log(`Live ${Date.now() - reloaded}ms after reload without the fragment (reconnect)`);
   await openRow(dir.split('/').pop());
-  await pane.locator('.turn-end').waitFor({ timeout: 10_000 });
+  await pane.locator('.turn-end').waitFor({ timeout: PATIENCE });
   check((await text('.reply')) === REPLY, 'the transcript replayed after reload');
 
   // A Home Screen web app on iOS starts with empty storage and no fragment, so it
   // must pair by pasting the join link.
   const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  fresh.setDefaultTimeout(PATIENCE);
   const installed = await fresh.newPage();
   installed.on('console', (msg) => msg.type() === 'error' && consoleErrors.push(msg.text()));
   await installed.goto(joinUrl.replace(/#join=.*/, ''));
-  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 30_000 });
+  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: PATIENCE });
   check(true, 'a fresh install asks for a join link');
   await installed.locator('form.pair input').fill(joinUrl);
   const pasted = Date.now();
   await installed.locator('form.pair button').click();
-  await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+  await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: PATIENCE });
   log(`Live ${Date.now() - pasted}ms after pasting the join link`);
   // The camera can't hand a new join link to a Home Screen app, so a paired
   // app must be able to drop its host and pair again from inside.
   await installed.getByRole('button', { name: 'Credentials' }).click();
   await installed.getByRole('button', { name: 'Forget conductor' }).click();
-  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 10_000 });
+  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: PATIENCE });
   await installed.reload();
-  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 30_000 });
+  await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: PATIENCE });
   check(true, 'forgetting the only host asks for a join link, across a relaunch');
   await installed.locator('form.pair input').fill(joinUrl);
   await installed.locator('form.pair button').click();
-  await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+  await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: PATIENCE });
   check(true, 'pairing again after forgetting the host reaches Live');
   await fresh.close();
 } else if (scenario === 'worktrees') {
   // Harness provides one idle session with three completed checkpointed turns.
   await page.locator('.session-row').first().tap();
-  await pane.locator('.turn-changes').nth(2).waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-changes').nth(2).waitFor({ timeout: PATIENCE });
   check((await pane.locator('.user').count()) === 3, 'three turns before undo');
   check((await pane.locator('.workspace-branch').innerText()).startsWith('Branch: '), 'session branch context');
   const directory = pane.locator('.workspace-directory');
@@ -244,7 +296,7 @@ if (scenario === 'turn') {
   await changesButton.focus();
   await page.keyboard.press('Enter');
   const closeButton = turns.nth(1).getByRole('button', { name: 'Close changes', exact: true });
-  await closeButton.waitFor({ timeout: 30_000 });
+  await closeButton.waitFor({ timeout: PATIENCE });
   const closedWhileLoading = (await turns.nth(1).innerText()).includes('Loading changes…');
   await closeButton.focus();
   await page.keyboard.press('Enter');
@@ -254,7 +306,7 @@ if (scenario === 'turn') {
   check((await turns.nth(1).locator('.diff-panel').count()) === 0, 'closed preview remains closed after pending response');
   await page.keyboard.press('Enter');
   const diff = turns.nth(1).locator('.diff-panel');
-  await diff.waitFor({ timeout: 30_000 });
+  await diff.waitFor({ timeout: PATIENCE });
   check((await diff.locator('.undo-scope').innerText()).includes('every later turn'), 'full undo scope visible before action');
   const preview = diff.locator('.diff-files');
   check((await preview.evaluate(el => getComputedStyle(el).overscrollBehavior)).includes('contain'), 'diff scrolling is contained');
@@ -266,13 +318,13 @@ if (scenario === 'turn') {
   await page.screenshot({ path: out, fullPage: true });
   await diff.getByRole('button', { name: 'Undo this turn', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await pane.getByRole('status').filter({ hasText: 'Turn and all later file and conversation changes undone.' }).waitFor({ timeout: 30_000 });
+  await pane.getByRole('status').filter({ hasText: 'Turn and all later file and conversation changes undone.' }).waitFor({ timeout: PATIENCE });
   await page.waitForFunction(() => document.activeElement?.matches('.composer textarea:not(:disabled), .undo-status'));
   check(true, 'undo moves keyboard focus to surviving composer or status');
   check((await pane.locator('.user').count()) === 1, 'selected and later conversation turns removed');
   check((await pane.locator('.turn-changes').count()) === 1, 'selected and later checkpoint controls removed');
   await page.reload();
-  await waitFor('header.status[data-state="Live"]', 60_000);
+  await waitFor('header.status[data-state="Live"]');
   await page.locator('.session-row').first().tap();
   await pane.locator('.user').waitFor();
   check((await pane.locator('.user').count()) === 1, 'undo survives reconnect and durable replay');
@@ -292,21 +344,21 @@ if (scenario === 'turn') {
   await startSession('Codex', second);
   await openRow('first');
   await send('write a.txt');
-  await pane.locator('.request[data-open="true"]').waitFor({ timeout: 20_000 });
+  await pane.locator('.request[data-open="true"]').waitFor({ timeout: PATIENCE });
   check((await text('.reply')) === 'I’ll create `a.txt` with the exact requested contents.', 'the first reply streamed in before the request');
   await openRow('second');
   await send('write b.txt');
-  await pane.locator('.request[data-open="true"]').waitFor({ timeout: 20_000 });
+  await pane.locator('.request[data-open="true"]').waitFor({ timeout: PATIENCE });
   log(`second approval card: "${(await pane.locator('.request[data-open="true"]').innerText()).replace(/\s+/g, ' ')}"`);
   await openRow('first');
   await pane.locator('.request[data-open="true"] button.approve').click();
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   check((await text('.request .resolved')) === 'Approved by iPhone', 'the first request was approved by this device');
   check((await pane.locator('.tool').getAttribute('data-state')) === 'succeeded', 'the approved command succeeded');
   check((await text('.reply')).endsWith('Created [a.txt](/tmp/s2-scratch/a.txt).'), 'the first turn ended with its own answer');
   await openRow('second');
   await pane.locator('.request[data-open="true"] button.deny').click();
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 20_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   check((await text('.request .resolved')) === 'Denied by iPhone', 'the second request was denied by this device');
   check((await text('.reply')) === 'The request was declined.', 'the second turn ended with its own answer');
   await page.screenshot({ path: out });
@@ -316,7 +368,7 @@ if (scenario === 'turn') {
   await startSession('Claude Code', `${dir}/question`);
   await send('ask me');
   const card = pane.locator('.question[data-open="true"]');
-  await card.waitFor({ timeout: 30_000 });
+  await card.waitFor({ timeout: PATIENCE });
   log(`question card: "${(await card.innerText()).replace(/\s+/g, ' ')}"`);
   const sendAnswer = card.getByRole('button', { name: 'Send answer' });
   check(await sendAnswer.isDisabled(), 'the answer cannot be sent before an option is chosen');
@@ -330,11 +382,11 @@ if (scenario === 'turn') {
   check((await blue.getAttribute('aria-pressed')) === 'true', 'the tapped option shows as chosen');
   const box = await blue.boundingBox();
   check(box.height >= 44 && box.width >= 300, `the option is a thumb-sized target (${Math.round(box.width)}x${Math.round(box.height)})`);
-  await page.waitForTimeout(400);
+  await settled();
   await page.screenshot({ path: out.replace(/\.png$/, '-question.png') });
   await sendAnswer.tap();
   log('tapped Send answer');
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   check((await text('.question .question-answer')) === 'Blue', 'the card shows the answer given');
   check((await text('.question .resolved')) === 'Answered by iPhone', 'the question was answered once, by this device');
   check(
@@ -349,24 +401,24 @@ if (scenario === 'turn') {
   await startSession('Claude Code', `${dir}/for-session`);
   await send('touch t1.txt');
   const request = pane.locator('.request[data-open="true"]');
-  await request.waitFor({ timeout: 30_000 });
+  await request.waitFor({ timeout: PATIENCE });
   const forSession = request.locator('button.for-session');
   check(
     (await forSession.innerText()).replace(/\s+/g, ' ') === 'Allow for this session Allows Bash(touch t1.txt) until the session ends',
     'the third button says what it allows, in the CLI\'s words',
   );
-  await page.waitForTimeout(400);
+  await settled();
   await page.screenshot({ path: out.replace(/\.png$/, '-for-session.png') });
   await forSession.tap();
   log('tapped Allow for this session');
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   check((await text('.request .resolved')) === 'Allowed for this session by iPhone', 'the request was allowed for the session by this device');
   check(
     (await page.evaluate(() => document.activeElement.id)) === 'request-1',
     'focus moved to the resolved approval card, not the page',
   );
   await send('again');
-  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: PATIENCE });
   check((await pane.locator('.request').count()) === 1, 'the second identical call asked nothing');
   check(
     (await pane.locator('.tool').evaluateAll((tools) => tools.map((t) => t.dataset.state))).join(' ') === 'succeeded succeeded',
@@ -389,28 +441,28 @@ if (scenario === 'turn') {
   await page.screenshot({ path: out.replace(/\.png$/, '-picker.png') });
   await page.locator('input[name="directory"]').fill(`${dir}/killed`);
   await page.getByRole('button', { name: 'Start session' }).click();
-  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
+  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: PATIENCE });
   check((await text('.runs-with')) === 'sonnet', 'the header shows the model');
   check((await pane.locator('select.effort-pick').inputValue()) === 'high', 'the header shows the effort');
   await send('sheep?');
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   await send('count');
   const closed = pane.locator('.closed-note');
-  await closed.waitFor({ timeout: 20_000 });
+  await closed.waitFor({ timeout: PATIENCE });
   check((await closed.locator('p').innerText()) === 'The session has ended (signal: 9 (SIGKILL)).', 'the killed CLI closes the session');
-  await page.waitForTimeout(400);
+  await settled();
   await page.screenshot({ path: out.replace(/\.png$/, '-closed.png') });
   await closed.getByRole('button', { name: 'Continue' }).tap();
   log('tapped Continue');
-  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
-  await page.waitForFunction(() => document.activeElement?.matches('.composer textarea'), null, { timeout: 5_000 }).catch(() => {});
+  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: PATIENCE });
+  await page.waitForFunction(() => document.activeElement?.matches('.composer textarea'), null, { timeout: PATIENCE }).catch(() => {});
   check(
     await page.evaluate(() => document.activeElement?.matches('.composer textarea') ?? false),
     'focus moved to the composer once the session was ready again, not the page',
   );
   check((await text('.continued')) === 'Continued after: The session has ended (signal: 9 (SIGKILL)).', 'the transcript keeps the close and the continue');
   await send('how many sheep?');
-  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: PATIENCE });
   check((await text('.reply')) === '18 | 18', 'the continued session answered');
   check((await text('.user .bubble')) === 'sheep? | count | how many sheep?', 'every message shows once');
 
@@ -419,14 +471,14 @@ if (scenario === 'turn') {
   await startSession('Claude Code', `${dir}/reasoning`);
   await send('sheep?');
   const live = pane.locator('details.reasoning[data-state="streaming"]');
-  await live.waitFor({ timeout: 20_000 });
+  await live.waitFor({ timeout: PATIENCE });
   check((await live.locator('summary').innerText()) === 'Thinking…', 'reasoning streams under "Thinking…"');
   check(
     (await live.locator('summary').getAttribute('role')) === null && (await live.locator('summary [role="status"]').count()) === 1,
     'the summary stays a disclosure and a span inside it announces the stream',
   );
   check((await pane.locator('.working').count()) === 0, 'the streaming reasoning stands in for the working line');
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   const done = pane.locator('details.reasoning[data-state="done"]');
   check((await done.count()) === 1, 'one Thinking disclosure for the turn');
   check((await done.locator('summary').innerText()) === 'Thinking', 'it reads "Thinking" once finished');
@@ -450,7 +502,7 @@ if (scenario === 'turn') {
   );
   check((await pane.locator('details.tasks').count()) === 0, 'no checklist before the agent writes one');
   await send('plan');
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   const tasks = pane.locator('details.tasks');
   check((await tasks.locator('summary').innerText()).replace(/\s+/g, ' ').trim() === 'Tasks 1 of 3 done', 'the checklist counts what is done');
   check(
@@ -464,21 +516,21 @@ if (scenario === 'turn') {
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page overflow at phone width');
   const summary = await tasks.locator('summary').boundingBox();
   check(summary.height >= 44, `the checklist's summary is a thumb-sized target (${Math.round(summary.height)}px)`);
-  await page.waitForTimeout(400);
+  await settled();
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
   await picker.selectOption('low');
-  await page.waitForFunction(() => document.querySelectorAll('select.effort-pick option').length === 5, null, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelectorAll('select.effort-pick option').length === 5, null, { timeout: PATIENCE });
   check((await picker.inputValue()) === 'low', 'the header shows the new effort once the host has logged it');
   await send('pong');
-  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"] >> nth=1').waitFor({ timeout: PATIENCE });
   check((await text('.reply')).endsWith('pong'), 'the next turn ran');
   await tasks.locator('summary').tap();
   check(!(await tasks.evaluate((d) => d.open)), 'a tap folds the checklist away');
   await page.reload();
-  await waitFor('header.status[data-state="Live"]', 60_000);
+  await waitFor('header.status[data-state="Live"]');
   await openRow(dir.split('/').pop());
-  await pane.locator('details.tasks').waitFor({ timeout: 10_000 });
+  await pane.locator('details.tasks').waitFor({ timeout: PATIENCE });
   check(
     (await pane.locator('.task').count()) === 3 && (await pane.locator('select.effort-pick').inputValue()) === 'low',
     'the tasks and the effort replay after a reload',
@@ -488,7 +540,7 @@ if (scenario === 'turn') {
   // sub-agent, which keeps a checklist of its own and reports "ok".
   await startSession('Claude Code', dir);
   await send('delegate');
-  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: PATIENCE });
   const group = pane.locator('details.subagent');
   check((await group.count()) === 1, 'one sub-agent group');
   check((await text('.tool .tool-name')) === 'Agent', 'the call that started it shows as a tool call');
@@ -514,9 +566,9 @@ if (scenario === 'turn') {
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
   await page.reload();
-  await waitFor('header.status[data-state="Live"]', 60_000);
+  await waitFor('header.status[data-state="Live"]');
   await openRow(dir.split('/').pop());
-  await pane.locator('details.subagent').waitFor({ timeout: 10_000 });
+  await pane.locator('details.subagent').waitFor({ timeout: PATIENCE });
   check(
     (await pane.locator('details.subagent').getAttribute('data-status')) === 'finished',
     'the sub-agent replays after a reload',
@@ -557,7 +609,7 @@ if (scenario === 'turn') {
   await claude.getByLabel('Gateway URL').fill(GATEWAY);
   await token.fill(TOKEN);
   await claude.getByRole('button', { name: 'Save gateway' }).click();
-  await state.filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: 10_000 });
+  await state.filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: PATIENCE });
   log(`state: "${await state.innerText()}"`);
   check((await token.inputValue()) === '', 'the token field is empty once sent');
   check(
@@ -577,7 +629,7 @@ if (scenario === 'turn') {
   check(!kept.includes(TOKEN), 'the token is in no storage, the URL or the DOM');
   await page.screenshot({ path: out });
   await claude.getByRole('button', { name: 'Clear the Claude Code credential' }).click();
-  await state.filter({ hasText: "conductor's own CLI" }).waitFor({ timeout: 10_000 });
+  await state.filter({ hasText: "conductor's own CLI" }).waitFor({ timeout: PATIENCE });
   check((await claude.getByRole('status').innerText()) === 'Cleared on conductor.', 'the clear is confirmed');
   check((await page.evaluate(() => document.activeElement?.id))?.endsWith('-claude-credential'), 'focus moves to the Claude heading');
 
@@ -587,7 +639,7 @@ if (scenario === 'turn') {
   await add.getByLabel('Label').fill('Claude API');
   await add.getByRole('button', { name: 'Add instance: Claude Code' }).click();
   const api = page.getByRole('region', { name: 'Claude API', exact: true });
-  await api.waitFor({ timeout: 20_000 });
+  await api.waitFor({ timeout: PATIENCE });
   check((await add.getByRole('status').innerText()) === 'Added on conductor.', 'the add is confirmed');
   check((await api.locator('.credential-provider').innerText()) === 'Claude Code', 'the new instance runs Claude Code');
   check(
@@ -601,7 +653,7 @@ if (scenario === 'turn') {
   await api.getByLabel('Gateway URL').fill(GATEWAY);
   await api.getByLabel('Token').fill(TOKEN);
   await api.getByRole('button', { name: 'Save gateway' }).click();
-  await api.locator('.credential-state').filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: 10_000 });
+  await api.locator('.credential-state').filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: PATIENCE });
   check(
     (await state.innerText()) === "conductor's own CLI, signed in on its own",
     "the new instance's gateway leaves the first Claude instance on its own CLI"
@@ -626,7 +678,7 @@ if (scenario === 'turn') {
   check((await state.innerText()) === "conductor's own CLI, signed in on its own", 'Claude starts on its own CLI');
   const signIn = async () => {
     await claude.getByRole('button', { name: 'Sign in: Claude Code' }).click();
-    await claude.getByRole('link', { name: 'Open the sign-in page' }).waitFor({ timeout: 20_000 });
+    await claude.getByRole('link', { name: 'Open the sign-in page' }).waitFor({ timeout: PATIENCE });
   };
   await signIn();
   const link = claude.getByRole('link', { name: 'Open the sign-in page' });
@@ -650,7 +702,7 @@ if (scenario === 'turn') {
   await field.fill(WRONG);
   await claude.getByRole('button', { name: 'Send code' }).click();
   const failed = claude.locator('.sign-in [role="alert"]');
-  await failed.waitFor({ timeout: 20_000 });
+  await failed.waitFor({ timeout: PATIENCE });
   check(
     (await failed.innerText()) === "The sign-in failed: Claude didn't accept that code. Sign in again to get a new one.",
     'a refused code says so'
@@ -660,9 +712,9 @@ if (scenario === 'turn') {
   check((await field.inputValue()) === '', 'a new sign-in starts with an empty field');
   await field.fill(CODE);
   await claude.getByRole('button', { name: 'Send code' }).click();
-  await field.waitFor({ state: 'detached', timeout: 20_000 });
+  await field.waitFor({ state: 'detached', timeout: PATIENCE });
   log('the field went once the code was sent');
-  await state.filter({ hasText: 'Signed in on conductor' }).waitFor({ timeout: 20_000 });
+  await state.filter({ hasText: 'Signed in on conductor' }).waitFor({ timeout: PATIENCE });
   check(
     (await claude.locator('.sign-in [role="status"]').innerText()) === 'Signed in on conductor.',
     'the instance is signed in, without a reload'
@@ -683,7 +735,7 @@ if (scenario === 'turn') {
   );
   check(!kept.includes(CODE) && !kept.includes(WRONG), 'no code is in storage, the URL or the DOM');
   await page.reload();
-  await waitFor('header.status[data-state="Live"]', 60_000);
+  await waitFor('header.status[data-state="Live"]');
   await page.getByRole('button', { name: 'Credentials' }).click();
   check(
     (await page.getByRole('region', { name: 'Claude Code' }).locator('.credential-state').innerText()) ===
@@ -693,12 +745,12 @@ if (scenario === 'turn') {
 } else if (scenario === 'screens') {
   await startSession('Claude Code', `${dir}/notes`);
   await startSession('Claude Code', `${dir}/scratch`);
-  await pane.locator('.closed-note').waitFor({ timeout: 20_000 });
+  await pane.locator('.closed-note').waitFor({ timeout: PATIENCE });
   log(`closed: "${await text('.closed-note')}"`);
   await startSession('Claude Code', `${dir}/conductor`);
   await send(PROMPT);
   const approve = pane.locator('.request[data-open="true"] button.approve');
-  await approve.waitFor({ timeout: 20_000 });
+  await approve.waitFor({ timeout: PATIENCE });
   const shots = {
     desktop: [{ viewport: { width: 1280, height: 800 } }, [['conductor', 'running'], ['scratch', 'closed']]],
     phone: [
@@ -711,23 +763,27 @@ if (scenario === 'turn') {
   for (const scheme of ['light', 'dark']) {
     for (const [device, [options, states]] of Object.entries(shots)) {
       const context = await browser.newContext({ ...options, colorScheme: scheme, reducedMotion: 'reduce' });
+      context.setDefaultTimeout(PATIENCE);
       const shot = await context.newPage();
       watch(shot);
       await shot.goto(joinUrl);
-      await shot.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+      await shot.locator('header.status[data-state="Live"]').waitFor({ timeout: PATIENCE });
       shooters.push({ scheme, device, states, context, shot });
     }
   }
   await approve.click();
-  await pane.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 20_000 });
+  await pane.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: PATIENCE });
   log(`running, held mid-reply: "${await text('.reply')}"`);
   for (const { scheme, device, states, context, shot } of shooters) {
     for (const [title, state] of states) {
       await openRow(title, shot);
-      if (state === 'running') {
-        await shot.locator('.reply.streaming', { hasText: '/tmp/s1' }).waitFor({ timeout: 10_000 });
-      }
-      await shot.waitForTimeout(450);
+      const shown = {
+        running: shot.locator('.reply.streaming', { hasText: '/tmp/s1' }),
+        closed: shot.locator('.session-pane .closed-note'),
+        idle: shot.locator('.session-pane .composer textarea:not([disabled])'),
+      }[state];
+      await shown.waitFor();
+      await settled(shot);
       const file = `${out}/${device}-${scheme}-${state}.png`;
       await shot.screenshot({ path: file });
       log(`screenshot ${file}`);
@@ -737,7 +793,7 @@ if (scenario === 'turn') {
 } else if (scenario === 'projects') {
   const project = (id) => page.locator(`.project[data-project="${id}"]`);
   await page.getByRole('button', { name: 'Projects', exact: true }).click();
-  await page.locator('.home-line[data-sync="synced"]').waitFor({ timeout: 30_000 });
+  await page.locator('.home-line[data-sync="synced"]').waitFor({ timeout: PATIENCE });
   const home = await page.locator('.home-line .home-state').innerText();
   check(/^Home synced \d{4}-\d\d-\d\d \d\d:\d\d UTC from file:\/\/.*home-remote\.git\.$/.test(home), `the host's home is synced ("${home}")`);
   check(
@@ -746,7 +802,7 @@ if (scenario === 'turn') {
   );
   check((await project('beta').locator('.checkout').getAttribute('data-checkout')) === 'missing', 'beta is not checked out');
   await page.getByRole('button', { name: 'Clone beta on conductor' }).click();
-  await project('beta').locator('.checkout[data-checkout="checked-out"]').waitFor({ timeout: 30_000 });
+  await project('beta').locator('.checkout[data-checkout="checked-out"]').waitFor({ timeout: PATIENCE });
   const cloned = await project('beta').locator('.checkout-path').innerText();
   check(cloned.endsWith('/projects-host/projects/beta (cloned here)'), `beta was cloned into the host's data dir ("${cloned}")`);
   await page.screenshot({ path: out });
@@ -760,7 +816,7 @@ if (scenario === 'turn') {
   await page.locator('select[name="project"]').selectOption({ label: 'alpha' });
   check((await page.locator('input[name="directory"]').count()) === 0, 'a picked project hides the directory');
   await page.getByRole('button', { name: 'Start session' }).click();
-  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: 20_000 });
+  await pane.locator('.composer textarea[placeholder="Message Claude Code"]').waitFor({ timeout: PATIENCE });
   check((await pane.locator('.pane-title p').innerText()) === `${dir}/roots/alpha on conductor`, "the session runs in alpha's checkout");
   await back();
   check((await page.locator('.row-title').allInnerTexts()).join(', ') === 'alpha', 'the session is listed by its project');
@@ -771,7 +827,7 @@ if (scenario === 'turn') {
   const names = async () => (await page.locator('.host-group .status .host').allInnerTexts()).join(', ');
   const bothLive = async () => {
     for (const name of ['desk', 'laptop']) {
-      await group(name).locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+      await group(name).locator('header.status[data-state="Live"]').waitFor({ timeout: PATIENCE });
     }
   };
   await page.getByRole('button', { name: 'Add host' }).click();
@@ -825,10 +881,10 @@ if (scenario === 'turn') {
   );
   await page.getByRole('button', { name: 'Forget laptop' }).click();
   await back();
-  await page.locator('.host-group').nth(1).waitFor({ state: 'detached', timeout: 10_000 });
+  await page.locator('.host-group').nth(1).waitFor({ state: 'detached', timeout: PATIENCE });
   check((await names()) === 'desk', 'forgetting laptop drops its group');
   await page.reload();
-  await waitFor('header.status[data-state="Live"]', 60_000);
+  await waitFor('header.status[data-state="Live"]');
   check((await names()) === 'desk' && (await rowsOf('desk')) === 'desk', 'laptop stays forgotten after a reload');
 } else {
   throw new Error(`unknown scenario ${scenario}`);
