@@ -65,7 +65,11 @@ impl Shell {
                     .read()
                     .get(&host)
                     .map(|(_, link)| Rc::clone(link));
-                spawn(async move {
+                // Not tied to the component that sent it: a host update can
+                // take that component away before the answer comes (a failed
+                // sign-in drops its code form), and the answer still has to
+                // land.
+                dioxus_core::spawn_forever(async move {
                     let answer = send(link, body).await;
                     self.dispatch(Intent::Replied(reply, answer));
                 });
@@ -100,9 +104,20 @@ fn script(focus: &Focus) -> String {
         Focus::AfterUndo => String::from(
             "requestAnimationFrame(() => (document.querySelector('.composer textarea:not(:disabled)') || document.querySelector('.undo-status'))?.focus())",
         ),
-        Focus::Composer => {
-            String::from("document.querySelector('.composer textarea').focus()")
-        }
+        // The composer can mount disabled while the agent starts, and is
+        // enabled in place once it takes messages.
+        Focus::Composer => String::from(
+            "(() => { \
+               const box = document.querySelector('.composer textarea'); \
+               if (!box) return; \
+               if (!box.disabled) { box.focus(); return; } \
+               const watch = new MutationObserver(() => { \
+                 if (!box.isConnected) watch.disconnect(); \
+                 else if (!box.disabled) { watch.disconnect(); box.focus(); } \
+               }); \
+               watch.observe(box, { attributes: true, attributeFilter: ['disabled'] }); \
+             })()",
+        ),
     }
 }
 
