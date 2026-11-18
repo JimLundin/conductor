@@ -289,7 +289,7 @@ impl State {
                 host,
                 visit: self.visit,
             },
-            (known.instances(), &known.catalog()),
+            &known.catalog(),
         );
         self.credentials.insert(host, forms);
         (self, effects)

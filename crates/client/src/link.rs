@@ -701,10 +701,8 @@ mod tests {
             Provider::ALL
                 .map(|provider| {
                     (
-                        InstanceId::named(provider.name()),
+                        InstanceId::own(provider),
                         InstanceStatus {
-                            label: String::from(provider.name()),
-                            provider,
                             availability: Availability::Unavailable {
                                 reason: String::from(reason),
                             },
@@ -1336,7 +1334,7 @@ mod tests {
 
     #[test]
     fn sign_ins_show_in_the_status_until_cancelled_or_the_next_welcome() {
-        let id = || InstanceId::named("claude");
+        let id = || InstanceId::own(Provider::Claude);
         let frame = |step| {
             Input::from(Some(Feed::SignIn(SignIn {
                 instance: id(),

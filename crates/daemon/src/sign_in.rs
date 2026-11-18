@@ -1,7 +1,8 @@
 //! Runs the app's sign-ins.
 //!
 //! Each is the CLI's own sign-in in its instance's home, on pipes, then
-//! its sign-in check, then the refresh's answer. The decisions are
+//! its sign-in check and the account the CLI names, then the refresh's
+//! answer. The decisions are
 //! [`host::sign_in`]'s; the registry's actor performs them with [`Runs`]
 //! and hands the core what each run reports.
 //!
@@ -17,7 +18,7 @@ use std::pin::Pin;
 use std::process::ExitStatus;
 use std::sync::Arc;
 
-use agents::{Invocation, SignIn as Flow};
+use agents::{Invocation, Reported, SignIn as Flow};
 use host::sign_in::{Key, LIMIT};
 use install::Home;
 use install::process::{SignInRun, command, sign_in, write_line};
@@ -27,13 +28,33 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 
 /// How an instance's CLI signs its home in: the CLI, the home, the
-/// plugin's description of the sign-in, and the CLI's sign-in check.
+/// plugin's description of the sign-in, the CLI's sign-in check, and
+/// where the CLI names the account and how the plugin reads it.
 #[derive(Debug, Clone)]
 pub struct Signing {
     pub program: PathBuf,
     pub home: Home,
     pub flow: Flow,
     pub check: Invocation,
+    pub account: Reported,
+    pub read: fn(&str) -> Option<String>,
+}
+
+impl Signing {
+    /// The account the signed-in home is, from what its sign-in check
+    /// printed or the file the CLI keeps it in.
+    #[must_use]
+    pub fn account(&self, status: &str) -> Option<String> {
+        match (&self.account, &self.home) {
+            (Reported::Status, _) => (self.read)(status),
+            (Reported::File(file), Home::Private(dir)) => {
+                std::fs::read_to_string(dir.join(file))
+                    .ok()
+                    .and_then(|kept| (self.read)(&kept))
+            }
+            (Reported::File(_), Home::User) => None,
+        }
+    }
 }
 
 type Resolving = Pin<Box<dyn Future<Output = Result<Signing, String>> + Send>>;
@@ -74,7 +95,7 @@ pub enum Report {
     Printed(String),
     Exited(Option<i32>, String),
     Expired,
-    Checked(Result<Option<i32>, String>),
+    Checked(Result<Option<i32>, String>, Option<String>),
     Listed(CommandResult),
 }
 
@@ -155,16 +176,25 @@ impl Runs {
         self.checks.remove(key);
     }
 
-    /// Runs the CLI's sign-in check against the run's home.
+    /// Runs the CLI's sign-in check against the run's home, and reads
+    /// the account it names.
     pub fn check(&mut self, key: Key) {
         self.stdins.remove(&key);
         if let Some(signing) = self.checks.remove(&key) {
             let sender = self.sender.clone();
             self.tasks.spawn(async move {
-                let check =
-                    command(&signing.program, &signing.home, signing.check);
-                let code = crate::start::sign_in_check(check).await;
-                let _ = sender.send((key, Report::Checked(code)));
+                let check = command(
+                    &signing.program,
+                    &signing.home,
+                    signing.check.clone(),
+                );
+                let ran = crate::start::sign_in_check(check).await;
+                let account = ran
+                    .as_ref()
+                    .ok()
+                    .and_then(|(_, printed)| signing.account(printed));
+                let code = ran.map(|(code, _)| code);
+                let _ = sender.send((key, Report::Checked(code, account)));
             });
         }
     }

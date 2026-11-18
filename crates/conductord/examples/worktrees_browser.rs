@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     drive_live(&mut updates).await?;
     let session = match link
         .send(CommandBody::StartSession {
-            instance: InstanceId::named(Provider::Claude.name()),
+            instance: InstanceId::own(Provider::Claude),
             at: StartAt::Directory(HostPath(
                 args.directory.display().to_string(),
             )),

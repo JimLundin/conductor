@@ -597,6 +597,7 @@ name = "codex"
 version = "0.1.0"
 dependencies = [
  "agents",
+ "data-encoding",
  "proto",
  "serde",
  "serde_json",
@@ -2034,6 +2035,7 @@ dependencies = [
  "agents",
  "data-encoding",
  "proto",
+ "sha2",
  "thiserror 2.0.21",
  "ulid",
 ]

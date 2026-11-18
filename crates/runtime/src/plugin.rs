@@ -39,4 +39,7 @@ pub struct Plugin {
     pub profile: Profile,
     pub settings: Settings,
     pub starter: fn(Launch) -> Starter,
+    /// The account a signed-in home is, from what the CLI reports where
+    /// the profile's `account` says.
+    pub account: fn(&str) -> Option<String>,
 }

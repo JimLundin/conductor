@@ -179,17 +179,8 @@ pub enum SignInOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Configure {
     SetCredential {
-        instance: InstanceId,
-        credential: Credential,
-    },
-    ClearCredential(InstanceId),
-    Add {
         provider: Provider,
-        label: String,
-    },
-    Rename {
-        instance: InstanceId,
-        label: String,
+        credential: Credential,
     },
     Remove(InstanceId),
 }
@@ -287,21 +278,12 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             },
         ),
         CommandBody::SetCredential {
-            instance,
+            provider,
             credential,
         } => Route::Configure(Configure::SetCredential {
-            instance,
+            provider,
             credential,
         }),
-        CommandBody::ClearCredential { instance } => {
-            Route::Configure(Configure::ClearCredential(instance))
-        }
-        CommandBody::AddInstance { provider, label } => {
-            Route::Configure(Configure::Add { provider, label })
-        }
-        CommandBody::RenameInstance { instance, label } => {
-            Route::Configure(Configure::Rename { instance, label })
-        }
         CommandBody::RemoveInstance { instance } => {
             Route::Configure(Configure::Remove(instance))
         }

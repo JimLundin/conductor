@@ -79,6 +79,7 @@ fn catalog() -> Catalog {
         kind: text(kind),
         label: text(label),
         fields,
+        account: text("base_url"),
     };
     Catalog(BTreeMap::from([
         (
@@ -180,28 +181,23 @@ fn signing_in(
     )
 }
 
+/// A provider's own instance by its name, and otherwise Claude's of the
+/// account.
 fn id(name: &str) -> InstanceId {
-    InstanceId::named(name)
+    match name {
+        "claude" => InstanceId::own(Provider::Claude),
+        "codex" => InstanceId::own(Provider::Codex),
+        account => InstanceId::named(Provider::Claude, account),
+    }
 }
 
-fn instance(
-    label: &str,
-    provider: Provider,
-    availability: Availability,
-) -> InstanceStatus {
-    InstanceStatus {
-        label: text(label),
-        provider,
-        availability,
-    }
+const fn instance(availability: Availability) -> InstanceStatus {
+    InstanceStatus { availability }
 }
 
 /// A host with only its default Claude instance.
 fn claude(availability: Availability) -> Instances {
-    Instances(BTreeMap::from([(
-        id("claude"),
-        instance("Claude Code", Provider::Claude, availability),
-    )]))
+    Instances(BTreeMap::from([(id("claude"), instance(availability))]))
 }
 
 /// A session that is ready, shown in the detail pane.
@@ -1059,19 +1055,12 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
 #[test]
 fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
     let instances = Instances(BTreeMap::from([
-        (
-            id("claude"),
-            instance("Claude Code", Provider::Claude, signed_in()),
-        ),
+        (id("claude"), instance(signed_in())),
         (
             id("codex"),
-            instance(
-                "Codex",
-                Provider::Codex,
-                Availability::Unavailable {
-                    reason: text("no codex"),
-                },
-            ),
+            instance(Availability::Unavailable {
+                reason: text("no codex"),
+            }),
         ),
     ]));
     let (empty, _) = run(
@@ -1154,19 +1143,29 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
     );
 }
 
-type Shown = (String, Option<bool>, bool, Option<String>, Vec<String>);
+type Shown = (String, Option<String>);
 
 fn credentials(state: &State) -> Vec<Shown> {
     pane_of(state).map_or_else(Vec::new, |pane| {
         pane.instances
             .into_iter()
-            .map(|shown| {
+            .map(|shown| (shown.state, shown.outcome.map(|hint| hint.text)))
+            .collect()
+    })
+}
+
+/// Claude's forms: whether saving is off, what came of the last, and each
+/// field's value.
+fn claude_forms(state: &State) -> Option<(bool, Option<String>, Vec<String>)> {
+    pane_of(state).and_then(|pane| {
+        pane.add
+            .into_iter()
+            .find(|forms| forms.provider == Provider::Claude)
+            .map(|forms| {
                 (
-                    shown.state,
-                    shown.clear.map(|clear| clear.disabled),
-                    shown.forms.iter().any(|form| form.save_disabled),
-                    shown.outcome.map(|hint| hint.text),
-                    shown
+                    forms.forms.iter().any(|form| form.save_disabled),
+                    forms.outcome.map(|hint| hint.text),
+                    forms
                         .forms
                         .into_iter()
                         .flat_map(|form| form.fields)
@@ -1174,24 +1173,16 @@ fn credentials(state: &State) -> Vec<Shown> {
                         .collect(),
                 )
             })
-            .collect()
     })
 }
 
 #[test]
-fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
-    let gateway = Availability::Available {
-        auth: Auth::Stored {
-            kind: text("gateway"),
-            url: Some(text("https://gw.example")),
-        },
-        models: Models::none(),
-    };
+fn a_secret_is_sent_once_and_its_account_makes_the_instance() {
     let fill = |field: &str, value: &str| {
         Intent::Credential(
             HOST,
             CredentialIntent::Type {
-                instance: id("claude"),
+                provider: Provider::Claude,
                 kind: text("gateway"),
                 field: text(field),
                 text: text(value),
@@ -1201,7 +1192,7 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
     let (filled, _) = run(
         paired(),
         Vec::from([
-            status(claude(gateway)),
+            status(claude(signed_in())),
             Intent::Show(Place::Credentials),
             fill("base_url", " https://gw.example "),
             fill("token", "secret"),
@@ -1212,47 +1203,41 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
         Vec::from([Intent::Credential(
             HOST,
             CredentialIntent::Save {
-                instance: id("claude"),
+                provider: Provider::Claude,
                 kind: text("gateway"),
             },
         )]),
     );
     let (stored, _) = run(
         saving.clone(),
-        Vec::from([Intent::Replied(
-            reply(ReplyTo::Instance(
-                Subject::Instance(id("claude")),
-                Done::Stored,
-            )),
-            Ok(CommandResult::Instances(Instances::default())),
-        )]),
-    );
-    let (_, cleared) = run(
-        stored.clone(),
-        Vec::from([Intent::Credential(
-            HOST,
-            CredentialIntent::Clear(id("claude")),
-        )]),
+        Vec::from([
+            Intent::Replied(
+                reply(ReplyTo::Instance(
+                    Subject::Add(Provider::Claude),
+                    Done::Stored,
+                )),
+                Ok(CommandResult::Instances(two_claudes())),
+            ),
+            status(two_claudes()),
+        ]),
     );
     assert_eq!(
         (
-            credentials(&filled).first().map(|form| form.2),
-            credentials(&saving),
+            claude_forms(&filled).map(|forms| forms.0),
+            claude_forms(&saving),
             sent(&saved),
-            credentials(&stored).first().map(|form| form.3.clone()),
-            cleared.last().cloned(),
+            claude_forms(&stored).map(|forms| forms.1),
+            credentials(&stored),
         ),
         (
             Some(false),
-            Vec::from([(
-                text("Gateway at https://gw.example"),
-                Some(true),
+            Some((
                 true,
                 Some(text("Sending…")),
                 Vec::from([text(" https://gw.example "), String::new()]),
-            )]),
+            )),
             Vec::from([CommandBody::SetCredential {
-                instance: id("claude"),
+                provider: Provider::Claude,
                 credential: Credential {
                     kind: text("gateway"),
                     values: BTreeMap::from([
@@ -1264,34 +1249,28 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
             Some(Some(text(
                 "Sent to desk over the encrypted link. This app doesn't keep it; your browser may offer to save it."
             ))),
-            Some(Effect::Focus(Focus::Element(format!(
-                "{}-claude-credential",
-                HOST.key()
-            )))),
+            Vec::from([
+                (text("Signed in on desk"), None),
+                (text("Gateway at https://gw.example"), None),
+            ]),
         )
     );
 }
 
-/// A host with two Claude instances, one through a gateway.
+/// A host with Claude's own instance, signed in, and the instance of a
+/// gateway's account.
 fn two_claudes() -> Instances {
     Instances(BTreeMap::from([
+        (id("claude"), instance(signed_in())),
         (
-            id("claude"),
-            instance("Claude Code", Provider::Claude, signed_in()),
-        ),
-        (
-            id("claude-api"),
-            instance(
-                "Claude (API)",
-                Provider::Claude,
-                Availability::Available {
-                    auth: Auth::Stored {
-                        kind: text("gateway"),
-                        url: Some(text("https://gw.example")),
-                    },
-                    models: Models::none(),
+            id("https://gw.example"),
+            instance(Availability::Available {
+                auth: Auth::Stored {
+                    kind: text("gateway"),
+                    url: Some(text("https://gw.example")),
                 },
-            ),
+                models: Models::none(),
+            }),
         ),
     ]))
 }
@@ -1309,7 +1288,7 @@ fn pane_of(state: &State) -> Option<crate::CredentialsPane> {
 }
 
 #[test]
-fn each_instance_has_its_section_and_each_provider_a_form_to_add_one() {
+fn each_instance_is_its_account_and_each_provider_has_its_forms() {
     let (shown, _) = run(
         paired(),
         Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
@@ -1324,14 +1303,14 @@ fn each_instance_has_its_section_and_each_provider_a_form_to_add_one() {
                         it.name.clone(),
                         it.provider.clone(),
                         it.state.clone(),
-                        it.clear.is_some(),
+                        it.remove.is_some(),
                         it.login.clone(),
                     )
                 })
                 .collect::<Vec<_>>(),
             pane.add
                 .iter()
-                .map(|form| (form.button.clone(), form.disabled))
+                .map(|forms| (forms.label.clone(), forms.forms.len()))
                 .collect::<Vec<_>>(),
         )
     });
@@ -1340,60 +1319,41 @@ fn each_instance_has_its_section_and_each_provider_a_form_to_add_one() {
         Some((
             Vec::from([
                 (
-                    format!("{}-claude-credential", HOST.key()),
+                    format!("{}-claude-own-credential", HOST.key()),
                     text("Claude Code"),
                     text("Claude Code"),
                     text("Signed in on desk"),
                     false,
-                    text("To sign it in on desk: conductord login claude"),
+                    text(
+                        "To sign in on desk's terminal: conductord login claude"
+                    ),
                 ),
                 (
-                    format!("{}-claude-api-credential", HOST.key()),
-                    text("Claude (API)"),
+                    format!(
+                        "{}-claude-https://gw.example-credential",
+                        HOST.key()
+                    ),
+                    text("https://gw.example"),
                     text("Claude Code"),
                     text("Gateway at https://gw.example"),
                     true,
-                    text("To sign it in on desk: conductord login claude-api"),
+                    text(
+                        "To sign it in again on desk's terminal: conductord login claude --account https://gw.example"
+                    ),
                 ),
             ]),
-            Vec::from([
-                (text("Add instance: Claude Code"), true),
-                (text("Add instance: Codex"), true),
-            ]),
+            Vec::from([(text("Claude Code"), 1), (text("Codex"), 1)]),
         ))
     );
 }
 
 #[test]
-fn an_instance_is_added_renamed_and_removed_and_a_refusal_shows_why() {
+fn an_instance_is_removed_and_a_refusal_shows_why() {
     let (shown, _) = run(
         paired(),
         Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
     );
-    let api = || id("claude-api");
-    let (_, added) = run(
-        shown.clone(),
-        Vec::from([
-            Intent::Credential(
-                HOST,
-                CredentialIntent::TypeNewLabel(
-                    Provider::Codex,
-                    text(" Codex (API) "),
-                ),
-            ),
-            Intent::Credential(HOST, CredentialIntent::Add(Provider::Codex)),
-        ]),
-    );
-    let (renaming, renamed) = run(
-        shown.clone(),
-        Vec::from([
-            Intent::Credential(
-                HOST,
-                CredentialIntent::TypeLabel(api(), text("Work API")),
-            ),
-            Intent::Credential(HOST, CredentialIntent::Rename(api())),
-        ]),
-    );
+    let api = || id("https://gw.example");
     let (_, removed) = run(
         shown.clone(),
         Vec::from([Intent::Credential(HOST, CredentialIntent::Remove(api()))]),
@@ -1423,23 +1383,9 @@ fn an_instance_is_added_renamed_and_removed_and_a_refusal_shows_why() {
         })
     };
     assert_eq!(
+        (sent(&removed), removed.last().cloned(), outcome(&refused)),
         (
-            sent(&added),
-            sent(&renamed),
-            outcome(&renaming),
-            removed.last().cloned(),
-            outcome(&refused),
-        ),
-        (
-            Vec::from([CommandBody::AddInstance {
-                provider: Provider::Codex,
-                label: text("Codex (API)"),
-            }]),
-            Vec::from([CommandBody::RenameInstance {
-                instance: api(),
-                label: text("Work API"),
-            }]),
-            Some(text("Sending…")),
+            Vec::from([CommandBody::RemoveInstance { instance: api() }]),
             Some(Effect::Focus(Focus::Element(format!(
                 "{}-add-instance",
                 HOST.key()
@@ -1460,7 +1406,7 @@ fn the_new_session_form_lists_each_instance_and_starts_on_the_one_picked() {
     let (_, started) = run(
         shown.clone(),
         Vec::from([
-            Intent::Form(FormIntent::PickInstance(id("claude-api"))),
+            Intent::Form(FormIntent::PickInstance(id("https://gw.example"))),
             Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
             Intent::Form(FormIntent::Start),
         ]),
@@ -1477,10 +1423,10 @@ fn the_new_session_form_lists_each_instance_and_starts_on_the_one_picked() {
         (
             Some(Vec::from([
                 (text("Claude Code"), true),
-                (text("Claude (API)"), false),
+                (text("https://gw.example"), false),
             ])),
             Vec::from([CommandBody::StartSession {
-                instance: id("claude-api"),
+                instance: id("https://gw.example"),
                 at: StartAt::Directory(HostPath(text("/src/x"))),
                 model: None,
                 effort: None,
@@ -1805,7 +1751,7 @@ fn a_sign_in_starts_from_the_instance_and_takes_the_pasted_code_once() {
             sent(&sent_code),
             paste(&submitted),
             paste(&accepted),
-            credentials(&accepted).first().map(|shown| shown.3.clone()),
+            credentials(&accepted).first().map(|shown| shown.1.clone()),
         ),
         (
             Some(crate::SignInButton {

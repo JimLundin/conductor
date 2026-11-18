@@ -4,7 +4,8 @@
 //! first ends. Each runs the CLI's own sign-in in the instance's home,
 //! reads what to show the person from its output as the provider's plugin
 //! describes, sends a pasted code to its stdin, and once it exits 0 checks
-//! the home and refreshes the instance.
+//! the home, reads the account the CLI says it signed in as, and refreshes
+//! the instance, which becomes that account's (`registry`).
 //!
 //! Every step goes to the clients live and is stored nowhere: the code,
 //! the output and the link are in no event, receipt or log line.
@@ -18,8 +19,8 @@ use core::time::Duration;
 
 use agents::{SignIn as Flow, plain};
 use proto::{
-    CommandResult, Instance, InstanceId, Rejection, SignIn, SignInCode,
-    SignInStep,
+    Account, CommandResult, Instance, InstanceId, Rejection, SignIn,
+    SignInCode, SignInStep,
 };
 
 use crate::Note;
@@ -56,12 +57,13 @@ pub enum Effect {
     /// Write the code to the run's stdin, as one line.
     Write(Key, SignInCode),
     Kill(Key),
-    /// Run the CLI's sign-in check against the home, and report
-    /// [`SignIns::checked`].
+    /// Run the CLI's sign-in check against the home, read the account the
+    /// CLI names, and report both to [`SignIns::checked`].
     Check(Key),
-    /// Take the instance as signed in and refresh it, and report what the
-    /// host runs then to [`SignIns::listed`].
-    Refresh(Key),
+    /// Take the instance as signed in as the account, if the CLI named
+    /// one, and refresh it, and report what the host runs then to
+    /// [`SignIns::listed`].
+    Refresh(Key, Option<Account>),
     /// Send this to every subscribed client.
     Publish(SignIn),
 }
@@ -240,15 +242,20 @@ impl SignIns {
         effects
     }
 
-    /// The CLI's sign-in check exited with `code`, or did not finish.
+    /// The CLI's sign-in check exited with `code`, or did not finish, and
+    /// the CLI named `account`, or none.
     pub fn checked(
         &mut self,
         key: &Key,
         code: &Result<Option<i32>, String>,
+        account: Option<String>,
     ) -> Vec<Effect> {
         match (self.current(key).is_some(), code) {
             (false, _) => Vec::new(),
-            (true, Ok(Some(0))) => Vec::from([Effect::Refresh(key.clone())]),
+            (true, Ok(Some(0))) => Vec::from([Effect::Refresh(
+                key.clone(),
+                account.map(Account::Named),
+            )]),
             (true, Ok(_) | Err(_)) => self.fail(
                 key,
                 String::from(

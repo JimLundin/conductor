@@ -3,7 +3,7 @@
 //! runs.
 
 use agents::pin::Cli;
-use agents::{Config, HomeKind, Invocation, Note, Profile, Var};
+use agents::{Config, HomeKind, Invocation, Note, Profile, Reported, Var};
 use proto::{Effort, Provider};
 use serde_json::Value;
 
@@ -193,6 +193,7 @@ pub fn profile() -> Profile {
         },
         version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
         status: auth_status(HomeKind::Private),
+        account: Reported::Status,
         sign_in: crate::sign_in(),
     }
 }

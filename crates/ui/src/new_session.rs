@@ -327,7 +327,6 @@ impl Form {
                 (_, false, _) | (_, _, None) => (true, "Start session"),
                 (_, true, Some(_)) => (false, "Start session"),
             };
-        let status = picked.and_then(|id| instances?.of(id));
         NewSessionForm {
             subtitle: String::from(
                 "Runs on the host you choose, in one of its projects or a directory there.",
@@ -342,7 +341,7 @@ impl Form {
                     .iter()
                     .map(|(id, choice)| InstanceChoice {
                         pick: FormIntent::PickInstance(id.clone()),
-                        label: choice.label.clone(),
+                        label: crate::credentials::instance_name(id, &catalog),
                         state: word(Some(&choice.availability)),
                         checked: Some(id) == picked,
                     })
@@ -350,9 +349,12 @@ impl Form {
             }),
             instance_hint: instance_hint(
                 instance_error,
-                note(status.and_then(|it| catalog.of(it.provider)), available),
+                note(picked.and_then(|it| catalog.of(it.provider)), available),
                 (
-                    status.map_or("That instance", |it| it.label.as_str()),
+                    &picked.map_or_else(
+                        || String::from("That instance"),
+                        |it| crate::credentials::instance_name(it, &catalog),
+                    ),
                     &name,
                 ),
             ),
@@ -418,9 +420,9 @@ fn project_choices(home: &Home, picked: Option<&ProjectId>) -> Vec<Choice> {
     let listed = home.projects.iter().map(|project| Choice {
         value: project.id.0.clone(),
         label: if project.checkouts.is_empty() {
-            format!("{} (not checked out)", project.name)
+            format!("{} (not checked out)", project.title)
         } else {
-            project.name.clone()
+            project.title.clone()
         },
         selected: Some(&project.id) == picked,
         disabled: project.checkouts.is_empty(),

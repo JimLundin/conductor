@@ -1,7 +1,7 @@
 //! What the host's cores decide is worth logging, as data: `daemon` logs
 //! each kind with its fields.
 
-use proto::{InstanceId, Provider};
+use proto::InstanceId;
 
 use crate::prelude::*;
 use crate::registry::OwnSignIn;
@@ -31,11 +31,9 @@ pub enum Note {
         instance: InstanceId,
         reason: String,
     },
+    /// A credential or a sign-in named an account the host had no
+    /// instance of.
     InstanceAdded {
-        instance: InstanceId,
-        provider: Provider,
-    },
-    InstanceRenamed {
         instance: InstanceId,
     },
     InstanceRemoved {

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use daemon::start::{Hosting, Plugins};
-use proto::{InstanceId, Provider};
+use proto::Provider;
 use runtime::Settings;
 
 #[derive(Parser)]
@@ -30,9 +30,14 @@ enum Cmd {
 
 #[derive(Parser)]
 struct LoginArgs {
-    /// The instance to sign in, by its id: on a fresh host `claude` or
-    /// `codex`, and otherwise as the app's credentials screen shows it.
-    instance: String,
+    /// The provider whose CLI signs in: `claude` or `codex`.
+    #[arg(value_parser = host::start::provider)]
+    provider: Provider,
+    /// The account of the instance to sign in again, as the app's
+    /// credentials screen shows it. Without it the provider's own sign-in
+    /// runs, and the account the CLI names becomes an instance.
+    #[arg(long)]
+    account: Option<String>,
     /// The host's data dir, as given to `conductord host`.
     #[arg(long)]
     data_dir: Option<PathBuf>,
@@ -94,8 +99,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Login(args) => {
             let plugins = plugins(Vec::new(), Vec::new());
-            let instance = InstanceId(args.instance);
-            daemon::start::login(args.data_dir, plugins, instance).await
+            daemon::start::login(
+                args.data_dir,
+                plugins,
+                args.provider,
+                args.account,
+            )
+            .await
         }
     }
 }

@@ -21,10 +21,10 @@ use proto::Roster;
 
 pub use host::registry::Stored;
 
-/// Format 4 holds the host's instances, each with its credential as its
-/// form's values; an older store reads as one that doesn't open, which a
-/// Clear moves aside.
-const FORMAT: u8 = 4;
+/// Format 5 holds the host's instances, each by its provider and account
+/// with its credential as its form's values; an older store reads as one
+/// that doesn't open, which removing an instance moves aside.
+const FORMAT: u8 = 5;
 const PURPOSE: &[u8] = b"conductor credentials 1";
 const NONCE_LEN: usize = 24;
 

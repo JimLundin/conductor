@@ -1,8 +1,7 @@
-//! The host's instances and their credentials: what each instance signs in
-//! with, its sign-in from the app, a form for each kind of credential its
-//! provider's plugin describes, a button to clear the stored one, its
-//! label, a button to remove it, and a form per provider to add another
-//! instance. The forms are drawn from the host's description of them.
+//! The host's instances and their credentials: each instance's account,
+//! what it signs in with, its sign-in from the app and a button to remove
+//! it, and per provider a form for each kind of credential its plugin
+//! describes. The forms are drawn from the host's description of them.
 
 #![expect(
     clippy::disallowed_types,
@@ -63,26 +62,24 @@ fn CredentialsPane(pane: ui::CredentialsPane) -> Element {
                 InstanceCredentials { key: "{instance.heading}", instance }
             }
             section { class: "credential", "aria-labelledby": "{pane.add_heading}",
-                h3 { id: "{pane.add_heading}", tabindex: "-1", "Add an instance" }
+                h3 { id: "{pane.add_heading}", tabindex: "-1", "Add a credential" }
                 if let Some(hint) = pane.removed {
                     Hint { hint }
                 }
-                for form in pane.add {
-                    AddForm { key: "{form.button}", form }
+                for forms in pane.add {
+                    ProviderForms { key: "{forms.label}", forms }
                 }
             }
         }
     }
 }
 
-/// The instance's heading, what it signs in with now, its label, buttons
-/// to clear a stored credential and to remove it, and a form for each kind
-/// of credential it takes.
+/// The instance's heading, what it signs in with now, its sign-in and the
+/// button that removes it.
 #[component]
 fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
     let shell = use_context::<Shell>();
     let host = use_context::<HostId>();
-    let clear = instance.instance.clone();
     let remove = instance.instance.clone();
     rsx! {
         section { class: "credential", "aria-labelledby": "{instance.heading}",
@@ -92,30 +89,18 @@ fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
                     p { class: "credential-provider", "{instance.provider}" }
                     p { class: "credential-state", "{instance.state}" }
                 }
-                if let Some(button) = instance.clear {
+                if let Some(button) = instance.remove {
                     button {
                         r#type: "button",
-                        class: "clear",
+                        class: "clear remove",
                         "aria-label": "{button.label}",
                         disabled: button.disabled,
-                        onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::Clear(clear.clone()))),
-                        "Clear"
+                        onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::Remove(remove.clone()))),
+                        "Remove"
                     }
-                }
-                button {
-                    r#type: "button",
-                    class: "clear remove",
-                    "aria-label": "{instance.remove.label}",
-                    disabled: instance.remove.disabled,
-                    onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::Remove(remove.clone()))),
-                    "Remove"
                 }
             }
             SignIn { instance: instance.instance.clone(), view: instance.sign_in }
-            Rename { instance: instance.instance.clone(), form: instance.rename }
-            for form in instance.forms {
-                KindForm { key: "{form.kind}", form }
-            }
             p { class: "hint muted", "{instance.login}" }
             if let Some(hint) = instance.outcome {
                 Hint { hint }
@@ -232,64 +217,17 @@ fn PasteForm(form: ui::PasteForm) -> Element {
     }
 }
 
+/// A provider's credential forms, each of which makes or updates the
+/// instance of the account it names.
 #[component]
-fn Rename(instance: proto::InstanceId, form: ui::RenameForm) -> Element {
-    let shell = use_context::<Shell>();
-    let host = use_context::<HostId>();
-    let typed = instance.clone();
+fn ProviderForms(forms: ui::ProviderForms) -> Element {
     rsx! {
-        form {
-            class: "credential-kind rename",
-            "aria-label": "{form.label}",
-            onsubmit: move |event: FormEvent| {
-                event.prevent_default();
-                shell.dispatch(Intent::Credential(host, CredentialIntent::Rename(instance.clone())));
-            },
-            label { class: "field",
-                span { class: "field-label", "Label" }
-                input {
-                    r#type: "text",
-                    autocomplete: "off",
-                    value: "{form.value}",
-                    oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::TypeLabel(
-                        typed.clone(),
-                        event.value(),
-                    ))),
-                }
+        div { class: "provider-credentials",
+            p { class: "credential-provider", "{forms.label}" }
+            for form in forms.forms {
+                KindForm { key: "{form.kind}", form }
             }
-            button { r#type: "submit", class: "start", disabled: form.disabled, "Rename" }
-        }
-    }
-}
-
-#[component]
-fn AddForm(form: ui::AddForm) -> Element {
-    let shell = use_context::<Shell>();
-    let host = use_context::<HostId>();
-    let provider = form.provider;
-    rsx! {
-        form {
-            class: "credential-kind add",
-            "aria-label": "{form.button}",
-            onsubmit: move |event: FormEvent| {
-                event.prevent_default();
-                shell.dispatch(Intent::Credential(host, CredentialIntent::Add(provider)));
-            },
-            label { class: "field",
-                span { class: "field-label", "Label" }
-                input {
-                    r#type: "text",
-                    autocomplete: "off",
-                    placeholder: "{form.placeholder}",
-                    value: "{form.value}",
-                    oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::TypeNewLabel(
-                        provider,
-                        event.value(),
-                    ))),
-                }
-            }
-            button { r#type: "submit", class: "start", disabled: form.disabled, "{form.button}" }
-            if let Some(hint) = form.outcome {
+            if let Some(hint) = forms.outcome {
                 Hint { hint }
             }
         }
@@ -300,7 +238,7 @@ fn AddForm(form: ui::AddForm) -> Element {
 fn KindForm(form: ui::KindForm) -> Element {
     let shell = use_context::<Shell>();
     let host = use_context::<HostId>();
-    let instance = form.instance.clone();
+    let provider = form.provider;
     let kind = form.kind.clone();
     rsx! {
         form {
@@ -309,7 +247,7 @@ fn KindForm(form: ui::KindForm) -> Element {
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
                 shell.dispatch(Intent::Credential(host, CredentialIntent::Save {
-                    instance: instance.clone(),
+                    provider,
                     kind: kind.clone(),
                 }));
             },
@@ -325,7 +263,7 @@ fn KindForm(form: ui::KindForm) -> Element {
 fn Field(field: ui::FieldView) -> Element {
     let shell = use_context::<Shell>();
     let host = use_context::<HostId>();
-    let instance = field.instance.clone();
+    let provider = field.provider;
     let kind = field.kind.clone();
     let id = field.field.clone();
     rsx! {
@@ -340,7 +278,7 @@ fn Field(field: ui::FieldView) -> Element {
                 spellcheck: "false",
                 value: "{field.value}",
                 oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::Type {
-                    instance: instance.clone(),
+                    provider,
                     kind: kind.clone(),
                     field: id.clone(),
                     text: event.value(),

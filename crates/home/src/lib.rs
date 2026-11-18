@@ -89,8 +89,8 @@ pub fn view(
             .map(|project| proto::Project {
                 id: project.id.clone(),
                 name: project.name.clone(),
+                title: project.title.clone(),
                 remote: project.remote.clone(),
-                branch: project.branch.clone(),
                 profiles: project.profiles.clone(),
                 checkouts: checkouts
                     .get(&project.id)

@@ -18,6 +18,15 @@ pub struct Config {
     pub contents: String,
 }
 
+/// Where a CLI names the account its home is signed in as, once it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reported {
+    /// In what its sign-in check prints.
+    Status,
+    /// In this file of its home.
+    File(String),
+}
+
 /// The runs are for the CLI in the host's private home for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Profile {
@@ -30,6 +39,8 @@ pub struct Profile {
     pub version: Invocation,
     /// The CLI's own check, which succeeds when its home is signed in.
     pub status: Invocation,
+    /// Where the CLI names the account a sign-in signed its home in as.
+    pub account: Reported,
     /// The CLI's own sign-in, which stores the credential in its home:
     /// from the app, or on the host's terminal (`conductord login`).
     pub sign_in: SignIn,

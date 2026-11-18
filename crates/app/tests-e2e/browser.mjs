@@ -13,14 +13,15 @@
 //   codex     Two Codex sessions in <dir>/first and <dir>/second, one
 //             approved and one denied.
 //   credentials  The forms the host's catalog describes, and a Claude
-//             gateway entered in its form, shown as configured, and
-//             cleared; then a second Claude instance added, given a gateway
-//             of its own, and listed in the new-session picker; <dir> is
+//             gateway entered in its form, which makes the instance of the
+//             gateway's account beside Claude's own; that instance removed,
+//             added again and listed in the new-session picker; <dir> is
 //             unused.
 //   sign-in   Claude signed in from the app on the fake's sign-in: the
 //             link it printed, a refused code, then the accepted one, and
-//             the instance signed in without a reload; <dir> is unused, and
-//             <out> also gets a -refused shot.
+//             the account the CLI named shown as an instance, signed in,
+//             without a reload; <dir> is unused, and <out> also gets a
+//             -refused shot.
 //   questions A Claude question in <dir>/question answered by tapping an
 //             option, and a command in <dir>/for-session allowed for the
 //             session, which then runs again without asking.
@@ -577,10 +578,11 @@ if (scenario === 'turn') {
   const GATEWAY = 'https://gateway.conductor-test.invalid';
   const TOKEN = 'conductor-test-browser-token';
   await page.getByRole('button', { name: 'Credentials' }).click();
-  // Each section and its fields come from the host's catalog, which each
-  // provider's plugin describes.
-  const claude = page.getByRole('region', { name: 'Claude Code' });
-  const codex = page.getByRole('region', { name: 'Codex' });
+  // Each provider's own instance has a section; the forms come from the
+  // host's catalog, which each provider's plugin describes.
+  const claude = page.getByRole('region', { name: 'Claude Code', exact: true });
+  const codex = page.getByRole('region', { name: 'Codex', exact: true });
+  const add = page.getByRole('region', { name: 'Add a credential' });
   const state = claude.locator('.credential-state');
   check((await state.innerText()) === "conductor's own CLI, signed in on its own", 'Claude starts on its own CLI');
   check(
@@ -589,11 +591,9 @@ if (scenario === 'turn') {
   );
   const labels = async (form) =>
     (await form.locator('.field-label').allInnerTexts()).join(', ');
-  check(
-    (await labels(claude.getByRole('form', { name: 'Gateway' }))) === 'Gateway URL, Token',
-    "Claude's gateway form has the fields its plugin describes"
-  );
-  const provider = codex.getByRole('form', { name: 'Model provider' });
+  const gateway = add.getByRole('form', { name: 'Gateway' });
+  check((await labels(gateway)) === 'Gateway URL, Token', "Claude's gateway form has the fields its plugin describes");
+  const provider = add.getByRole('form', { name: 'Model provider' });
   check(
     (await labels(provider)) === 'Provider name, Base URL, Model, Key',
     "Codex's provider form has the fields its plugin describes"
@@ -604,19 +604,33 @@ if (scenario === 'turn') {
       (await provider.getByRole('button', { name: 'Save model provider' }).isDisabled()),
     'a field kind sets its input type, and a required field left empty holds the save back'
   );
-  const token = claude.getByLabel('Token');
+  const token = gateway.getByLabel('Token');
   check((await token.getAttribute('type')) === 'password', 'the token field is a password field');
-  await claude.getByLabel('Gateway URL').fill(GATEWAY);
-  await token.fill(TOKEN);
-  await claude.getByRole('button', { name: 'Save gateway' }).click();
-  await state.filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: PATIENCE });
-  log(`state: "${await state.innerText()}"`);
+  check((await token.getAttribute('autocomplete')) === 'new-password', 'the token field asks a password manager not to fill it');
+  const api = page.getByRole('region', { name: GATEWAY, exact: true });
+  const save = async () => {
+    await gateway.getByLabel('Gateway URL').fill(GATEWAY);
+    await token.fill(TOKEN);
+    await gateway.getByRole('button', { name: 'Save gateway' }).click();
+    await api.locator('.credential-state').filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: PATIENCE });
+  };
+  await save();
+  log(`state: "${await api.locator('.credential-state').innerText()}"`);
   check((await token.inputValue()) === '', 'the token field is empty once sent');
   check(
-    (await claude.getByRole('status').innerText()) === "Sent to conductor over the encrypted link. This app doesn't keep it; your browser may offer to save it.",
+    (await add.getByRole('status').innerText()) === "Sent to conductor over the encrypted link. This app doesn't keep it; your browser may offer to save it.",
     'the form says the app keeps nothing'
   );
-  check((await token.getAttribute('autocomplete')) === 'new-password', 'the token field asks a password manager not to fill it');
+  check((await api.locator('.credential-provider').innerText()) === 'Claude Code', "the gateway's account runs Claude Code");
+  check(
+    (await state.innerText()) === "conductor's own CLI, signed in on its own",
+    "the gateway's account leaves Claude's own instance on its own CLI"
+  );
+  check(
+    (await api.getByText('conductord login').innerText()) ===
+      `To sign it in again on conductor's terminal: conductord login claude --account ${GATEWAY}`,
+    'the instance names its account for a sign-in on the host'
+  );
   const kept = await page.evaluate(async () =>
     JSON.stringify([
       { ...localStorage },
@@ -628,52 +642,32 @@ if (scenario === 'turn') {
   );
   check(!kept.includes(TOKEN), 'the token is in no storage, the URL or the DOM');
   await page.screenshot({ path: out });
-  await claude.getByRole('button', { name: 'Clear the Claude Code credential' }).click();
-  await state.filter({ hasText: "conductor's own CLI" }).waitFor({ timeout: PATIENCE });
-  check((await claude.getByRole('status').innerText()) === 'Cleared on conductor.', 'the clear is confirmed');
-  check((await page.evaluate(() => document.activeElement?.id))?.endsWith('-claude-credential'), 'focus moves to the Claude heading');
+  await api.getByRole('button', { name: `Remove ${GATEWAY}` }).click();
+  await api.waitFor({ state: 'detached', timeout: PATIENCE });
+  check((await add.getByRole('status').first().innerText()) === 'Removed from conductor.', 'the removal is confirmed');
+  check((await page.evaluate(() => document.activeElement?.id))?.endsWith('-add-instance'), 'focus moves to the credential forms');
 
-  // A second instance of Claude, added from the app, has a section and a
-  // credential of its own, and the new-session picker lists it.
-  const add = page.getByRole('form', { name: 'Add instance: Claude Code' });
-  await add.getByLabel('Label').fill('Claude API');
-  await add.getByRole('button', { name: 'Add instance: Claude Code' }).click();
-  const api = page.getByRole('region', { name: 'Claude API', exact: true });
-  await api.waitFor({ timeout: PATIENCE });
-  check((await add.getByRole('status').innerText()) === 'Added on conductor.', 'the add is confirmed');
-  check((await api.locator('.credential-provider').innerText()) === 'Claude Code', 'the new instance runs Claude Code');
-  check(
-    (await api.locator('.credential-state').innerText()) === "conductor's own CLI, signed in on its own",
-    'the new instance starts on its own CLI'
-  );
-  check(
-    (await api.getByText('conductord login').innerText()) === 'To sign it in on conductor: conductord login claude-api',
-    'the new instance names its id for a sign-in on the host'
-  );
-  await api.getByLabel('Gateway URL').fill(GATEWAY);
-  await api.getByLabel('Token').fill(TOKEN);
-  await api.getByRole('button', { name: 'Save gateway' }).click();
-  await api.locator('.credential-state').filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: PATIENCE });
-  check(
-    (await state.innerText()) === "conductor's own CLI, signed in on its own",
-    "the new instance's gateway leaves the first Claude instance on its own CLI"
-  );
+  // The account's instance comes back with a credential again, and the
+  // new-session picker lists it.
+  await save();
   await back();
   await page.getByRole('button', { name: 'New session' }).click();
   const agents = (await page.locator('.segment .segment-name').allInnerTexts()).join(', ');
-  check(agents === 'Claude Code, Claude API, Codex', `the new-session picker lists each instance (${agents})`);
-  await page.locator('.segment', { hasText: 'Claude API' }).click();
+  check(agents === `Claude Code, ${GATEWAY}, Codex`, `the new-session picker lists each instance (${agents})`);
+  await page.locator('.segment', { hasText: GATEWAY }).click();
   check(
-    await page.locator('.segment', { hasText: 'Claude API' }).locator('input').isChecked(),
-    'the new instance can be picked for a session'
+    await page.locator('.segment', { hasText: GATEWAY }).locator('input').isChecked(),
+    "the gateway's account can be picked for a session"
   );
 } else if (scenario === 'sign-in') {
   // The fake's sign-in (fixtures/fake-login.py) prints Claude's link and
-  // takes one code; this is the one it accepts.
+  // takes one code; this is the one it accepts, and the account its
+  // status then names.
   const CODE = 'conductor-test-sign-in-code#fake-state';
   const WRONG = 'conductor-test-wrong-code';
+  const ACCOUNT = 'conductor-test@example.invalid';
   await page.getByRole('button', { name: 'Credentials' }).click();
-  const claude = page.getByRole('region', { name: 'Claude Code' });
+  const claude = page.getByRole('region', { name: 'Claude Code', exact: true });
   const state = claude.locator('.credential-state');
   check((await state.innerText()) === "conductor's own CLI, signed in on its own", 'Claude starts on its own CLI');
   const signIn = async () => {
@@ -714,14 +708,15 @@ if (scenario === 'turn') {
   await claude.getByRole('button', { name: 'Send code' }).click();
   await field.waitFor({ state: 'detached', timeout: PATIENCE });
   log('the field went once the code was sent');
-  await state.filter({ hasText: 'Signed in on conductor' }).waitFor({ timeout: PATIENCE });
+  const account = page.getByRole('region', { name: ACCOUNT, exact: true });
+  await account.locator('.credential-state').filter({ hasText: 'Signed in on conductor' }).waitFor({ timeout: PATIENCE });
   check(
     (await claude.locator('.sign-in [role="status"]').innerText()) === 'Signed in on conductor.',
-    'the instance is signed in, without a reload'
+    'the sign-in says it signed in, without a reload'
   );
   check(
     (await claude.getByRole('button', { name: 'Sign in again: Claude Code' }).isVisible()),
-    'it can sign in again'
+    "Claude's own instance can sign in another account"
   );
   await page.screenshot({ path: out });
   const kept = await page.evaluate(async () =>
@@ -738,9 +733,9 @@ if (scenario === 'turn') {
   await waitFor('header.status[data-state="Live"]');
   await page.getByRole('button', { name: 'Credentials' }).click();
   check(
-    (await page.getByRole('region', { name: 'Claude Code' }).locator('.credential-state').innerText()) ===
+    (await page.getByRole('region', { name: ACCOUNT, exact: true }).locator('.credential-state').innerText()) ===
       'Signed in on conductor',
-    'a reload finds the instance signed in'
+    "a reload finds the account's instance signed in"
   );
 } else if (scenario === 'screens') {
   await startSession('Claude Code', `${dir}/notes`);

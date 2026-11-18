@@ -64,6 +64,7 @@ pub fn info() -> ProviderInfo {
                 field(MODEL, "Model", FieldKind::Text, "gpt-6"),
                 field(KEY, "Key", FieldKind::Secret, ""),
             ]),
+            account: String::from(BASE_URL),
         }]),
     }
 }
@@ -76,6 +77,41 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
         placeholder: String::from(placeholder),
         required: true,
     }
+}
+
+/// The account a signed-in home is, as its `auth.json` keeps it: the
+/// email in the ID token of a `ChatGPT` sign-in, else its account id. An
+/// API key's sign-in names none, so a model provider's form does.
+#[must_use]
+pub fn account(auth: &str) -> Option<String> {
+    let kept = serde_json::from_str::<serde_json::Value>(auth).ok()?;
+    let tokens = kept.get("tokens")?;
+    let email = tokens
+        .get("id_token")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|token| token.split('.').nth(1))
+        .and_then(|claims| {
+            data_encoding::BASE64URL_NOPAD
+                .decode(claims.trim_end_matches('=').as_bytes())
+                .ok()
+        })
+        .and_then(|claims| {
+            serde_json::from_slice::<serde_json::Value>(&claims).ok()
+        })
+        .and_then(|claims| {
+            claims
+                .get("email")
+                .and_then(serde_json::Value::as_str)
+                .map(String::from)
+        });
+    email
+        .or_else(|| {
+            tokens
+                .get("account_id")
+                .and_then(serde_json::Value::as_str)
+                .map(String::from)
+        })
+        .filter(|account| !account.is_empty())
 }
 
 /// An instance's credential as Codex's, if it is of a kind Codex takes.
@@ -106,7 +142,7 @@ pub fn default_model(credential: &CodexCredential) -> ModelId {
 mod tests {
     use proto::Credential;
 
-    use super::{CodexCredential, credential, info};
+    use super::{CodexCredential, account, credential, info};
 
     fn provider(kind: &str) -> Credential {
         Credential {
@@ -120,6 +156,30 @@ mod tests {
             .map(|(id, value)| (String::from(id), String::from(value)))
             .into(),
         }
+    }
+
+    #[test]
+    fn a_chatgpt_sign_in_is_its_id_token_s_email_else_its_account_id() {
+        let claims = data_encoding::BASE64URL_NOPAD
+            .encode(br#"{"email":"me@example.com","sub":"x"}"#);
+        let signed = format!(
+            r#"{{"tokens":{{"id_token":"e30.{claims}.sig","account_id":"acct-1"}}}}"#
+        );
+        assert_eq!(
+            [
+                signed.as_str(),
+                r#"{"tokens":{"id_token":"bad","account_id":"acct-1"}}"#,
+                r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}"#,
+                "not json",
+            ]
+            .map(account),
+            [
+                Some(String::from("me@example.com")),
+                Some(String::from("acct-1")),
+                None,
+                None,
+            ]
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::credentials::Store;
+use crate::credentials::{Store, Stored};
 use crate::home::{HomeClone, Homing};
 use crate::log::Log;
 use crate::registry::{Builder, Launcher, Launchers, Registry, Setup};
@@ -19,7 +19,7 @@ use install::{Home, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{Catalog, Instance, InstanceId, Provider, Ticket};
+use proto::{Account, Catalog, Instance, InstanceId, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin, Settings};
@@ -106,6 +106,8 @@ pub async fn signing(
         home,
         flow: profile.sign_in,
         check: profile.status,
+        account: profile.account,
+        read: plugin.account,
     })
 }
 
@@ -182,7 +184,7 @@ pub async fn launcher(
     id: InstanceId,
     instance: Instance,
 ) -> Launcher {
-    let span = tracing::info_span!("instance", id = %id.0);
+    let span = tracing::info_span!("instance", id = %id);
     match prepare(plugins, data_dir, &id, &instance) {
         Ok(prepared) => {
             run(prepared, data_dir, instance).instrument(span).await
@@ -206,12 +208,13 @@ fn prepare(
     id: &InstanceId,
     instance: &Instance,
 ) -> Result<Prepared, String> {
-    let plugin =
-        plugins.0.get(&instance.provider).cloned().ok_or_else(|| {
-            format!("no plugin runs {}", instance.provider.name())
-        })?;
+    let plugin = plugins
+        .0
+        .get(&id.provider)
+        .cloned()
+        .ok_or_else(|| format!("no plugin runs {}", id.provider.name()))?;
     let home = private_home(data_dir, id, &plugin)?;
-    let work = data_dir.join("work").join(&id.0);
+    let work = data_dir.join("work").join(host::registry::dir(id));
     std::fs::create_dir_all(&work)
         .map_err(|err| format!("creating {}: {err}", work.display()))?;
     let settings = Settings {
@@ -274,7 +277,8 @@ async fn run(
             }
             Next::CheckSignIn(path, checking) => checking.checked(
                 &sign_in_check(command(&path, &home, profile.status.clone()))
-                    .await,
+                    .await
+                    .map(|(code, _)| code),
             ),
             Next::ListModels(listing) => {
                 let mut runtime = listing.start().start();
@@ -296,32 +300,95 @@ async fn run(
 /// Signs an instance's CLI in on this terminal, into the instance's
 /// private home, as the app's sign-in does on pipes.
 ///
+/// The instance is `provider`'s of `account`, or without one the
+/// provider's own. Once the CLI names the account it signed in as, the home is that
+/// account's instance, as after a sign-in from the app; the host takes it
+/// when it next starts.
+///
 /// # Errors
 ///
-/// The host has no such instance, `plugins` has none for its provider, or
-/// the install or the sign-in failed.
+/// The host has no such instance, `plugins` has none for its provider,
+/// the install or the sign-in failed, or the store couldn't keep the
+/// account's instance.
 pub async fn login(
     given: Option<PathBuf>,
     plugins: Plugins,
-    instance: InstanceId,
+    provider: Provider,
+    account: Option<String>,
 ) -> anyhow::Result<()> {
     let data_dir = data_dir_or_default(given)?;
-    let (_, stored) = Store::open(&data_dir)?;
+    let (store, stored) = Store::open(&data_dir)?;
     let roster = stored.roster(&plugins.catalog());
+    let instance =
+        host::registry::picked(&roster, provider, account.as_deref())
+            .map_err(anyhow::Error::msg)?;
     let settings = roster
         .of(&instance)
-        .with_context(|| format!("this host has no instance {}", instance.0))?;
-    let Signing {
-        program,
-        home,
-        flow,
-        ..
-    } = signing(&plugins, &data_dir, &instance, settings)
+        .with_context(|| format!("this host has no instance {instance}"))?;
+    let signing = signing(&plugins, &data_dir, &instance, settings)
         .await
         .map_err(anyhow::Error::msg)?;
-    let status = command(&program, &home, flow.run).status().await?;
+    let status =
+        command(&signing.program, &signing.home, signing.flow.run.clone())
+            .status()
+            .await?;
     host::start::signed_in(status.code(), &status.to_string())
-        .map_err(anyhow::Error::msg)
+        .map_err(anyhow::Error::msg)?;
+    let check = command(&signing.program, &signing.home, signing.check.clone());
+    let (_, printed) =
+        sign_in_check(check).await.map_err(anyhow::Error::msg)?;
+    let named = signing.account(&printed).map(Account::Named);
+    let Some((next, to)) =
+        host::registry::signed_in_as(&roster, &instance, named)
+    else {
+        return Ok(());
+    };
+    if let Stored::Unreadable(reason) = stored {
+        anyhow::bail!(
+            "signed in, but the store doesn't open to keep {to}: {reason}"
+        );
+    }
+    move_instance(&data_dir, &instance, &to)?;
+    store.save(&next)?;
+    tracing::info!(target: "host", instance = %to, "signed in");
+    Ok(())
+}
+
+/// Moves `from`'s private home and work dir to `to`'s, in place of any
+/// `to` had: a sign-in of `from` named `to`'s account.
+///
+/// # Errors
+///
+/// A directory couldn't be removed or moved.
+pub fn move_instance(
+    data_dir: &Path,
+    from: &InstanceId,
+    to: &InstanceId,
+) -> anyhow::Result<()> {
+    ["home", "work"].into_iter().try_for_each(|kind| {
+        let source = data_dir.join(kind).join(host::registry::dir(from));
+        let target = data_dir.join(kind).join(host::registry::dir(to));
+        clear(&target).and_then(|()| rename_existing(&source, &target))
+    })
+}
+
+/// Removes the directory at `target`, if there is one.
+fn clear(target: &Path) -> anyhow::Result<()> {
+    if target.exists() {
+        std::fs::remove_dir_all(target)
+            .with_context(|| format!("removing {}", target.display()))?;
+    }
+    Ok(())
+}
+
+/// Moves the directory at `source`, if there is one, to `target`.
+fn rename_existing(source: &Path, target: &Path) -> anyhow::Result<()> {
+    if source.exists() {
+        std::fs::rename(source, target).with_context(|| {
+            format!("moving {} to {}", source.display(), target.display())
+        })?;
+    }
+    Ok(())
 }
 
 fn private_home(
@@ -329,8 +396,8 @@ fn private_home(
     id: &InstanceId,
     plugin: &Plugin,
 ) -> Result<Home, String> {
-    Home::private(data_dir, &id.0, &plugin.profile.config)
-        .map_err(|err| format!("creating the private home for {}: {err}", id.0))
+    Home::private(data_dir, &host::registry::dir(id), &plugin.profile.config)
+        .map_err(|err| format!("creating the private home for {id}: {err}"))
 }
 
 fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
@@ -347,16 +414,21 @@ fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 /// as signed out.
 const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// How the CLI's own sign-in check against its private home exited, if it
-/// ran to the end within `SIGN_IN_CHECK`.
+/// How the CLI's own sign-in check against its private home exited, and
+/// what it printed, if it ran to the end within `SIGN_IN_CHECK`.
 pub(crate) async fn sign_in_check(
     mut status: tokio::process::Command,
-) -> Result<Option<i32>, String> {
+) -> Result<(Option<i32>, String), String> {
     status.kill_on_drop(true);
     tokio::time::timeout(SIGN_IN_CHECK, status.output())
         .await
         .map_err(|elapsed| elapsed.to_string())?
-        .map(|output| output.status.code())
+        .map(|output| {
+            (
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+            )
+        })
         .map_err(|err| err.to_string())
 }
 

@@ -317,7 +317,7 @@ mod tests {
 
     fn started() -> EventKind {
         EventKind::SessionCreated {
-            instance: InstanceId::named("codex-api"),
+            instance: InstanceId::named(Provider::Codex, "https://gw.example"),
             provider: Provider::Codex,
             directory: HostPath(String::from("/work")),
             by: ClientName(String::from("phone")),
@@ -374,7 +374,10 @@ mod tests {
             created(&history).first(),
             Some(&Created {
                 session: SessionId(1),
-                instance: InstanceId::named("codex-api"),
+                instance: InstanceId::named(
+                    Provider::Codex,
+                    "https://gw.example"
+                ),
                 directory: HostPath(String::from("/work")),
                 choice: choice.clone(),
             })

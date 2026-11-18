@@ -11,6 +11,7 @@ pub fn plugin(settings: Settings) -> Plugin {
         profile: codex::profile(),
         settings,
         starter: launched,
+        account: codex::account,
     }
 }
 

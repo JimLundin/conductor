@@ -22,9 +22,9 @@ fn project(name: &str, remote: Option<&str>) -> Project {
     Project {
         id: id(name),
         name: String::from(name),
+        title: format!("The {name}"),
         remote: remote.map(String::from),
         root: String::from(ROOT),
-        branch: String::from("main"),
         profiles: Vec::from([String::from("rust")]),
     }
 }
@@ -46,20 +46,22 @@ fn probe(path: &str, roots: &[&str], remote: Option<&str>) -> Probe {
 
 #[test]
 fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
+    let folder = "01m7r5n23kp17wyfj138e0bcnf";
     let text = format!(
-        "name = \"Conductor\"\nremote = \"{REMOTE}\"\nroot = \"{ROOT}\"\n\
-         branch = \"main\"\nprofiles = [\"rust\"]\npath = \"apps/conductor\"\n\
-         issues = 3\n"
+        "name = \"conductor\"\ntitle = \"Conductor\"\nremote = \"{REMOTE}\"\n\
+         root = \"{ROOT}\"\nbranch = \"main\"\nprofiles = [\"rust\"]\n\
+         path = \"apps/conductor\"\nissues = 3\n"
     );
     assert_eq!(
-        parse("conductor", &text),
+        parse(folder, &text),
         Ok(Project {
-            name: String::from("Conductor"),
+            id: id(folder),
+            title: String::from("Conductor"),
             ..project("conductor", Some(REMOTE))
         })
     );
     let local =
-        format!("name = \"sop\"\nroot = \"{ROOT}\"\nbranch = \"main\"\n");
+        format!("name = \"sop\"\ntitle = \"The sop\"\nroot = \"{ROOT}\"\n");
     assert_eq!(
         parse("sop", &local),
         Ok(Project {
@@ -72,7 +74,7 @@ fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
 #[test]
 fn a_project_toml_that_wont_do_says_why() {
     let fields = |root: &str| {
-        format!("name = \"x\"\nroot = \"{root}\"\nbranch = \"main\"\n")
+        format!("name = \"x\"\ntitle = \"X\"\nroot = \"{root}\"\n")
     };
     let good = fields(ROOT);
     assert_eq!(
@@ -109,13 +111,15 @@ fn first_words(text: &str) -> String {
 #[test]
 fn a_listing_is_by_id_and_names_the_folders_that_arent_projects() {
     let text = |name: &str| {
-        format!("name = \"{name}\"\nroot = \"{ROOT}\"\nbranch = \"main\"\n")
+        format!("name = \"{name}\"\ntitle = \"{name}\"\nroot = \"{ROOT}\"\n")
     };
     let Listing { projects, problems } = listed(Vec::from([
         (String::from("zeta"), Ok(text("zeta"))),
         (String::from("alpha"), Ok(text("alpha"))),
         (String::from("Bad"), Ok(text("bad"))),
         (String::from("gone"), Err(String::from("no project.toml"))),
+        (String::from("one"), Ok(text("same"))),
+        (String::from("two"), Ok(text("same"))),
     ]));
     assert_eq!(
         projects
@@ -124,9 +128,58 @@ fn a_listing_is_by_id_and_names_the_folders_that_arent_projects() {
             .collect::<Vec<_>>(),
         ["alpha", "zeta"]
     );
-    assert_eq!(problems.len(), 2);
-    assert!(problems[0].starts_with("projects/Bad: the folder's name"));
-    assert_eq!(problems[1], "projects/gone: no project.toml");
+    assert_eq!(
+        problems,
+        [
+            "projects/Bad: the folder's name is not lower-case letters, digits and dashes",
+            "projects/gone: no project.toml",
+            "projects/one: another project is also called \"same\"",
+            "projects/two: another project is also called \"same\"",
+        ]
+    );
+}
+
+/// A rename is an edit of `project.toml`: the project keeps its id, so its
+/// checkouts, which are kept by id, stay its own.
+#[test]
+fn a_renamed_project_keeps_its_id_and_its_checkouts() {
+    let folder = "01m7r5n23kp17wyfj138e0bcnf";
+    let renamed = parse(
+        folder,
+        &format!(
+            "name = \"orchestra\"\ntitle = \"Orchestra\"\nremote = \"{REMOTE}\"\n\
+             root = \"{ROOT}\"\n"
+        ),
+    );
+    let found = BTreeMap::from([(
+        id(folder),
+        Vec::from([checkout("/a", Origin::Found)]),
+    )]);
+    let shown = renamed.clone().map(|project| {
+        view(REMOTE, &Sync::new(), &[project], (&found, &BTreeMap::new()))
+            .projects
+    });
+    assert_eq!(
+        (
+            renamed.map(|project| (project.id, project.name, project.title)),
+            shown.map(|projects| {
+                projects
+                    .into_iter()
+                    .map(|project| project.checkouts)
+                    .collect::<Vec<_>>()
+            }),
+            Stored::kept(None, &found).checkouts.get("/a"),
+        ),
+        (
+            Ok((
+                id(folder),
+                String::from("orchestra"),
+                String::from("Orchestra"),
+            )),
+            Ok(Vec::from([Vec::from([checkout("/a", Origin::Found)])])),
+            Some(&id(folder)),
+        )
+    );
 }
 
 #[test]
@@ -357,8 +410,8 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
             proto::Project {
                 id: id("conductor"),
                 name: String::from("conductor"),
+                title: String::from("The conductor"),
                 remote: Some(String::from(REMOTE)),
-                branch: String::from("main"),
                 profiles: Vec::from([String::from("rust")]),
                 checkouts: Vec::from([
                     checkout("/a", Origin::Found),
@@ -369,8 +422,8 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
             proto::Project {
                 id: id("sop"),
                 name: String::from("sop"),
+                title: String::from("The sop"),
                 remote: None,
-                branch: String::from("main"),
                 profiles: Vec::from([String::from("rust")]),
                 checkouts: Vec::new(),
                 cloning: Cloning::Failed {
