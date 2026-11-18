@@ -16,7 +16,7 @@ use claude::Sandbox;
 use claude_cli::ClaudeLaunch;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
-    ToolState,
+    Subagent, SubagentStatus, ToolState,
 };
 use codex_cli::{Hub, ServerOptions};
 use daemon::Stopped;
@@ -39,8 +39,9 @@ use proto::{
     EventKind, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
     Instances, ModelChoice, ModelId, Models, Provider, Question,
     QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
-    SessionId, Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
-    ToolPhase, TurnOutcome,
+    SessionId, SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome,
+    Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome,
 };
 use runtime::Settings;
 use tokio::net::UdpSocket;
@@ -3139,6 +3140,97 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
         }]
     );
     late.stop().await?;
+    phone.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
+}
+
+/// `probe-subagent-todo.jsonl`: the main agent's `Agent` call runs a
+/// sub-agent, which calls `TodoWrite` twice and reports "ok". Its events are
+/// the session's, and its checklist is not the session's tasks.
+#[tokio::test]
+async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
+-> Fallible {
+    let fx = host().await?;
+    let dir = scratch("subagent", "claude-subagent.jsonl")?;
+    let (phone, mut updates) = link(fx.target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let session =
+        started_session(&send(&phone, start(Provider::Claude, &dir)).await?)?;
+    let _ = send(&phone, message(session, "delegate")).await?;
+    let events = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let agent = || SubagentId(String::from("af19920e77caaf1de"));
+    let call = || ToolCallId(String::from("toolu_015av4j2jHs5CwVCv76qxYf2"));
+    let description = || String::from("Run TodoWrite checklist task");
+    let todo_done = |id: &str| EventKind::Subagent {
+        agent: agent(),
+        event: SubagentEvent::Activity(SubagentActivity::ToolCall {
+            call: ToolCallId(String::from(id)),
+            phase: ToolPhase::Finished {
+                outcome: ToolOutcome::Succeeded,
+            },
+        }),
+    };
+    assert_eq!(
+        of(session, &events)
+            .into_iter()
+            .filter(|kind| !matches!(kind, EventKind::AssistantDelta { .. }))
+            .collect::<Vec<EventKind>>(),
+        [
+            opening(Provider::Claude, &dir),
+            Vec::from([
+                user("delegate"),
+                EventKind::ToolCall {
+                    call: call(),
+                    phase: ToolPhase::Started {
+                        tool: ToolKind::Other {
+                            name: String::from("Agent"),
+                            detail: description(),
+                        },
+                    },
+                },
+                EventKind::Subagent {
+                    agent: agent(),
+                    event: SubagentEvent::Started {
+                        call: call(),
+                        description: description()
+                    }
+                },
+                todo_done("toolu_01WSCsnAQWyaEonxDVnmncap"),
+                todo_done("toolu_01H4nEBx6jVuR4PwHBWBgvPw"),
+                EventKind::Subagent {
+                    agent: agent(),
+                    event: SubagentEvent::Ended {
+                        outcome: SubagentOutcome::Finished,
+                        summary: Some(String::from("ok"))
+                    }
+                },
+                finished(
+                    "toolu_015av4j2jHs5CwVCv76qxYf2",
+                    ToolOutcome::Succeeded,
+                ),
+                reply("done"),
+                turn_end(TurnOutcome::Completed),
+            ]),
+        ]
+        .concat()
+    );
+    let view = fold(events);
+    assert_eq!(
+        view.sessions
+            .get(&session)
+            .map(|shown| (shown.tasks.clone(), shown.subagents.clone())),
+        Some((
+            Vec::new(),
+            Vec::from([Subagent {
+                id: agent(),
+                call: call(),
+                description: description(),
+                status: SubagentStatus::Ended(SubagentOutcome::Finished),
+                items: Vec::from([done("ok")]),
+            }])
+        ))
+    );
     phone.stop().await?;
     fx.router.shutdown().await?;
     Ok(())

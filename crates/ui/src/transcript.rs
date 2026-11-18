@@ -5,10 +5,13 @@ use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
 use client::answers::Draft;
-use client::host_view::{Approval, Item, ReplyState, RequestState, ToolState};
+use client::host_view::{
+    Approval, Item, ReplyState, RequestState, Subagent, SubagentStatus,
+    ToolState,
+};
 use proto::{
-    Change, Decision, Question, RequestId, Resolution, Selection, ToolKind,
-    TurnOutcome,
+    Change, Decision, Question, RequestId, Resolution, Selection,
+    SubagentOutcome, ToolKind, TurnOutcome,
 };
 
 use crate::session::closed;
@@ -143,6 +146,44 @@ pub struct OptionButton {
 pub struct AnsweredQuestion {
     pub text: String,
     pub answer: Option<String>,
+}
+
+/// A sub-agent under the tool call that started it: its description and
+/// status, which open to its transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentGroup {
+    pub key: String,
+    pub description: String,
+    /// The status in a word, also its `data-status`.
+    pub status: &'static str,
+    pub label: &'static str,
+    pub rows: Vec<Row>,
+    /// What an empty transcript says.
+    pub empty: Option<&'static str>,
+}
+
+pub fn agent_group(
+    subagent: &Subagent,
+    drafts: &BTreeMap<RequestId, Draft>,
+) -> AgentGroup {
+    AgentGroup {
+        key: subagent.id.0.clone(),
+        description: subagent.description.clone(),
+        status: subagent.status.word(),
+        label: match subagent.status {
+            SubagentStatus::Running => "Running",
+            SubagentStatus::Ended(SubagentOutcome::Finished) => "Finished",
+            SubagentStatus::Ended(SubagentOutcome::Failed) => "Failed",
+            SubagentStatus::Ended(SubagentOutcome::Stopped)
+            | SubagentStatus::Stopped => "Stopped",
+        },
+        rows: subagent
+            .items
+            .iter()
+            .map(|item| row(item, drafts))
+            .collect(),
+        empty: subagent.items.is_empty().then_some("Nothing yet"),
+    }
 }
 
 pub fn row(item: &Item, drafts: &BTreeMap<RequestId, Draft>) -> Row {

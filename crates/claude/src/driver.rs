@@ -12,6 +12,8 @@ use agents::{Exit, Note};
 use proto::Provider;
 use serde_json::Value;
 
+use alloc::collections::BTreeSet;
+
 use crate::prelude::*;
 use crate::{
     ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
@@ -158,8 +160,8 @@ impl<E: fmt::Display> fmt::Display for Failure<E> {
 }
 
 /// The session's state: our control requests awaiting a `control_response`,
-/// the `can_use_tool` requests not yet answered, and the last message of
-/// the running turn.
+/// the `can_use_tool` requests not yet answered, the last message of the
+/// running turn, and the sub-agents the process started.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session<R> {
     /// How the process ended, once it has.
@@ -170,6 +172,9 @@ pub struct Session<R> {
     open: BTreeMap<PermissionRequestId, Open>,
     next_request: u64,
     last_message: Option<MessageId>,
+    /// Every task the CLI reported as a sub-agent. A task's end doesn't
+    /// say what the task was.
+    subagents: BTreeSet<String>,
 }
 
 impl<R> Default for Session<R> {
@@ -180,6 +185,7 @@ impl<R> Default for Session<R> {
             open: BTreeMap::new(),
             next_request: 0,
             last_message: None,
+            subagents: BTreeSet::new(),
         }
     }
 }
@@ -267,8 +273,9 @@ impl<R> Session<R> {
         }
     }
 
-    /// Tracks the turn's last message, which its result carries, and the
-    /// requests the CLI withdraws.
+    /// Tracks the turn's last message, which its result carries, the
+    /// requests the CLI withdraws, and the sub-agents. The end of a task that
+    /// is no sub-agent, such as a background command, is `Unknown`.
     fn event(&mut self, received: ClaudeEvent) -> ClaudeEvent {
         match received {
             ClaudeEvent::Message {
@@ -301,6 +308,25 @@ impl<R> Session<R> {
             ClaudeEvent::PermissionCancelled { id } => {
                 self.open.remove(&id);
                 ClaudeEvent::PermissionCancelled { id }
+            }
+            ClaudeEvent::SubagentStarted {
+                agent,
+                tool_use_id,
+                description,
+            } => {
+                self.subagents.insert(agent.clone());
+                ClaudeEvent::SubagentStarted {
+                    agent,
+                    tool_use_id,
+                    description,
+                }
+            }
+            ClaudeEvent::SubagentEnded { agent, .. }
+                if !self.subagents.contains(&agent) =>
+            {
+                ClaudeEvent::Unknown(Value::String(format!(
+                    "task_notification for task {agent}, which is no sub-agent"
+                )))
             }
             other => other,
         }
@@ -499,6 +525,50 @@ mod tests {
 
     fn line(value: &Value) -> Input<u8, char, &'static str> {
         Input::Read(Ok(Some(value.to_string())))
+    }
+
+    fn task(subtype: &str, id: &str, task_type: &str) -> Value {
+        json!({
+            "type": "system",
+            "subtype": subtype,
+            "task_id": id,
+            "tool_use_id": "toolu_1",
+            "description": "look around",
+            "task_type": task_type,
+            "status": "completed",
+            "summary": "",
+            "session_id": "s1",
+        })
+    }
+
+    #[test]
+    fn only_a_sub_agents_task_ends_as_a_sub_agent() {
+        let mut session = Session::<u8>::running();
+        let ended = |effects: &[Step]| match effects {
+            [Effect::Emit(ClaudeEvent::SubagentStarted { agent, .. })] => {
+                format!("started {agent}")
+            }
+            [Effect::Emit(ClaudeEvent::SubagentEnded { agent, .. })] => {
+                format!("ended {agent}")
+            }
+            [Effect::Emit(ClaudeEvent::Unknown(_))] => String::from("unknown"),
+            other => format!("{other:?}"),
+        };
+        let seen = walk(
+            &mut session,
+            Vec::from([
+                line(&task("task_started", "a1", "local_agent")),
+                line(&task("task_started", "b1", "local_bash")),
+                line(&task("task_notification", "b1", "local_bash")),
+                line(&task("task_notification", "a1", "local_agent")),
+            ]),
+        );
+        assert_eq!(
+            seen.iter()
+                .map(|effects| ended(effects))
+                .collect::<Vec<String>>(),
+            ["started a1", "unknown", "unknown", "ended a1"].map(String::from)
+        );
     }
 
     fn written(msg: Outbound, then: Then<u8>) -> Step {

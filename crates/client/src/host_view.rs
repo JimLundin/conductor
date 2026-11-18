@@ -8,7 +8,8 @@ use core::cmp::Reverse;
 use proto::{
     CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath,
     HostSeq, InstanceId, ModelId, Provider, Question, RequestId, Resolution,
-    SessionId, Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    SessionId, SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome,
+    Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability, Workspace,
 };
 
@@ -34,8 +35,45 @@ pub struct SessionView {
     pub undo: UndoState,
     turn_starts: BTreeMap<HostSeq, usize>,
     pub items: Vec<Item>,
+    /// The agents the session's agent started, in the order they started.
+    pub subagents: Vec<Subagent>,
     /// The last event that touched this session.
     pub activity: HostSeq,
+}
+
+/// A sub-agent: a child of its session, shown under the tool call that
+/// started it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subagent {
+    pub id: SubagentId,
+    pub call: ToolCallId,
+    pub description: String,
+    pub status: SubagentStatus,
+    /// Its own transcript: replies, reasoning and tool calls, and its final
+    /// report as its last reply.
+    pub items: Vec<Item>,
+}
+
+/// Derived from the events, never sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentStatus {
+    Running,
+    Ended(SubagentOutcome),
+    /// The session closed while it ran.
+    Stopped,
+}
+
+impl SubagentStatus {
+    /// The status in one word, for the UI's text and its `data-status`.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Ended(SubagentOutcome::Finished) => "finished",
+            Self::Ended(SubagentOutcome::Failed) => "failed",
+            Self::Ended(SubagentOutcome::Stopped) | Self::Stopped => "stopped",
+        }
+    }
 }
 
 /// A completed turn and its transcript boundaries; provider identifiers stay opaque.
@@ -273,6 +311,7 @@ impl HostView {
                 undo: UndoState::Ready,
                 turn_starts: BTreeMap::new(),
                 items: Vec::new(),
+                subagents: Vec::new(),
                 activity: event.seq,
             }),
             // A delta repeats the seq of the event before it, which may be
@@ -432,10 +471,7 @@ impl SessionView {
                 ..self
             }
             .push(Item::ModelChanged(reason)),
-            EventKind::SessionClosed { reason } => self
-                .change(&Change::End)
-                .settle()
-                .status(SessionStatus::Closed(reason)),
+            EventKind::SessionClosed { reason } => self.closed(reason),
             EventKind::UserMessage { text, by } => {
                 self.user_message(Item::User { text, by }, seq)
             }
@@ -519,7 +555,100 @@ impl SessionView {
                 self.turns_undone(checkpoint)
             }
             EventKind::Error { message } => self.push(Item::Error(message)),
+            EventKind::Subagent { agent, event } => {
+                self.subagent_event(agent, event)
+            }
         }
+    }
+
+    /// A sub-agent's finished call also finishes the card its request got
+    /// in the session.
+    fn subagent_event(self, agent: SubagentId, event: SubagentEvent) -> Self {
+        match event {
+            SubagentEvent::Started { call, description } => {
+                self.subagent_started(agent, call, description)
+            }
+            SubagentEvent::Activity(SubagentActivity::ToolCall {
+                call,
+                phase: ToolPhase::Finished { outcome },
+            }) => {
+                let finish = Change::Finish(call, outcome);
+                self.change(&finish)
+                    .subagent(&agent, |subagent| subagent.change(&finish))
+            }
+            SubagentEvent::Activity(activity) => {
+                self.subagent(&agent, |subagent| subagent.did(activity))
+            }
+            SubagentEvent::Ended { outcome, summary } => {
+                self.subagent(&agent, |subagent| {
+                    subagent.ended(SubagentStatus::Ended(outcome), summary)
+                })
+            }
+        }
+    }
+
+    /// A sub-agent the agent resumes runs again under its id, after what
+    /// it did before.
+    fn subagent_started(
+        self,
+        agent: SubagentId,
+        call: ToolCallId,
+        description: String,
+    ) -> Self {
+        let mut subagents = self.subagents;
+        match subagents.iter_mut().find(|known| known.id == agent) {
+            Some(known) => known.status = SubagentStatus::Running,
+            None => subagents.push(Subagent {
+                id: agent,
+                call,
+                description,
+                status: SubagentStatus::Running,
+                items: Vec::new(),
+            }),
+        }
+        Self { subagents, ..self }
+    }
+
+    /// Activity of a sub-agent this view never saw start is dropped.
+    fn subagent(
+        self,
+        agent: &SubagentId,
+        apply: impl FnOnce(Subagent) -> Subagent,
+    ) -> Self {
+        let mut subagents = self.subagents;
+        let position = subagents.iter().position(|known| &known.id == agent);
+        if let Some(index) = position {
+            let found = subagents.remove(index);
+            subagents.insert(index, apply(found));
+        }
+        Self { subagents, ..self }
+    }
+
+    fn subagents_stopped(self) -> Self {
+        Self {
+            subagents: self
+                .subagents
+                .into_iter()
+                .map(|subagent| match subagent.status {
+                    SubagentStatus::Running => {
+                        subagent.ended(SubagentStatus::Stopped, None)
+                    }
+                    SubagentStatus::Ended(_) | SubagentStatus::Stopped => {
+                        subagent
+                    }
+                })
+                .collect(),
+            ..self
+        }
+    }
+
+    /// Nothing still running will finish, and nothing still open will be
+    /// answered.
+    fn closed(self, reason: CloseReason) -> Self {
+        self.change(&Change::End)
+            .settle()
+            .subagents_stopped()
+            .status(SessionStatus::Closed(reason))
     }
 
     fn status(self, status: SessionStatus) -> Self {
@@ -588,6 +717,17 @@ impl SessionView {
             .map(|turn| turn.start)
         {
             Some(start) => Self {
+                subagents: self
+                    .subagents
+                    .into_iter()
+                    .filter(|subagent| {
+                        self.items
+                            .iter()
+                            .take(start)
+                            .filter_map(Item::call)
+                            .any(|call| call == &subagent.call)
+                    })
+                    .collect(),
                 items: self.items.into_iter().take(start).collect(),
                 checkpoints: self
                     .checkpoints
@@ -709,6 +849,71 @@ impl SessionView {
     }
 }
 
+impl Subagent {
+    /// Its transcript holds only finished items: a sub-agent's text
+    /// arrives whole.
+    fn did(self, activity: SubagentActivity) -> Self {
+        match activity {
+            SubagentActivity::Message { text } => self.pushed(Item::Reply {
+                text,
+                state: ReplyState::Done,
+            }),
+            SubagentActivity::Reasoning { text } => {
+                self.pushed(Item::Reasoning {
+                    text,
+                    state: ReplyState::Done,
+                })
+            }
+            SubagentActivity::ToolCall {
+                call,
+                phase: ToolPhase::Started { tool },
+            } => self.pushed(Item::Tool {
+                call,
+                tool,
+                state: ToolState::Running,
+                approval: Approval::NotAsked,
+            }),
+            SubagentActivity::ToolCall {
+                call,
+                phase: ToolPhase::Finished { outcome },
+            } => self.change(&Change::Finish(call, outcome)),
+        }
+    }
+
+    /// Its tool calls still running stop with it, and its report ends its
+    /// transcript.
+    fn ended(self, status: SubagentStatus, summary: Option<String>) -> Self {
+        let ended = Self {
+            status,
+            ..self.change(&Change::End)
+        };
+        match summary {
+            Some(text) => ended.pushed(Item::Reply {
+                text,
+                state: ReplyState::Done,
+            }),
+            None => ended,
+        }
+    }
+
+    fn pushed(self, item: Item) -> Self {
+        let mut items = self.items;
+        items.push(item);
+        Self { items, ..self }
+    }
+
+    fn change(self, change: &Change) -> Self {
+        Self {
+            items: self
+                .items
+                .into_iter()
+                .map(|item| item.changed(change))
+                .collect(),
+            ..self
+        }
+    }
+}
+
 impl Item {
     /// The item, done streaming: something else follows it.
     fn settled(self) -> Self {
@@ -725,7 +930,9 @@ impl Item {
         }
     }
 
-    const fn call(&self) -> Option<&ToolCallId> {
+    /// The tool call the item shows, if it shows one.
+    #[must_use]
+    pub const fn call(&self) -> Option<&ToolCallId> {
         match self {
             Self::Tool { call, .. } => Some(call),
             Self::User { .. }
@@ -846,15 +1053,16 @@ mod tests {
     use proto::{
         Answer, ClientName, CloseReason, Decision, Effort, Event, EventKind,
         HostPath, HostSeq, InstanceId, ModelId, Provider, Question,
-        QuestionOption, RequestId, Resolution, Selection, SessionId, Task,
+        QuestionOption, RequestId, Resolution, Selection, SessionId,
+        SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Task,
         TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
         TurnOutcome,
     };
 
     use super::{
         Approval, Attention, Composer, HostView, Interrupt, Item, ReplyState,
-        RequestState, Resume, SessionStatus, SessionView, ToolState, UndoState,
-        Working,
+        RequestState, Resume, SessionStatus, SessionView, Subagent,
+        SubagentStatus, ToolState, UndoState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -1013,6 +1221,7 @@ mod tests {
                     effort: None,
                     status: SessionStatus::Idle,
                     tasks: Vec::new(),
+                    subagents: Vec::new(),
                     items: Vec::from([
                         Item::User {
                             text: text("hi"),
@@ -1080,6 +1289,7 @@ mod tests {
                         status: text("1"),
                     }),
                     tasks: Vec::new(),
+                    subagents: Vec::new(),
                     items: Vec::from([Item::Error(text("odd"))]),
                     workspace: None,
                     checkpoints: Vec::new(),
@@ -1374,6 +1584,223 @@ mod tests {
             text: String::from(text),
             status,
             holder: SessionId(1),
+        }
+    }
+
+    fn subagent(agent: &str, activity: SubagentActivity) -> EventKind {
+        EventKind::Subagent {
+            agent: SubagentId(text(agent)),
+            event: SubagentEvent::Activity(activity),
+        }
+    }
+
+    fn subagent_started(agent: &str, call: &str) -> EventKind {
+        EventKind::Subagent {
+            agent: SubagentId(text(agent)),
+            event: SubagentEvent::Started {
+                call: ToolCallId(text(call)),
+                description: format!("look for {agent}"),
+            },
+        }
+    }
+
+    fn subagent_ended(
+        agent: &str,
+        outcome: SubagentOutcome,
+        summary: Option<&str>,
+    ) -> EventKind {
+        EventKind::Subagent {
+            agent: SubagentId(text(agent)),
+            event: SubagentEvent::Ended {
+                outcome,
+                summary: summary.map(text),
+            },
+        }
+    }
+
+    fn subagent_ls(agent: &str, call: &str, phase: ToolPhase) -> EventKind {
+        subagent(
+            agent,
+            SubagentActivity::ToolCall {
+                call: ToolCallId(text(call)),
+                phase,
+            },
+        )
+    }
+
+    fn ls_phase() -> ToolPhase {
+        ToolPhase::Started {
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
+        }
+    }
+
+    fn ls(call: &str, state: ToolState) -> Item {
+        Item::Tool {
+            call: ToolCallId(text(call)),
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
+            state,
+            approval: Approval::NotAsked,
+        }
+    }
+
+    /// Two sub-agents: `a` asks to run a call, which the user approves, and
+    /// finishes; `b` still runs a call when the session closes.
+    fn subagent_events() -> Vec<(u64, EventKind)> {
+        let succeeded = ToolPhase::Finished {
+            outcome: ToolOutcome::Succeeded,
+        };
+        let said =
+            |words: &str| SubagentActivity::Message { text: text(words) };
+        Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (1, started("toolu_agent_a")),
+            (1, subagent_started("a", "toolu_agent_a")),
+            (1, started("toolu_agent_b")),
+            (1, subagent_started("b", "toolu_agent_b")),
+            (
+                1,
+                subagent(
+                    "a",
+                    SubagentActivity::Reasoning {
+                        text: text("where?"),
+                    },
+                ),
+            ),
+            (1, subagent_ls("a", "toolu_a1", ls_phase())),
+            // The request for the sub-agent's call has a card of its own in
+            // the session, which the sub-agent's result finishes.
+            (
+                1,
+                EventKind::RequestOpened {
+                    request: RequestId(1),
+                    call: ToolCallId(text("toolu_a1")),
+                    tool: ToolKind::Command {
+                        command: text("ls"),
+                    },
+                    reason: None,
+                    for_session: None,
+                },
+            ),
+            (
+                1,
+                EventKind::RequestResolved {
+                    request: RequestId(1),
+                    resolution: Resolution::Decided {
+                        decision: Decision::Approve,
+                        by: ClientName(text("phone")),
+                    },
+                },
+            ),
+            (1, subagent_ls("a", "toolu_a1", succeeded)),
+            (1, subagent("a", said("found it"))),
+            (
+                1,
+                subagent_ended(
+                    "a",
+                    SubagentOutcome::Finished,
+                    Some("it is in /a"),
+                ),
+            ),
+            (1, subagent_ls("b", "toolu_b1", ls_phase())),
+            (1, subagent("nobody", said("lost"))),
+            (
+                1,
+                EventKind::SessionClosed {
+                    reason: CloseReason::Exited { status: text("1") },
+                },
+            ),
+        ])
+    }
+
+    fn expected_subagents() -> Vec<Subagent> {
+        Vec::from([
+            Subagent {
+                id: SubagentId(text("a")),
+                call: ToolCallId(text("toolu_agent_a")),
+                description: text("look for a"),
+                status: SubagentStatus::Ended(SubagentOutcome::Finished),
+                items: Vec::from([
+                    Item::Reasoning {
+                        text: text("where?"),
+                        state: ReplyState::Done,
+                    },
+                    ls("toolu_a1", ToolState::Finished(ToolOutcome::Succeeded)),
+                    done_reply("found it"),
+                    done_reply("it is in /a"),
+                ]),
+            },
+            Subagent {
+                id: SubagentId(text("b")),
+                call: ToolCallId(text("toolu_agent_b")),
+                description: text("look for b"),
+                status: SubagentStatus::Stopped,
+                items: Vec::from([ls("toolu_b1", ToolState::Stopped)]),
+            },
+        ])
+    }
+
+    #[test]
+    fn subagents_fold_under_their_session_and_stop_when_it_closes() {
+        let view = fold(subagent_events());
+        assert_eq!(
+            view.sessions.get(&SessionId(1)).map(|found| {
+                (
+                    found.subagents.clone(),
+                    found
+                        .items
+                        .iter()
+                        .map(|item| match item {
+                            Item::Tool { call, state, .. } => {
+                                Some((call.0.clone(), *state))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<Option<(String, ToolState)>>>(),
+                )
+            }),
+            Some((
+                expected_subagents(),
+                Vec::from([
+                    Some((text("toolu_agent_a"), ToolState::Stopped)),
+                    Some((text("toolu_agent_b"), ToolState::Stopped)),
+                    Some((
+                        text("toolu_a1"),
+                        ToolState::Finished(ToolOutcome::Succeeded)
+                    )),
+                ]),
+            ))
+        );
+    }
+
+    #[test]
+    fn a_resumed_subagent_runs_again() {
+        let resumed = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (1, started("toolu_agent_a")),
+            (1, subagent_started("a", "toolu_agent_a")),
+            (1, subagent_ended("a", SubagentOutcome::Failed, None)),
+            (1, subagent_started("a", "toolu_agent_a")),
+        ]));
+        assert_eq!(
+            resumed.sessions.get(&SessionId(1)).map(|found| found
+                .subagents
+                .iter()
+                .map(|known| (known.status, known.status.word()))
+                .collect::<Vec<(SubagentStatus, &str)>>()),
+            Some(Vec::from([(SubagentStatus::Running, "running")]))
+        );
+    }
+
+    fn done_reply(said: &str) -> Item {
+        Item::Reply {
+            text: text(said),
+            state: ReplyState::Done,
         }
     }
 

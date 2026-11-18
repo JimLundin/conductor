@@ -42,9 +42,9 @@ pub use session::{
 };
 pub use sessions::{Listing, SessionList, SessionRow};
 pub use transcript::{
-    Action, AnsweredQuestion, ApprovalCard, Ask, OptionButton, QuestionBody,
-    QuestionCard, QuestionField, QuestionForm, Row, ToolDetail, ToolFile,
-    ToolLine,
+    Action, AgentGroup, AnsweredQuestion, ApprovalCard, Ask, OptionButton,
+    QuestionBody, QuestionCard, QuestionField, QuestionForm, Row, ToolDetail,
+    ToolFile, ToolLine,
 };
 
 use credentials::{Done, Subject};

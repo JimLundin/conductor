@@ -469,6 +469,44 @@ if (scenario === 'turn') {
     (await pane.locator('.task').count()) === 3 && (await pane.locator('select.effort-pick').inputValue()) === 'low',
     'the tasks and the effort replay after a reload',
   );
+} else if (scenario === 'subagents') {
+  // fixtures/e2e/claude-subagent.jsonl: the main agent's Agent call runs a
+  // sub-agent, which keeps a checklist of its own and reports "ok".
+  await startSession('Claude Code', dir);
+  await send('delegate');
+  await pane.locator('.turn-end[data-outcome="completed"]').waitFor({ timeout: 30_000 });
+  const group = pane.locator('details.subagent');
+  check((await group.count()) === 1, 'one sub-agent group');
+  check((await text('.tool .tool-name')) === 'Agent', 'the call that started it shows as a tool call');
+  check(
+    await group.evaluate((d) => d.previousElementSibling?.classList.contains('tool')),
+    'the group hangs right under the call that started it',
+  );
+  check((await group.getAttribute('data-status')) === 'finished', 'the group carries its status');
+  check(
+    (await group.locator('summary').innerText()).replace(/\s+/g, ' ').trim() === 'Run TodoWrite checklist task Finished',
+    'the folded group names its description and status',
+  );
+  check(!(await group.evaluate((d) => d.open)), 'the group starts folded');
+  check(!(await group.locator('.subagent-items').isVisible()), 'its transcript is hidden while folded');
+  check((await pane.locator('details.tasks').count()) === 0, "the sub-agent's checklist is not the session's tasks");
+  check((await text('.items > .reply')) === 'done', "the session's own reply shows once, outside the group");
+  const summary = await group.locator('summary').boundingBox();
+  check(summary.height >= 44, `the group's summary is a thumb-sized target (${Math.round(summary.height)}px)`);
+  await group.locator('summary').tap();
+  check(await group.evaluate((d) => d.open), 'a tap opens the group');
+  check((await group.locator('.subagent-items .reply').innerText()) === 'ok', "the open group shows the sub-agent's report");
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page overflow at phone width');
+  await page.screenshot({ path: out });
+  log(`screenshot ${out}`);
+  await page.reload();
+  await waitFor('header.status[data-state="Live"]', 60_000);
+  await openRow(dir.split('/').pop());
+  await pane.locator('details.subagent').waitFor({ timeout: 10_000 });
+  check(
+    (await pane.locator('details.subagent').getAttribute('data-status')) === 'finished',
+    'the sub-agent replays after a reload',
+  );
 } else if (scenario === 'credentials') {
   const GATEWAY = 'https://gateway.conductor-test.invalid';
   const TOKEN = 'conductor-test-browser-token';

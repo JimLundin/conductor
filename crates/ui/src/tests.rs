@@ -8,18 +8,20 @@ use proto::{
     Event, EventKind, Field, FieldKind, FilePatch, HistoryAnchor, HostPath,
     HostSeq, InstanceId, InstanceStatus, Instances, ModelChoice, ModelId,
     Models, Provider, ProviderInfo, Question, QuestionOption, Rejection,
-    RequestId, Resolution, Selection, SessionId, Ticket, TicketError,
+    RequestId, Resolution, Selection, SessionId, SubagentActivity,
+    SubagentEvent, SubagentId, SubagentOutcome, Ticket, TicketError,
     ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability,
 };
 
 use crate::credentials::{Done, Subject};
 use crate::{
-    Action, Ask, CredentialIntent, Detail, Diff, DiffFile, DiffPanel, Effect,
-    EffortControl, Focus, Footer, FormIntent, Hint, HostScreen, Intent,
-    Keystroke, Listing, Mount, NewSessionForm, Opening, Patch, Place,
-    QuestionBody, Reply, ReplyTo, Row, Screen, SessionIntent, SessionPane,
-    State, ToolDetail, ToolLine, TurnChanges, UndoNote, sends, update, view,
+    Action, AgentGroup, Ask, CredentialIntent, Detail, Diff, DiffFile,
+    DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint,
+    HostScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
+    Patch, Place, QuestionBody, Reply, ReplyTo, Row, Screen, SessionIntent,
+    SessionPane, State, ToolDetail, ToolLine, TurnChanges, UndoNote, sends,
+    update, view,
 };
 
 const SESSION: SessionId = SessionId(7);
@@ -436,6 +438,98 @@ fn every_transcript_item_has_its_row() {
                 text: text("He")
             }),
         )
+    );
+}
+
+fn agent_call(call: &str, description: &str) -> EventKind {
+    EventKind::ToolCall {
+        call: ToolCallId(text(call)),
+        phase: ToolPhase::Started {
+            tool: ToolKind::Other {
+                name: text("Agent"),
+                detail: text(description),
+            },
+        },
+    }
+}
+
+fn agent_started(agent: &str, call: &str, description: &str) -> EventKind {
+    EventKind::Subagent {
+        agent: SubagentId(text(agent)),
+        event: SubagentEvent::Started {
+            call: ToolCallId(text(call)),
+            description: text(description),
+        },
+    }
+}
+
+#[test]
+fn each_subagent_hangs_under_the_call_that_started_it() {
+    let (state, _) = opened(Vec::from([
+        event(3, said("look around")),
+        event(4, agent_call("toolu_a", "Find the docs")),
+        event(5, agent_started("a", "toolu_a", "Find the docs")),
+        event(6, agent_call("toolu_b", "Run the tests")),
+        event(7, agent_started("b", "toolu_b", "Run the tests")),
+        event(
+            8,
+            EventKind::Subagent {
+                agent: SubagentId(text("a")),
+                event: SubagentEvent::Activity(SubagentActivity::ToolCall {
+                    call: ToolCallId(text("toolu_a1")),
+                    phase: ToolPhase::Started {
+                        tool: ToolKind::Command {
+                            command: text("ls docs"),
+                        },
+                    },
+                }),
+            },
+        ),
+        event(
+            9,
+            EventKind::Subagent {
+                agent: SubagentId(text("a")),
+                event: SubagentEvent::Ended {
+                    outcome: SubagentOutcome::Failed,
+                    summary: Some(text("no docs")),
+                },
+            },
+        ),
+    ]));
+    let groups = pane(&state).map(|shown| {
+        shown
+            .entries
+            .into_iter()
+            .map(|entry| entry.agents)
+            .collect::<Vec<Vec<AgentGroup>>>()
+    });
+    assert_eq!(
+        groups,
+        Some(Vec::from([
+            Vec::new(),
+            Vec::from([AgentGroup {
+                key: text("a"),
+                description: text("Find the docs"),
+                status: "failed",
+                label: "Failed",
+                rows: Vec::from([
+                    Row::Tool(line("stopped", "ls docs")),
+                    Row::Reply {
+                        class: "reply",
+                        text: text("no docs"),
+                    },
+                ]),
+                empty: None,
+            }]),
+            Vec::from([AgentGroup {
+                key: text("b"),
+                description: text("Run the tests"),
+                status: "running",
+                label: "Running",
+                rows: Vec::new(),
+                empty: Some("Nothing yet"),
+            }]),
+        ]))
     );
 }
 

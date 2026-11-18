@@ -5,7 +5,8 @@ use agents::{
     NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
 };
 use proto::{
-    ClientName, CloseReason, Decision, EventKind, ToolCallId, ToolPhase,
+    ClientName, CloseReason, Decision, EventKind, SubagentActivity, SubagentId,
+    ToolCallId, ToolPhase,
 };
 
 use crate::prelude::*;
@@ -59,12 +60,84 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             Step::HistoryBoundary(last_message.map(|message| message.0)),
             Step::TurnEnded(outcome),
         ]),
+        ClaudeEvent::SubagentStarted {
+            agent,
+            tool_use_id,
+            description,
+        } => Vec::from([Step::SubagentStarted {
+            agent: SubagentId(agent),
+            call: ToolCallId(tool_use_id),
+            description,
+        }]),
+        ClaudeEvent::SubagentMessage {
+            agent,
+            role,
+            content,
+        } => content
+            .into_iter()
+            .filter_map(|block| subagent_block(role, block))
+            .map(|activity| Step::SubagentActivity {
+                agent: SubagentId(agent.clone()),
+                activity,
+            })
+            .collect(),
+        ClaudeEvent::SubagentEnded {
+            agent,
+            outcome,
+            summary,
+        } => Vec::from([Step::SubagentEnded {
+            agent: SubagentId(agent),
+            outcome,
+            summary,
+        }]),
         ClaudeEvent::Exited { status } => {
             Vec::from([Step::Closed(CloseReason::Exited {
                 status: status.describe(),
             })])
         }
         ClaudeEvent::Unknown(_) => Vec::new(),
+    }
+}
+
+/// A sub-agent's blocks map as the main agent's do, except its checklist,
+/// which is not the session's tasks and is left out.
+fn subagent_block(role: Role, block: Block) -> Option<SubagentActivity> {
+    match (role, block) {
+        (Role::Assistant, Block::Text(text)) => {
+            Some(SubagentActivity::Message { text })
+        }
+        (Role::Assistant, Block::Thinking(text)) => Some(text)
+            .filter(|piece| !piece.is_empty())
+            .map(|piece| SubagentActivity::Reasoning { text: piece }),
+        (Role::Assistant, Block::ToolUse { id, name, tool }) => {
+            match name.as_str() {
+                ASK_USER_QUESTION => None,
+                _ => Some(SubagentActivity::ToolCall {
+                    call: ToolCallId(id),
+                    phase: ToolPhase::Started { tool },
+                }),
+            }
+        }
+        (
+            Role::User,
+            Block::ToolResult {
+                tool_use_id,
+                outcome,
+                ..
+            },
+        ) => Some(SubagentActivity::ToolCall {
+            call: ToolCallId(tool_use_id),
+            phase: ToolPhase::Finished { outcome },
+        }),
+        (
+            Role::User,
+            Block::Text(_)
+            | Block::ToolUse { .. }
+            | Block::Thinking(_)
+            | Block::Checklist(_),
+        )
+        | (Role::Assistant, Block::ToolResult { .. } | Block::Checklist(_))
+        | (_, Block::Other(_)) => None,
     }
 }
 
@@ -133,14 +206,127 @@ mod tests {
     use agents::{Exit, NativeRequest, PlanStep, Reply, Step};
     use proto::{
         Answer, ClientName, CloseReason, Decision, EventKind, Question,
-        QuestionOption, Selection, TaskStatus, ToolCallId, ToolKind,
+        QuestionOption, Selection, SubagentActivity, SubagentId,
+        SubagentOutcome, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
+        ToolPhase,
     };
 
     use super::{claude_answer, claude_steps};
     use crate::{
-        AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionRequestId,
-        Role,
+        AfterDeny, Block, ClaudeEvent, Inbound, PermissionDecision,
+        PermissionRequestId, Role, parse_line,
     };
+
+    /// `probe-subagent-todo.jsonl`: the main agent ran one sub-agent, which
+    /// called `TodoWrite` twice and reported "ok".
+    const PROBE: &str =
+        include_str!("../../../fixtures/claude/probe-subagent-todo.jsonl");
+
+    fn agent() -> SubagentId {
+        SubagentId(String::from("af19920e77caaf1de"))
+    }
+
+    fn activity(activity: SubagentActivity) -> Step {
+        Step::SubagentActivity {
+            agent: agent(),
+            activity,
+        }
+    }
+
+    fn subagent_finished(call: &str) -> Step {
+        activity(SubagentActivity::ToolCall {
+            call: ToolCallId(String::from(call)),
+            phase: ToolPhase::Finished {
+                outcome: ToolOutcome::Succeeded,
+            },
+        })
+    }
+
+    #[test]
+    fn a_recorded_subagent_maps_to_its_start_its_calls_and_its_end()
+    -> Result<(), serde_json::Error> {
+        let steps = PROBE
+            .lines()
+            .map(parse_line)
+            .collect::<Result<Vec<Inbound>, serde_json::Error>>()?
+            .into_iter()
+            .filter_map(|inbound| match inbound {
+                Inbound::Event(event) => Some(event),
+                Inbound::Permission { .. }
+                | Inbound::ControlResponse { .. }
+                | Inbound::UnsupportedControlRequest { .. } => None,
+            })
+            .flat_map(claude_steps)
+            .filter(|step| {
+                matches!(
+                    step,
+                    Step::SubagentStarted { .. }
+                        | Step::SubagentActivity { .. }
+                        | Step::SubagentEnded { .. }
+                        | Step::Checklist(_)
+                )
+            })
+            .collect::<Vec<Step>>();
+        assert_eq!(
+            steps,
+            Vec::from([
+                Step::SubagentStarted {
+                    agent: agent(),
+                    call: ToolCallId(String::from(
+                        "toolu_015av4j2jHs5CwVCv76qxYf2"
+                    )),
+                    description: String::from("Run TodoWrite checklist task"),
+                },
+                subagent_finished("toolu_01WSCsnAQWyaEonxDVnmncap"),
+                subagent_finished("toolu_01H4nEBx6jVuR4PwHBWBgvPw"),
+                Step::SubagentEnded {
+                    agent: agent(),
+                    outcome: SubagentOutcome::Finished,
+                    summary: Some(String::from("ok")),
+                },
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_subagents_messages_reasoning_and_calls_are_its_own() {
+        let bash = ToolKind::Command {
+            command: String::from("ls"),
+        };
+        assert_eq!(
+            claude_steps(ClaudeEvent::SubagentMessage {
+                agent: agent().0,
+                role: Role::Assistant,
+                content: Vec::from([
+                    Block::Thinking(String::new()),
+                    Block::Thinking(String::from("hm")),
+                    Block::Text(String::from("looking")),
+                    tool_use("Bash", bash.clone()),
+                    tool_use(
+                        "AskUserQuestion",
+                        ToolKind::Other {
+                            name: String::from("AskUserQuestion"),
+                            detail: String::from("{}"),
+                        },
+                    ),
+                    Block::Checklist(Vec::from([step()])),
+                ]),
+            }),
+            Vec::from([
+                activity(SubagentActivity::Reasoning {
+                    text: String::from("hm"),
+                }),
+                activity(SubagentActivity::Message {
+                    text: String::from("looking"),
+                }),
+                activity(SubagentActivity::ToolCall {
+                    call: ToolCallId(String::from("toolu_1")),
+                    phase: ToolPhase::Started { tool: bash },
+                }),
+            ])
+        );
+    }
 
     /// The steps one provider event maps to, and the steps it should.
     struct Case {

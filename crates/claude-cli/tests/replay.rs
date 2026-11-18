@@ -103,14 +103,27 @@ fn summary(event: &ClaudeEvent) -> String {
             format!("turn_started {}", session_id.0)
         }
         ClaudeEvent::Message { role, content, .. } => {
-            let blocks =
-                content.iter().map(block_summary).collect::<Vec<String>>();
-            let speaker = match role {
-                Role::Assistant => "assistant",
-                Role::User => "user",
-            };
-            format!("{speaker}: {}", blocks.join(", "))
+            format!("{}: {}", speaker(*role), blocks(content))
         }
+        ClaudeEvent::SubagentStarted {
+            agent,
+            tool_use_id,
+            description,
+        } => {
+            format!("subagent {agent} started by {tool_use_id}: {description}")
+        }
+        ClaudeEvent::SubagentMessage {
+            agent,
+            role,
+            content,
+        } => {
+            format!("subagent {agent} {}: {}", speaker(*role), blocks(content))
+        }
+        ClaudeEvent::SubagentEnded {
+            agent,
+            outcome,
+            summary,
+        } => format!("subagent {agent} ended {outcome:?} {summary:?}"),
         ClaudeEvent::PermissionRequested {
             tool_name,
             tool,
@@ -144,6 +157,21 @@ fn summary(event: &ClaudeEvent) -> String {
         }
         ClaudeEvent::Unknown(v) => format!("unknown {}", frame(v)),
     }
+}
+
+const fn speaker(role: Role) -> &'static str {
+    match role {
+        Role::Assistant => "assistant",
+        Role::User => "user",
+    }
+}
+
+fn blocks(content: &[Block]) -> String {
+    content
+        .iter()
+        .map(block_summary)
+        .collect::<Vec<String>>()
+        .join(", ")
 }
 
 /// An unmapped frame's `type/subtype`.
@@ -593,23 +621,55 @@ async fn the_effort_is_set_in_the_running_process() -> TestResult<()> {
     Ok(())
 }
 
-/// A probe: the main agent runs a subagent, whose two `TodoWrite` calls
-/// carry its `parent_tool_use_id`. They are not the session's checklist.
+/// A probe: the main agent runs a subagent, whose frames carry its
+/// `agent_id`, from its start to its end. Its two `TodoWrite` calls are its
+/// own, not the session's checklist.
 #[tokio::test]
-async fn a_subagents_checklist_is_not_the_sessions() -> TestResult<()> {
+async fn a_subagent_runs_inside_the_session_from_start_to_end() -> TestResult<()>
+{
     let replayed = replay("probe-subagent-todo.jsonl", Vec::new()).await?;
+    let agent = "af19920e77caaf1de";
+    let call = "toolu_015av4j2jHs5CwVCv76qxYf2";
+    let prompt = "Use the TodoWrite tool to make a checklist of two steps, alpha and beta, mark both completed with TodoWrite, then reply ok. Do not use any other tool.";
+    let todos = |status: &str| {
+        format!(
+            "subagent {agent} assistant: checklist [(\"alpha\", {status}), (\"beta\", {status})]"
+        )
+    };
     assert_eq!(
         (
             replayed
                 .events
                 .iter()
+                .filter(|line| line.starts_with("subagent")
+                    || line.starts_with("assistant: tool_use Agent"))
+                .cloned()
+                .collect::<Vec<String>>(),
+            replayed
+                .events
+                .iter()
                 .filter(|line| line.starts_with("assistant: checklist"))
                 .count(),
-            replayed.unknown.get("assistant/-"),
-            replayed.unknown.get("user/-"),
             replayed.unknown.get("system/task_started"),
         ),
-        (0, Some(&2), Some(&3), Some(&1))
+        (
+            Vec::from([
+                String::from(
+                    "assistant: tool_use Agent Other { name: \"Agent\", detail: \"Run TodoWrite checklist task\" }"
+                ),
+                format!(
+                    "subagent {agent} started by {call}: Run TodoWrite checklist task"
+                ),
+                format!("subagent {agent} user: text {prompt:?}"),
+                todos("Pending"),
+                format!("subagent {agent} user: tool_result Succeeded"),
+                todos("Completed"),
+                format!("subagent {agent} user: tool_result Succeeded"),
+                format!("subagent {agent} ended Finished Some(\"ok\")"),
+            ]),
+            0,
+            None,
+        )
     );
     Ok(())
 }

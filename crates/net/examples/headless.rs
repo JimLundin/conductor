@@ -500,6 +500,7 @@ impl Session {
             | EventKind::ModelChanged { .. }
             | EventKind::EffortChanged { .. }
             | EventKind::TasksChanged { .. }
+            | EventKind::Subagent { .. }
             | EventKind::CheckpointReserved { .. }
             | EventKind::HistoryMaterialized { .. }
             | EventKind::NativeTurnStarted { .. }

@@ -72,7 +72,8 @@ so one UI and one set of commands work for both agents.
   approval requests opened and resolved (first decision wins, and a late
   one is told who decided); questions asked and answered; a turn
   completes, is interrupted or fails; the session's tasks change
-  (`TasksChanged`, the whole list); its effort changes (`EffortChanged`).
+  (`TasksChanged`, the whole list); its effort changes (`EffortChanged`);
+  a sub-agent starts, acts and ends (`Subagent`).
 - **Model and effort:** `Welcome` lists, for each instance the host can
   run (§5.2), the models its CLI offers with the instance's current
   credential (`Models`: each model's id, name, description and efforts,
@@ -120,10 +121,30 @@ so one UI and one set of commands work for both agents.
   they were at the checkpoint it goes back to (the last `TasksChanged`
   before it, or none), logging `TasksChanged` with
   `UndoHistoryRestored`. Only the main agent's checklist counts: a Claude
-  subagent's `TodoWrite` carries its `parent_tool_use_id` and is left out.
+  sub-agent's `TodoWrite` is left out of the session's tasks, and of the
+  sub-agent's transcript too.
   Codex's plan `explanation` is not kept, since Claude has none. Handing a
   task to another session is next (`docs/roadmap.md`); `holder` is what it
   will change.
+- **Sub-agents:** an agent's tool call may start a sub-agent, a child
+  session in the model with no session of its own: its events are its
+  parent's, in the parent's log and in seq order. Each is `Subagent {
+  agent, event }`, naming it by its provider's id (`SubagentId`, Claude's
+  `task_id`): `Started { call, description }` names the tool call that
+  started it; `Activity` carries its own transcript, a `Message`,
+  `Reasoning` or `ToolCall` (started and finished, each whole, never
+  streamed); `Ended { outcome, summary }` ends it as finished, failed or
+  stopped, with its report when the provider gives one. The agent API has
+  a step for each (`agents::Step::SubagentStarted`, `SubagentActivity`,
+  `SubagentEnded`). A sub-agent resumed later starts again under the same
+  id. Its tool calls
+  ask for approval as the agent's do, so a request names a sub-agent's call
+  and gets a card of its own in the session, and a denied call that fails
+  is `Declined`. `HostView` keeps each session's sub-agents beside its
+  items, as running, ended with its outcome, or stopped when the session
+  closed; the app shows each under the tool call that started it, folded to
+  its description and status and opening to its transcript. Codex's collab
+  agents fit the same model but are not mapped yet (Codex `PROTOCOL.md`).
 - **Reasoning:** `ReasoningDelta` streams and `Reasoning` stores the
   finished text, which is the provider's summary of the model's reasoning:
   a few sentences per stretch, never the raw thoughts, so the host stores
@@ -182,12 +203,13 @@ How each agent carries these, from the recordings of the real CLIs:
 | Plan | A `TodoWrite` call, `input.todos: [{content, status, activeForm}]`, offered with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and `CLAUDE_CODE_ENABLE_TASKS=0`; asks no permission | `turn/plan/updated`: `explanation` and `plan: [{step, status}]`, with `tools.update_plan.enabled` in the thread's `config` |
 | Reasoning | `thinking_delta`s and a `thinking` block; text only with `--thinking-display summarized` and experimental betas on | `item/reasoning/summaryTextDelta` and the item's `summary`, with `model_reasoning_summary` set |
 | Resume | `--resume <session_id>` in a new process | `thread/resume { threadId }` on a new app-server |
+| Sub-agent | The `Agent` call; `system/task_started` (`task_type: "local_agent"`, `task_id`, `tool_use_id`, `description`), its frames with `parent_tool_use_id` and `agent_id`, `system/task_notification` (`status` `completed`, `failed` or `stopped`, `summary`) | In the schema only: a `collabAgentToolCall` item (`spawnAgent`, the new thread in `receiverThreadIds`) and `subAgentActivity` items; not recorded, not mapped |
 
 The `AskUserQuestion` tool call is not shown as a tool call; its question
 card is. Nor is a `TodoWrite` call; the session's tasks are.
 
 Next in the model (`docs/roadmap.md`): handing tasks between sessions
-(#30), and the subagents each session runs (#31).
+(#30), and Codex's sub-agents (#31).
 
 ## 4. Transport
 

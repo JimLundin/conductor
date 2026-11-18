@@ -1,7 +1,7 @@
 # The home: projects, issues and work across the fleet
 
-Status: design, decisions in §9. Nothing here is built yet. It extends the fleet
-plan (architecture §6) with what the fleet works *on*.
+Status: design, decisions in §9. Step 1 of §8 is built; the rest is not yet.
+It extends the fleet plan (architecture §6) with what the fleet works *on*.
 
 ## 1. What it adds
 
@@ -166,17 +166,22 @@ host gets the same gate and CI definitions.
 
 ## 6. Sub-agents
 
-A session's sub-agents become child sessions in the model: an id under the
-parent, the tool call that started them, a description, their own
-transcript and status. The provider's core maps them:
+Built (architecture §3). A session's sub-agents are child sessions in the
+model: an id under the parent, the tool call that started them, a
+description, their own transcript and status. Their events are the
+parent's, in its log; the registry has no session for them. The provider's
+core maps them:
 
-- Claude marks a sub-agent's frames with `parent_tool_use_id` (verified in
-  the recordings; the parser drops them today, architecture §3).
-- Codex: to verify against the pinned CLI before modelling it.
+- Claude: `system/task_started` of a `local_agent` starts one, its frames
+  carry `parent_tool_use_id` and `agent_id`, and `task_notification` ends
+  it (verified in a recording and the pinned binary, Claude `PROTOCOL.md`).
+- Codex: the pinned 0.166's app-server schema has collab agents, each a
+  thread of its own, but no run has recorded one, so they are not mapped
+  yet (Codex `PROTOCOL.md`). The model takes them as they are.
 
-The app shows them nested under the session, collapsed by default, with
-their status, and lets you open one to see its transcript. They are not
-work records: their output belongs to the parent's attempt.
+The app shows each under the tool call that started it, collapsed to its
+description and status, and opens to its transcript. They are not work
+records: their output belongs to the parent's attempt.
 
 ## 7. The app
 
@@ -189,7 +194,7 @@ work records: their output belongs to the parent's attempt.
 
 ## 8. Build order
 
-1. Sub-agents in the session model (host only; no home needed).
+1. Sub-agents in the session model (host only; no home needed). Done.
 2. The app with several hosts.
 3. The home repository: clone, sync, and projects with checkouts.
 4. Issues: create, edit, status, notes, in the app.

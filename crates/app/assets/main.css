@@ -397,6 +397,20 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .reasoning-text { margin-top: 0.3rem; padding-left: 1.1em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .continued, .model-changed { color: var(--muted); font-size: 0.75rem; text-align: center; }
 
+/* A sub-agent hangs under the tool call that started it, folded to its
+   description and status. */
+.subagent { margin-left: 1.65rem; padding-left: 0.75rem; border-left: 2px solid var(--line); font-size: 0.875rem; }
+.subagent summary { min-height: 44px; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; list-style: none; touch-action: manipulation; }
+.subagent summary::-webkit-details-marker { display: none; }
+.subagent summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); }
+.subagent[open] summary::before { content: "▾"; }
+.subagent-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.subagent-status { flex-shrink: 0; color: var(--muted); font-size: 0.75rem; }
+.subagent[data-status="running"] .subagent-status { color: var(--accent); }
+.subagent[data-status="failed"] .subagent-status { color: var(--red); }
+.subagent-items > * { margin-bottom: 0.6rem; }
+.subagent-empty { color: var(--muted); }
+
 /* Fades in late, so a quick gap between events doesn't flash it. */
 .working {
   color: var(--muted);

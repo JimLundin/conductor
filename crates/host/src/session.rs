@@ -31,8 +31,8 @@ use proto::{
     Checkpoint, CheckpointDiff, CheckpointId, ClientName, CloseReason,
     CommandResult, Decision, Effort, Event, EventKind, HistoryAnchor, HostPath,
     HostSeq, ModelId, Models, Rejection, RequestId, Resolution, SessionId,
-    Task, TaskId, ToolCallId, ToolOutcome, ToolPhase, TurnOutcome,
-    UndoAvailability, Workspace,
+    SubagentActivity, SubagentEvent, SubagentId, Task, TaskId, ToolCallId,
+    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -754,6 +754,20 @@ impl Session {
             }
             Step::Withdraw(native) => self.withdraw(&native),
             Step::Checklist(steps) => self.checklist(steps),
+            Step::SubagentStarted {
+                agent,
+                call,
+                description,
+            } => subagent(agent, SubagentEvent::Started { call, description }),
+            Step::SubagentActivity { agent, activity } => subagent(
+                agent,
+                SubagentEvent::Activity(self.subagent_activity(activity)),
+            ),
+            Step::SubagentEnded {
+                agent,
+                outcome,
+                summary,
+            } => subagent(agent, SubagentEvent::Ended { outcome, summary }),
             // A request still open when the turn ends can't be answered any
             // more: an agent may withdraw it only after `TurnCompleted`, and an
             // answer in between would log a decision for a command that
@@ -777,16 +791,43 @@ impl Session {
         call: ToolCallId,
         outcome: ToolOutcome,
     ) -> Vec<Effect> {
-        let denied = self.declined.iter().position(|denied| denied == &call);
-        let finished = match (outcome, denied) {
-            (ToolOutcome::Failed, Some(_)) => ToolOutcome::Declined,
-            (reported, _) => reported,
-        };
-        self.declined.retain(|denied| denied != &call);
+        let finished = self.finished(&call, outcome);
         Vec::from([Effect::Emit(EventKind::ToolCall {
             call,
             phase: ToolPhase::Finished { outcome: finished },
         })])
+    }
+
+    fn subagent_activity(
+        &mut self,
+        activity: SubagentActivity,
+    ) -> SubagentActivity {
+        match activity {
+            SubagentActivity::ToolCall {
+                call,
+                phase: ToolPhase::Finished { outcome },
+            } => SubagentActivity::ToolCall {
+                phase: ToolPhase::Finished {
+                    outcome: self.finished(&call, outcome),
+                },
+                call,
+            },
+            other => other,
+        }
+    }
+
+    /// A call that failed after the user denied it was declined.
+    fn finished(
+        &mut self,
+        call: &ToolCallId,
+        outcome: ToolOutcome,
+    ) -> ToolOutcome {
+        let denied = self.declined.iter().position(|denied| denied == call);
+        self.declined.retain(|denied| denied != call);
+        match (outcome, denied) {
+            (ToolOutcome::Failed, Some(_)) => ToolOutcome::Declined,
+            (reported, _) => reported,
+        }
     }
 
     fn history_boundary(&mut self, boundary: Option<String>) -> Vec<Effect> {
@@ -1776,6 +1817,10 @@ fn answer(result: CommandResult) -> Vec<Effect> {
 
 fn rejected(rejection: Rejection) -> Vec<Effect> {
     answer(CommandResult::Rejected(rejection))
+}
+
+fn subagent(agent: SubagentId, event: SubagentEvent) -> Vec<Effect> {
+    Vec::from([Effect::Emit(EventKind::Subagent { agent, event })])
 }
 
 fn join(

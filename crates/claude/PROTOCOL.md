@@ -191,13 +191,38 @@ stdout.
   "completed"`) and `system/task_notification` (`status`, `summary`,
   `output_file`).
 - The subagent's own `user` and `assistant` frames carry
-  `parent_tool_use_id`, the `Agent` call's id; its `TodoWrite` calls are
-  among them. Its report comes back as the `tool_result` of the `Agent`
-  call, in the main agent's frames.
-- The adapter leaves every frame with a `parent_tool_use_id` `Unknown`, so
-  a subagent's checklist never becomes the session's tasks. The `Agent`
-  call shows as an ordinary tool call. Conductor does not model subagents
-  yet.
+  `parent_tool_use_id`, the `Agent` call's id, and `agent_id`, the
+  `task_id`; its `TodoWrite` calls are among them. Its first `user` frame
+  is the `Agent` call's prompt. It printed no `stream_event`s and no
+  `assistant` frame for its final reply: the reply is the
+  `task_notification`'s `summary` (`ok`), and comes back to the main agent
+  as the `tool_result` of the `Agent` call, wrapped in a hand-back note.
+  `task_updated` (`patch.status`) arrives just before `task_notification`.
+- The pinned binary's own schema (2.1.316, read from the binary on
+  2026-11-18) adds what the probe can't show: `task_started.task_type` is
+  `local_agent` for a subagent, and other values for a background command
+  (`local_bash`), a workflow or an MCP task, which use the same frames;
+  `task_notification.status` is one of `completed`, `failed` and
+  `stopped`, with no task type; a `failed` one's `summary` may be redacted
+  to `error`; and a later `task_notification` may follow for the same
+  `task_id` when the agent is resumed, which registers it in the
+  background again.
+- The adapter maps them as the session's sub-agent (architecture §3):
+  `task_started` of a `local_agent` with a `tool_use_id` starts one
+  (`ClaudeEvent::SubagentStarted`), a frame with both `parent_tool_use_id`
+  and `agent_id` is its message (`SubagentMessage`), and `task_notification`
+  ends it (`SubagentEnded`; an empty `summary` is none). The driver keeps
+  the ids of the subagents it saw start and passes the end of any other
+  task on as `Unknown`. Any other task, a frame with a `parent_tool_use_id`
+  but no `agent_id`, a subagent's `stream_event`, `task_progress` and
+  `task_updated` stay `Unknown`. A subagent's text, reasoning and tool calls
+  are its own transcript; its `TodoWrite` and `AskUserQuestion` calls are
+  left out of it, so its checklist never becomes the session's tasks, and
+  its prompt is left out too, since the `Agent` call shows its
+  `description`. Its frames have no transcript UUID the session anchors
+  undo on. Not recorded yet: a subagent that asks permission (its
+  `can_use_tool` names its own call, which then gets a card of its own in
+  the session), one that fails or is stopped, and a background one.
 
 ## Reasoning
 
@@ -320,7 +345,7 @@ Verified against 2.1.316 on 2026-11-13.
   unmaterialized fork recipe.
 - We always pass `--replay-user-messages`. Top-level assistant and user
   entries expose transcript UUIDs; subagent entries with
-  `parent_tool_use_id` stay `Unknown`. The actor resets its boundary on each
+  `parent_tool_use_id` are the subagent's and never a boundary. The actor resets its boundary on each
   successfully sent user command and attaches the latest root entry to
   `TurnFinished.last_message`. Missing UUIDs yield no safe retained anchor.
 - An interrupted turn with no assistant reply persisted a user entry and

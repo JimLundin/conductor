@@ -24,6 +24,7 @@ HERE = pathlib.Path(__file__).parent
 SESSION1 = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
 SESSION3 = HERE.parent / "claude" / "session3-questions.jsonl"
 PROBE = HERE.parent / "claude" / "probe-thinking.jsonl"
+SUBAGENT = HERE.parent / "claude" / "probe-subagent-todo.jsonl"
 SESSION4 = HERE.parent / "claude" / "session4-chosen-killed.jsonl"
 SESSION5 = HERE.parent / "claude" / "session5-resumed.jsonl"
 SESSION6 = HERE.parent / "claude" / "session6-resume-missing.jsonl"
@@ -34,8 +35,10 @@ SESSION9 = HERE.parent / "claude" / "session9-checklist-effort.jsonl"
 # 3b interrupt with a permission open. Session 3: 7 a question, 8 a command
 # approved for the session, the same command again with no request, 9 a
 # question withdrawn by an interrupt. The probe: one turn with summarized
-# thinking. Session 4: 12 a turn that reasons (its thinking empty, through
-# the owner's gateway); session 5: 13 the same session resumed.
+# thinking. The subagent probe: one turn in which the main agent runs a
+# subagent that calls TodoWrite twice. Session 4: 12 a turn that reasons
+# (its thinking empty, through the owner's gateway); session 5: 13 the same
+# session resumed.
 RECORDINGS = {
     "claude-approve.jsonl": (SESSION1, [0]),
     "claude-deny-interrupt.jsonl": (SESSION1, [1, 4, 5]),
@@ -46,6 +49,7 @@ RECORDINGS = {
     "claude-for-session.jsonl": (SESSION3, [1, 2]),
     "claude-question-withdraw.jsonl": (SESSION3, [3]),
     "claude-reasoning.jsonl": (PROBE, [0]),
+    "claude-subagent.jsonl": (SUBAGENT, [0]),
     "claude-killed.jsonl": (SESSION4, [0]),
     "claude-resumed.jsonl": (SESSION5, [0]),
 }

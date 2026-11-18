@@ -57,6 +57,7 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                     }
                     for entry in pane.entries {
                         TranscriptRow { key: "{entry.key}", row: entry.row }
+                        Subagents { groups: entry.agents }
                         if let Some(changes) = entry.changes {
                             TurnChanges { key: "{changes.key}", changes }
                         }
@@ -162,6 +163,37 @@ fn Tasks(tasks: ui::Tasks) -> Element {
                         span { class: "task-mark", role: "img", "aria-label": task.label }
                         span { class: "task-text", "{task.text}" }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// The sub-agents a tool call started, each folded to its description and
+/// status until opened.
+#[component]
+fn Subagents(groups: Vec<ui::AgentGroup>) -> Element {
+    rsx! {
+        for group in groups {
+            Subagent { key: "{group.key}", group }
+        }
+    }
+}
+
+#[component]
+fn Subagent(group: ui::AgentGroup) -> Element {
+    rsx! {
+        details { class: "subagent", "data-status": group.status,
+            summary {
+                span { class: "subagent-title", "{group.description}" }
+                span { class: "subagent-status", "{group.label}" }
+            }
+            div { class: "subagent-items",
+                if let Some(text) = group.empty {
+                    p { class: "subagent-empty", "{text}" }
+                }
+                for (index, row) in group.rows.into_iter().enumerate() {
+                    TranscriptRow { key: "{index}", row }
                 }
             }
         }

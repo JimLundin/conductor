@@ -2,8 +2,9 @@
 //! Request ids and the turn belong to the session.
 
 use proto::{
-    Answer, CloseReason, Decision, EventKind, Question, ToolCallId, ToolKind,
-    ToolOutcome, TurnOutcome,
+    Answer, CloseReason, Decision, EventKind, Question, SubagentActivity,
+    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome,
+    TurnOutcome,
 };
 
 use crate::PlanStep;
@@ -58,6 +59,24 @@ pub enum Step {
     Closed(CloseReason),
     /// The agent rewrote its checklist: the session syncs its tasks to it.
     Checklist(Vec<PlanStep>),
+    /// The agent's tool call `call` started a sub-agent, which runs inside
+    /// the session: the session logs it.
+    SubagentStarted {
+        agent: SubagentId,
+        call: ToolCallId,
+        description: String,
+    },
+    /// The session logs what the sub-agent did, a tool call of its that
+    /// failed after the user denied it as `Declined`.
+    SubagentActivity {
+        agent: SubagentId,
+        activity: SubagentActivity,
+    },
+    SubagentEnded {
+        agent: SubagentId,
+        outcome: SubagentOutcome,
+        summary: Option<String>,
+    },
 }
 
 /// A reply to an open request: a decision for an approval, answers for a

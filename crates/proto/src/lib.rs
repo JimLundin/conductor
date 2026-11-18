@@ -41,7 +41,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/14";
+pub const ALPN: &[u8] = b"conductor/15";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -684,6 +684,49 @@ pub enum EventKind {
     EffortChanged {
         effort: Effort,
     },
+    /// A sub-agent belongs to its session: its events are the session's, in
+    /// the session's log, and it has no session of its own.
+    Subagent {
+        agent: SubagentId,
+        event: SubagentEvent,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubagentEvent {
+    /// The agent's tool call `call` started it. A sub-agent the agent
+    /// resumes starts again under the same id.
+    Started {
+        call: ToolCallId,
+        description: String,
+    },
+    Activity(SubagentActivity),
+    /// `summary` is its final report, when its provider gives one.
+    Ended {
+        outcome: SubagentOutcome,
+        summary: Option<String>,
+    },
+}
+
+/// A sub-agent's id as its provider gave it (Claude's `task_id`).
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub struct SubagentId(pub String);
+
+/// One entry of a sub-agent's own transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubagentActivity {
+    Message { text: String },
+    Reasoning { text: String },
+    ToolCall { call: ToolCallId, phase: ToolPhase },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubagentOutcome {
+    Finished,
+    Failed,
+    Stopped,
 }
 
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits.

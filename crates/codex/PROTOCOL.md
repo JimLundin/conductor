@@ -186,8 +186,37 @@ From a run on 2026-11-16 and probes the same day.
 
 ## Subagents
 
-No run started a Codex subagent (the `collab` and spawn-agent items): no
-scripted step or probe asked for one, so their frames are not recorded.
+No run started a Codex subagent: no scripted step or probe asked for one,
+and a live run needs a sign-in, so their frames are not recorded and the
+adapter maps none (they stay `Unknown`). What the pinned 0.166.0 says of
+them, from `codex app-server generate-json-schema` and `codex features
+list` in a scratch `CODEX_HOME`, unsigned, on 2026-11-18:
+
+- `multi_agent` is a stable feature, on by default (`multi_agent_v2` is
+  stable and off). Every recorded `thread/start` and `thread/resume`
+  answered `multiAgentMode: "explicitRequestOnly"`, and `model/list` gives
+  each model a `multiAgentVersion` (`v1` or `v2` in `server1.jsonl`).
+- A collab call is a `ThreadItem` of type `collabAgentToolCall`: `id`,
+  `tool` (`spawnAgent`, `sendInput`, `resumeAgent`, `wait`, `closeAgent`,
+  `sendMessage`, `followupTask`, `interruptAgent`, `listAgents`), `status`
+  (`inProgress`, `completed`, `failed`, `interrupted`), `senderThreadId`,
+  `receiverThreadIds` (for `spawnAgent`, the new agent's thread), `prompt`,
+  `model`, `reasoningEffort` and `agentsStates`, each receiver's
+  `CollabAgentStatus` (`pendingInit`, `running`, `interrupted`, `completed`,
+  `errored`, `shutdown`, `notFound`) and last `message`.
+- A `subAgentActivity` item (`agentThreadId`, `agentPath`, `kind`
+  `started`, `interacted`, `interrupted` or `completed`) marks a subagent's
+  life in its parent's thread.
+- A spawned agent is a thread of its own, whose source is
+  `SubAgentSource.thread_spawn` (`parent_thread_id`, `depth`,
+  `agent_nickname`, `agent_role`). Its turns and items would come as the
+  ordinary notifications under its own `threadId`, on the same app-server.
+
+So the session model fits as it is (architecture §3): the sub-agent's id
+is its thread id, the call that started it the `spawnAgent` item, and its
+activity its thread's items. Until a run records one, how the spawned
+thread's notifications reach a client, and whether its approvals do, is
+unverified.
 
 ## Interrupt
 

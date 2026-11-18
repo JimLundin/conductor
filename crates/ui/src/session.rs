@@ -18,7 +18,7 @@ use proto::{
 use crate::checkpoints::{self, DiffState, TurnChanges};
 use crate::new_session::Choice;
 use crate::sessions::{agent, short};
-use crate::transcript::{self, Row, card_id};
+use crate::transcript::{self, AgentGroup, Row, card_id};
 use crate::{Effect, Focus, Reply, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,11 +126,13 @@ pub struct TaskRow {
     pub text: String,
 }
 
-/// A transcript item, and the changes of the turn it ends.
+/// A transcript item, the sub-agents its tool call started, and the
+/// changes of the turn it ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub key: String,
     pub row: Row,
+    pub agents: Vec<AgentGroup>,
     pub changes: Option<TurnChanges>,
 }
 
@@ -499,6 +501,16 @@ impl Pane {
             .map(|(index, item)| Entry {
                 key: format!("{index}"),
                 row: transcript::row(item, &self.answers),
+                agents: item.call().map_or_else(Vec::new, |call| {
+                    session
+                        .subagents
+                        .iter()
+                        .filter(|subagent| &subagent.call == call)
+                        .map(|subagent| {
+                            transcript::agent_group(subagent, &self.answers)
+                        })
+                        .collect()
+                }),
                 changes: session
                     .checkpoints
                     .iter()

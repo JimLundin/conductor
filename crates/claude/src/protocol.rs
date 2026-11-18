@@ -5,7 +5,8 @@
 use agents::{Exit, PlanStep};
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
-    QuestionOption, Selection, TaskStatus, ToolKind, ToolOutcome, TurnOutcome,
+    QuestionOption, Selection, SubagentOutcome, TaskStatus, ToolKind,
+    ToolOutcome, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -99,6 +100,8 @@ fn tool_kind(name: &str, input: &Value) -> ToolKind {
             "WebFetch" => {
                 field(input, "url").map(|detail| other_tool(name, detail))
             }
+            "Agent" | "Task" => field(input, "description")
+                .map(|detail| other_tool(name, detail)),
             _ => None,
         };
     shown.unwrap_or_else(|| other_tool(name, input.to_string()))
@@ -199,6 +202,26 @@ pub enum ClaudeEvent {
         /// an interrupted marker. None means no safe retained prefix is known.
         last_message: Option<MessageId>,
     },
+    /// The `Agent` call `tool_use_id` started the sub-agent `agent`
+    /// (`system/task_started` of a `local_agent`).
+    SubagentStarted {
+        agent: String,
+        tool_use_id: String,
+        description: String,
+    },
+    /// A sub-agent's own message, which its `agent_id` names.
+    SubagentMessage {
+        agent: String,
+        role: Role,
+        content: Vec<Block>,
+    },
+    /// A task ended (`system/task_notification`). The frame doesn't say
+    /// whether the task is a sub-agent; the session's state does.
+    SubagentEnded {
+        agent: String,
+        outcome: SubagentOutcome,
+        summary: Option<String>,
+    },
     Exited {
         status: Exit,
     },
@@ -235,23 +258,12 @@ pub enum Inbound {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Frame {
-    /// Only `init` is read, which the CLI prints once per turn.
-    System {
-        subtype: SystemSubtype,
-        session_id: String,
-    },
-    Assistant {
-        message: Message,
-        uuid: Option<String>,
-        parent_tool_use_id: Option<String>,
-    },
-    User {
-        message: Message,
-        uuid: Option<String>,
-        parent_tool_use_id: Option<String>,
-    },
+    System(System),
+    Assistant(Entry),
+    User(Entry),
     StreamEvent {
         event: StreamEvent,
+        parent_tool_use_id: Option<String>,
     },
     Result {
         subtype: String,
@@ -272,10 +284,49 @@ enum Frame {
     },
 }
 
+/// The `system` frames we read, by `subtype`: `init`, which the CLI prints
+/// once per turn, and a task's start and end.
+#[derive(Deserialize)]
+#[serde(tag = "subtype", rename_all = "snake_case")]
+enum System {
+    Init {
+        session_id: String,
+    },
+    /// A task the CLI runs: a sub-agent is a `local_agent` started by the
+    /// `Agent` call `tool_use_id`.
+    TaskStarted {
+        task_id: String,
+        tool_use_id: Option<String>,
+        description: String,
+        task_type: Option<String>,
+    },
+    /// Any task's end, which doesn't say the task's type.
+    TaskNotification {
+        task_id: String,
+        status: TaskEnd,
+        summary: Option<String>,
+    },
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum SystemSubtype {
-    Init,
+enum TaskEnd {
+    Completed,
+    Failed,
+    Stopped,
+}
+
+/// The `task_type` of a sub-agent.
+const LOCAL_AGENT: &str = "local_agent";
+
+/// A transcript entry. One with a `parent_tool_use_id` is a sub-agent's,
+/// and its `agent_id` names the sub-agent.
+#[derive(Deserialize)]
+struct Entry {
+    message: Message,
+    uuid: Option<String>,
+    parent_tool_use_id: Option<String>,
+    agent_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -518,44 +569,31 @@ pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
 
 fn inbound(frame: Frame, raw: Value) -> Inbound {
     match frame {
-        Frame::System {
-            subtype: SystemSubtype::Init,
-            session_id,
-        } => Inbound::Event(ClaudeEvent::TurnStarted {
-            session_id: SessionId(session_id),
-        }),
-        Frame::Assistant {
-            message,
-            uuid,
-            parent_tool_use_id: None,
-        } => message_event(Role::Assistant, message, uuid),
-        Frame::User {
-            message,
-            uuid,
-            parent_tool_use_id: None,
-        } => message_event(Role::User, message, uuid),
-        Frame::Assistant {
-            parent_tool_use_id: Some(_),
-            ..
-        }
-        | Frame::User {
-            parent_tool_use_id: Some(_),
+        Frame::System(system) => Inbound::Event(system_event(system, raw)),
+        Frame::Assistant(entry) => entry_event(Role::Assistant, entry, raw),
+        Frame::User(entry) => entry_event(Role::User, entry, raw),
+        // A sub-agent's stream, whose finished message follows.
+        Frame::StreamEvent {
+            event: StreamEvent { delta: None },
             ..
         }
         | Frame::StreamEvent {
-            event: StreamEvent { delta: None },
+            parent_tool_use_id: Some(_),
+            ..
         } => Inbound::Event(ClaudeEvent::Unknown(raw)),
         Frame::StreamEvent {
             event:
                 StreamEvent {
                     delta: Some(Delta::TextDelta { text }),
                 },
+            parent_tool_use_id: None,
         } => Inbound::Event(ClaudeEvent::StreamDelta { text }),
         Frame::StreamEvent {
             event:
                 StreamEvent {
                     delta: Some(Delta::ThinkingDelta { thinking }),
                 },
+            parent_tool_use_id: None,
         } => Inbound::Event(ClaudeEvent::ThinkingDelta { text: thinking }),
         Frame::Result {
             subtype,
@@ -690,6 +728,55 @@ fn control_request(request_id: String, request: &Value) -> Inbound {
                 .unwrap_or_default()
                 .to_owned(),
         },
+    }
+}
+
+/// A task other than a sub-agent, and the start of a sub-agent with no
+/// `Agent` call, are passed on as `Unknown`.
+fn system_event(system: System, raw: Value) -> ClaudeEvent {
+    match system {
+        System::Init { session_id } => ClaudeEvent::TurnStarted {
+            session_id: SessionId(session_id),
+        },
+        System::TaskStarted {
+            task_id,
+            tool_use_id: Some(tool_use_id),
+            description,
+            task_type: Some(task_type),
+        } if task_type == LOCAL_AGENT => ClaudeEvent::SubagentStarted {
+            agent: task_id,
+            tool_use_id,
+            description,
+        },
+        System::TaskStarted { .. } => ClaudeEvent::Unknown(raw),
+        System::TaskNotification {
+            task_id,
+            status,
+            summary,
+        } => ClaudeEvent::SubagentEnded {
+            agent: task_id,
+            outcome: match status {
+                TaskEnd::Completed => SubagentOutcome::Finished,
+                TaskEnd::Failed => SubagentOutcome::Failed,
+                TaskEnd::Stopped => SubagentOutcome::Stopped,
+            },
+            summary: summary.filter(|report| !report.is_empty()),
+        },
+    }
+}
+
+/// A sub-agent's entry that names no sub-agent is `Unknown`.
+fn entry_event(role: Role, entry: Entry, raw: Value) -> Inbound {
+    match (entry.parent_tool_use_id, entry.agent_id) {
+        (None, _) => message_event(role, entry.message, entry.uuid),
+        (Some(_), Some(agent)) => {
+            Inbound::Event(ClaudeEvent::SubagentMessage {
+                agent,
+                role,
+                content: entry.message.content.into_iter().map(block).collect(),
+            })
+        }
+        (Some(_), None) => Inbound::Event(ClaudeEvent::Unknown(raw)),
     }
 }
 
@@ -1074,13 +1161,13 @@ mod tests {
 
     use proto::{
         Answer, Change, FileChange, Question, QuestionOption, Selection,
-        ToolKind, ToolOutcome, TurnOutcome,
+        SubagentOutcome, ToolKind, ToolOutcome, TurnOutcome,
     };
 
     use super::{
-        AfterDeny, ClaudeEvent, ControlCall, Inbound, MessageId, Open,
+        AfterDeny, Block, ClaudeEvent, ControlCall, Inbound, MessageId, Open,
         Outbound, PermissionDecision, PermissionMode, PermissionRequestId,
-        encode, parse_line,
+        Role, encode, parse_line,
     };
 
     type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -1175,6 +1262,47 @@ mod tests {
                 .all(|(actual, expected)| actual == expected)
                 .then_some(()),
             Some(())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn task_and_nested_frames_read_as_sub_agents() -> TestResult<()> {
+        let events = [
+            r#"{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"toolu_1","description":"sleep","task_type":"local_bash","session_id":"s"}"#,
+            r#"{"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_2","status":"failed","output_file":"","summary":"","session_id":"s"}"#,
+            r#"{"type":"system","subtype":"task_notification","task_id":"a2","status":"stopped","output_file":"","summary":"cut short","session_id":"s"}"#,
+            r#"{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"hi"}},"parent_tool_use_id":"toolu_2","session_id":"s"}"#,
+            r#"{"type":"assistant","parent_tool_use_id":"toolu_2","agent_id":"a1","uuid":"u","message":{"content":[{"type":"text","text":"hi"}]},"session_id":"s"}"#,
+        ]
+        .into_iter()
+        .map(|line| match parse_line(line)? {
+            Inbound::Event(ClaudeEvent::Unknown(_)) => Ok(None),
+            Inbound::Event(event) => Ok(Some(event)),
+            other => Err(format!("not an event: {other:?}").into()),
+        })
+        .collect::<TestResult<Vec<Option<ClaudeEvent>>>>()?;
+        assert_eq!(
+            events,
+            Vec::from([
+                None,
+                Some(ClaudeEvent::SubagentEnded {
+                    agent: String::from("a1"),
+                    outcome: SubagentOutcome::Failed,
+                    summary: None,
+                }),
+                Some(ClaudeEvent::SubagentEnded {
+                    agent: String::from("a2"),
+                    outcome: SubagentOutcome::Stopped,
+                    summary: Some(String::from("cut short")),
+                }),
+                None,
+                Some(ClaudeEvent::SubagentMessage {
+                    agent: String::from("a1"),
+                    role: Role::Assistant,
+                    content: Vec::from([Block::Text(String::from("hi"))]),
+                }),
+            ])
         );
         Ok(())
     }

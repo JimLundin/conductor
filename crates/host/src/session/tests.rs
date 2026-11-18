@@ -4,7 +4,8 @@ use proto::{
     Answer, Checkpoint, CheckpointId, ClientName, CloseReason, CommandResult,
     Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq,
     InstanceId, ModelChoice, ModelId, Models, Provider, Question, Rejection,
-    RequestId, Resolution, Selection, SessionId, ToolCallId, ToolKind,
+    RequestId, Resolution, Selection, SessionId, SubagentActivity,
+    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
     ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
@@ -228,6 +229,97 @@ fn a_message_the_agent_never_got_fails_the_turn() {
                 ]),
             ),
             (send("again"), Vec::from([record("again")])),
+        ]),
+    );
+}
+
+/// A sub-agent's call asks like the agent's own, so a denied one that
+/// fails was declined.
+#[test]
+fn a_subagent_is_logged_and_its_denied_call_declined() {
+    let deny = || Reply::Decide(Decision::Deny);
+    let agent_id = || SubagentId(text("a1"));
+    let finished = |outcome| SubagentActivity::ToolCall {
+        call: ToolCallId(text("toolu_1")),
+        phase: ToolPhase::Finished { outcome },
+    };
+    let call = || ToolCallId(text("toolu_agent"));
+    let _ = expect(
+        running(),
+        Vec::from([
+            (
+                Input::Step(Step::SubagentStarted {
+                    agent: agent_id(),
+                    call: call(),
+                    description: text("look around"),
+                }),
+                Vec::from([Effect::Emit(EventKind::Subagent {
+                    agent: agent_id(),
+                    event: SubagentEvent::Started {
+                        call: call(),
+                        description: text("look around"),
+                    },
+                })]),
+            ),
+            (
+                open(),
+                Vec::from([Effect::Emit(EventKind::RequestOpened {
+                    request: RequestId(1),
+                    call: ToolCallId(text("toolu_1")),
+                    tool: ToolKind::Command {
+                        command: text("ls"),
+                    },
+                    reason: None,
+                    for_session: None,
+                })]),
+            ),
+            (
+                reply(1, deny(), "phone"),
+                Vec::from([
+                    Effect::Emit(EventKind::RequestResolved {
+                        request: RequestId(1),
+                        resolution: Resolution::Decided {
+                            decision: Decision::Deny,
+                            by: phone(),
+                        },
+                    }),
+                    agent(Command::Reply {
+                        native: NativeRequest(text("perm-1")),
+                        reply: deny(),
+                        by: phone(),
+                    }),
+                ]),
+            ),
+            (
+                Input::Agent(Outcome::Replied(Ok(()))),
+                Vec::from([accepted()]),
+            ),
+            (
+                Input::Step(Step::SubagentActivity {
+                    agent: agent_id(),
+                    activity: finished(ToolOutcome::Failed),
+                }),
+                Vec::from([Effect::Emit(EventKind::Subagent {
+                    agent: agent_id(),
+                    event: SubagentEvent::Activity(finished(
+                        ToolOutcome::Declined,
+                    )),
+                })]),
+            ),
+            (
+                Input::Step(Step::SubagentEnded {
+                    agent: agent_id(),
+                    outcome: SubagentOutcome::Stopped,
+                    summary: None,
+                }),
+                Vec::from([Effect::Emit(EventKind::Subagent {
+                    agent: agent_id(),
+                    event: SubagentEvent::Ended {
+                        outcome: SubagentOutcome::Stopped,
+                        summary: None,
+                    },
+                })]),
+            ),
         ]),
     );
 }

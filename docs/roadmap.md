@@ -167,11 +167,19 @@ Each item ends in something to try. The fleet design is
    claims a task, and how a task leaves one session or agent for another.
    *Try:* hand a task from a Claude session to a Codex session and watch it
    leave one checklist and join the other.
-10. **Monitor the subagents** (#31) each session runs: Claude's `Agent`
-    tool, whose subagent frames carry `parent_tool_use_id` (Claude
-    `PROTOCOL.md`), and Codex's collab and spawn-agent items, shown in the
-    app. Round C keeps a subagent's checklist out of its session's tasks.
-    *Try:* watch a session's subagents work, and finish, from the phone.
+10. **Monitor the subagents** (#31) each session runs (home step 1,
+    `docs/home.md` §6). Built on `subagents`, for Claude: a session's
+    sub-agents are child sessions in the model (`EventKind::Subagent`, its
+    start, activity and end, in the session's own log, ALPN
+    `conductor/15`), from the CLI's `task_started`, its frames with
+    `parent_tool_use_id` and `agent_id`, and `task_notification` (Claude
+    `PROTOCOL.md`). `HostView` folds them under their session, and the app
+    shows each under the `Agent` call that started it, folded to its
+    description and status and opening to its transcript. A sub-agent's
+    checklist stays out of its session's tasks. Next: Codex's collab agents,
+    which the pinned 0.166's schema has but no run has recorded (Codex
+    `PROTOCOL.md`). *Try:* ask a Claude session to delegate to a sub-agent
+    and open it on the phone as it works and when it finishes.
 
 ## Known bugs
 

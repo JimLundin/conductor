@@ -7,7 +7,9 @@
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
 # CLI continued and the Thinking disclosure (continue), a checklist shown as the
-# session's tasks and the effort changed between turns (tasks, WebKit), the
+# session's tasks and the effort changed between turns (tasks, WebKit), a
+# sub-agent folded under the call that started it and opened (subagents,
+# Chromium), the
 # credentials forms and a second Claude instance added from the app
 # (credentials, WebKit), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
@@ -194,6 +196,19 @@ tasks() {
   echo "ok: host tasks: the CLI read apply_flag_settings right before the next message"
 }
 
+subagents() {
+  session "$scratch/subagents" claude-subagent.jsonl
+  start_host subagents
+  echo
+  echo "## A sub-agent under its call, opened, chromium"
+  run chromium subagents "$scratch/subagents.png" "$scratch/subagents"
+  echo
+  echo "## Sub-agents, host log"
+  host_log subagents
+  echo
+  expect subagents 2 'serve: command client="iPhone"' 'the start and the message reached the host'
+}
+
 credentials() {
   # The Claude instance the scenario adds lists its models in its own work
   # dir.
@@ -260,6 +275,7 @@ out=docs/p1/browser-run.txt
   scenario "questions, webkit" questions
   scenario "continue, chromium" continue_scenario
   scenario "tasks, webkit" tasks
+  scenario "subagents, chromium" subagents
   scenario "credentials, webkit" credentials
   scenario "screens, chromium" screens
   echo
