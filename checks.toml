@@ -20,16 +20,9 @@ packages = ["proto", "client", "net", "app"]
 
 [[suite]]
 name = "browser"
+# Release only until it passes reliably under the step run's load: in the
+# gate it failed 3 of 6 runs, in a different scenario each time, after the
+# full test run, and passed alone.
 command = "E2E_RECORD=target/e2e-browser tools/e2e-browser.sh"
 [[suite.when]]
 tier = "release"
-[[suite.when]]
-tier = "step"
-paths = [
-    "crates/app/**",
-    "crates/ui/**",
-    "crates/net/**",
-    "crates/proto/**",
-    "crates/client/**",
-    "tools/e2e-browser.sh",
-]
