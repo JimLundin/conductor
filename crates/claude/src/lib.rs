@@ -1,9 +1,9 @@
 //! Claude Code's stream-json control protocol (`--input-format stream-json
 //! --permission-prompt-tool stdio`): the few frames we read and write, and
 //! their events mapped into the agent API (`agents`), how its process starts,
-//! what the process actor decides and what the agent decides with a
-//! session's runtime commands. `claude-cli` runs the process that speaks
-//! it.
+//! what the process actor decides, what the agent decides with a
+//! session's runtime commands, and how its sign-in reads. `claude-cli`
+//! runs the process that speaks it.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -16,6 +16,7 @@ mod mapping;
 mod prelude;
 mod protocol;
 pub mod runtime;
+mod sign_in;
 
 pub use credentials::{ClaudeCredential, credential, info};
 pub use driver::{After, Command, Effect, Failure, Input, Session, Then};
@@ -31,3 +32,4 @@ pub use protocol::{
     PermissionRequestId, Role, SessionId, UnsupportedVersion, applied,
     check_version, encode, models, parse_line,
 };
+pub use sign_in::sign_in;

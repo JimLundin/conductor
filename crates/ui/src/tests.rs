@@ -8,9 +8,9 @@ use proto::{
     Event, EventKind, Field, FieldKind, FilePatch, HistoryAnchor, HostPath,
     HostSeq, InstanceId, InstanceStatus, Instances, ModelChoice, ModelId,
     Models, Provider, ProviderInfo, Question, QuestionOption, Rejection,
-    RequestId, Resolution, Selection, SessionId, Ticket, TicketError,
-    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
-    UndoAvailability,
+    RequestId, Resolution, Selection, SessionId, SignInCode, SignInStep,
+    Ticket, TicketError, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome, UndoAvailability,
 };
 
 use crate::credentials::{Done, Subject};
@@ -137,11 +137,20 @@ fn said(words: &str) -> EventKind {
 }
 
 fn status(instances: Instances) -> Intent {
+    signing_in(instances, BTreeMap::new())
+}
+
+/// A live host with these instances and their sign-ins from the app.
+fn signing_in(
+    instances: Instances,
+    sign_ins: BTreeMap<InstanceId, SignInStep>,
+) -> Intent {
     Intent::Link(Update::Status(Status {
         state: LinkState::Live,
         host: Some(text("desk")),
         instances: Some(instances),
         catalog: catalog(),
+        sign_ins,
         error: None,
     }))
 }
@@ -219,7 +228,8 @@ fn sent(effects: &[Effect]) -> Vec<CommandBody> {
             Effect::SaveTicket(_)
             | Effect::ForgetTicket
             | Effect::Focus(_)
-            | Effect::ShowEffort(_) => None,
+            | Effect::ShowEffort(_)
+            | Effect::Copy(_) => None,
         })
         .collect()
 }
@@ -1560,5 +1570,198 @@ fn a_refusal_is_the_notice_until_dismissed_and_a_left_pane_drops_late_answers()
             None,
             true,
         )
+    );
+}
+
+fn sign_in_of(state: &State) -> Option<crate::SignInView> {
+    pane_of(state)
+        .and_then(|pane| pane.instances.into_iter().next())
+        .map(|section| section.sign_in)
+}
+
+fn sign_in(intent: CredentialIntent) -> Intent {
+    Intent::Credential(intent)
+}
+
+/// The credentials screen of a host whose Claude instance signs in at
+/// `step`, if a sign-in runs on it.
+fn signing(step: Option<SignInStep>) -> State {
+    let steps = step.map_or_default(|at| BTreeMap::from([(id("claude"), at)]));
+    run(
+        paired(),
+        Vec::from([
+            signing_in(claude(signed_in()), steps),
+            Intent::Show(Place::Credentials),
+        ]),
+    )
+    .0
+}
+
+#[test]
+fn a_sign_in_starts_from_the_instance_and_takes_the_pasted_code_once() {
+    let idle = signing(None);
+    let (_, started) = run(
+        idle.clone(),
+        Vec::from([sign_in(CredentialIntent::StartSignIn(id("claude")))]),
+    );
+    let open = signing(Some(SignInStep::Open {
+        url: text("https://sign.example/in?state=1"),
+        code: None,
+        paste: true,
+    }));
+    let (typed, _) = run(
+        open,
+        Vec::from([sign_in(CredentialIntent::TypeSignInCode(
+            id("claude"),
+            text(" abc#def "),
+        ))]),
+    );
+    let (submitted, sent_code) = run(
+        typed.clone(),
+        Vec::from([sign_in(CredentialIntent::SubmitSignInCode(id("claude")))]),
+    );
+    let (accepted, _) = run(
+        submitted.clone(),
+        Vec::from([Intent::Replied(
+            reply(ReplyTo::Instance(
+                Subject::Instance(id("claude")),
+                Done::SignIn,
+            )),
+            Ok(CommandResult::Accepted),
+        )]),
+    );
+    let paste = |state: &State| {
+        sign_in_of(state)
+            .and_then(|view| view.paste)
+            .map(|form| (form.value, form.submit_disabled))
+    };
+    assert_eq!(
+        (
+            sign_in_of(&idle).and_then(|view| view.start),
+            sent(&started),
+            sign_in_of(&typed).map(|view| (view.link, view.progress)),
+            paste(&typed),
+            sent(&sent_code),
+            paste(&submitted),
+            paste(&accepted),
+            credentials(&accepted).first().map(|shown| shown.3.clone()),
+        ),
+        (
+            Some(crate::SignInButton {
+                text: text("Sign in"),
+                label: text("Sign in: Claude Code"),
+                disabled: false,
+            }),
+            Vec::from([CommandBody::StartSignIn {
+                instance: id("claude")
+            }]),
+            Some((
+                Some(text("https://sign.example/in?state=1")),
+                Some(Hint {
+                    class: "hint muted",
+                    role: Some("status"),
+                    text: text(
+                        "Open the sign-in page and sign in. Then paste the code it shows here."
+                    ),
+                })
+            )),
+            Some((text(" abc#def "), false)),
+            Vec::from([CommandBody::SubmitSignInCode {
+                instance: id("claude"),
+                code: SignInCode(text("abc#def")),
+            }]),
+            Some((String::new(), true)),
+            Some((String::new(), true)),
+            Some(None),
+        )
+    );
+}
+
+#[test]
+fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
+    let device = signing(Some(SignInStep::Open {
+        url: text("https://sign.example/device"),
+        code: Some(text("ABCD-12345")),
+        paste: false,
+    }));
+    let (copied, copy) = run(
+        device.clone(),
+        Vec::from([sign_in(CredentialIntent::CopySignInCode(
+            id("claude"),
+            text("ABCD-12345"),
+        ))]),
+    );
+    let (_, cancelled) = run(
+        device.clone(),
+        Vec::from([sign_in(CredentialIntent::CancelSignIn(id("claude")))]),
+    );
+    let code = |state: &State| {
+        sign_in_of(state)
+            .and_then(|view| view.code)
+            .map(|shown| (shown.code, shown.copy))
+    };
+    let progress = |step| {
+        sign_in_of(&signing(Some(step))).map(|view| {
+            (
+                view.start.map(|button| button.text),
+                view.progress.map(|hint| (hint.class, hint.text)),
+                view.cancel.is_some(),
+            )
+        })
+    };
+    assert_eq!(
+        (
+            code(&device),
+            sign_in_of(&device).map(|view| view.paste.is_none()),
+            copy,
+            code(&copied),
+            sent(&cancelled),
+        ),
+        (
+            Some((text("ABCD-12345"), text("Copy"))),
+            Some(true),
+            Vec::from([Effect::Copy(text("ABCD-12345"))]),
+            Some((text("ABCD-12345"), text("Copied"))),
+            Vec::from([CommandBody::CancelSignIn {
+                instance: id("claude")
+            }]),
+        )
+    );
+    assert_eq!(
+        [
+            progress(SignInStep::Starting),
+            progress(SignInStep::Finishing),
+            progress(SignInStep::SignedIn {
+                instances: Instances::default()
+            }),
+            progress(SignInStep::Failed {
+                reason: text("the code expired")
+            }),
+        ],
+        [
+            Some((
+                None,
+                Some(("hint muted", text("Starting the sign-in on desk…"))),
+                true
+            )),
+            Some((
+                None,
+                Some(("hint muted", text("Finishing the sign-in on desk…"))),
+                true
+            )),
+            Some((
+                Some(text("Sign in again")),
+                Some(("hint muted", text("Signed in on desk."))),
+                false
+            )),
+            Some((
+                Some(text("Sign in")),
+                Some((
+                    "hint error",
+                    text("The sign-in failed: the code expired")
+                )),
+                false
+            )),
+        ]
     );
 }

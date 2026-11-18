@@ -17,6 +17,10 @@
 //             cleared; then a second Claude instance added, given a gateway
 //             of its own, and listed in the new-session picker; <dir> is
 //             unused.
+//   sign-in   Claude signed in from the app on the fake's sign-in: the
+//             link it printed, a refused code, then the accepted one, and
+//             the instance signed in without a reload; <dir> is unused, and
+//             <out> also gets a -refused shot.
 //   questions A Claude question in <dir>/question answered by tapping an
 //             option, and a command in <dir>/for-session allowed for the
 //             session, which then runs again without asking.
@@ -562,6 +566,81 @@ if (scenario === 'turn') {
   check(
     await page.locator('.segment', { hasText: 'Claude API' }).locator('input').isChecked(),
     'the new instance can be picked for a session'
+  );
+} else if (scenario === 'sign-in') {
+  // The fake's sign-in (fixtures/fake-login.py) prints Claude's link and
+  // takes one code; this is the one it accepts.
+  const CODE = 'conductor-test-sign-in-code#fake-state';
+  const WRONG = 'conductor-test-wrong-code';
+  await page.getByRole('button', { name: 'Credentials' }).click();
+  const claude = page.getByRole('region', { name: 'Claude Code' });
+  const state = claude.locator('.credential-state');
+  check((await state.innerText()) === "The host's own CLI, signed in on its own", 'Claude starts on its own CLI');
+  const signIn = async () => {
+    await claude.getByRole('button', { name: 'Sign in: Claude Code' }).click();
+    await claude.getByRole('link', { name: 'Open the sign-in page' }).waitFor({ timeout: 20_000 });
+  };
+  await signIn();
+  const link = claude.getByRole('link', { name: 'Open the sign-in page' });
+  check(
+    (await link.getAttribute('href')).startsWith('https://claude.com/cai/oauth/authorize?') &&
+      (await link.getAttribute('target')) === '_blank' &&
+      (await link.getAttribute('rel')) === 'noopener noreferrer',
+    "the link is the one the CLI printed, and opens in a new tab"
+  );
+  check(
+    (await claude.locator('.sign-in [role="status"]').innerText()) ===
+      'Open the sign-in page and sign in. Then paste the code it shows here.',
+    'the page says to paste the code the sign-in page shows'
+  );
+  const field = claude.getByLabel('Code from the sign-in page');
+  check(
+    (await field.getAttribute('type')) === 'password' &&
+      (await claude.getByRole('button', { name: 'Send code' }).isDisabled()),
+    'the code field is a password field, and nothing is sent while it is empty'
+  );
+  await field.fill(WRONG);
+  await claude.getByRole('button', { name: 'Send code' }).click();
+  const failed = claude.locator('.sign-in [role="alert"]');
+  await failed.waitFor({ timeout: 20_000 });
+  check(
+    (await failed.innerText()) === "The sign-in failed: Claude didn't accept that code. Sign in again to get a new one.",
+    'a refused code says so'
+  );
+  await page.screenshot({ path: out.replace(/\.png$/, '-refused.png') });
+  await signIn();
+  check((await field.inputValue()) === '', 'a new sign-in starts with an empty field');
+  await field.fill(CODE);
+  await claude.getByRole('button', { name: 'Send code' }).click();
+  await field.waitFor({ state: 'detached', timeout: 20_000 });
+  log('the field went once the code was sent');
+  await state.filter({ hasText: 'Signed in on the host' }).waitFor({ timeout: 20_000 });
+  check(
+    (await claude.locator('.sign-in [role="status"]').innerText()) === 'Signed in on conductor.',
+    'the instance is signed in, without a reload'
+  );
+  check(
+    (await claude.getByRole('button', { name: 'Sign in again: Claude Code' }).isVisible()),
+    'it can sign in again'
+  );
+  await page.screenshot({ path: out });
+  const kept = await page.evaluate(async () =>
+    JSON.stringify([
+      { ...localStorage },
+      { ...sessionStorage },
+      location.href,
+      document.documentElement.outerHTML,
+      await indexedDB.databases(),
+    ])
+  );
+  check(!kept.includes(CODE) && !kept.includes(WRONG), 'no code is in storage, the URL or the DOM');
+  await page.reload();
+  await waitFor('header.status[data-state="Live"]', 60_000);
+  await page.getByRole('button', { name: 'Credentials' }).click();
+  check(
+    (await page.getByRole('region', { name: 'Claude Code' }).locator('.credential-state').innerText()) ===
+      'Signed in on the host',
+    'a reload finds the instance signed in'
   );
 } else if (scenario === 'screens') {
   await startSession('Claude Code', `${dir}/notes`);

@@ -7,6 +7,7 @@ pub mod log;
 pub mod registry;
 pub mod serve;
 pub mod session;
+pub mod sign_in;
 pub mod start;
 mod storage;
 mod workspace;
@@ -201,6 +202,9 @@ fn log_note(note: &Note) {
         }
         Note::InstanceRemoved { instance } => {
             tracing::info!(target: "host", instance = instance.0, "removed an instance");
+        }
+        Note::SignIn { instance, step } => {
+            tracing::info!(target: "host", instance = instance.0, %step, "sign-in");
         }
     }
 }

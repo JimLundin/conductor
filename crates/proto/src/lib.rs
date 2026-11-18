@@ -5,14 +5,14 @@
 //! Every bi-stream starts with one [`Open`] frame from the client. The first
 //! stream of a connection must be [`Open::Hello`], answered by one
 //! [`HelloReply`]. A [`Open::Command`] stream gets one [`CommandResult`] and
-//! closes. A [`Open::Subscribe`] stream then carries [`Event`]s until either
-//! side closes it.
+//! closes. A [`Open::Subscribe`] stream then carries [`Feed`] frames, the
+//! events and the sign-ins, until either side closes it.
 //!
 //! Frame bodies are postcard, which is not self-describing. A variant is
 //! its index and a field is its position, so a reordered enum or struct
 //! decodes as the wrong value with no error, and a variant added at the end
 //! fails an old peer mid-stream. So any change to a type reachable from
-//! [`Open`], [`HelloReply`], [`CommandResult`] or [`Event`] bumps [`ALPN`],
+//! [`Open`], [`HelloReply`], [`CommandResult`] or [`Feed`] bumps [`ALPN`],
 //! including a variant added at the end. Renaming a variant or a field
 //! doesn't change the bytes and needs no bump.
 
@@ -23,6 +23,7 @@ extern crate alloc;
 mod credential;
 mod frame;
 mod instance;
+mod sign_in;
 mod ticket;
 
 use alloc::format;
@@ -36,12 +37,20 @@ pub use credential::{
 };
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
 pub use instance::{Instance, InstanceId, InstanceStatus, Instances, Roster};
+pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/14";
+pub const ALPN: &[u8] = b"conductor/15";
+
+/// One frame of a subscription: a logged event, or where a sign-in stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Feed {
+    Event(Event),
+    SignIn(SignIn),
+}
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -236,8 +245,8 @@ pub enum Auth {
     /// A credential the host stores, of this kind, reaching this URL if
     /// its form has one ([`ProviderInfo::auth`]).
     Stored { kind: String, url: Option<String> },
-    /// The CLI's own sign-in in the instance's private home
-    /// (`conductord login <instance>`).
+    /// The CLI's own sign-in in the instance's private home, from the app
+    /// (`StartSignIn`) or on the host (`conductord login <instance>`).
     SignedIn,
     /// A CLI the host was started with (`--cli <provider>=<path>`),
     /// which signs in however it does.
@@ -407,6 +416,21 @@ pub enum CommandBody {
     RemoveInstance {
         instance: InstanceId,
     },
+    /// Runs the CLI's own sign-in in the instance's home; every client
+    /// follows it as `Feed::SignIn`. Refused while one runs on it.
+    StartSignIn {
+        instance: InstanceId,
+    },
+    /// The code the sign-in page gave, for a sign-in whose step asks for
+    /// one to be pasted.
+    SubmitSignInCode {
+        instance: InstanceId,
+        code: SignInCode,
+    },
+    /// Stops the instance's sign-in, if one runs.
+    CancelSignIn {
+        instance: InstanceId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -485,6 +509,9 @@ pub enum Rejection {
     InvalidLabel {
         reason: String,
     },
+    SignInRunning,
+    /// No sign-in runs on the instance, or it takes no code now.
+    NoCodeAsked,
 }
 
 impl Rejection {
@@ -529,6 +556,12 @@ impl Rejection {
             }
             Self::UndoInProgress => {
                 String::from("finish recovering the interrupted undo first")
+            }
+            Self::SignInRunning => String::from(
+                "a sign-in is already running on it; cancel it to start again",
+            ),
+            Self::NoCodeAsked => {
+                String::from("its sign-in isn't waiting for a code")
             }
             Self::NotOffered { reason }
             | Self::WrongReply { reason }

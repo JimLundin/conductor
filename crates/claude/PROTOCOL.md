@@ -330,3 +330,26 @@ Verified against 2.1.316 on 2026-11-13.
   interrupt probe verified the no-assistant case.
 - Undoing the first turn starts a fresh conversation. No retained entry
   exists. `rewind_files` is file-only and is not used for conversation undo.
+
+## Sign-in
+
+Observed on 2026-11-18 with the pinned 2.1.316, its stdin, stdout and
+stderr on pipes, in an empty `CLAUDE_CONFIG_DIR` and `HOME`, with the
+host's sign-in variables scrubbed. No sign-in was completed.
+
+- `claude auth status` prints JSON with `"loggedIn": false` and exits 1.
+- `claude auth login --claudeai` prints, at once, `Opening browser to sign
+  in…` and `If the browser didn't open, visit: <url>`. The URL is
+  `https://claude.com/cai/oauth/authorize?code=true&…` with a
+  `redirect_uri` of `https://platform.claude.com/oauth/code/callback`, so
+  the page shows a code to paste instead of calling back to the host. It
+  then prints `Paste code here if prompted > ` without a newline and waits
+  for a line on stdin. `fixtures/claude/sign-in.txt` is that output, its
+  `code_challenge` and `state` replaced.
+- A line that isn't a code it issued prints, on stderr, `Login failed:
+  That code wasn't accepted. It may be incomplete, expired, already used,
+  or from an earlier sign-in attempt. Sign in again to get a new code.`
+  (`fixtures/claude/sign-in-refused.txt`) and exits 1.
+- What it prints on success, `Login successful.`, is from the binary's
+  strings, not observed; the host goes by the exit code and the sign-in
+  check after it.

@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use client::host_view::{HostView, SessionView};
-use client::link::{LinkState, Status, Update, shown_after};
+use client::link::{Status, Update, shown_after};
 use proto::{Catalog, CommandResult, Effort, Instances, SessionId, Ticket};
 
 use crate::credentials::{CredentialsPane, Forms};
@@ -276,8 +276,12 @@ impl Host {
                     .as_ref()
                     .and_then(|status| status.host.clone())
                     .unwrap_or_else(|| String::from("the host"));
+                let sign_ins = self
+                    .status
+                    .as_ref()
+                    .map_or_default(|status| status.sign_ins.clone());
                 Detail::Credentials(Box::new(
-                    self.credentials.screen(&host, known, &catalog),
+                    self.credentials.screen(&host, known, &catalog, &sign_ins),
                 ))
             }
             (Place::Session(_), Some((id, session))) => {
@@ -295,13 +299,7 @@ impl Host {
     }
 
     fn status_line(&self) -> StatusLine {
-        let shown = self.status.clone().unwrap_or_else(|| Status {
-            state: LinkState::Disconnected,
-            host: None,
-            instances: None,
-            catalog: Catalog::default(),
-            error: None,
-        });
+        let shown = self.status.clone().unwrap_or_default();
         StatusLine {
             state: format!("{:?}", shown.state),
             host: shown.host.unwrap_or_else(|| String::from("host")),

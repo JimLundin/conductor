@@ -77,6 +77,12 @@ impl Shell {
                     "document.querySelector('select.effort-pick').value = '{effort}'"
                 ));
             }
+            Effect::Copy(text) => {
+                let copy = document::eval(
+                    "navigator.clipboard.writeText(await dioxus.recv())",
+                );
+                let _ = copy.send(text);
+            }
         }
     }
 }

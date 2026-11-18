@@ -6,7 +6,7 @@ use agents::Reply;
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
     Credential, Effort, HostPath, InstanceId, ModelId, Models, Open, Provider,
-    Rejection, RequestId, SessionId, Subscribe,
+    Rejection, RequestId, SessionId, SignInCode, Subscribe,
 };
 
 use crate::prelude::*;
@@ -155,6 +155,15 @@ pub enum Route {
         by: ClientName,
     },
     Configure(Configure),
+    SignIn(SignInOrder),
+}
+
+/// A command about an instance's sign-in from the app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignInOrder {
+    Start(InstanceId),
+    Submit(InstanceId, SignInCode),
+    Cancel(InstanceId),
 }
 
 /// A command that changes the host's instances, and answers what it runs
@@ -181,7 +190,8 @@ pub enum Configure {
 /// id answers the first result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ledger {
-    /// A read: run it every time.
+    /// A read, or a sign-in command, whose code must reach no store: run
+    /// it every time.
     Unrecorded,
     /// Runs alone, with its events in one transaction with its receipt.
     Session,
@@ -194,7 +204,9 @@ impl Route {
     #[must_use]
     pub const fn ledger(&self) -> Ledger {
         match self {
-            Self::Order(_, Order::Diff(_)) => Ledger::Unrecorded,
+            Self::Order(_, Order::Diff(_)) | Self::SignIn(_) => {
+                Ledger::Unrecorded
+            }
             Self::Configure(_) => Ledger::Credential,
             Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
                 Ledger::Session
@@ -279,6 +291,15 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         }
         CommandBody::RemoveInstance { instance } => {
             Route::Configure(Configure::Remove(instance))
+        }
+        CommandBody::StartSignIn { instance } => {
+            Route::SignIn(SignInOrder::Start(instance))
+        }
+        CommandBody::SubmitSignInCode { instance, code } => {
+            Route::SignIn(SignInOrder::Submit(instance, code))
+        }
+        CommandBody::CancelSignIn { instance } => {
+            Route::SignIn(SignInOrder::Cancel(instance))
         }
     }
 }

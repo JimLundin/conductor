@@ -22,7 +22,7 @@ use client::link::{
 pub use client::link::{Cursor, LinkState, Status, Update, shown_after};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
-    Event, Hello, HelloReply, Instances, Open, Subscribe, Ticket, TicketError,
+    Feed, Hello, HelloReply, Instances, Open, Subscribe, Ticket, TicketError,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -618,7 +618,7 @@ async fn open_subscription(
 /// Reads one frame and hands the halves back for the next. Holding both
 /// keeps the subscription open.
 async fn read((send, mut recv): Halves) -> Done {
-    let frame = wire::read::<Event>(&mut recv).await;
+    let frame = wire::read::<Feed>(&mut recv).await;
     Done::Read(
         frame.map_or_else(|err| broken(&err), Input::from),
         (send, recv),

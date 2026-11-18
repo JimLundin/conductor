@@ -1,17 +1,18 @@
 //! The host's instances and their credentials: what each instance signs in
-//! with, a form for each kind of credential its provider's plugin
-//! describes, a button to clear the stored one, its label to rename it, a
-//! button to remove it, and a form per provider to add another instance of
-//! it. A secret only passes through: its field is cleared once it is sent,
-//! and nothing keeps it (§6.3).
+//! with, its CLI's own sign-in run from the app, a form for each kind of
+//! credential its provider's plugin describes, a button to clear the
+//! stored one, its label to rename it, a button to remove it, and a form
+//! per provider to add another instance of it. A secret only passes
+//! through: its field is cleared once it is sent, and nothing keeps it
+//! (§6.3). A pasted sign-in code is one.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::prelude::*;
 use proto::{
     Auth, Availability, Catalog, CommandBody, CommandResult, Credential,
     CredentialForm, Field, FieldKind, InstanceId, InstanceStatus, Instances,
-    Provider, ProviderInfo,
+    Provider, ProviderInfo, SignInCode, SignInStep,
 };
 
 use crate::new_session::{Hint, alert};
@@ -43,6 +44,14 @@ pub enum CredentialIntent {
     /// The label typed for a new instance of a provider.
     TypeNewLabel(Provider, String),
     Add(Provider),
+    /// Runs the instance's CLI's own sign-in on the host.
+    StartSignIn(InstanceId),
+    /// The code typed or pasted from the sign-in page.
+    TypeSignInCode(InstanceId, String),
+    SubmitSignInCode(InstanceId),
+    CancelSignIn(InstanceId),
+    /// Copies the code the sign-in shows to the clipboard.
+    CopySignInCode(InstanceId, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,11 +79,56 @@ pub struct InstanceCredentials {
     pub state: String,
     /// How to sign its CLI in on the host's terminal.
     pub login: String,
+    pub sign_in: SignInView,
     pub clear: Option<ClearButton>,
     pub rename: RenameForm,
     pub remove: ClearButton,
     pub forms: Vec<KindForm>,
     pub outcome: Option<Hint>,
+}
+
+/// The instance's sign-in from the app.
+///
+/// That is the button that starts one, or where the running one stands,
+/// with the page to open, the code to enter there, the field for the code
+/// the page gives back, and a button that cancels it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInView {
+    pub start: Option<SignInButton>,
+    pub progress: Option<Hint>,
+    /// The sign-in page, which opens in a new tab.
+    pub link: Option<String>,
+    pub code: Option<DeviceCode>,
+    pub paste: Option<PasteForm>,
+    pub cancel: Option<ClearButton>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInButton {
+    pub text: String,
+    /// The button's accessible label.
+    pub label: String,
+    pub disabled: bool,
+}
+
+/// A code the person enters on the sign-in page, and its copy button.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceCode {
+    pub code: String,
+    /// The copy button's text: whether it has copied the code.
+    pub copy: String,
+    pub copy_label: String,
+}
+
+/// The field for the code the sign-in page gives, a password field so the
+/// screen doesn't show it, and its send button.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasteForm {
+    pub instance: InstanceId,
+    /// The form's accessible label.
+    pub label: String,
+    pub value: String,
+    pub submit_disabled: bool,
 }
 
 /// The instance's label, and the button that renames it to the typed one.
@@ -153,6 +207,8 @@ pub enum Done {
     Renamed,
     Removed,
     Added,
+    /// A sign-in command, whose progress the host reports live.
+    SignIn,
 }
 
 /// What each form's fields hold, and what each subject's forms sent last.
@@ -162,6 +218,10 @@ pub struct Forms {
     labels: BTreeMap<InstanceId, String>,
     new_labels: BTreeMap<Provider, String>,
     sent: BTreeMap<Subject, Sent>,
+    /// The code typed for each instance's sign-in, until it is sent.
+    codes: BTreeMap<InstanceId, String>,
+    /// The instances whose shown code was copied.
+    copied: BTreeSet<InstanceId>,
 }
 
 impl Forms {
@@ -217,22 +277,7 @@ impl Forms {
                 (self, Vec::new())
             }
             CredentialIntent::Rename(instance) => {
-                let label = self
-                    .labels
-                    .get(&instance)
-                    .map_or_else(String::new, |typed| {
-                        String::from(typed.trim())
-                    });
-                let body = CommandBody::RenameInstance {
-                    instance: instance.clone(),
-                    label,
-                };
-                let effects = self.send(
-                    Subject::Instance(instance),
-                    Done::Renamed,
-                    body,
-                    visit,
-                );
+                let effects = self.rename(instance, visit);
                 (self, effects)
             }
             CredentialIntent::Remove(instance) => {
@@ -266,7 +311,94 @@ impl Forms {
                     self.send(Subject::Add(provider), Done::Added, body, visit);
                 (self, effects)
             }
+            signing @ (CredentialIntent::StartSignIn(_)
+            | CredentialIntent::TypeSignInCode(..)
+            | CredentialIntent::SubmitSignInCode(_)
+            | CredentialIntent::CancelSignIn(_)
+            | CredentialIntent::CopySignInCode(..)) => {
+                self.signing(signing, visit)
+            }
         }
+    }
+
+    /// Renames the instance to the label typed for it.
+    fn rename(&mut self, instance: InstanceId, visit: u64) -> Vec<Effect> {
+        let label = self
+            .labels
+            .get(&instance)
+            .map_or_else(String::new, |typed| String::from(typed.trim()));
+        let body = CommandBody::RenameInstance {
+            instance: instance.clone(),
+            label,
+        };
+        self.send(Subject::Instance(instance), Done::Renamed, body, visit)
+    }
+
+    /// What a sign-in's controls do.
+    fn signing(
+        mut self,
+        intent: CredentialIntent,
+        visit: u64,
+    ) -> (Self, Vec<Effect>) {
+        match intent {
+            CredentialIntent::StartSignIn(instance) => {
+                self.forget_sign_in(&instance);
+                let body = CommandBody::StartSignIn {
+                    instance: instance.clone(),
+                };
+                let effects = self.sign_in(instance, body, visit);
+                (self, effects)
+            }
+            CredentialIntent::TypeSignInCode(instance, text) => {
+                self.codes.insert(instance, text);
+                (self, Vec::new())
+            }
+            CredentialIntent::SubmitSignInCode(instance) => {
+                let typed = self.codes.remove(&instance).unwrap_or_default();
+                let body = CommandBody::SubmitSignInCode {
+                    instance: instance.clone(),
+                    code: SignInCode(String::from(typed.trim())),
+                };
+                let effects = self.sign_in(instance, body, visit);
+                (self, effects)
+            }
+            CredentialIntent::CancelSignIn(instance) => {
+                self.forget_sign_in(&instance);
+                let body = CommandBody::CancelSignIn {
+                    instance: instance.clone(),
+                };
+                let effects = self.sign_in(instance, body, visit);
+                (self, effects)
+            }
+            CredentialIntent::CopySignInCode(instance, code) => {
+                self.copied.insert(instance);
+                (self, Vec::from([Effect::Copy(code)]))
+            }
+            CredentialIntent::Type { .. }
+            | CredentialIntent::Save { .. }
+            | CredentialIntent::Clear(_)
+            | CredentialIntent::TypeLabel(..)
+            | CredentialIntent::Rename(_)
+            | CredentialIntent::Remove(_)
+            | CredentialIntent::TypeNewLabel(..)
+            | CredentialIntent::Add(_) => (self, Vec::new()),
+        }
+    }
+
+    fn sign_in(
+        &mut self,
+        instance: InstanceId,
+        body: CommandBody,
+        visit: u64,
+    ) -> Vec<Effect> {
+        self.send(Subject::Instance(instance), Done::SignIn, body, visit)
+    }
+
+    /// Drops what the person typed or copied for the instance's last
+    /// sign-in.
+    fn forget_sign_in(&mut self, instance: &InstanceId) {
+        self.codes.remove(instance);
+        self.copied.remove(instance);
     }
 
     /// Sends `body` for `subject`, which shows it is sending until the
@@ -331,6 +463,9 @@ impl Forms {
     ) -> Self {
         let sent = match answer {
             Ok(CommandResult::Instances(_)) => Sent::Done(done),
+            Ok(CommandResult::Accepted) if done == Done::SignIn => {
+                Sent::Done(done)
+            }
             Ok(CommandResult::Rejected(rejection)) => {
                 Sent::Failed(rejection.label())
             }
@@ -356,19 +491,23 @@ impl Forms {
         self
     }
 
-    /// A section for each instance the host has, and a form for adding
-    /// one of each provider its plugins describe.
+    /// A section for each instance the host has, with where its sign-in
+    /// from the app stands, and a form for adding one of each provider its
+    /// plugins describe.
     pub fn screen(
         &self,
         host: &str,
         instances: Option<&Instances>,
         catalog: &Catalog,
+        sign_ins: &BTreeMap<InstanceId, SignInStep>,
     ) -> CredentialsPane {
         let listed = instances.map_or_else(Vec::new, |known| {
             known
                 .0
                 .iter()
-                .map(|(id, status)| self.instance(id, status, catalog, host))
+                .map(|(id, status)| {
+                    self.instance(id, status, catalog, (host, sign_ins.get(id)))
+                })
                 .collect()
         });
         CredentialsPane {
@@ -385,12 +524,14 @@ impl Forms {
         }
     }
 
+    /// The instance's section, on `host` where its sign-in from the app
+    /// stands at `step`.
     fn instance(
         &self,
         instance: &InstanceId,
         status: &InstanceStatus,
         catalog: &Catalog,
-        host: &str,
+        (host, step): (&str, Option<&SignInStep>),
     ) -> InstanceCredentials {
         let sent = self.sent.get(&Subject::Instance(instance.clone()));
         let sending = sent == Some(&Sent::Sending);
@@ -407,6 +548,12 @@ impl Forms {
             login: format!(
                 "To sign it in on {host}: conductord login {}",
                 instance.0
+            ),
+            sign_in: self.sign_in_view(
+                instance,
+                &status.label,
+                (step, sending),
+                host,
             ),
             clear: stored(&status.availability).then(|| ClearButton {
                 label: format!("Clear the {} credential", status.label),
@@ -501,6 +648,120 @@ impl Forms {
     }
 }
 
+impl Forms {
+    /// The instance's sign-in, at `step`, while a command for the
+    /// instance may be `sending`.
+    fn sign_in_view(
+        &self,
+        instance: &InstanceId,
+        name: &str,
+        (step, sending): (Option<&SignInStep>, bool),
+        host: &str,
+    ) -> SignInView {
+        let cancel = Some(ClearButton {
+            label: format!("Cancel the sign-in of {name}"),
+            disabled: sending,
+        });
+        let start = |text: &str| SignInButton {
+            text: String::from(text),
+            label: format!("{text}: {name}"),
+            disabled: sending,
+        };
+        let idle = SignInView {
+            start: Some(start("Sign in")),
+            progress: None,
+            link: None,
+            code: None,
+            paste: None,
+            cancel: None,
+        };
+        match step {
+            None | Some(SignInStep::Cancelled) => idle,
+            Some(SignInStep::Starting) => SignInView {
+                start: None,
+                progress: Some(status(format!(
+                    "Starting the sign-in on {host}…"
+                ))),
+                cancel,
+                ..idle
+            },
+            Some(SignInStep::Open { url, code, paste }) => SignInView {
+                start: None,
+                progress: Some(status(String::from(open_says(
+                    code.is_some(),
+                    *paste,
+                )))),
+                link: Some(url.clone()),
+                code: code
+                    .as_ref()
+                    .map(|shown| self.device_code(instance, shown)),
+                paste: paste.then(|| self.paste_form(instance, name, sending)),
+                cancel,
+            },
+            Some(SignInStep::Finishing) => SignInView {
+                start: None,
+                progress: Some(status(format!(
+                    "Finishing the sign-in on {host}…"
+                ))),
+                cancel,
+                ..idle
+            },
+            Some(SignInStep::SignedIn { .. }) => SignInView {
+                start: Some(start("Sign in again")),
+                progress: Some(status(format!("Signed in on {host}."))),
+                ..idle
+            },
+            Some(SignInStep::Failed { reason }) => SignInView {
+                progress: Some(alert(format!("The sign-in failed: {reason}"))),
+                ..idle
+            },
+        }
+    }
+
+    fn device_code(&self, instance: &InstanceId, code: &str) -> DeviceCode {
+        DeviceCode {
+            code: String::from(code),
+            copy: String::from(if self.copied.contains(instance) {
+                "Copied"
+            } else {
+                "Copy"
+            }),
+            copy_label: format!("Copy the code {code}"),
+        }
+    }
+
+    fn paste_form(
+        &self,
+        instance: &InstanceId,
+        name: &str,
+        sending: bool,
+    ) -> PasteForm {
+        let value = self.codes.get(instance).cloned().unwrap_or_default();
+        PasteForm {
+            instance: instance.clone(),
+            label: format!("Code for {name}"),
+            submit_disabled: sending || value.trim().is_empty(),
+            value,
+        }
+    }
+}
+
+/// What a person does with a sign-in page that shows a `code` to enter,
+/// or gives one to `paste`, or neither.
+const fn open_says(code: bool, paste: bool) -> &'static str {
+    match (code, paste) {
+        (true, _) => {
+            "Open the sign-in page, sign in, and enter this code there. This page follows along."
+        }
+        (false, true) => {
+            "Open the sign-in page and sign in. Then paste the code it shows here."
+        }
+        (false, false) => {
+            "Open the sign-in page and sign in there. This page follows along."
+        }
+    }
+}
+
 /// What a field sends: a secret as typed, anything else trimmed.
 fn sent_value(field: &Field, draft: &BTreeMap<String, String>) -> String {
     let typed = draft.get(&field.id).map_or("", String::as_str);
@@ -568,7 +829,7 @@ fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
             Some(status(format!("Renamed on {host}.")))
         }
         Sent::Done(Done::Added) => Some(status(format!("Added on {host}."))),
-        Sent::Done(Done::Removed) => None,
+        Sent::Done(Done::Removed | Done::SignIn) => None,
         Sent::Failed(error) => Some(alert(error.clone())),
     }
 }

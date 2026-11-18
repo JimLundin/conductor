@@ -6,9 +6,9 @@
 
 use proto::{Provider, ProviderInfo};
 
-use crate::Invocation;
 use crate::pin::Cli;
 use crate::prelude::*;
+use crate::{Invocation, SignIn};
 
 /// The file a CLI's private home gets on its first start only, since the
 /// CLI edits its own config too.
@@ -30,7 +30,7 @@ pub struct Profile {
     pub version: Invocation,
     /// The CLI's own check, which succeeds when its home is signed in.
     pub status: Invocation,
-    /// The CLI's own sign-in on the host's terminal (`conductord login`),
-    /// which stores the credential in its home.
-    pub login: Invocation,
+    /// The CLI's own sign-in, which stores the credential in its home:
+    /// from the app, or on the host's terminal (`conductord login`).
+    pub sign_in: SignIn,
 }

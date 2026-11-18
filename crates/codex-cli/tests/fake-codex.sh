@@ -3,5 +3,7 @@
 # directory, gated on what the server writes.
 # `--version` answers as the real CLI does, so a host finds it available.
 [ "$1" = --version ] && { echo "fake-codex"; exit 0; }
+# `login` signs the private home in (fixtures/fake-login.py).
+[ "$1" = login ] && exec /usr/bin/python3 -I "$(dirname "$0")/../../../fixtures/fake-login.py" codex "$@"
 # The arguments name the variables it records (fixtures/fake-cli.py).
 exec /usr/bin/python3 -I "$(dirname "$0")/../../../fixtures/fake-cli.py" CODEX_HOME CONDUCTOR_CODEX_KEY

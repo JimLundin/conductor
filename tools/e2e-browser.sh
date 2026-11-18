@@ -9,7 +9,8 @@
 # CLI continued and the Thinking disclosure (continue), a checklist shown as the
 # session's tasks and the effort changed between turns (tasks, WebKit), the
 # credentials forms and a second Claude instance added from the app
-# (credentials, WebKit), and the screenshots of the
+# (credentials, WebKit), Claude signed in from the app on the fake's sign-in
+# (sign-in, WebKit), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
 # and docs/p1/screens/phone-light-tasks.png. Every scenario runs even after
@@ -213,6 +214,27 @@ credentials() {
   expect credentials 0 'conductor-test-browser-token' 'the token is in no log line'
 }
 
+sign_in() {
+  start_host sign-in
+  echo
+  echo "## Sign-in from the app, webkit"
+  run webkit sign-in "$scratch/sign-in.png" "$scratch"
+  echo
+  echo "## Sign-in, host log"
+  host_log sign-in
+  echo
+  expect sign-in 2 'body: StartSignIn {' 'both sign-ins reached the host'
+  expect sign-in 2 'code: SignInCode(..)' 'both codes reached the host, logged without their text'
+  expect sign-in 1 'sign-in instance="claude" step=failed: Claude' 'the refused code failed the first sign-in'
+  expect sign-in 1 'sign-in instance="claude" step=signed in' 'the second signed the instance in'
+  expect sign-in 0 'conductor-test-sign-in-code\|conductor-test-wrong-code' 'no code is in a log line'
+  if grep -rlq 'conductor-test-sign-in-code\|conductor-test-wrong-code' "$scratch/sign-in"; then
+    echo "FAILED: host sign-in: a code is in the data dir"
+    return 1
+  fi
+  echo "ok: host sign-in: no code is in the data dir"
+}
+
 screens() {
   # conductor runs, held mid-reply; scratch's CLI hangs up as the session
   # starts; notes is never sent a message.
@@ -261,6 +283,7 @@ out=docs/p1/browser-run.txt
   scenario "continue, chromium" continue_scenario
   scenario "tasks, webkit" tasks
   scenario "credentials, webkit" credentials
+  scenario "sign-in, webkit" sign_in
   scenario "screens, chromium" screens
   echo
   echo "## Summary"

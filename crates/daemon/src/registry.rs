@@ -1,10 +1,10 @@
 //! The registry's actor: the one place a `StartSession` and a `Continue`
-//! are checked, a session is found by its id, and the host's instances
-//! change.
+//! are checked, a session is found by its id, the host's instances
+//! change, and an instance signs in from the app.
 //!
-//! Its decisions are `host::registry`'s; the actor keeps the store, the
-//! sessions' tasks and the instances' refreshes and starts, and performs
-//! what the registry decides.
+//! Its decisions are `host::registry`'s and `host::sign_in`'s; the actor
+//! keeps the store, the sessions' tasks, the instances' refreshes and
+//! starts and the sign-ins' runs, and performs what the cores decide.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -17,21 +17,29 @@ use std::sync::Arc;
 use agents::runtime::Command;
 use host::registry::{Job, Launch, Listing, Refreshed, Started, Starting};
 use host::restore::{Created, Recovery, Step, events_of};
-use host::serve::Configure;
+use host::serve::{Configure, SignInOrder};
+use host::sign_in::{Effect as SignInEffect, Key, SignIns};
 use proto::{
     Catalog, Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
     Effort, Event, EventKind, HistoryAnchor, HostPath, Instance, InstanceId,
-    Instances, ModelId, Models, Rejection, SessionId, UndoAvailability,
+    Instances, ModelId, Models, Rejection, SessionId, SignIn, UndoAvailability,
     Workspace,
 };
 use runtime::{Runtime, Starter};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinSet;
 
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use crate::session::Session;
+use crate::sign_in::{Report, Runs, Signer};
+
+/// A subscriber this far behind the sign-ins is dropped and resubscribes.
+const SIGN_IN_BUFFER: usize = 64;
+
+/// The sign-ins running now, and the steps they take from then on.
+pub type Watch = (Vec<SignIn>, broadcast::Receiver<SignIn>);
 
 pub use host::registry::{Offer, OwnSignIn};
 
@@ -70,15 +78,19 @@ impl fmt::Debug for Builder {
     }
 }
 
-/// What the registry starts with: how it runs the instances the store
-/// held when it opened (`stored`), how it starts the ones added later, and
-/// how each provider presents itself and the credentials it takes.
+/// What the registry starts with.
+///
+/// That is how it runs the instances the store held when it opened
+/// (`stored`), how it starts the ones added later, how each provider
+/// presents itself and the credentials it takes, and how an instance signs
+/// in from the app.
 pub struct Setup {
     pub launchers: Launchers,
     pub store: Store,
     pub stored: Stored,
     pub catalog: Catalog,
     pub builder: Builder,
+    pub signer: Signer,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +126,14 @@ enum RegistryMsg {
         configure: Configure,
         reply: Reply,
     },
+    SignIn {
+        order: SignInOrder,
+        reply: Reply,
+    },
+    Watch {
+        reply: oneshot::Sender<Watch>,
+    },
+    Run(Key, Report),
 }
 
 struct RegistryActor {
@@ -123,6 +143,10 @@ struct RegistryActor {
     builder: Builder,
     refreshes: JoinSet<Refreshed>,
     starts: JoinSet<Started<Starter>>,
+    signer: Signer,
+    sign_ins: SignIns,
+    runs: Runs,
+    live: broadcast::Sender<SignIn>,
 }
 
 impl Registry {
@@ -134,6 +158,7 @@ impl Registry {
             stored,
             catalog,
             builder,
+            signer,
         } = setup;
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
@@ -143,6 +168,10 @@ impl Registry {
             builder,
             refreshes: JoinSet::new(),
             starts: JoinSet::new(),
+            signer,
+            sign_ins: SignIns::default(),
+            runs: Runs::default(),
+            live: broadcast::channel(SIGN_IN_BUFFER).0,
         };
         let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
@@ -234,6 +263,28 @@ impl Registry {
             .await
     }
 
+    /// Starts, answers or cancels an instance's sign-in.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
+    pub async fn sign_in(
+        &self,
+        order: SignInOrder,
+    ) -> Result<CommandResult, Stopped> {
+        self.ask(|reply| RegistryMsg::SignIn { order, reply }).await
+    }
+
+    /// The sign-ins running now and every step after, taken together so
+    /// none falls between.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the registry has stopped.
+    pub async fn watch(&self) -> Result<Watch, Stopped> {
+        self.ask(|reply| RegistryMsg::Watch { reply }).await
+    }
+
     async fn ask<T>(
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> RegistryMsg,
@@ -257,6 +308,7 @@ impl RegistryActor {
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
                 Some(Ok(result)) = self.refreshes.join_next() => RegistryMsg::Refreshed(result),
                 Some(Ok(result)) = self.starts.join_next() => RegistryMsg::Started(result),
+                Some((key, report)) = self.runs.next() => RegistryMsg::Run(key, report),
             };
             self.on(msg).await?;
         }
@@ -299,8 +351,83 @@ impl RegistryActor {
                 let effects = self.configure(configure, reply).await?;
                 self.perform(effects);
             }
+            RegistryMsg::SignIn { order, reply } => {
+                let (result, effects) = self.order(order);
+                self.signs_in(effects).await;
+                let _ = reply.send(result);
+            }
+            RegistryMsg::Watch { reply } => {
+                let _ = reply
+                    .send((self.sign_ins.running(), self.live.subscribe()));
+            }
+            RegistryMsg::Run(key, report) => {
+                let effects = self.reported(&key, report);
+                self.signs_in(effects).await;
+            }
         }
         Ok(())
+    }
+
+    fn order(
+        &mut self,
+        order: SignInOrder,
+    ) -> (CommandResult, Vec<SignInEffect>) {
+        match order {
+            SignInOrder::Start(instance) => {
+                let settings = self.core.settings(&instance);
+                self.sign_ins.start(instance, settings)
+            }
+            SignInOrder::Submit(instance, code) => {
+                self.sign_ins.submit(instance, code)
+            }
+            SignInOrder::Cancel(instance) => self.sign_ins.cancel(instance),
+        }
+    }
+
+    /// Hands the sign-ins' core what a run reported.
+    fn reported(&mut self, key: &Key, report: Report) -> Vec<SignInEffect> {
+        match report {
+            Report::Spawned(spawned) => {
+                let flow = self.runs.started(key, spawned);
+                self.sign_ins.spawned(key, flow)
+            }
+            Report::Printed(line) => self.sign_ins.printed(key, &line),
+            Report::Exited(code, status) => {
+                self.sign_ins.exited(key, code, &status)
+            }
+            Report::Expired => self.sign_ins.expired(key),
+            Report::Checked(code) => self.sign_ins.checked(key, &code),
+            Report::Listed(result) => self.sign_ins.listed(key, result),
+        }
+    }
+
+    async fn signs_in(&mut self, effects: Vec<SignInEffect>) {
+        for effect in effects {
+            self.sign_in(effect).await;
+        }
+    }
+
+    async fn sign_in(&mut self, effect: SignInEffect) {
+        match effect {
+            SignInEffect::Spawn { key, settings } => {
+                self.runs.spawn(key, self.signer.clone(), settings);
+            }
+            SignInEffect::Write(key, code) => {
+                self.runs.write(&key, &code).await;
+            }
+            SignInEffect::Kill(key) => self.runs.kill(&key),
+            SignInEffect::Check(key) => self.runs.check(key),
+            SignInEffect::Refresh(key) => {
+                let (reply, answer) = oneshot::channel();
+                let effects = self.core.signed_in(key.instance.clone(), reply);
+                self.perform(effects);
+                self.runs.listen(key, answer);
+            }
+            SignInEffect::Publish(step) => {
+                crate::log_note(&host::sign_in::note(&step));
+                let _ = self.live.send(step);
+            }
+        }
     }
 
     async fn configure(
@@ -707,6 +834,9 @@ mod tests {
                 catalog: proto::Catalog::default(),
                 builder: Builder::new(|_, _| async {
                     Launcher::Unavailable(String::from("no instance is added"))
+                }),
+                signer: crate::sign_in::Signer::new(|_, _| async {
+                    Err(String::from("no instance signs in"))
                 }),
             },
         );

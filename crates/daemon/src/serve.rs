@@ -10,8 +10,8 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandResult, Event, HelloReply, Open,
-    Rejection, SessionId, Subscribe, Welcome,
+    AuthToken, ClientName, Command, CommandResult, Event, Feed as Frame,
+    HelloReply, Open, Rejection, SessionId, SignIn, Subscribe, Welcome,
 };
 use tokio::sync::broadcast;
 
@@ -42,21 +42,24 @@ enum StreamError {
 
 /// What a subscription does next.
 enum Upcoming {
-    Event(Event),
-    /// The client fell behind or the log stopped: end the stream, and the
-    /// client resubscribes from its cursor.
+    Frame(Frame),
+    /// The client fell behind or the log or the registry stopped: end the
+    /// stream, and the client resubscribes from its cursor.
     Resubscribe,
     /// The connection is gone.
     Gone,
 }
 
-/// A gap-free subscription (architecture §8): the replay, then the live feed.
-/// The log attaches the feed in the same turn as it takes the replay, so the
-/// two neither overlap nor leave a gap.
+/// A gap-free subscription (architecture §8): the replay and the sign-ins
+/// running, then the live feed and the sign-ins' steps. The log attaches
+/// its feed in the same turn as it takes the replay, and the registry its
+/// steps in the turn it lists the sign-ins, so neither overlaps or leaves
+/// a gap.
 struct Feed {
     send: SendStream,
-    replay: std::vec::IntoIter<Event>,
+    first: std::vec::IntoIter<Frame>,
     live: broadcast::Receiver<Event>,
+    sign_ins: broadcast::Receiver<SignIn>,
 }
 
 impl ProtocolHandler for Conductor {
@@ -209,6 +212,7 @@ impl Conductor {
             Route::Configure(configure) => {
                 self.registry.configure(configure).await
             }
+            Route::SignIn(order) => self.registry.sign_in(order).await,
         }
     }
 
@@ -253,10 +257,18 @@ impl Conductor {
                     replayed = subscription.replay.len(),
                     "subscribed"
                 );
+                let (running, sign_ins) = self.registry.watch().await?;
+                let first = subscription
+                    .replay
+                    .into_iter()
+                    .map(Frame::Event)
+                    .chain(running.into_iter().map(Frame::SignIn))
+                    .collect::<Vec<Frame>>();
                 let feed = Feed {
                     send,
-                    replay: subscription.replay.into_iter(),
+                    first: first.into_iter(),
                     live: subscription.live,
+                    sign_ins,
                 };
                 let result = feed.run(conn).await;
                 tracing::info!(?result, "subscription ended");
@@ -272,8 +284,8 @@ impl Feed {
     async fn run(mut self, conn: &Connection) -> Result<(), StreamError> {
         loop {
             match self.next(conn).await {
-                Upcoming::Event(event) => {
-                    wire::write(&mut self.send, &event).await?;
+                Upcoming::Frame(frame) => {
+                    wire::write(&mut self.send, &frame).await?;
                 }
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
                 Upcoming::Gone => break Ok(()),
@@ -282,14 +294,21 @@ impl Feed {
     }
 
     async fn next(&mut self, conn: &Connection) -> Upcoming {
-        if let Some(event) = self.replay.next() {
-            Upcoming::Event(event)
+        if let Some(frame) = self.first.next() {
+            Upcoming::Frame(frame)
         } else {
             tokio::select! {
-                next = self.live.recv() => next.map_or(Upcoming::Resubscribe, Upcoming::Event),
+                next = self.live.recv() => upcoming(next.map(Frame::Event)),
+                next = self.sign_ins.recv() => upcoming(next.map(Frame::SignIn)),
                 // Without this, an idle feed would outlive its connection.
                 _ = conn.closed() => Upcoming::Gone,
             }
         }
     }
+}
+
+/// A live frame, or a resubscribe if the subscriber fell behind or the
+/// sender stopped.
+fn upcoming(next: Result<Frame, broadcast::error::RecvError>) -> Upcoming {
+    next.map_or(Upcoming::Resubscribe, Upcoming::Frame)
 }

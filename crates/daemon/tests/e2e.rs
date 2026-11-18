@@ -26,6 +26,7 @@ use daemon::registry::{
     Builder, Launcher, Launchers, Offer, OwnSignIn, Registry, Setup,
 };
 use daemon::serve::Conductor;
+use daemon::sign_in::Signer;
 use install::Home;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
@@ -2767,6 +2768,12 @@ fn probed_in(data: &Path, name: &str) -> Fallible {
 /// A host on `data` as `conductord host` starts one: each instance its
 /// store holds runs on its plugin, and an added one starts the same way.
 async fn plugin_host(data: &Path) -> Fallible<Fixture> {
+    let log = Log::spawn(String::from("test-host"), Epoch(11));
+    plugin_host_logging(data, log).await
+}
+
+/// [`plugin_host`], writing its events to `log`.
+async fn plugin_host_logging(data: &Path, log: Log) -> Fallible<Fixture> {
     let plugins = fake_plugins(data);
     let (store, stored) = Store::open(data)?;
     let mut launchers = Launchers::new();
@@ -2780,9 +2787,9 @@ async fn plugin_host(data: &Path) -> Fallible<Fixture> {
         store,
         stored,
         catalog: catalog(),
-        builder: daemon::start::builder(plugins, data.to_path_buf()),
+        builder: daemon::start::builder(plugins.clone(), data.to_path_buf()),
+        signer: daemon::start::signer(plugins, data.to_path_buf()),
     };
-    let log = Log::spawn(String::from("test-host"), Epoch(11));
     serve_setup(endpoint().await?, setup, log).await
 }
 
@@ -3863,6 +3870,7 @@ fn setup(
         builder: Builder::new(|_, _| async {
             Launcher::Unavailable(String::from(UNAVAILABLE))
         }),
+        signer: Signer::new(|_, _| async { Err(String::from(UNAVAILABLE)) }),
     }
 }
 
@@ -5661,5 +5669,150 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     late.stop().await?;
     phone.stop().await?;
     second.shutdown().await?;
+    Ok(())
+}
+
+/// The code the sign-in stand-in accepts (fixtures/fake-login.py).
+const SIGN_IN_CODE: &str = "conductor-test-sign-in-code#fake-state";
+/// One it refuses.
+const WRONG_CODE: &str = "conductor-test-wrong-code";
+
+/// The instance's sign-in steps the link shows, through the first that
+/// `done` takes.
+async fn sign_in_until(
+    updates: &mut mpsc::Receiver<Update>,
+    instance: &InstanceId,
+    done: impl Fn(&proto::SignInStep) -> bool,
+) -> Fallible<proto::SignInStep> {
+    loop {
+        if let Update::Status(status) = next(updates).await?
+            && let Some(step) = status.sign_ins.get(instance)
+            && done(step)
+        {
+            break Ok(step.clone());
+        }
+    }
+}
+
+/// Every file under `dir` that holds `text`.
+fn holding(dir: &Path, text: &str) -> Fallible<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            found.extend(holding(&path, text)?);
+        } else if count(&path, text)? > 0 {
+            found.push(path);
+        }
+    }
+    Ok(found)
+}
+
+/// A sign-in from the app on the stand-in: it prints a link and asks for
+/// the code the page gives; a wrong code fails, the right one signs the
+/// instance in, and its availability turns without a restart. Neither code
+/// is in a log line, a stored event or receipt, or any file the host keeps.
+#[tokio::test]
+async fn a_sign_in_from_the_app_signs_the_instance_in_and_stores_no_code()
+-> Fallible {
+    let data = data_dir("sign-in")?;
+    let (log_path, logging) = capture_log("sign-in")?;
+    probed_in(&data, "claude")?;
+    let log =
+        Log::open(String::from("test-host"), &data.join("conductor.redb"))?;
+    let fx = plugin_host_logging(&data, log).await?;
+    let (link, mut updates, _) = live(&fx).await?;
+    let claude = instance(Provider::Claude);
+    let start = || CommandBody::StartSignIn {
+        instance: claude.clone(),
+    };
+    let submit = |code: &str| CommandBody::SubmitSignInCode {
+        instance: claude.clone(),
+        code: proto::SignInCode(String::from(code)),
+    };
+    let open = |step: &proto::SignInStep| {
+        matches!(step, proto::SignInStep::Open { .. })
+    };
+    let ended = |step: &proto::SignInStep| {
+        matches!(
+            step,
+            proto::SignInStep::Failed { .. }
+                | proto::SignInStep::SignedIn { .. }
+        )
+    };
+
+    let started = send(&link, start()).await?;
+    let shown = sign_in_until(&mut updates, &claude, open).await?;
+    let again = send(&link, start()).await?;
+    let wrong = send(&link, submit(WRONG_CODE)).await?;
+    let refused = sign_in_until(&mut updates, &claude, ended).await?;
+    let restarted = send(&link, start()).await?;
+    let _ = sign_in_until(&mut updates, &claude, open).await?;
+    let right = send(&link, submit(SIGN_IN_CODE)).await?;
+    let signed_in = sign_in_until(&mut updates, &claude, ended).await?;
+    let now = Availability::Available {
+        auth: Auth::SignedIn,
+        models: probed(),
+    };
+    assert_eq!(
+        (started, again, wrong, right),
+        (
+            CommandResult::Accepted,
+            CommandResult::Rejected(Rejection::SignInRunning),
+            CommandResult::Accepted,
+            CommandResult::Accepted,
+        )
+    );
+    assert_eq!(
+        (shown, refused, restarted),
+        (
+            proto::SignInStep::Open {
+                url: String::from(
+                    "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=CHALLENGE&code_challenge_method=S256&state=STATE"
+                ),
+                code: None,
+                paste: true,
+            },
+            proto::SignInStep::Failed {
+                reason: String::from(
+                    "Claude didn't accept that code. Sign in again to get a new one."
+                ),
+            },
+            CommandResult::Accepted,
+        )
+    );
+    assert_eq!(
+        (
+            match signed_in {
+                proto::SignInStep::SignedIn { instances } => {
+                    status_of(&CommandResult::Instances(instances), &claude)
+                        .map(|it| it.availability)
+                }
+                _ => None,
+            },
+            link.status()
+                .instances
+                .and_then(|known| known.of(&claude).cloned())
+                .map(|it| it.availability),
+        ),
+        (Some(now.clone()), Some(now))
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+    drop(logging);
+    let logged = captured(&log_path)?;
+    assert_eq!(
+        (
+            logged.contains(SIGN_IN_CODE) || logged.contains(WRONG_CODE),
+            logged.matches("SignInCode(..)").count(),
+            logged
+                .matches("sign-in instance=\"claude\" step=signed in")
+                .count(),
+            holding(&data, SIGN_IN_CODE)?,
+            holding(&data, WRONG_CODE)?,
+        ),
+        (false, 2, 1, Vec::new(), Vec::new()),
+        "{logged}"
+    );
     Ok(())
 }

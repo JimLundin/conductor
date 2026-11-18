@@ -270,3 +270,23 @@ Verified against 0.166.0 on 2026-11-13.
   codeword and forgot the second, with the exact native prefix verified
   both before and after app-server restart/resume. Undoing the first turn
   instead starts a fresh native thread.
+
+## Sign-in
+
+Observed on 2026-11-18 with the pinned 0.166.0, its stdin, stdout and
+stderr on pipes, in an empty `CODEX_HOME` and `HOME`. No sign-in was
+completed: the run was killed while it waited.
+
+- `codex login status` prints `Not logged in` on stderr and exits 1.
+- `codex login --device-auth` prints a welcome, then `1. Open this link in
+  your browser and sign in to your account` with
+  `https://auth.openai.com/codex/device` on the next line, then `2. Enter
+  this one-time code (expires in 15 minutes)` with the code, such as
+  `P017-GVVNW`, on the next. It colours them with ANSI escapes even on a
+  pipe and with `TERM=dumb`. It reads nothing from stdin and polls until
+  the code is entered. `fixtures/codex/sign-in.txt` is that output, its
+  code replaced.
+- Its failure and success texts are from the binary's strings, not
+  observed: `device auth timed out after 15 minutes`, `device code login
+  is not enabled for this Codex server. Use the browser login or verify the
+  server URL.`, `Error logging in: ` and `Successfully logged in`.
