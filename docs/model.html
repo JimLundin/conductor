@@ -7,7 +7,7 @@
 <style>
   :root {
     --ink: #1d2433; --muted: #5d6677; --line: #8a93a6; --paper: #f6f4ef; --card: #fff; --rule: #ece8df;
-    --fleet: #6b5bd6; --home: #1f8a5b; --host: #c27a12; --log: #2f6fd1;
+    --fleet: #6b5bd6; --home: #1f8a5b; --host: #c27a12; --log: #2f6fd1; --binary: #8a5a3c;
     --built: #1f8a5b; --partly: #c27a12; --planned: #8a93a6;
   }
   * { box-sizing: border-box; }
@@ -58,12 +58,13 @@
 <body>
 <header>
   <h1>Conductor: the application model</h1>
-  <p class="lede">Five entities from the domain, and two relations that carry data of their own (dashed). Each entity lists its properties with their types: <code>PK</code> marks the key, <code>FK</code> a reference, and boxed tables are parts that exist only inside their owner. Line ends show cardinality.</p>
+  <p class="lede">Six entities from the domain, and two relations that carry data of their own (dashed). Each entity lists its properties with their types: <code>PK</code> marks the key, <code>FK</code> a reference, and boxed tables are parts that exist only inside their owner. Line ends show cardinality.</p>
   <div class="legend">
     <span><i class="swatch" style="background:var(--fleet)"></i>fleet config (signed)</span>
     <span><i class="swatch" style="background:var(--home)"></i>home repo (git, shared)</span>
     <span><i class="swatch" style="background:var(--host)"></i>a node's store</span>
     <span><i class="swatch" style="background:var(--log)"></i>a node's log</span>
+    <span><i class="swatch" style="background:var(--binary)"></i>the binary</span>
     <span><i class="assoc-key"></i>relation with data</span>
     <span><i class="dot" style="background:var(--built)"></i>built</span>
     <span><i class="dot" style="background:var(--partly)"></i>partly built</span>
@@ -87,11 +88,11 @@
       <tr><td><code>NodeId</code></td><td>a node's public key (32 bytes)</td></tr>
       <tr><td><code>Slug</code></td><td>a short lowercase name, unique where it is a key</td></tr>
       <tr><td><code>Ulid</code></td><td>a time-ordered id, unique across every node</td></tr>
-      <tr><td><code>Provider</code></td><td><code>Claude</code> | <code>Codex</code> (a plugin)</td></tr>
+      <tr><td><code>HarnessId</code></td><td><code>claude</code> | <code>codex</code>: one per harness plugin</td></tr>
       <tr><td><code>IssueStatus</code></td><td><code>Open</code> | <code>Ready</code> | <code>InProgress</code> | <code>Review</code> | <code>Done</code> | <code>Dropped</code></td></tr>
       <tr><td><code>SessionStatus</code></td><td><code>Starting</code> | <code>Idle</code> | <code>Running</code> | <code>Closed(reason)</code></td></tr>
       <tr><td><code>Effort</code></td><td><code>Low</code> | <code>Medium</code> | <code>High</code> | …, as the provider offers</td></tr>
-      <tr><td><code>Credential</code></td><td>a form kind and its field values, as the provider describes them</td></tr>
+      <tr><td><code>Credential</code></td><td>a form kind and its field values, as the harness describes them</td></tr>
       <tr><td><code>Path</code>, <code>Branch</code>, <code>Commit</code></td><td>a path on a node, a git branch name, a git commit id</td></tr>
     </tbody>
   </table>
@@ -99,6 +100,9 @@
   <h2>Why it's shaped this way</h2>
   <ul class="notes">
     <li><b>A session owns its workspace.</b> The workspace is what a session needs to work on its issue: a checkout of the project on the instance's node, on the session's own branch. It is made when the session starts and removed with the session.</li>
+    <li><b>Each turn is a commit</b> on the session's branch, so undoing a turn resets the branch; there is no separate checkpoint.</li>
+    <li><b>A harness is shared</b> by every instance of it; it comes with the binary as plugin data. The harness ref is the harness's own id for the session, which Conductor resumes it by.</li>
+    <li><b>A project is identified by its root commit</b>, which is the same in every copy whatever its remote or path, and is the only identity a project with no remote has. Its default branch is git's, not the model's.</li>
     <li><b>A session has its own branch</b>, cut from its issue's branch, because a branch can be checked out in only one place. What a session does reaches the issue by landing its branch on the issue's branch.</li>
     <li><b>A session stores its issue and its instance</b>; its node and project follow from those, so nothing can disagree.</li>
     <li><b>Sub-agents are part of a session</b>, like a tool call, so they can't point at another issue. <b>There are no sub-issues.</b></li>
@@ -116,45 +120,46 @@
 <footer>Source of truth: <code>docs/home.md</code>. Keep this page in step with it.</footer>
 
 <script>
-const S = { fleet: "--fleet", home: "--home", host: "--host", log: "--log" };
-const where = { fleet: "fleet config", home: "home repo", host: "a node's store", log: "a node's log" };
+const S = { fleet: "--fleet", home: "--home", host: "--host", log: "--log", binary: "--binary" };
+const where = { fleet: "fleet config", home: "home repo", host: "a node's store", log: "a node's log", binary: "the binary (plugin data)" };
 const tint = { built: "var(--built)", "partly built": "var(--partly)", planned: "var(--planned)" };
 
 // Each property: [key, name, type]. key is "PK", "FK" or "".
 // Each part: [title, [properties]].
 const items = [
-  { id: "Instance", col: 1, row: 1, store: "host", status: "built", what: "an agent account on a node",
-    props: [["PK","id","Slug"],["FK","node","NodeId"],["","provider","Provider"],["","label","String"],
-            ["","credential","Option<Credential>"],["","model","Option<ModelId>"],["","cli","Option<Path>"]],
-    parts: [["home", [["","path","Path"],["","signed in","bool"]]]] },
-  { id: "Node", col: 2, row: 1, store: "fleet", status: "partly built", what: "a machine: runs agents, drives others, or both",
-    props: [["PK","id","NodeId"],["","name","String"],["","relay","Url"],["","ticket","Ticket"]],
-    parts: [["home sync", [["","remote","Url"],["","synced","Option<Time>"],["","state","SyncState"]]]] },
-  { id: "Copy", col: 3, row: 1, store: "host", status: "built", what: "a node's copy of a project", assoc: true,
-    props: [["PK","node","NodeId"],["PK","project","Slug"],["","path","Path"]] },
-  { id: "Session", col: 1, row: 2, store: "log", status: "built", what: "one agent conversation on an issue",
-    props: [["PK","id","Ulid"],["FK","issue","Ulid"],["FK","instance","Slug"],["","conversation","Option<String>"],
+  { id: "Harness", col: 1, row: 1, store: "binary", status: "built", what: "an agent harness: Claude Code, Codex",
+    props: [["PK","id","HarnessId"],["","name","String"],["","version","Version"]],
+    parts: [["credential form *", [["","kind","String"],["","label","String"],["","fields","List<Field>"]]]] },
+  { id: "Instance", col: 2, row: 1, store: "host", status: "built", what: "a harness set up on a node, with an account",
+    props: [["PK","id","Slug"],["FK","node","NodeId"],["FK","harness","HarnessId"],["","label","String"],
+            ["","credential","Option<Credential>"],["","model","Option<ModelId>"],["","cli","Option<Path>"]] },
+  { id: "Node", col: 3, row: 1, store: "fleet", status: "partly built", what: "a machine: runs agents, drives others, or both",
+    props: [["PK","id","NodeId"],["","name","String"],["","relay","Url"],["","ticket","Ticket"]] },
+  { id: "Session", col: 2, row: 2, store: "log", status: "built", what: "an agent session on an issue",
+    props: [["PK","id","Ulid"],["FK","issue","Ulid"],["FK","instance","Slug"],["","harness ref","String"],
             ["","status","SessionStatus"],["","model","Option<ModelId>"],["","effort","Option<Effort>"]],
     parts: [["workspace", [["","path","Path"],["","branch","Branch"],["","base","Commit"]]],
-            ["checkpoint *", [["","commit","Commit"],["","before turn","u32"]]],
             ["transcript", [["","events","List<Event>"],["","tasks","List<Task>"],["","requests","List<Request>"],["","sub-agents","List<SubAgent>"]]]] },
-  { id: "Issue", col: 2, row: 2, store: "home", status: "planned", what: "a unit of work in a project",
+  { id: "Copy", col: 3, row: 2, store: "host", status: "built", what: "a node's copy of a project", assoc: true,
+    props: [["PK","node","NodeId"],["PK","project","Slug"],["","path","Path"]] },
+  { id: "Issue", col: 2, row: 3, store: "home", status: "planned", what: "a unit of work in a project",
     props: [["PK","id","Ulid"],["FK","project","Slug"],["","title","String"],["","body","Markdown"],
             ["","status","IssueStatus"],["","priority","Priority"],["","labels","List<String>"],["","branch","Branch"]],
     parts: [["note *", [["","at","Time"],["","author","String"],["","text","Markdown"]]],
             ["checklist item *", [["","text","String"],["","done","bool"]]]] },
-  { id: "Project", col: 3, row: 2, store: "home", status: "built", what: "a repository",
-    props: [["PK","id","Slug"],["","remote","Option<Url>"],["","root","Commit"],["","branch","Branch"],["","profiles","List<Slug>"]] },
+  { id: "Project", col: 3, row: 3, store: "home", status: "built", what: "a repository",
+    props: [["PK","id","Slug"],["","remote","Option<Url>"],["","root","Commit"],["","profiles","List<Slug>"]] },
 ];
 
 const relations = [
-  ["Node", "Instance", "1", "*", "the agent accounts a node runs"],
+  ["Harness", "Instance", "1", "*", "the harness an instance runs"],
+  ["Node", "Instance", "1", "*", "the instances a node runs"],
   ["Node", "Node", "*", "*", "Pairing (node, node): any paired node may drive any other", "loop"],
   ["Node", "Copy", "1", "*", "the projects a node has a copy of"],
   ["Copy", "Project", "*", "1", ""],
   ["Project", "Issue", "1", "*", "the work in a project"],
-  ["Issue", "Session", "1", "*", "its attempts: every conversation on it"],
-  ["Instance", "Session", "1", "*", "the account a conversation runs on"],
+  ["Issue", "Session", "1", "*", "its attempts: every agent session on it"],
+  ["Instance", "Session", "1", "*", "the instance a session runs on"],
 ];
 
 function rows(props) {
