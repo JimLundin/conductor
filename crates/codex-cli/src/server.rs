@@ -7,7 +7,7 @@
 use std::convert::Infallible;
 use std::future::pending;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -356,29 +356,6 @@ async fn ask<T>(
         .await
         .map_err(|_| Error::Exited)?;
     answer.await.map_err(|_| Error::Exited)
-}
-
-/// `codex` with its home.
-#[must_use]
-pub fn cli(codex_path: &Path, home: &Home) -> Command {
-    install::process::command(codex_path, home, codex::cli(home.kind()))
-}
-
-/// `codex login status`, which succeeds when `home` is signed in.
-#[must_use]
-pub fn login_status(codex_path: &Path, home: &Home) -> Command {
-    install::process::command(
-        codex_path,
-        home,
-        codex::login_status(home.kind()),
-    )
-}
-
-/// The `ChatGPT` sign-in by device code, `codex login --device-auth`, into
-/// `home`. It stores the credential there itself.
-#[must_use]
-pub fn login(codex_path: &Path, home: &Home) -> Command {
-    install::process::command(codex_path, home, codex::login(home.kind()))
 }
 
 fn command(opts: &ServerOptions) -> Command {

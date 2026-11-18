@@ -2,7 +2,8 @@
 //! decides: its command line, its environment and whether its version
 //! runs.
 
-use agents::{HomeKind, Invocation, Note, Var};
+use agents::pin::Cli;
+use agents::{Config, HomeKind, Invocation, Note, Profile, Var};
 use proto::{ClaudeCredential, Effort, Provider};
 use serde_json::Value;
 
@@ -175,6 +176,24 @@ pub fn auth_status(home: HomeKind) -> Invocation {
 #[must_use]
 pub fn login(home: HomeKind) -> Invocation {
     Invocation::of(cli(home).env, &["auth", "login", "--claudeai"])
+}
+
+/// Claude Code as the host runs it. Its settings keep transcripts past
+/// Claude Code's default 30-day sweep; Conductor deletes a transcript with
+/// its session (§6.2).
+#[must_use]
+pub fn profile() -> Profile {
+    Profile {
+        provider: Provider::Claude,
+        pin: Cli::Claude,
+        config: Config {
+            file: String::from("settings.json"),
+            contents: String::from("{\n  \"cleanupPeriodDays\": 36500\n}\n"),
+        },
+        version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
+        status: auth_status(HomeKind::Private),
+        login: login(HomeKind::Private),
+    }
 }
 
 /// What a session's `claude` runs with.
@@ -383,12 +402,34 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Launch, Resume, Sandbox, SettingSource, VersionPolicy, admit,
-        reported_refusal, sandbox, session, unprotected,
+        Launch, Resume, Sandbox, SettingSource, VersionPolicy, admit, cli,
+        profile, reported_refusal, sandbox, session, unprotected,
     };
     use crate::{
         ClaudeEvent, MessageId, PermissionMode, SessionId, UnsupportedVersion,
     };
+
+    #[test]
+    fn the_profile_runs_claude_in_its_private_home() {
+        let profile = profile();
+        let private = cli(HomeKind::Private).env;
+        assert_eq!(
+            (
+                profile.provider,
+                profile.config.file.as_str(),
+                [profile.version, profile.status, profile.login]
+            ),
+            (
+                Provider::Claude,
+                "settings.json",
+                [
+                    Invocation::of(private.clone(), &["--version"]),
+                    Invocation::of(private.clone(), &["auth", "status"]),
+                    Invocation::of(private, &["auth", "login", "--claudeai"]),
+                ]
+            )
+        );
+    }
 
     fn id(text: &str) -> SessionId {
         SessionId(String::from(text))

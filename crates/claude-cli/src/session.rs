@@ -6,7 +6,7 @@
 
 use std::convert::Infallible;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -396,12 +396,6 @@ async fn stderr_reason(
         .unwrap_or_else(|| String::from("it printed no reason"))
 }
 
-/// `claude` with what every run of it gets (`claude::cli`).
-#[must_use]
-pub fn cli(claude_path: &Path, home: &Home) -> Command {
-    install::process::command(claude_path, home, claude::cli(home.kind()))
-}
-
 /// Whether Claude's command sandbox can run here (`claude::sandbox`).
 #[must_use]
 pub fn sandbox() -> Sandbox {
@@ -411,23 +405,6 @@ pub fn sandbox() -> Sandbox {
         .iter()
         .all(|tool| dirs.iter().any(|dir| dir.join(tool).is_file()));
     claude::sandbox(std::env::consts::OS, tools)
-}
-
-/// `claude auth status`, which succeeds when `home` is signed in.
-#[must_use]
-pub fn auth_status(claude_path: &Path, home: &Home) -> Command {
-    install::process::command(
-        claude_path,
-        home,
-        claude::auth_status(home.kind()),
-    )
-}
-
-/// The subscription sign-in, `claude auth login --claudeai`, into `home`. It
-/// stores the credential there itself.
-#[must_use]
-pub fn login(claude_path: &Path, home: &Home) -> Command {
-    install::process::command(claude_path, home, claude::login(home.kind()))
 }
 
 fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {

@@ -234,7 +234,7 @@ pub enum Auth {
     Gateway { base_url: String },
     /// The CLI's own sign-in in the host's private home (`conductord login`).
     SignedIn,
-    /// A CLI the host was started with (`--claude-path`, `--codex-path`),
+    /// A CLI the host was started with (`--cli <provider>=<path>`),
     /// which signs in however it does.
     Unmanaged,
 }
@@ -441,6 +441,23 @@ pub enum Provider {
 
 impl Provider {
     pub const ALL: [Self; 2] = [Self::Claude, Self::Codex];
+
+    /// What the host's command line and data dir call it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    /// The provider called `name`.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|provider| provider.name() == name)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1002,6 +1019,20 @@ mod tests {
     fn constant_cursor_saturates_without_wrapping() {
         const LAST: super::HostSeq = super::HostSeq(u64::MAX).next();
         assert_eq!(LAST, super::HostSeq(u64::MAX));
+    }
+
+    #[test]
+    fn each_provider_is_found_by_its_name() {
+        assert_eq!(
+            super::Provider::ALL
+                .map(|provider| super::Provider::named(provider.name())),
+            super::Provider::ALL.map(Some)
+        );
+        assert_eq!(
+            super::Provider::ALL.map(super::Provider::name),
+            ["claude", "codex"]
+        );
+        assert_eq!(super::Provider::named("gemini"), None);
     }
 
     #[test]

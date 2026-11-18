@@ -10,6 +10,7 @@ layer = "shell"
 
 [dependencies]
 agents = { path = "../agents" }
+install = { path = "../install" }
 proto = { path = "../proto" }
 tokio.workspace = true
 tracing.workspace = true

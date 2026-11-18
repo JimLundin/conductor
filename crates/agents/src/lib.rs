@@ -1,7 +1,8 @@
 //! The provider-agnostic agent API a session speaks: the runtime protocol
 //! of commands and events, the steps a provider's events map to, the
 //! replies it answers requests with, how its process starts and how it
-//! ended. Each provider's wire maps into it (`claude`, `codex`).
+//! ended, and the profile of its CLI the host starts it by. Each
+//! provider's wire maps into it (`claude`, `codex`).
 
 #![cfg_attr(not(test), no_std)]
 
@@ -12,6 +13,7 @@ mod note;
 pub mod pin;
 mod plan;
 mod prelude;
+mod profile;
 mod run;
 pub mod runtime;
 mod step;
@@ -19,6 +21,7 @@ mod step;
 pub use exit::Exit;
 pub use note::Note;
 pub use plan::PlanStep;
+pub use profile::{Config, Profile};
 pub use run::{HomeKind, Invocation, Var};
 pub use step::{
     NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,

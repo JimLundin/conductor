@@ -25,7 +25,7 @@ target=$(tools/target-dir)
 site=$(mktemp -d)
 ln -s "$target/dx/app/release/web/public" "$site/conductor"
 (cd crates/app/tests-e2e && [ -d node_modules ] || npm install --silent)
-cargo build -q -p daemon --bin conductord
+cargo build -q -p conductord
 
 python3 -m http.server "$port" --bind 127.0.0.1 --directory "$site" >/dev/null 2>&1 &
 server=$!
@@ -72,7 +72,7 @@ start_host() {
   head -2 "$recordings/claude-killed.jsonl" >"$scratch/$name/probe/stdout.jsonl"
   "$target"/debug/conductord host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" \
-    --claude-path "$claude" --codex-path "${codex:-$scratch/no-codex}" "$@" \
+    --cli claude="$claude" --cli codex="${codex:-$scratch/no-codex}" "$@" \
     >"$scratch/$name.log" 2>&1 &
   hosts+=($!)
   until grep -q '^join:' "$scratch/$name.log"; do

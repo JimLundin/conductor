@@ -47,7 +47,7 @@ case $provider in
 esac
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 target=$(tools/target-dir)
-cargo build -q -p daemon --bin conductord
+cargo build -q -p conductord
 cargo build -q -p client --example headless
 
 scratch=$(mktemp -d /tmp/live-host-scratch.XXXXXX)
@@ -65,8 +65,8 @@ if [ -z "$data_dir" ]; then
   cleanup=$data_dir
 fi
 # A registered Codex provider brings its own model.
-models=(--claude-model haiku --codex-model gpt-6-luna)
-[ "$register" = keep ] || models=(--claude-model haiku)
+models=(--model claude=haiku --model codex=gpt-6-luna)
+[ "$register" = keep ] || models=(--model claude=haiku)
 "$target"/debug/conductord host --data-dir "$data_dir" "${models[@]}" \
   >"$logs/host.out" 2>"$logs/host.log" &
 host_pid=$!

@@ -2239,7 +2239,7 @@ fn count(path: &Path, text: &str) -> Fallible<usize> {
 /// sign-in of its own, and whose Codex is unavailable. Its Claude starts
 /// with the credential the store holds, as `conductord host` does.
 async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
-    let homes = daemon::homes(data)?;
+    let home = Home::private(data, &claude::profile())?;
     std::fs::create_dir_all(data.join("probe"))?;
     std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n"))?;
     let credential = match Store::open(data)?.1 {
@@ -2254,7 +2254,7 @@ async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
             Launcher::Ready {
                 start: claude_cli::starter(ClaudeLaunch {
                     claude_path: fake_claude(),
-                    home: homes.claude,
+                    home,
                     credential,
                     probe: data.join("probe"),
                 }),
@@ -2508,10 +2508,10 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
     let data = data_dir("codex-provider")?;
     let (log, logging) = capture_log("codex-provider")?;
     let server = scratch("codex-provider", "codex-two-threads-listed.jsonl")?;
-    let homes = daemon::homes(&data)?;
+    let home = Home::private(&data, &codex::profile())?;
     let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
-        home: homes.codex,
+        home,
         credential: None,
         cwd: server.clone(),
         stdout_log: None,
@@ -3788,7 +3788,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let launchers = Launchers::from([
         (
             Provider::Claude,
-            refresh_claude(daemon::homes(&data)?.claude, &data),
+            refresh_claude(Home::private(&data, &claude::profile())?, &data),
         ),
         (
             Provider::Codex,
@@ -3916,10 +3916,9 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let source = scratch("refresh-codex-claude", "claude-approve.jsonl")?;
     let server = scratch("refresh-codex", "codex-two-threads-listed.jsonl")?;
     hold_codex_listing(&server)?;
-    let homes = daemon::homes(&data)?;
     let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
-        home: homes.codex,
+        home: Home::private(&data, &codex::profile())?,
         credential: None,
         cwd: server.clone(),
         stdout_log: None,
@@ -3928,7 +3927,13 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
         &data,
         &source,
         Launchers::from([
-            (Provider::Claude, refresh_claude(homes.claude, &data)),
+            (
+                Provider::Claude,
+                refresh_claude(
+                    Home::private(&data, &claude::profile())?,
+                    &data,
+                ),
+            ),
             (
                 Provider::Codex,
                 Launcher::Ready {

@@ -19,8 +19,8 @@ pub mod runtime;
 pub use driver::{After, Command, Effect, Failure, Input, Session, Then};
 pub use launch::{
     Launch, Resume, SANDBOX_TOOLS, Sandbox, SettingSource, VersionPolicy,
-    admit, auth_status, cli, login, reported_refusal, sandbox, session,
-    unprotected,
+    admit, auth_status, cli, login, profile, reported_refusal, sandbox,
+    session, unprotected,
 };
 pub use mapping::{claude_answer, claude_steps};
 pub use protocol::{

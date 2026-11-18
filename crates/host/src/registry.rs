@@ -56,7 +56,7 @@ const REFRESHING: &str = "refreshing provider models";
 
 /// What a provider offers and the model a session gets when it names none:
 /// the one the credential names, as its gateway serves that one, then
-/// `chosen` (`--claude-model`, `--codex-model`), then the CLI's own.
+/// `chosen` (`--model <provider>=<model>`), then the CLI's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
     /// What the CLI lists with the current credential.

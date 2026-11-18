@@ -82,7 +82,7 @@ so one UI and one set of commands work for both agents.
   `ultra`); a model or an effort the host doesn't list is refused as
   `NotOffered`. With none named, the session gets the default: a Codex provider
   credential's model, which is what its gateway serves; else the host's
-  `--claude-model` or `--codex-model`; else the one the CLI marks as its
+  `--model <provider>=<model>`; else the one the CLI marks as its
   default. The list comes from the CLI even with a credential. `SessionCreated` carries the model and effort
   the session runs with. A `Continue` after a credential change whose
   models no longer include the session's (neither listed nor the default)
@@ -545,7 +545,7 @@ This keeps OpenPGP and Sigstore out of the daemon. The trust is in the
 developer's `tools/pin` run, which upstream's signatures back, and in the
 Conductor build that carries the hashes.
 
-`--claude-path` and `--codex-path` stay, for the fake CLIs in tests and for
+`--cli <provider>=<path>` stays, for the fake CLIs in tests and for
 development. Without them the daemon runs only the pinned copies.
 
 #### The pin and the fixtures
@@ -629,7 +629,7 @@ false`. Even `--version` runs with the
 private home set, because `codex --version` writes helper binaries into
 `CODEX_HOME/tmp` (observed).
 
-Until the app can sign in (§6.3), `conductord login claude|codex` runs the
+Until the app can sign in (§6.3), `conductord login <provider>` runs the
 sign-in on the host's terminal against the private home: `claude auth login
 --claudeai`, §6.3's per-host mode, which stores its own credential, and
 `codex login --device-auth`. A private home signed in this way counts as
@@ -716,8 +716,8 @@ types.
   `Welcome`. Like every command they need a client admitted by the ticket's
   token, which the device certificates of §6.1 replace.
 - **Write-only:** `Availability::Available { auth }` reports `Gateway {
-  base_url }`, `SignedIn` or `Unmanaged` (a `--claude-path` or
-  `--codex-path` CLI), and never a token or key. The credentials' `Debug`
+  base_url }`, `SignedIn` or `Unmanaged` (a `--cli <provider>=<path>`
+  CLI), and never a token or key. The credentials' `Debug`
   prints only their kind, so no command log line carries a value. A
   provider with no credential, no signed-in private home and no
   development CLI is `Unavailable { reason: "no credential configured" }`.

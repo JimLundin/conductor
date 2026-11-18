@@ -636,6 +636,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "conductord"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "claude-cli",
+ "codex-cli",
+ "daemon",
+ "host",
+ "net",
+ "proto",
+ "runtime",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -896,7 +913,6 @@ dependencies = [
  "agents",
  "anyhow",
  "chacha20poly1305",
- "clap",
  "claude",
  "claude-cli",
  "client",
@@ -3950,6 +3966,7 @@ name = "runtime"
 version = "0.1.0"
 dependencies = [
  "agents",
+ "install",
  "proto",
  "tokio",
  "tracing",

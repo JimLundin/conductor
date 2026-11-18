@@ -1,7 +1,11 @@
 //! The handle a session holds on its agent, whichever provider runs it: a
 //! channel pair that speaks the `agents::runtime` protocol. Each provider's
 //! shell (`claude-cli`, `codex-cli`) runs a task on the other end, and
-//! hands the host a [`Starter`] for its agents.
+//! hands the host a [`Plugin`] whose [`Starter`] starts its agents.
+
+mod plugin;
+
+pub use plugin::{Launch, Plugin, Settings};
 
 use std::fmt;
 use std::sync::Arc;

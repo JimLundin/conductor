@@ -1,5 +1,6 @@
-//! `conductord`: the host daemon. It serves the event log and the sessions
-//! over iroh (`conductord host`).
+//! The host daemon behind `conductord`. It serves the event log and the
+//! sessions over iroh, and runs each provider through the
+//! [`runtime::Plugin`] it is handed, knowing none by name.
 
 pub mod credentials;
 pub mod log;
@@ -16,7 +17,6 @@ use std::path::Path;
 use anyhow::Context;
 use host::Note;
 use host::secret::Secret;
-use install::Home;
 use iroh::SecretKey;
 use proto::{AuthToken, Epoch};
 
@@ -112,28 +112,6 @@ fn link_new(original: &Path, link: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// The CLIs' private homes under `<data_dir>/home` (§6.2).
-pub struct Homes {
-    pub claude: Home,
-    pub codex: Home,
-}
-
-/// Creates the private homes, each with its CLI's config.
-///
-/// # Errors
-///
-/// Fails if a home or its config can't be created.
-pub fn homes(data_dir: &Path) -> anyhow::Result<Homes> {
-    let claude = data_dir.join("home").join("claude");
-    let codex = data_dir.join("home").join("codex");
-    Ok(Homes {
-        claude: claude_cli::private_home(claude.clone())
-            .with_context(|| format!("creating {}", claude.display()))?,
-        codex: codex_cli::private_home(codex.clone())
-            .with_context(|| format!("creating {}", codex.display()))?,
-    })
-}
-
 /// Writes a new file and syncs it to disk. A stale file at `path` is
 /// removed first, so the new one is always created, and on Unix created
 /// with mode 0600. On Windows it inherits the data dir's ACL.
@@ -220,42 +198,7 @@ fn log_note(note: &Note) {
 
 #[cfg(test)]
 mod tests {
-    use install::Home;
-
-    use super::{homes, load_or_create_key, load_or_create_token};
-
-    #[test]
-    fn homes_get_their_config_once() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = std::env::temp_dir()
-            .join(format!("conductord-homes-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let first = homes(&dir)?;
-        let settings = dir.join("home/claude/settings.json");
-        let config = dir.join("home/codex/config.toml");
-        let written = (
-            std::fs::read_to_string(&settings)?,
-            std::fs::read_to_string(&config)?,
-        );
-        std::fs::write(&settings, "{}")?;
-        let _ = homes(&dir)?;
-        assert_eq!(
-            (first.claude, first.codex),
-            (
-                Home::Private(dir.join("home/claude")),
-                Home::Private(dir.join("home/codex"))
-            )
-        );
-        assert_eq!(
-            written,
-            (
-                String::from("{\n  \"cleanupPeriodDays\": 36500\n}\n"),
-                String::from("check_for_update_on_startup = false\n")
-            )
-        );
-        assert_eq!(std::fs::read_to_string(&settings)?, "{}");
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
+    use super::{load_or_create_key, load_or_create_token};
 
     #[test]
     fn ticket_token_is_created_once_then_reloaded()

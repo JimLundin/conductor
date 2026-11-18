@@ -18,9 +18,9 @@ once, and how the whole thing feels.
 - [ ] Start the host from the checkout, with cheap models:
 
   ```sh
-  cargo run -q -p daemon --bin conductord -- host \
+  cargo run -q -p conductord -- host \
     --web-url https://jimlundin.github.io/conductor/ \
-    --claude-model haiku 2>host.log
+    --model claude=haiku 2>host.log
   ```
 
   It prints the join link and a QR code. Keep `host.log`.
@@ -92,7 +92,7 @@ approval.
 
 - [ ] In **New session**, enter a directory that doesn't exist. The form
       shows the rejection, and no session is created.
-- [ ] Stop the host, and start it again with `--codex-path /nonexistent`.
+- [ ] Stop the host, and start it again with `--cli codex=/nonexistent`.
       After rejoining, **New session** shows Codex as unavailable, with a
       reason, before you try it.
 

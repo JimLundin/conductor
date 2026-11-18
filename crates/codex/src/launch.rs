@@ -3,8 +3,9 @@
 //! Also the version its handshake reports and the paging through a
 //! thread's history.
 
-use agents::{HomeKind, Invocation, Var};
-use proto::CodexCredential;
+use agents::pin::Cli;
+use agents::{Config, HomeKind, Invocation, Profile, Var};
+use proto::{CodexCredential, Provider};
 
 use crate::TurnId;
 use crate::prelude::*;
@@ -39,6 +40,23 @@ pub fn login_status(home: HomeKind) -> Invocation {
 #[must_use]
 pub fn login(home: HomeKind) -> Invocation {
     Invocation::of(cli(home).env, &["login", "--device-auth"])
+}
+
+/// Codex as the host runs it, with its own update check off, since the
+/// host installs the version it runs.
+#[must_use]
+pub fn profile() -> Profile {
+    Profile {
+        provider: Provider::Codex,
+        pin: Cli::Codex,
+        config: Config {
+            file: String::from("config.toml"),
+            contents: String::from("check_for_update_on_startup = false\n"),
+        },
+        version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
+        status: login_status(HomeKind::Private),
+        login: login(HomeKind::Private),
+    }
 }
 
 /// The app-server on stdio, with the key of `credential`'s provider in its
@@ -209,12 +227,35 @@ impl History {
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Var};
-    use proto::CodexCredential;
+    use proto::{CodexCredential, Provider};
 
     use super::{
-        Edit, History, Paging, app_server, config_edits, login, version,
+        Edit, History, Paging, app_server, cli, config_edits, login, profile,
+        version,
     };
     use crate::TurnId;
+
+    #[test]
+    fn the_profile_runs_codex_in_its_private_home() {
+        let profile = profile();
+        let private = cli(HomeKind::Private).env;
+        assert_eq!(
+            (
+                profile.provider,
+                profile.config.file.as_str(),
+                [profile.version, profile.status, profile.login]
+            ),
+            (
+                Provider::Codex,
+                "config.toml",
+                [
+                    Invocation::of(private.clone(), &["--version"]),
+                    Invocation::of(private.clone(), &["login", "status"]),
+                    Invocation::of(private, &["login", "--device-auth"]),
+                ]
+            )
+        );
+    }
 
     fn provider() -> CodexCredential {
         CodexCredential::Provider {

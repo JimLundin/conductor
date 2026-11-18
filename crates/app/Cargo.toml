@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[package.metadata.standards]
+layer = "shell"
+
 [dependencies]
 net = { path = "../net" }
 dioxus = { version = "0.7.10", default-features = false, features = ["launch", "lib", "logger"] }

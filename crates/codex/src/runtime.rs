@@ -292,6 +292,13 @@ pub fn default_model(credential: &CodexCredential) -> ModelId {
     }
 }
 
+/// The model the host's credentials make Codex's default, if they hold
+/// Codex's.
+#[must_use]
+pub fn named(credentials: &Credentials) -> Option<ModelId> {
+    credential(credentials).as_ref().map(default_model)
+}
+
 fn call(call: Call, then: Then) -> Vec<Effect> {
     Vec::from([Effect::Call { call, then }])
 }
@@ -311,7 +318,7 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{Call, Effect, Input, Open, Runtime, Then, resume};
+    use super::{Call, Effect, Input, Open, Runtime, Then, named, resume};
     use crate::hub::Routed;
     use crate::{
         ApprovalId, ApprovalPolicy, CodexEvent, Decision, Sandbox, ThreadEvent,
@@ -570,6 +577,23 @@ mod tests {
                 Vec::from([Effect::Credential(None)]),
                 outcome(Outcome::Configured(Ok(None))),
             ])
+        );
+    }
+
+    #[test]
+    fn a_stored_codex_credential_names_the_default() {
+        let gateway = CodexCredential::Provider {
+            name: text("gateway"),
+            base_url: text("https://gateway.example"),
+            key: text("secret"),
+            model: text("gw-model"),
+        };
+        assert_eq!(
+            [
+                named(&Credentials::none().set(Credential::Codex(gateway))),
+                named(&Credentials::none()),
+            ],
+            [Some(ModelId(text("gw-model"))), None]
         );
     }
 }

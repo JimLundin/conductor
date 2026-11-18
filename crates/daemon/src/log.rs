@@ -505,22 +505,18 @@ mod tests {
 
     fn providers() -> Providers {
         Providers(
-            [
-                (
-                    Provider::Claude,
+            Provider::ALL
+                .into_iter()
+                .zip([
                     Availability::Available {
                         auth: Auth::SignedIn,
                         models: Models::none(),
                     },
-                ),
-                (
-                    Provider::Codex,
                     Availability::Unavailable {
-                        reason: String::from("no codex"),
+                        reason: String::from("not in this test"),
                     },
-                ),
-            ]
-            .into(),
+                ])
+                .collect(),
         )
     }
 

@@ -3,14 +3,13 @@
 //!
 //! `claude` reads and writes the frames we use and decides what the session
 //! and the agent do with them; this crate owns the process and performs
-//! those decisions, and runs each agent behind a `runtime::Runtime`.
+//! those decisions, runs each agent behind a `runtime::Runtime`, and hands
+//! the host Claude's [`plugin`].
 
 mod agent;
-mod home;
+mod plugin;
 mod session;
 
 pub use agent::{ClaudeLaunch, starter};
-pub use home::private_home;
-pub use session::{
-    ClaudeOptions, ClaudeSession, Error, auth_status, cli, login, sandbox,
-};
+pub use plugin::plugin;
+pub use session::{ClaudeOptions, ClaudeSession, Error, sandbox};

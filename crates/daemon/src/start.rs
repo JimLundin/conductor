@@ -1,5 +1,7 @@
-//! `conductord`'s commands: start the host, or sign a CLI in.
+//! `conductord`'s commands, for the plugins it is handed: start the host,
+//! or sign a provider's CLI in.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -7,124 +9,69 @@ use crate::credentials::{Store, Stored};
 use crate::log::Log;
 use crate::registry::{Launcher, Launchers, Registry};
 use crate::serve::Conductor;
+use agents::Profile;
 use anyhow::Context;
-use clap::{Parser, Subcommand, ValueEnum};
-use claude_cli::ClaudeLaunch;
-use codex_cli::{Hub, ServerOptions};
 use host::start::{Defaults, Next, Output};
-use install::Home;
-use install::{Cli, install};
+use install::process::command;
+use install::{Home, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{Provider, Ticket};
+use proto::{Credentials, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
-use runtime::Starter;
+use runtime::{Launch, Plugin};
 
-#[derive(Parser)]
-#[command(name = "conductord", about = "The Conductor host daemon")]
-pub struct Args {
-    #[command(subcommand)]
-    command: Cmd,
-}
+/// The providers a host runs, each by its plugin.
+#[derive(Debug, Clone, Default)]
+pub struct Plugins(BTreeMap<Provider, Plugin>);
 
-#[derive(Subcommand)]
-enum Cmd {
-    /// Serve this host's sessions over iroh and print a join ticket.
-    Host(HostArgs),
-    /// Sign a provider's CLI in on this terminal, into the host's private
-    /// home for it. Until the app can sign in (docs/roadmap.md).
-    Login(LoginArgs),
-}
-
-#[derive(Parser)]
-struct LoginArgs {
-    provider: LoginProvider,
-    /// The host's data dir, as given to `conductord host`.
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum LoginProvider {
-    /// `claude auth login --claudeai`: a Claude subscription.
-    Claude,
-    /// `codex login --device-auth`: `ChatGPT`, by device code.
-    Codex,
-}
-
-#[derive(Parser)]
-struct HostArgs {
-    /// Where the host key lives. Defaults to the OS data dir for "conductor".
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-    /// The name clients show for this host.
-    #[arg(long, default_value = "conductor")]
-    name: String,
-    /// The web app's URL; the printed join link is this plus `#join=<ticket>`.
-    #[arg(long, default_value = "http://localhost:8080/conductor/")]
-    web_url: String,
-    /// A Claude Code CLI to run instead of the pinned one the host installs,
-    /// for tests and development. A host where it doesn't run offers no
-    /// Claude sessions.
-    #[arg(long)]
-    claude_path: Option<PathBuf>,
-    /// The model for Claude sessions, such as `haiku`. Defaults to the CLI's.
-    #[arg(long)]
-    claude_model: Option<String>,
-    /// A Codex CLI to run instead of the pinned one the host installs, for
-    /// tests and development. A host where it doesn't run offers no Codex
-    /// sessions.
-    #[arg(long)]
-    codex_path: Option<PathBuf>,
-    /// The model for Codex sessions, such as `gpt-6-luna`. Defaults to the
-    /// app-server's.
-    #[arg(long)]
-    codex_model: Option<String>,
-}
-
-/// Runs the `conductord` command `args` names.
-///
-/// # Errors
-///
-/// Why the host could not start or stopped, or why the sign-in failed.
-pub async fn run(args: Args) -> anyhow::Result<()> {
-    match args.command {
-        Cmd::Host(host_args) => serve_host(host_args).await,
-        Cmd::Login(login_args) => login(login_args).await,
+impl FromIterator<Plugin> for Plugins {
+    fn from_iter<I: IntoIterator<Item = Plugin>>(plugins: I) -> Self {
+        Self(
+            plugins
+                .into_iter()
+                .map(|plugin| (plugin.profile.provider, plugin))
+                .collect(),
+        )
     }
 }
 
-async fn serve_host(args: HostArgs) -> anyhow::Result<()> {
-    let HostArgs {
-        data_dir: given_dir,
+/// How `conductord host` serves.
+#[derive(Debug, Clone)]
+pub struct Hosting {
+    /// Where the host key lives; `None` takes the OS data dir for
+    /// "conductor".
+    pub data_dir: Option<PathBuf>,
+    /// The name clients show for this host.
+    pub name: String,
+    /// The web app's URL; the printed join link is this plus
+    /// `#join=<ticket>`.
+    pub web_url: String,
+}
+
+/// Serves this host's sessions over iroh with `plugins`' providers, and
+/// prints a join ticket. It runs until Ctrl-C.
+///
+/// # Errors
+///
+/// Why the host could not start or stopped.
+pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
+    let Hosting {
+        data_dir: given,
         name,
         web_url,
-        claude_path,
-        claude_model,
-        codex_path,
-        codex_model,
-    } = args;
-    let data_dir = data_dir_or_default(given_dir)?;
-    let homes = crate::homes(&data_dir)?;
+    } = hosting;
+    let data_dir = data_dir_or_default(given)?;
     let (store, stored) = Store::open(&data_dir)?;
-    let claude = launcher(
-        claude_kit(claude_model, &data_dir, homes.claude, &stored),
-        claude_path,
-        &data_dir,
-    )
-    .await;
-    let codex = launcher(
-        codex_kit(codex_model, &data_dir, homes.codex, &stored),
-        codex_path,
-        &data_dir,
-    )
-    .await;
-    let launchers =
-        Launchers::from([(Provider::Claude, claude), (Provider::Codex, codex)]);
+    let credentials = stored.credentials();
+    let mut launchers = Launchers::new();
+    for (provider, plugin) in plugins.0 {
+        let launcher = launcher(plugin, &data_dir, &credentials).await?;
+        launchers.insert(provider, launcher);
+    }
     let Hosted { router, log } =
-        host(data_dir, web_url, name, launchers, store, stored).await?;
+        listen(data_dir, web_url, name, launchers, store, stored).await?;
     let ended = tokio::select! {
         result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
         () = log.stopped() => Err(anyhow::Error::from(crate::Stopped {})),
@@ -135,130 +82,90 @@ async fn serve_host(args: HostArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// What starting one provider's CLI takes: its install, its probes and its
-/// starter.
-struct Kit {
-    cli: Cli,
-    home: Home,
-    version: fn(&Path, &Home) -> tokio::process::Command,
-    status: fn(&Path, &Home) -> tokio::process::Command,
-    starter: Box<dyn Fn(&Path) -> Starter + Send + Sync>,
-    defaults: Defaults,
-}
-
-fn claude_kit(
-    model: Option<String>,
-    data_dir: &Path,
-    home: Home,
-    stored: &Stored,
-) -> Kit {
-    let credential = claude::runtime::credential(&stored.credentials());
-    let probe = data_dir.join("probe");
-    let launched = home.clone();
-    Kit {
-        cli: Cli::Claude,
-        home,
-        version: claude_cli::cli,
-        status: claude_cli::auth_status,
-        starter: Box::new(move |path| {
-            claude_cli::starter(ClaudeLaunch {
-                claude_path: path.to_path_buf(),
-                home: launched.clone(),
-                credential: credential.clone(),
-                probe: probe.clone(),
-            })
-        }),
-        defaults: Defaults {
-            named: None,
-            chosen: model,
-        },
-    }
-}
-
-fn codex_kit(
-    model: Option<String>,
-    data_dir: &Path,
-    home: Home,
-    stored: &Stored,
-) -> Kit {
-    let credential = codex::runtime::credential(&stored.credentials());
-    let named = credential.as_ref().map(codex::runtime::default_model);
-    let cwd = data_dir.to_path_buf();
-    let launched = home.clone();
-    Kit {
-        cli: Cli::Codex,
-        home,
-        version: codex_cli::cli,
-        status: codex_cli::login_status,
-        // The app-server's own working directory is the data dir;
-        // each thread runs in its session's directory.
-        starter: Box::new(move |path| {
-            codex_cli::starter(Hub::spawn(ServerOptions {
-                codex_path: path.to_path_buf(),
-                home: launched.clone(),
-                credential: credential.clone(),
-                cwd: cwd.clone(),
-                stdout_log: None,
-            }))
-        }),
-        defaults: Defaults {
-            named,
-            chosen: model,
-        },
-    }
-}
-
-/// Runs each step of `host::start` for the CLI `kit` starts, the `given`
-/// one or else the pinned one installed into the data dir.
+/// Runs each step of `host::start` for `plugin`'s CLI: the one its
+/// settings give, or else the pinned one installed into the data dir.
 async fn launcher(
-    kit: Kit,
-    given: Option<PathBuf>,
+    plugin: Plugin,
     data_dir: &Path,
-) -> Launcher {
-    let mut next = host::start::start(kit.cli.name(), given, kit.defaults);
+    credentials: &Credentials,
+) -> anyhow::Result<Launcher> {
+    let Plugin {
+        profile,
+        settings,
+        named,
+        starter,
+    } = plugin;
+    let home = private_home(data_dir, &profile)?;
+    let defaults = Defaults {
+        named: named(credentials),
+        chosen: settings.model,
+    };
+    let mut next =
+        host::start::start(profile.provider.name(), settings.path, defaults);
     loop {
         next = match next {
             Next::Install(installing) => installing.installed(
-                install(kit.cli, data_dir)
+                install(profile.pin, data_dir)
                     .await
                     .map_err(|err| err.to_string()),
             ),
             Next::Probe(path, probing) => {
-                let start = (kit.starter)(&path);
+                let start = starter(Launch {
+                    path: path.clone(),
+                    home: home.clone(),
+                    credentials: credentials.clone(),
+                    data_dir: data_dir.to_path_buf(),
+                });
                 let program = path.display().to_string();
-                let ran = version((kit.version)(&path, &kit.home)).await;
+                let ran =
+                    version(command(&path, &home, profile.version.clone()))
+                        .await;
                 probing.probed(path, start, program, ran)
             }
-            Next::CheckSignIn(path, checking) => checking
-                .checked(&sign_in_check((kit.status)(&path, &kit.home)).await),
+            Next::CheckSignIn(path, checking) => checking.checked(
+                &sign_in_check(command(&path, &home, profile.status.clone()))
+                    .await,
+            ),
             Next::ListModels(listing) => {
                 let listed = listing.start().models().await;
                 listing.listed(listed)
             }
             Next::Done(launcher, notes) => {
                 notes.iter().for_each(crate::log_note);
-                break launcher;
+                break Ok(launcher);
             }
         }
     }
 }
 
-async fn login(args: LoginArgs) -> anyhow::Result<()> {
-    let data_dir = data_dir_or_default(args.data_dir)?;
-    let homes = crate::homes(&data_dir)?;
-    let mut sign_in = match args.provider {
-        LoginProvider::Claude => claude_cli::login(
-            &install(Cli::Claude, &data_dir).await?,
-            &homes.claude,
-        ),
-        LoginProvider::Codex => codex_cli::login(
-            &install(Cli::Codex, &data_dir).await?,
-            &homes.codex,
-        ),
-    };
-    let status = sign_in.status().await?;
+/// Signs `provider`'s pinned CLI in on this terminal, into the host's
+/// private home for it. Until the app can sign in (docs/roadmap.md).
+///
+/// # Errors
+///
+/// `plugins` has none for `provider`, or the install or the sign-in failed.
+pub async fn login(
+    given: Option<PathBuf>,
+    plugins: Plugins,
+    provider: Provider,
+) -> anyhow::Result<()> {
+    let data_dir = data_dir_or_default(given)?;
+    let profile = &plugins
+        .0
+        .get(&provider)
+        .with_context(|| format!("no plugin runs {}", provider.name()))?
+        .profile;
+    let home = private_home(&data_dir, profile)?;
+    let cli = install(profile.pin, &data_dir).await?;
+    let status = command(&cli, &home, profile.login.clone()).status().await?;
     host::start::signed_in(status.code(), &status.to_string())
         .map_err(anyhow::Error::msg)
+}
+
+fn private_home(data_dir: &Path, profile: &Profile) -> anyhow::Result<Home> {
+    Home::private(data_dir, profile).with_context(|| {
+        format!("creating the private home for {}", profile.provider.name())
+    })
 }
 
 fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
@@ -293,7 +200,7 @@ struct Hosted {
     log: Log,
 }
 
-async fn host(
+async fn listen(
     data_dir: PathBuf,
     web_url: String,
     name: String,
@@ -332,10 +239,9 @@ async fn host(
     Ok(Hosted { router, log })
 }
 
-/// How `<cli> --version` exited.
+/// How the CLI's `--version` run exited.
 async fn version(mut cli: tokio::process::Command) -> Result<Output, String> {
-    cli.arg("--version")
-        .output()
+    cli.output()
         .await
         .map(|output| Output {
             code: output.status.code(),

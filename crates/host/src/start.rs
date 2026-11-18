@@ -11,11 +11,33 @@
 
 use alloc::format;
 
-use proto::{ModelId, Models};
+use proto::{ModelId, Models, Provider};
 
 use crate::Note;
 use crate::prelude::*;
 use crate::registry::{Launcher, Offer, OwnSignIn};
+
+/// The provider the host's command line calls `name`.
+///
+/// # Errors
+/// No provider has that name.
+pub fn provider(name: &str) -> Result<Provider, String> {
+    Provider::named(name).ok_or_else(|| {
+        let names = Provider::ALL.map(Provider::name).join(", ");
+        format!("no provider is called {name:?}; the providers are {names}")
+    })
+}
+
+/// A provider's setting on the host's command line, `<provider>=<value>`.
+///
+/// # Errors
+/// The text has no `=`, or no provider has the name before it.
+pub fn setting(text: &str) -> Result<(Provider, String), String> {
+    let (name, value) = text
+        .split_once('=')
+        .ok_or_else(|| format!("{text:?} is not <provider>=<value>"))?;
+    Ok((provider(name)?, String::from(value)))
+}
 
 /// What the shell does next, and the step that takes its outcome.
 #[derive(Debug)]
@@ -244,13 +266,28 @@ fn unavailable<P, S>(reason: String) -> Next<P, S> {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Effort, ModelChoice, ModelId, Models};
+    use proto::{Effort, ModelChoice, ModelId, Models, Provider};
 
-    use super::{Defaults, Next, Output, signed_in, start};
+    use super::{Defaults, Next, Output, setting, signed_in, start};
     use crate::Note;
     use crate::registry::{Launcher, Offer, OwnSignIn};
 
     type Step = Next<&'static str, &'static str>;
+
+    #[test]
+    fn a_setting_names_its_provider_before_the_first_equals_sign() {
+        assert_eq!(
+            ["codex=a=b", "claude=", "claude", "gemini=pro"].map(setting),
+            [
+                Ok((Provider::Codex, String::from("a=b"))),
+                Ok((Provider::Claude, String::new())),
+                Err(String::from(r#""claude" is not <provider>=<value>"#)),
+                Err(String::from(
+                    r#"no provider is called "gemini"; the providers are claude, codex"#
+                )),
+            ]
+        );
+    }
 
     fn defaults() -> Defaults {
         Defaults {

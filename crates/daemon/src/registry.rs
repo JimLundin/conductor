@@ -518,27 +518,30 @@ async fn recover(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use install::Home;
+    use agents::runtime::{
+        Anchoring, Command, Event as AgentEvent, Outcome, Start, Started,
+    };
     use proto::{
         ClientName, CloseReason, CommandResult, Event, EventKind, HostPath,
         HostSeq, Models, Provider, RequestId, Resolution, SessionId,
         ToolCallId, TurnOutcome,
     };
+    use runtime::{Plug, Runtime, Starter};
+    use tokio::sync::mpsc;
 
     use super::{Launcher, Launchers, Offer, OwnSignIn, Registry};
     use crate::credentials::Store;
     use crate::log::Log;
     use crate::session::Order;
 
-    fn launcher(directory: &Path) -> Launcher {
+    /// Any provider: the fake agent stands in for it.
+    const PROVIDER: Provider = Provider::ALL[0];
+
+    /// A provider whose agents send each start they are asked for to
+    /// `started`, and start.
+    fn launcher(started: mpsc::UnboundedSender<Start>) -> Launcher {
         Launcher::Ready {
-            start: claude_cli::starter(claude_cli::ClaudeLaunch {
-                claude_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../claude-cli/tests/fake-claude.sh"),
-                home: Home::User,
-                credential: None,
-                probe: directory.join("probe"),
-            }),
+            start: Starter::new(move || agent(started.clone())),
             own: OwnSignIn::Unmanaged,
             offer: Offer {
                 listed: Models::none(),
@@ -548,17 +551,36 @@ mod tests {
         }
     }
 
+    fn agent(started: mpsc::UnboundedSender<Start>) -> Runtime {
+        let (runtime, plug) = runtime::pair();
+        tokio::spawn(answer(plug, started));
+        runtime
+    }
+
+    async fn answer(mut plug: Plug, started: mpsc::UnboundedSender<Start>) {
+        while let Some(command) = plug.commands.recv().await {
+            let outcome = match command {
+                Command::Start(start) => {
+                    let conversation =
+                        start.conversation.clone().unwrap_or_default();
+                    let _ = started.send(start);
+                    Outcome::Started(Ok(Started {
+                        conversation,
+                        anchoring: Anchoring::Messages,
+                    }))
+                }
+                other => other.failed("the fake agent does only starts"),
+            };
+            let _ = plug.events.send(AgentEvent::Outcome(outcome)).await;
+        }
+    }
+
     fn directory() -> std::io::Result<PathBuf> {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/tmp")
             .join(format!("conductor-test-restart-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory)?;
-        std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/e2e/claude-resumed.jsonl"),
-            directory.join("stdout.jsonl"),
-        )?;
         Ok(directory)
     }
 
@@ -584,12 +606,10 @@ mod tests {
         first.shutdown().await?;
         let second = Log::open(String::from("test"), &path)?;
         let (store, stored) = Store::open(&directory)?;
+        let (started, mut starts) = mpsc::unbounded_channel();
         let registry = Registry::spawn(
             second.clone(),
-            Launchers::from([
-                (Provider::Claude, launcher(&directory)),
-                (Provider::Codex, Launcher::Unavailable(String::from("test"))),
-            ]),
+            Launchers::from([(PROVIDER, launcher(started))]),
             store,
             stored,
         );
@@ -604,12 +624,9 @@ mod tests {
             session.order(Order::Start(models)).await?,
             CommandResult::Accepted
         );
-        let arguments = std::fs::read_to_string(directory.join("argv.txt"))?;
         assert_eq!(
-            arguments
-                .lines()
-                .find(|argument| argument.starts_with("--resume=")),
-            Some("--resume=restored-native-conversation")
+            starts.recv().await.and_then(|start| start.conversation),
+            Some(String::from("restored-native-conversation"))
         );
         let ready = second.subscribe(HostSeq(7)).await?.replay;
         assert_eq!(
@@ -634,7 +651,7 @@ mod tests {
             id,
             Vec::from([
                 EventKind::SessionCreated {
-                    provider: Provider::Claude,
+                    provider: PROVIDER,
                     directory: HostPath(directory.display().to_string()),
                     by: ClientName(String::from("phone")),
                     model: None,
