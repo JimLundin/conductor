@@ -106,35 +106,29 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
         Route::Order(SessionId(1), Order::Diff(CheckpointId(2)))
     );
     assert_eq!(diff.ledger(), Ledger::Unrecorded);
-    let work = || InstanceId::named("work");
+    let work = || InstanceId::named(Provider::Codex, "https://gw.example");
+    let gateway = || proto::Credential {
+        kind: String::from("provider"),
+        values: std::collections::BTreeMap::new(),
+    };
     let configured = [
-        CommandBody::ClearCredential { instance: work() },
-        CommandBody::AddInstance {
+        CommandBody::SetCredential {
             provider: Provider::Codex,
-            label: String::from("Codex (API)"),
-        },
-        CommandBody::RenameInstance {
-            instance: work(),
-            label: String::from("Work"),
+            credential: gateway(),
         },
         CommandBody::RemoveInstance { instance: work() },
     ]
     .map(|body| route(body, phone()));
     assert_eq!(
         configured.each_ref().map(Route::ledger),
-        [Ledger::Credential; 4]
+        [Ledger::Credential; 2]
     );
     assert_eq!(
         configured,
         [
-            Route::Configure(Configure::ClearCredential(work())),
-            Route::Configure(Configure::Add {
+            Route::Configure(Configure::SetCredential {
                 provider: Provider::Codex,
-                label: String::from("Codex (API)"),
-            }),
-            Route::Configure(Configure::Rename {
-                instance: work(),
-                label: String::from("Work"),
+                credential: gateway(),
             }),
             Route::Configure(Configure::Remove(work())),
         ]
@@ -180,7 +174,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
     );
     let started = route(
         CommandBody::StartSession {
-            instance: InstanceId::named("claude"),
+            instance: InstanceId::own(Provider::Claude),
             at: proto::StartAt::Project(project()),
             model: None,
             effort: Some(Effort::High),
@@ -191,7 +185,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
     assert_eq!(
         started,
         Route::Start {
-            instance: InstanceId::named("claude"),
+            instance: InstanceId::own(Provider::Claude),
             at: proto::StartAt::Project(project()),
             choice: (None, Some(Effort::High)),
             by: phone(),
@@ -201,7 +195,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
 
 #[test]
 fn sign_in_commands_keep_no_receipt() {
-    let work = || InstanceId::named("work");
+    let work = || InstanceId::own(Provider::Claude);
     let code = || SignInCode(String::from("pasted#code"));
     let routed = [
         CommandBody::StartSignIn { instance: work() },
@@ -226,7 +220,7 @@ fn sign_in_commands_keep_no_receipt() {
     );
     assert_eq!(
         format!("{:?}", routed[1]),
-        "SignIn(Submit(InstanceId(\"work\"), SignInCode(..)))"
+        "SignIn(Submit(InstanceId { provider: Claude, account: Own }, SignInCode(..)))"
     );
 }
 

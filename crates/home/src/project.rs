@@ -1,7 +1,8 @@
 //! A project's `projects/<project>/project.toml` in the home.
 //!
-//! It gives (docs/home.md §3) its remote, the root commit that identifies
-//! its checkouts, its default branch and its standards profiles.
+//! It gives (docs/home.md §3) its name, its title, its remote, the root
+//! commit that identifies its checkouts and its standards profiles. Its
+//! default branch is Git's, not the home's.
 
 use proto::ProjectId;
 use serde::Deserialize;
@@ -12,11 +13,11 @@ use crate::prelude::*;
 pub struct Project {
     pub id: ProjectId,
     pub name: String,
+    pub title: String,
     /// `None` for a project that is local only.
     pub remote: Option<String>,
     /// The first commit of its first-parent history.
     pub root: String,
-    pub branch: String,
     pub profiles: Vec<String>,
 }
 
@@ -24,14 +25,16 @@ pub struct Project {
 #[derive(Deserialize)]
 struct File {
     name: String,
+    title: String,
     remote: Option<String>,
     root: String,
-    branch: String,
     #[serde(default)]
     profiles: Vec<String>,
 }
 
 /// The projects a home lists, by id, and why any of its folders isn't one.
+/// A name is unique: a folder whose project another already has the name
+/// of is a problem, and so is the other.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Listing {
     pub projects: Vec<Project>,
@@ -42,7 +45,7 @@ pub struct Listing {
 /// why it couldn't be read.
 #[must_use]
 pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
-    let (mut projects, problems) = folders.into_iter().fold(
+    let (mut projects, mut problems) = folders.into_iter().fold(
         (Vec::new(), Vec::new()),
         |(mut projects, mut problems), (folder, text)| {
             match text.and_then(|read| parse(&folder, &read)) {
@@ -55,7 +58,24 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
         },
     );
     projects.sort_by(|one, other| one.id.cmp(&other.id));
-    Listing { projects, problems }
+    let (unique, shared): (Vec<Project>, Vec<Project>) =
+        projects.iter().cloned().partition(|project| {
+            projects
+                .iter()
+                .filter(|other| other.name == project.name)
+                .count()
+                == 1
+        });
+    problems.extend(shared.iter().map(|project| {
+        format!(
+            "projects/{}: another project is also called {:?}",
+            project.id.0, project.name
+        )
+    }));
+    Listing {
+        projects: unique,
+        problems,
+    }
 }
 
 /// The project in `folder`, as its `project.toml`'s `text` describes it.
@@ -70,9 +90,9 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
     Ok(Project {
         id,
         name: file.name,
+        title: file.title,
         remote: file.remote,
         root: commit(file.root)?,
-        branch: file.branch,
         profiles: file.profiles,
     })
 }

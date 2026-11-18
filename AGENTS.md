@@ -62,18 +62,22 @@ Home Screen. The design is in
   (each repeatable, the defaults of that provider's instances), `--home
   <remote>` (the home, `docs/home.md`, stored once given) and `--projects
   <dir>` (repeatable, where it looks for checkouts), and
-  `conductord login <instance>`; build it with `cargo build -p
-  conductord`. Keep provider-specific code out of `daemon`, `host`,
+  `conductord login <provider> [--account <account>]`, which picks the
+  instance of that account, or without one the provider's own; build it
+  with `cargo build -p conductord`. Keep provider-specific code out of `daemon`, `host`,
   `proto`, `client`, `ui` and `app`.
-- **Instances.** A host runs instances, not providers: each a named,
-  configured use of a provider with its own `InstanceId`, credential,
-  private home (`<data>/home/<instance>`), work dir (`<data>/work/<instance>`)
-  and agents, kept in the store as `proto::Roster`. Whatever is per
-  configured account is keyed by `InstanceId` (the registry, `Welcome`,
+- **Instances.** A host runs instances, not providers: each one account
+  of a provider, keyed by `InstanceId { provider, account }`, with its own
+  credential, private home (`<data>/home/<dir>`), work dir
+  (`<data>/work/<dir>`, `<dir>` from `host::registry::dir`) and agents,
+  kept in the store as `proto::Roster`. The provider names the account,
+  not the owner, so an instance is never renamed: a credential's form
+  names it, and a sign-in in the provider's own instance (`Account::Own`,
+  which every host has) names it once the CLI reports it. Whatever is per
+  account is keyed by `InstanceId` (the registry, `Welcome`,
   `StartSession`, `SessionCreated`, the store); only what the plugin itself
   describes (`Catalog`: label, note, credential forms) is keyed by
-  `Provider`. A fresh host gets one instance per provider, with the
-  provider's name as its id.
+  `Provider`.
 - **Sign-ins are live only.** A sign-in from the app reaches clients as
   `Feed::SignIn` frames, never as events; its commands keep no receipt;
   and a pasted code (`proto::SignInCode`, whose `Debug` hides it), a

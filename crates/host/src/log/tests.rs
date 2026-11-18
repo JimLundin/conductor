@@ -292,7 +292,7 @@ fn a_restored_log_continues_from_its_head() {
 fn a_new_database_takes_the_format_and_another_format_does_not_open() {
     let refused = |found: u32| {
         Err(format!(
-            "the log is format {found}, and this host reads format 2; move the database aside to start over"
+            "the log is format {found}, and this host reads format 3; move the database aside to start over"
         ))
     };
     assert_eq!(
@@ -300,35 +300,24 @@ fn a_new_database_takes_the_format_and_another_format_does_not_open() {
             opens(true, None),
             opens(false, Some(FORMAT)),
             opens(false, None),
-            opens(false, Some(3)),
+            opens(false, Some(2)),
         ],
-        [Ok(true), Ok(false), refused(1), refused(3)]
+        [Ok(true), Ok(false), refused(1), refused(2)]
     );
 }
 
 /// A Claude instance with `availability`, and one Codex instance that
 /// can't run.
 fn instances(availability: Availability) -> Instances {
-    let status = |label: &str, provider, availability| InstanceStatus {
-        label: String::from(label),
-        provider,
-        availability,
-    };
+    let status = |availability| InstanceStatus { availability };
     Instances(
         [
+            (InstanceId::own(Provider::Claude), status(availability)),
             (
-                InstanceId::named("claude"),
-                status("Claude Code", Provider::Claude, availability),
-            ),
-            (
-                InstanceId::named("codex"),
-                status(
-                    "Codex",
-                    Provider::Codex,
-                    Availability::Unavailable {
-                        reason: String::from("no codex"),
-                    },
-                ),
+                InstanceId::own(Provider::Codex),
+                status(Availability::Unavailable {
+                    reason: String::from("no codex"),
+                }),
             ),
         ]
         .into(),

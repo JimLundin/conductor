@@ -190,22 +190,19 @@ fn log_note(note: &Note) {
             tracing::warn!(target: "host", %reason, "the CLI listed no models");
         }
         Note::CredentialStored { instance } => {
-            tracing::info!(target: "host", instance = instance.0, "stored a credential change");
+            tracing::info!(target: "host", %instance, "stored a credential change");
         }
         Note::RefreshFailed { instance, reason } => {
-            tracing::warn!(target: "host", %reason, instance = instance.0, "instance refresh failed");
+            tracing::warn!(target: "host", %reason, %instance, "instance refresh failed");
         }
-        Note::InstanceAdded { instance, provider } => {
-            tracing::info!(target: "host", instance = instance.0, ?provider, "added an instance");
-        }
-        Note::InstanceRenamed { instance } => {
-            tracing::info!(target: "host", instance = instance.0, "renamed an instance");
+        Note::InstanceAdded { instance } => {
+            tracing::info!(target: "host", %instance, "added an instance");
         }
         Note::InstanceRemoved { instance } => {
-            tracing::info!(target: "host", instance = instance.0, "removed an instance");
+            tracing::info!(target: "host", %instance, "removed an instance");
         }
         Note::SignIn { instance, step } => {
-            tracing::info!(target: "host", instance = instance.0, %step, "sign-in");
+            tracing::info!(target: "host", %instance, %step, "sign-in");
         }
     }
 }

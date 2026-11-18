@@ -38,8 +38,8 @@ fn project(
     Project {
         id: ProjectId(text(name)),
         name: text(name),
+        title: format!("Project {name}"),
         remote: remote.map(text),
-        branch: text("main"),
         profiles: Vec::from([text("rust")]),
         checkouts,
         cloning,
@@ -210,7 +210,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                 host,
                 ProjectIntent::Clone(ProjectId(text(name))),
             ),
-            label: format!("Clone {name} on {on}"),
+            label: format!("Clone Project {name} on {on}"),
         };
     assert_eq!(
         projects(&two_homes()).map(|screen| (screen.projects, screen.empty)),
@@ -218,8 +218,8 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
             Vec::from([
                 ProjectGroup {
                     key: text("alpha"),
-                    name: text("alpha"),
-                    detail: text("rust · branch main"),
+                    title: text("Project alpha"),
+                    detail: text("alpha · rust"),
                     hosts: Vec::from([
                         row(
                             HOST,
@@ -242,8 +242,8 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                 },
                 ProjectGroup {
                     key: text("beta"),
-                    name: text("beta"),
-                    detail: text("rust · branch main"),
+                    title: text("Project beta"),
+                    detail: text("beta · rust"),
                     hosts: Vec::from([CheckoutRow {
                         clone: Some(clone(HOST, "beta", "desk")),
                         ..row(
@@ -257,8 +257,8 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                 },
                 ProjectGroup {
                     key: text("delta"),
-                    name: text("delta"),
-                    detail: text("rust · branch main"),
+                    title: text("Project delta"),
+                    detail: text("delta · rust"),
                     hosts: Vec::from([CheckoutRow {
                         clone: Some(clone(HOST, "delta", "desk")),
                         ..row(
@@ -272,8 +272,8 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                 },
                 ProjectGroup {
                     key: text("gamma"),
-                    name: text("gamma"),
-                    detail: text("rust · branch main"),
+                    title: text("Project gamma"),
+                    detail: text("gamma · rust"),
                     hosts: Vec::from([row(
                         HOST,
                         "desk",
@@ -284,8 +284,8 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                 },
                 ProjectGroup {
                     key: text("local"),
-                    name: text("local"),
-                    detail: text("rust · branch main"),
+                    title: text("Project local"),
+                    detail: text("local · rust"),
                     hosts: Vec::from([row(
                         HOST,
                         "desk",
@@ -507,11 +507,11 @@ fn a_session_starts_in_a_checked_out_project_picked_in_the_form() {
         Some((
             Some(Vec::from([
                 (text("A directory"), true, false),
-                (text("alpha"), false, false),
-                (text("beta (not checked out)"), false, true),
-                (text("local (not checked out)"), false, true),
-                (text("gamma (not checked out)"), false, true),
-                (text("delta (not checked out)"), false, true),
+                (text("Project alpha"), false, false),
+                (text("Project beta (not checked out)"), false, true),
+                (text("Project local (not checked out)"), false, true),
+                (text("Project gamma (not checked out)"), false, true),
+                (text("Project delta (not checked out)"), false, true),
             ])),
             true,
             true,

@@ -1,17 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use proto::{
-    Auth, Availability, Catalog, ClientName, CloseReason, CommandResult,
-    Credential, CredentialForm, Effort, Event, EventKind, Field, FieldKind,
-    HostPath, HostSeq, Instance, InstanceId, InstanceStatus, Instances,
-    ModelChoice, ModelId, Models, Provider, ProviderInfo, Rejection, Roster,
-    SessionId,
+    Account, Auth, Availability, Catalog, ClientName, CloseReason,
+    CommandResult, Credential, CredentialForm, Effort, Event, EventKind, Field,
+    FieldKind, HostPath, HostSeq, Instance, InstanceId, InstanceStatus,
+    Instances, ModelChoice, ModelId, Models, Provider, ProviderInfo, Rejection,
+    Roster, SessionId,
 };
 
 use super::{
     Change, Effect, Job, Launch, Launcher, Listing, Offer, OwnSignIn,
-    Refreshed, Registry, Started, Starting, Stored, defaults, running, slug,
-    unprepared,
+    Refreshed, Registry, Started, Starting, Stored, defaults, dir, picked,
+    running, unprepared,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -26,8 +26,13 @@ fn text(value: &str) -> String {
     String::from(value)
 }
 
-fn id(name: &str) -> InstanceId {
-    InstanceId::named(name)
+fn own(provider: Provider) -> InstanceId {
+    InstanceId::own(provider)
+}
+
+/// Claude's instance of the gateway account.
+fn api() -> InstanceId {
+    InstanceId::named(Provider::Claude, GATEWAY)
 }
 
 fn model(id: &str) -> ModelId {
@@ -58,44 +63,45 @@ fn ready(start: &'static str, own: OwnSignIn) -> Launcher<&'static str> {
     }
 }
 
-/// A fresh host: its default Claude instance runs and signs in as `own`
-/// says, and its Codex instance can't run.
-fn registry(own: OwnSignIn, stored: &Stored) -> Test {
+/// A fresh host: Claude's own instance runs and signs in as `own` says,
+/// and Codex's can't run.
+fn registry(own_sign_in: OwnSignIn, stored: &Stored) -> Test {
     Registry::new(
         BTreeMap::from([
-            (id("claude"), ready("claude", own)),
-            (id("codex"), Launcher::Unavailable(text("no codex"))),
+            (own(Provider::Claude), ready("claude", own_sign_in)),
+            (
+                own(Provider::Codex),
+                Launcher::Unavailable(text("no codex")),
+            ),
         ]),
         stored,
         catalog(),
     )
 }
 
-/// A host with these instances, each running on a starter named after
-/// it.
-fn host_of(instances: &[(&'static str, &str, Provider)]) -> Test {
-    Registry::new(
+/// A host with these instances besides the own ones, each running on the
+/// starter named with it.
+fn host_of(instances: &[(&'static str, InstanceId)]) -> Test {
+    let mut launchers = BTreeMap::from([
+        (own(Provider::Claude), ready("claude", OwnSignIn::Unmanaged)),
+        (own(Provider::Codex), ready("codex", OwnSignIn::Unmanaged)),
+    ]);
+    launchers.extend(
         instances
             .iter()
-            .map(|(name, _, _)| (id(name), ready(name, OwnSignIn::Unmanaged)))
-            .collect(),
-        &Stored::Opened(roster(instances)),
-        catalog(),
-    )
-}
-
-fn roster(instances: &[(&'static str, &str, Provider)]) -> Roster {
-    Roster(
+            .map(|(start, id)| (id.clone(), ready(start, OwnSignIn::Missing))),
+    );
+    let roster = Roster(
         instances
             .iter()
-            .map(|&(name, label, provider)| {
-                (id(name), Instance::new(text(label), provider))
-            })
+            .map(|(_, id)| (id.clone(), Instance::default()))
             .collect(),
-    )
+    );
+    Registry::new(launchers, &Stored::Opened(roster), catalog())
 }
 
-/// Each provider takes a gateway: a URL and a token.
+/// Each provider takes a gateway: a URL, which is its account, and a
+/// token.
 fn catalog() -> Catalog {
     let field = |id: &str, kind| Field {
         id: text(id),
@@ -114,6 +120,7 @@ fn catalog() -> Catalog {
                 field("base_url", FieldKind::Url),
                 field("token", FieldKind::Secret),
             ]),
+            account: text("base_url"),
         }]),
     };
     Catalog(BTreeMap::from([
@@ -136,7 +143,7 @@ fn gateway(token: &str) -> Credential {
 }
 
 fn opened() -> Stored {
-    Stored::Opened(defaults(&catalog()))
+    Stored::Opened(Roster::default())
 }
 
 fn unavailable(reason: &str) -> Availability {
@@ -152,49 +159,43 @@ fn stored_auth() -> Auth {
     }
 }
 
-/// The default instances, Claude's as `availability` says.
+/// The own instances, Claude's as `availability` says.
 fn claude(availability: Availability) -> Instances {
     Instances(BTreeMap::from([
+        (own(Provider::Claude), InstanceStatus { availability }),
         (
-            id("claude"),
+            own(Provider::Codex),
             InstanceStatus {
-                label: text("Claude Code"),
-                provider: Provider::Claude,
-                availability,
-            },
-        ),
-        (
-            id("codex"),
-            InstanceStatus {
-                label: text("Codex"),
-                provider: Provider::Codex,
                 availability: unavailable("no codex"),
             },
         ),
     ]))
 }
 
-fn availability(registry: &Test, name: &str) -> Option<Availability> {
-    registry.instances().availability(&id(name)).cloned()
+fn availability(registry: &Test, id: &InstanceId) -> Option<Availability> {
+    registry.instances().availability(id).cloned()
 }
 
 fn rejected(rejection: Rejection) -> CommandResult {
     CommandResult::Rejected(rejection)
 }
 
-fn stored_note(name: &str) -> Effect<&'static str, &'static str> {
-    Effect::Log(Note::CredentialStored { instance: id(name) })
+fn stored_note(id: &InstanceId) -> Effect<&'static str, &'static str> {
+    Effect::Log(Note::CredentialStored {
+        instance: id.clone(),
+    })
 }
 
 fn job(
     number: u64,
-    name: &'static str,
+    id: &InstanceId,
+    start: &'static str,
     credential: Option<Credential>,
 ) -> Job<&'static str> {
     Job {
         id: number,
-        instance: id(name),
-        start: name,
+        instance: id.clone(),
+        start,
         credential,
         signs_in: Ok(()),
     }
@@ -202,13 +203,20 @@ fn job(
 
 fn refreshed(
     number: u64,
-    name: &str,
+    id: &InstanceId,
     listing: Result<Listing, String>,
 ) -> Refreshed {
     Refreshed {
         id: number,
-        instance: id(name),
+        instance: id.clone(),
         listing,
+    }
+}
+
+fn listing() -> Listing {
+    Listing {
+        models: listed(),
+        named: None,
     }
 }
 
@@ -226,34 +234,37 @@ fn saving(registry: &mut Test, effects: Seen) -> Seen {
 
 fn set(
     registry: &mut Test,
-    name: &str,
+    provider: Provider,
     credential: Credential,
     reply: &'static str,
 ) -> Seen {
-    let effects = registry.set_credential(id(name), credential, reply);
+    let effects = registry.set_credential(provider, credential, reply);
     saving(registry, effects)
 }
 
-fn add(
-    registry: &mut Test,
-    provider: Provider,
-    label: &str,
-    reply: &'static str,
-) -> Seen {
-    let effects = registry.add_instance(provider, label, reply);
-    saving(registry, effects)
+fn with_credential(roster: Roster, id: &InstanceId, token: &str) -> Roster {
+    let mut changed = roster;
+    changed.0.insert(
+        id.clone(),
+        Instance {
+            credential: Some(gateway(token)),
+            ..Instance::default()
+        },
+    );
+    changed
 }
 
 #[test]
 fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
     let registry = registry(OwnSignIn::Unmanaged, &opened());
+    let claude = own(Provider::Claude);
     assert_eq!(
         [
-            registry.start(&id("claude"), false, None, None),
-            registry.start(&id("gemini"), true, None, None),
-            registry.start(&id("codex"), true, None, None),
-            registry.start(&id("claude"), true, Some(model("tiny")), None),
-            registry.start(&id("claude"), true, None, Some(Effort::Max)),
+            registry.start(&claude, false, None, None),
+            registry.start(&api(), true, None, None),
+            registry.start(&own(Provider::Codex), true, None, None),
+            registry.start(&claude, true, Some(model("tiny")), None),
+            registry.start(&claude, true, None, Some(Effort::Max)),
         ],
         [
             Err(Rejection::NoSuchDirectory),
@@ -270,7 +281,7 @@ fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
         ]
     );
     assert_eq!(
-        registry.start(&id("claude"), true, None, Some(Effort::High)),
+        registry.start(&claude, true, None, Some(Effort::High)),
         Ok(Launch {
             start: "claude",
             choice: Choice {
@@ -284,18 +295,24 @@ fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
 }
 
 #[test]
-fn a_fresh_host_has_one_instance_per_provider_named_after_it() {
-    let defaults = roster(&[
-        ("claude", "Claude Code", Provider::Claude),
-        ("codex", "Codex", Provider::Codex),
-    ]);
+fn every_host_has_each_provider_s_own_instance_beside_its_accounts() {
+    let defaults = defaults(&catalog());
+    let accounts = Roster(BTreeMap::from([(api(), Instance::default())]));
+    assert_eq!(
+        defaults.0.keys().cloned().collect::<Vec<InstanceId>>(),
+        [own(Provider::Claude), own(Provider::Codex)]
+    );
     assert_eq!(
         [
             Stored::Fresh.roster(&catalog()),
             Stored::Unreadable(text("sealed")).roster(&catalog()),
-            Stored::Opened(Roster::default()).roster(&catalog()),
+            Stored::Opened(accounts.clone()).roster(&catalog()),
         ],
-        [defaults.clone(), defaults, Roster::default()]
+        [
+            defaults.clone(),
+            defaults.clone(),
+            Roster(defaults.0.into_iter().chain(accounts.0).collect()),
+        ]
     );
     assert_eq!(
         registry(OwnSignIn::Unmanaged, &Stored::Fresh).instances(),
@@ -303,6 +320,47 @@ fn a_fresh_host_has_one_instance_per_provider_named_after_it() {
             auth: Auth::Unmanaged,
             models: listed(),
         })
+    );
+}
+
+#[test]
+fn an_instance_s_dirs_are_its_provider_and_a_hash_of_its_account() {
+    assert_eq!(
+        [
+            dir(&own(Provider::Claude)),
+            dir(&InstanceId::named(Provider::Claude, "me@example.com")),
+            dir(&InstanceId::named(Provider::Codex, "me@example.com")),
+            dir(&api()),
+        ],
+        [
+            text("claude"),
+            text("claude-8c2a47d3bdb8d309"),
+            text("codex-8c2a47d3bdb8d309"),
+            text("claude-7ba7f84d34407e97"),
+        ]
+    );
+}
+
+#[test]
+fn the_command_line_picks_an_account_or_the_provider_s_own_instance() {
+    let roster =
+        Stored::Opened(Roster(BTreeMap::from([(api(), Instance::default())])))
+            .roster(&catalog());
+    assert_eq!(
+        [
+            picked(&roster, Provider::Claude, None),
+            picked(&roster, Provider::Claude, Some(GATEWAY)),
+            picked(&roster, Provider::Claude, Some("me@example.com")),
+            picked(&roster, Provider::Codex, Some("me@example.com")),
+        ],
+        [
+            Ok(own(Provider::Claude)),
+            Ok(api()),
+            Err(text(
+                "this host has no instance claude me@example.com; its claude accounts are https://gateway.example"
+            )),
+            Err(text("this host has no instance codex me@example.com")),
+        ]
     );
 }
 
@@ -328,14 +386,14 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
         ]
     );
     assert_eq!(
-        missing.start(&id("claude"), true, None, None),
+        missing.start(&own(Provider::Claude), true, None, None),
         Err(Rejection::InstanceUnavailable {
             reason: text("no credential configured")
         })
     );
     assert_eq!(
         Registry::<&str, u8, &str>::new(BTreeMap::new(), &opened(), catalog())
-            .start(&id("claude"), true, None, None),
+            .start(&own(Provider::Claude), true, None, None),
         Err(Rejection::InstanceUnavailable {
             reason: text("this host has no instance claude")
         })
@@ -344,9 +402,9 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
 
 #[test]
 fn a_session_is_found_and_continued_only_while_its_instance_runs() {
-    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    registry.admit(SessionId(1), id("claude"), 7);
-    registry.admit(SessionId(2), id("codex"), 8);
+    let mut registry = host_of(&[("api", api())]);
+    registry.admit(SessionId(1), own(Provider::Claude), 7);
+    registry.admit(SessionId(2), api(), 8);
     assert_eq!(
         (
             registry.find(SessionId(1)),
@@ -354,24 +412,24 @@ fn a_session_is_found_and_continued_only_while_its_instance_runs() {
             registry.relaunch(SessionId(1)),
             registry.relaunch(SessionId(2)),
             registry.relaunch(SessionId(3)),
-            registry.launcher(&id("claude")),
-            registry.launcher(&id("codex")),
+            registry.launcher(&own(Provider::Claude)),
+            registry.launcher(&api()),
         ),
         (
             Some(7),
             None,
             Ok((7, listed())),
             Err(Rejection::InstanceUnavailable {
-                reason: text("no codex")
+                reason: text("no credential configured")
             }),
             Err(Rejection::UnknownSession),
             Ok("claude"),
-            Err(text("no codex")),
+            Ok("api"),
         )
     );
-    let _ = set(&mut registry, "claude", gateway("t"), "set");
+    let _ = set(&mut registry, Provider::Claude, gateway("t"), "set");
     assert_eq!(
-        registry.relaunch(SessionId(1)),
+        registry.relaunch(SessionId(2)),
         Err(Rejection::InstanceUnavailable {
             reason: text("refreshing the instance's models")
         })
@@ -380,21 +438,18 @@ fn a_session_is_found_and_continued_only_while_its_instance_runs() {
 
 #[test]
 fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
-    let mut registry = host_of(&[
-        ("claude", "Claude (subscription)", Provider::Claude),
-        ("claude-api", "Claude (API)", Provider::Claude),
-    ]);
+    let mut registry = host_of(&[("api", api())]);
     assert_eq!(
-        set(&mut registry, "claude-api", gateway("api"), "set"),
+        set(&mut registry, Provider::Claude, gateway("api"), "set"),
         Vec::from([
-            stored_note("claude-api"),
-            Effect::Refresh(job(1, "claude-api", Some(gateway("api")))),
+            stored_note(&api()),
+            Effect::Refresh(job(1, &api(), "api", Some(gateway("api")))),
         ])
     );
     assert_eq!(
         (
-            availability(&registry, "claude"),
-            availability(&registry, "claude-api"),
+            availability(&registry, &own(Provider::Claude)),
+            availability(&registry, &api()),
         ),
         (
             Some(Availability::Available {
@@ -404,60 +459,56 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
             Some(unavailable("refreshing the instance's models")),
         )
     );
-    let _ = registry.refreshed(refreshed(
-        1,
-        "claude-api",
-        Ok(Listing {
-            models: listed(),
-            named: None,
-        }),
-    ));
+    let _ = registry.refreshed(refreshed(1, &api(), Ok(listing())));
     assert_eq!(
-        availability(&registry, "claude-api"),
+        availability(&registry, &api()),
         Some(Availability::Available {
             auth: stored_auth(),
             models: listed(),
         })
     );
-    let started = |registry: &Test, name: &str| {
+    let started = |registry: &Test, id: &InstanceId| {
         registry
-            .start(&id(name), true, None, None)
+            .start(id, true, None, None)
             .map(|launch| (launch.start, launch.provider))
     };
     assert_eq!(
         [
-            started(&registry, "claude"),
-            started(&registry, "claude-api")
+            started(&registry, &own(Provider::Claude)),
+            started(&registry, &api())
         ],
         [
             Ok(("claude", Provider::Claude)),
-            Ok(("claude-api", Provider::Claude))
+            Ok(("api", Provider::Claude))
         ]
     );
 }
 
 #[test]
 fn each_codex_instance_refreshes_its_own_app_server() {
-    let mut registry = host_of(&[
-        ("codex", "Codex", Provider::Codex),
-        ("codex-api", "Codex (API)", Provider::Codex),
-    ]);
+    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
+    let mut registry = host_of(&[("codex-api", codex_api.clone())]);
     assert_eq!(
-        set(&mut registry, "codex-api", gateway("key"), "set"),
+        set(&mut registry, Provider::Codex, gateway("key"), "set"),
         Vec::from([
-            stored_note("codex-api"),
-            Effect::Refresh(job(1, "codex-api", Some(gateway("key")))),
+            stored_note(&codex_api),
+            Effect::Refresh(job(
+                1,
+                &codex_api,
+                "codex-api",
+                Some(gateway("key"))
+            )),
         ])
     );
-    registry.admit(SessionId(1), id("codex"), 1);
+    registry.admit(SessionId(1), own(Provider::Codex), 1);
     assert_eq!(
         (
             registry
-                .start(&id("codex"), true, None, None)
+                .start(&own(Provider::Codex), true, None, None)
                 .map(|launch| launch.start),
             registry.relaunch(SessionId(1)),
             registry
-                .start(&id("codex-api"), true, None, None)
+                .start(&codex_api, true, None, None)
                 .map(|launch| launch.start),
         ),
         (
@@ -471,107 +522,81 @@ fn each_codex_instance_refreshes_its_own_app_server() {
 }
 
 #[test]
-fn an_added_instance_is_named_from_its_label_and_starts_its_cli() {
+fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let added = Instance::new(text("Claude (API)"), Provider::Claude);
+    let added = Instance {
+        credential: Some(gateway("t")),
+        ..Instance::default()
+    };
     assert_eq!(
-        registry.add_instance(Provider::Claude, " Claude (API) ", "add"),
+        registry.set_credential(Provider::Claude, gateway("t"), "add"),
         Vec::from([Effect::Save {
-            roster: Roster(
-                defaults(&catalog())
-                    .0
-                    .into_iter()
-                    .chain([(id("claude-api"), added.clone())])
-                    .collect()
-            ),
-            change: Change::Added(id("claude-api")),
+            roster: with_credential(defaults(&catalog()), &api(), "t"),
+            change: Change::Added(api()),
             reply: "add",
         }])
     );
     assert_eq!(
-        add(&mut registry, Provider::Claude, "Claude (API)", "add"),
+        set(&mut registry, Provider::Claude, gateway("t"), "add"),
         Vec::from([
-            Effect::Log(Note::InstanceAdded {
-                instance: id("claude-api"),
-                provider: Provider::Claude,
-            }),
+            Effect::Log(Note::InstanceAdded { instance: api() }),
             Effect::Start(Starting {
                 id: 1,
-                instance: id("claude-api"),
+                instance: api(),
                 settings: added,
             }),
         ])
     );
     assert_eq!(
         (
-            availability(&registry, "claude-api"),
-            set(&mut registry, "claude-api", gateway("t"), "set"),
+            availability(&registry, &api()),
+            set(&mut registry, Provider::Claude, gateway("t2"), "set"),
         ),
         (
             Some(unavailable("starting the instance's CLI")),
-            Vec::from([stored_note("claude-api")]),
+            Vec::from([stored_note(&api())]),
         )
     );
     assert_eq!(
         registry.started(Started {
             id: 1,
-            instance: id("claude-api"),
-            launcher: ready("claude-api", OwnSignIn::Missing),
+            instance: api(),
+            launcher: ready("api", OwnSignIn::Missing),
         }),
-        Vec::from([Effect::Refresh(job(2, "claude-api", Some(gateway("t"))))])
+        Vec::from([Effect::Refresh(job(
+            2,
+            &api(),
+            "api",
+            Some(gateway("t2"))
+        ))])
     );
     let result =
         |registry: &Test| CommandResult::Instances(registry.instances());
     assert_eq!(
-        registry.refreshed(refreshed(
-            2,
-            "claude-api",
-            Ok(Listing {
-                models: listed(),
-                named: None,
-            })
-        )),
+        registry.refreshed(refreshed(2, &api(), Ok(listing()))),
         Vec::from([
             Effect::Reply("add", result(&registry)),
             Effect::Reply("set", result(&registry)),
         ])
     );
     assert_eq!(
-        [
-            registry.add_instance(Provider::Codex, "Claude (API)", "taken"),
-            registry.add_instance(Provider::Codex, "  ", "empty"),
-        ],
-        [
-            Vec::from([Effect::Reply(
-                "taken",
-                rejected(Rejection::InvalidLabel {
-                    reason: text("another instance is called Claude (API)")
-                })
-            )]),
-            Vec::from([Effect::Reply(
-                "empty",
-                rejected(Rejection::InvalidLabel {
-                    reason: text("an instance needs a label")
-                })
-            )]),
-        ]
-    );
-    let _ = add(&mut registry, Provider::Claude, "claude api", "again");
-    assert_eq!(
-        registry
-            .instances()
-            .of(&id("claude-api-2"))
-            .map(|it| &it.label),
-        Some(&text("claude api"))
+        registry.set_credential(Provider::Codex, gateway_at("", "t"), "none"),
+        Vec::from([Effect::Reply(
+            "none",
+            rejected(Rejection::InvalidCredential {
+                reason: text("base_url is required")
+            })
+        )])
     );
 }
 
 #[test]
 fn a_start_for_an_instance_since_removed_is_dropped() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let _ = add(&mut registry, Provider::Codex, "Codex (API)", "add");
+    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
+    let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
     let removed =
-        registry.remove_instance(id("codex-api"), &BTreeSet::new(), "remove");
+        registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
     let result = CommandResult::Instances(claude(Availability::Available {
         auth: Auth::Unmanaged,
         models: listed(),
@@ -580,7 +605,7 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
         saving(&mut registry, removed),
         Vec::from([
             Effect::Log(Note::InstanceRemoved {
-                instance: id("codex-api")
+                instance: codex_api.clone()
             }),
             Effect::Reply("add", result.clone()),
             Effect::Reply("remove", result),
@@ -589,68 +614,23 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
     assert_eq!(
         registry.started(Started {
             id: 1,
-            instance: id("codex-api"),
+            instance: codex_api.clone(),
             launcher: ready("codex-api", OwnSignIn::Unmanaged),
         }),
         Vec::new()
     );
-    assert_eq!(registry.instances().of(&id("codex-api")), None);
-}
-
-#[test]
-fn a_rename_keeps_the_numberand_takes_a_label_no_other_instance_has() {
-    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let renamed = registry.rename_instance(id("claude"), "Claude (work)", "r");
-    let seen = saving(&mut registry, renamed);
-    let instances = registry.instances();
-    assert_eq!(
-        seen,
-        Vec::from([
-            Effect::Log(Note::InstanceRenamed {
-                instance: id("claude")
-            }),
-            Effect::Reply("r", CommandResult::Instances(instances.clone())),
-        ])
-    );
-    assert_eq!(
-        instances.of(&id("claude")).map(|it| &it.label),
-        Some(&text("Claude (work)"))
-    );
-    assert_eq!(
-        [
-            registry.rename_instance(id("claude"), "Codex", "taken"),
-            registry.rename_instance(id("gemini"), "Gemini", "unknown"),
-        ],
-        [
-            Vec::from([Effect::Reply(
-                "taken",
-                rejected(Rejection::InvalidLabel {
-                    reason: text("another instance is called Codex")
-                })
-            )]),
-            Vec::from([Effect::Reply(
-                "unknown",
-                rejected(Rejection::UnknownInstance)
-            )]),
-        ]
-    );
-    assert_eq!(
-        registry
-            .rename_instance(id("claude"), "Claude (work)", "same")
-            .len(),
-        1
-    );
+    assert_eq!(registry.instances().of(&codex_api), None);
 }
 
 #[test]
 fn an_instance_is_removed_only_while_no_session_runs_on_it() {
-    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    registry.admit(SessionId(1), id("claude"), 1);
-    registry.admit(SessionId(2), id("claude"), 2);
-    registry.admit(SessionId(3), id("codex"), 3);
+    let mut registry = host_of(&[("api", api())]);
+    registry.admit(SessionId(1), api(), 1);
+    registry.admit(SessionId(2), api(), 2);
+    registry.admit(SessionId(3), own(Provider::Codex), 3);
     assert_eq!(
         registry.remove_instance(
-            id("claude"),
+            api(),
             &BTreeSet::from([SessionId(1), SessionId(3)]),
             "busy"
         ),
@@ -660,27 +640,40 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         )])
     );
     let removed = registry.remove_instance(
-        id("claude"),
+        api(),
         &BTreeSet::from([SessionId(3)]),
         "remove",
     );
     let _ = saving(&mut registry, removed);
     assert_eq!(
         (
-            registry.instances().of(&id("claude")),
+            registry.instances().of(&api()),
             registry.relaunch(SessionId(1)),
             registry.find(SessionId(2)),
         ),
         (
             None,
             Err(Rejection::InstanceUnavailable {
-                reason: text("this host has no instance claude")
+                reason: text(
+                    "this host has no instance claude https://gateway.example"
+                )
             }),
             Some(2),
         )
     );
-    let _ = add(&mut registry, Provider::Claude, "Claude", "add");
-    assert!(registry.instances().of(&id("claude-2")).is_some());
+    let kept = registry.remove_instance(
+        own(Provider::Claude),
+        &BTreeSet::new(),
+        "own",
+    );
+    assert_eq!(
+        kept,
+        Vec::from([Effect::Reply(
+            "own",
+            CommandResult::Instances(registry.instances())
+        )])
+    );
+    assert!(registry.instances().of(&own(Provider::Claude)).is_some());
 }
 
 #[test]
@@ -699,7 +692,7 @@ fn running_sessions_are_those_created_or_ready_and_not_closed_since() {
         event(
             1,
             EventKind::SessionCreated {
-                instance: id("claude"),
+                instance: own(Provider::Claude),
                 provider: Provider::Claude,
                 directory: HostPath(text("/work")),
                 by: ClientName(text("phone")),
@@ -720,41 +713,25 @@ fn running_sessions_are_those_created_or_ready_and_not_closed_since() {
 }
 
 #[test]
-fn an_numberis_the_label_s_letters_and_digits_joined_by_dashes() {
-    assert_eq!(
-        ["Claude (API)", "  Work -- laptop ", "Ünïcode", "Codex 2"].map(slug),
-        [
-            text("claude-api"),
-            text("work-laptop"),
-            text("n-code"),
-            text("codex-2")
-        ]
-    );
-    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let _ = add(&mut registry, Provider::Codex, "–", "add");
-    assert!(registry.instances().of(&id("codex-2")).is_some());
-}
-
-#[test]
 fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
-    let mut registry = registry(OwnSignIn::Missing, &opened());
+    let mut registry = host_of(&[("api", api())]);
     assert_eq!(
-        set(&mut registry, "claude", gateway("first"), "first"),
+        set(&mut registry, Provider::Claude, gateway("first"), "first"),
         Vec::from([
-            stored_note("claude"),
-            Effect::Refresh(job(1, "claude", Some(gateway("first"))))
+            stored_note(&api()),
+            Effect::Refresh(job(1, &api(), "api", Some(gateway("first"))))
         ])
     );
     assert_eq!(
         (
-            set(&mut registry, "claude", gateway("middle"), "middle"),
-            set(&mut registry, "claude", gateway("newest"), "newest"),
-            registry.instances(),
+            set(&mut registry, Provider::Claude, gateway("middle"), "middle"),
+            set(&mut registry, Provider::Claude, gateway("newest"), "newest"),
+            availability(&registry, &api()),
         ),
         (
-            Vec::from([stored_note("claude")]),
-            Vec::from([stored_note("claude")]),
-            claude(unavailable("refreshing the instance's models")),
+            Vec::from([stored_note(&api())]),
+            Vec::from([stored_note(&api())]),
+            Some(unavailable("refreshing the instance's models")),
         )
     );
     let offered = Listing {
@@ -762,19 +739,26 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
         named: Some(model("gw")),
     };
     assert_eq!(
-        registry.refreshed(refreshed(1, "claude", Ok(offered.clone()))),
-        Vec::from([Effect::Refresh(job(3, "claude", Some(gateway("newest"))))])
+        registry.refreshed(refreshed(1, &api(), Ok(offered.clone()))),
+        Vec::from([Effect::Refresh(job(
+            3,
+            &api(),
+            "api",
+            Some(gateway("newest"))
+        ))])
     );
-    let current = claude(Availability::Available {
+    let current = Availability::Available {
         auth: stored_auth(),
         models: Models {
             choices: Vec::new(),
             default: Some(model("gw")),
         },
-    });
-    let result = CommandResult::Instances(current.clone());
+    };
+    let answered =
+        registry.refreshed(refreshed(3, &api(), Ok(offered.clone())));
+    let result = CommandResult::Instances(registry.instances());
     assert_eq!(
-        registry.refreshed(refreshed(3, "claude", Ok(offered.clone()))),
+        answered,
         Vec::from([
             Effect::Reply("first", result.clone()),
             Effect::Reply("middle", result.clone()),
@@ -782,74 +766,42 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
         ])
     );
     assert_eq!(
-        registry.refreshed(refreshed(2, "claude", Ok(offered))),
+        registry.refreshed(refreshed(2, &api(), Ok(offered))),
         Vec::new()
     );
-    assert_eq!(registry.instances(), current);
+    assert_eq!(availability(&registry, &api()), Some(current));
 }
 
 #[test]
 fn a_failed_refresh_leaves_the_instance_unavailable_until_the_next() {
-    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let _ = set(&mut registry, "claude", gateway("t"), "set");
-    let failed = CommandResult::Instances(claude(unavailable("probe failed")));
+    let mut registry = host_of(&[("api", api())]);
+    let _ = set(&mut registry, Provider::Claude, gateway("t"), "set");
+    let failed =
+        registry.refreshed(refreshed(1, &api(), Err(text("probe failed"))));
     assert_eq!(
-        registry.refreshed(refreshed(1, "claude", Err(text("probe failed")))),
+        failed,
         Vec::from([
             Effect::Log(Note::RefreshFailed {
-                instance: id("claude"),
+                instance: api(),
                 reason: text("probe failed"),
             }),
-            Effect::Reply("set", failed),
+            Effect::Reply(
+                "set",
+                CommandResult::Instances(registry.instances())
+            ),
         ])
     );
     assert_eq!(
-        registry.refreshed(refreshed(
-            1,
-            "claude",
-            Ok(Listing {
-                models: listed(),
-                named: None,
-            })
-        )),
-        Vec::new()
-    );
-    let cleared = registry.clear_credential(id("claude"), "clear");
-    assert_eq!(
-        cleared,
-        Vec::from([Effect::Save {
-            roster: defaults(&catalog()),
-            change: Change::Credential(id("claude")),
-            reply: "clear",
-        }])
-    );
-    assert_eq!(
-        saving(&mut registry, cleared),
-        Vec::from([
-            stored_note("claude"),
-            Effect::Refresh(job(2, "claude", None))
-        ])
+        (
+            availability(&registry, &api()),
+            registry.refreshed(refreshed(1, &api(), Ok(listing()))),
+        ),
+        (Some(unavailable("probe failed")), Vec::new())
     );
 }
 
 #[test]
-fn a_refresh_that_leaves_no_sign_in_fails_after_the_credential_takes() {
-    let mut registry = registry(OwnSignIn::Missing, &opened());
-    let cleared = registry.clear_credential(id("claude"), "clear");
-    assert_eq!(
-        saving(&mut registry, cleared),
-        Vec::from([
-            stored_note("claude"),
-            Effect::Refresh(Job {
-                signs_in: Err(text("no credential configured")),
-                ..job(1, "claude", None)
-            }),
-        ])
-    );
-}
-
-#[test]
-fn credentials_are_checked_and_an_unreadable_store_is_only_cleared() {
+fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
     let mut registry =
         registry(OwnSignIn::Unmanaged, &Stored::Unreadable(text("sealed")));
     let bad = gateway_at("ftp://x", "t");
@@ -861,18 +813,17 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_cleared() {
             }),
         )])
     };
+    let codex = own(Provider::Codex);
     assert_eq!(
         (
-            registry.set_credential(id("claude"), bad, "bad"),
-            registry.set_credential(id("gemini"), gateway("t"), "unknown"),
-            registry.set_credential(id("claude"), gateway("t"), "set"),
-            registry.add_instance(Provider::Claude, "API", "add"),
-            registry.remove_instance(id("codex"), &BTreeSet::new(), "remove"),
-            registry.clear_credential(id("claude"), "clear"),
-            registry.moved_aside(id("claude"), "clear", Err(text("busy"))),
+            registry.set_credential(Provider::Claude, bad, "bad"),
+            registry.set_credential(Provider::Claude, gateway("t"), "set"),
+            registry.remove_instance(api(), &BTreeSet::new(), "unknown"),
+            registry.remove_instance(codex.clone(), &BTreeSet::new(), "remove"),
+            registry.moved_aside(codex.clone(), "remove", Err(text("busy"))),
             registry.saved(
                 Roster::default(),
-                Change::Credential(id("claude")),
+                Change::Credential(api()),
                 "save",
                 Err(text("disk full"))
             ),
@@ -884,38 +835,32 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_cleared() {
                     reason: text("base_url must be http or https")
                 })
             )]),
+            not_saved("set", "sealed"),
             Vec::from([Effect::Reply(
                 "unknown",
                 rejected(Rejection::UnknownInstance)
             )]),
-            not_saved("set", "sealed"),
-            not_saved("add", "sealed"),
-            not_saved("remove", "sealed"),
             Vec::from([Effect::MoveAside {
-                instance: id("claude"),
-                reply: "clear",
+                instance: codex.clone(),
+                reply: "remove",
             }]),
-            not_saved("clear", "busy"),
+            not_saved("remove", "busy"),
             not_saved("save", "disk full"),
         )
     );
+    let moved = registry.moved_aside(codex, "remove", Ok(()));
     assert_eq!(
-        registry.moved_aside(id("claude"), "clear", Ok(())),
-        Vec::from([Effect::Save {
-            roster: defaults(&catalog()),
-            change: Change::Credential(id("claude")),
-            reply: "clear",
-        }])
+        moved,
+        Vec::from([Effect::Reply(
+            "remove",
+            CommandResult::Instances(registry.instances())
+        )])
     );
-    let mut with_gateway = defaults(&catalog());
-    if let Some(instance) = with_gateway.0.get_mut(&id("claude")) {
-        instance.credential = Some(gateway("t"));
-    }
     assert_eq!(
-        registry.set_credential(id("claude"), gateway("t"), "set"),
+        registry.set_credential(Provider::Claude, gateway("t"), "set"),
         Vec::from([Effect::Save {
-            roster: with_gateway,
-            change: Change::Credential(id("claude")),
+            roster: with_credential(defaults(&catalog()), &api(), "t"),
+            change: Change::Added(api()),
             reply: "set",
         }])
     );
@@ -924,17 +869,18 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_cleared() {
 #[test]
 fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
+    let codex = own(Provider::Codex);
     assert_eq!(
         registry.saved(
             defaults(&catalog()),
-            Change::Credential(id("codex")),
-            "clear",
+            Change::Credential(codex.clone()),
+            "set",
             Ok(())
         ),
         Vec::from([
-            stored_note("codex"),
+            stored_note(&codex),
             Effect::Reply(
-                "clear",
+                "set",
                 CommandResult::Instances(claude(Availability::Available {
                     auth: Auth::Unmanaged,
                     models: listed(),
@@ -943,7 +889,7 @@ fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
         ])
     );
     assert_eq!(
-        registry.start(&id("codex"), true, None, None),
+        registry.start(&codex, true, None, None),
         Err(Rejection::InstanceUnavailable {
             reason: text("no codex")
         })
@@ -988,54 +934,31 @@ fn a_directory_outside_git_is_refused_as_such() {
 }
 
 #[test]
-fn a_sign_in_from_the_app_makes_the_home_sign_in_and_relists_its_models() {
+fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
     let mut registry = registry(OwnSignIn::Missing, &opened());
-    let availability = |registry: &Test| {
-        registry
-            .instances()
-            .of(&id("claude"))
-            .map(|status| status.availability.clone())
-    };
-    let before = availability(&registry);
-    let refresh = registry.signed_in(id("claude"), "signed in");
-    let during = availability(&registry);
-    let answered = registry.refreshed(Refreshed {
-        id: 1,
-        instance: id("claude"),
-        listing: Ok(Listing {
-            models: listed(),
-            named: None,
-        }),
-    });
-    let signed_in = Availability::Available {
-        auth: Auth::SignedIn,
-        models: listed(),
-    };
+    let claude = own(Provider::Claude);
+    let before = availability(&registry, &claude);
+    let refresh = registry.signed_in(claude.clone(), None, "signed in");
+    let during = availability(&registry, &claude);
+    let answered = registry.refreshed(refreshed(1, &claude, Ok(listing())));
     assert_eq!(
         (
             before,
             refresh,
             during,
-            availability(&registry),
-            registry.settings(&id("claude")),
-            registry.settings(&id("gemini")),
+            availability(&registry, &claude),
+            registry.settings(&claude),
+            registry.settings(&api()),
         ),
         (
-            Some(Availability::Unavailable {
-                reason: text("no credential configured")
+            Some(unavailable("no credential configured")),
+            Vec::from([Effect::Refresh(job(1, &claude, "claude", None))]),
+            Some(unavailable("refreshing the instance's models")),
+            Some(Availability::Available {
+                auth: Auth::SignedIn,
+                models: listed(),
             }),
-            Vec::from([Effect::Refresh(Job {
-                id: 1,
-                instance: id("claude"),
-                start: "claude",
-                credential: None,
-                signs_in: Ok(()),
-            })]),
-            Some(Availability::Unavailable {
-                reason: text("refreshing the instance's models")
-            }),
-            Some(signed_in),
-            Some(Instance::new(text("Claude Code"), Provider::Claude)),
+            Some(Instance::default()),
             None,
         )
     );
@@ -1045,5 +968,91 @@ fn a_sign_in_from_the_app_makes_the_home_sign_in_and_relists_its_models() {
             "signed in",
             CommandResult::Instances(registry.instances())
         )])
+    );
+}
+
+/// The own instance's home becomes the account's instance, whose CLI
+/// starts in it, and the own instance starts afresh for the next sign-in.
+#[test]
+fn a_sign_in_that_names_an_account_makes_its_instance() {
+    let mut registry = registry(OwnSignIn::Missing, &opened());
+    let claude = own(Provider::Claude);
+    let me = InstanceId::named(Provider::Claude, "me@example.com");
+    let signed = registry.signed_in(
+        claude.clone(),
+        Some(Account::Named(text("me@example.com"))),
+        "signed in",
+    );
+    let mut roster = defaults(&catalog());
+    roster.0.insert(me.clone(), Instance::default());
+    assert_eq!(
+        signed,
+        Vec::from([Effect::Save {
+            roster,
+            change: Change::SignedIn {
+                from: claude.clone(),
+                to: me.clone(),
+            },
+            reply: "signed in",
+        }])
+    );
+    assert_eq!(
+        saving(&mut registry, signed),
+        Vec::from([
+            Effect::Log(Note::InstanceAdded {
+                instance: me.clone()
+            }),
+            Effect::Start(Starting {
+                id: 1,
+                instance: me.clone(),
+                settings: Instance::default(),
+            }),
+            Effect::Start(Starting {
+                id: 2,
+                instance: claude.clone(),
+                settings: Instance::default(),
+            }),
+        ])
+    );
+    let starting = availability(&registry, &me);
+    let own_started = registry.started(Started {
+        id: 2,
+        instance: claude.clone(),
+        launcher: ready("claude", OwnSignIn::Missing),
+    });
+    let answered = registry.started(Started {
+        id: 1,
+        instance: me.clone(),
+        launcher: ready("me", OwnSignIn::SignedIn),
+    });
+    assert_eq!(
+        (starting, own_started, answered),
+        (
+            Some(unavailable("starting the instance's CLI")),
+            Vec::new(),
+            Vec::from([Effect::Reply(
+                "signed in",
+                CommandResult::Instances(registry.instances())
+            )]),
+        )
+    );
+    assert_eq!(
+        (
+            availability(&registry, &me),
+            availability(&registry, &claude),
+            registry.signed_in(
+                me.clone(),
+                Some(Account::Named(text("me@example.com"))),
+                "again"
+            ),
+        ),
+        (
+            Some(Availability::Available {
+                auth: Auth::SignedIn,
+                models: listed(),
+            }),
+            Some(unavailable("no credential configured")),
+            Vec::from([Effect::Refresh(job(3, &me, "me", None))]),
+        )
     );
 }

@@ -18,7 +18,7 @@ mod protocol;
 pub mod runtime;
 mod sign_in;
 
-pub use credentials::{ClaudeCredential, credential, info};
+pub use credentials::{ClaudeCredential, account, credential, info};
 pub use driver::{After, Command, Effect, Failure, Input, Session, Then};
 pub use launch::{
     Launch, Resume, SANDBOX_TOOLS, Sandbox, SettingSource, VersionPolicy,

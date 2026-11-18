@@ -43,6 +43,7 @@ pub fn info() -> ProviderInfo {
                 ),
                 field(TOKEN, "Token", FieldKind::Secret, ""),
             ]),
+            account: String::from(BASE_URL),
         }]),
     }
 }
@@ -55,6 +56,19 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
         placeholder: String::from(placeholder),
         required: true,
     }
+}
+
+/// The account a signed-in home is, as `claude auth status` prints it:
+/// the email of a Claude subscription. A gateway's or an API key's
+/// sign-in names none, so its credential's form does.
+#[must_use]
+pub fn account(status: &str) -> Option<String> {
+    let printed = serde_json::from_str::<serde_json::Value>(status).ok()?;
+    printed
+        .get("email")
+        .and_then(serde_json::Value::as_str)
+        .filter(|email| !email.is_empty())
+        .map(String::from)
 }
 
 /// An instance's credential as Claude's, if it is of a kind Claude takes.
@@ -74,7 +88,23 @@ fn read(credential: &Credential) -> Option<ClaudeCredential> {
 mod tests {
     use proto::Credential;
 
-    use super::{ClaudeCredential, credential, info};
+    use super::{ClaudeCredential, account, credential, info};
+
+    /// `claude auth status` with an API key and signed out, as 2.1.316
+    /// printed them, and with a subscription, as its binary writes it.
+    #[test]
+    fn a_subscription_s_account_is_its_email_and_a_key_names_none() {
+        assert_eq!(
+            [
+                r#"{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty", "email": "me@example.com", "orgId": "o", "orgName": "Me", "subscriptionType": "max"}"#,
+                r#"{"loggedIn": true, "authMethod": "api_key", "apiProvider": "firstParty", "apiKeySource": "ANTHROPIC_API_KEY"}"#,
+                r#"{"loggedIn": false, "authMethod": "none", "apiProvider": "firstParty"}"#,
+                "",
+            ]
+            .map(account),
+            [Some(String::from("me@example.com")), None, None, None]
+        );
+    }
 
     fn gateway(kind: &str) -> Credential {
         Credential {

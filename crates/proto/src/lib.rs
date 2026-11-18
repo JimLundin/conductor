@@ -40,14 +40,16 @@ pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
 pub use home::{
     Checkout, Cloning, Home, HomeSync, Origin, Project, ProjectId, StartAt,
 };
-pub use instance::{Instance, InstanceId, InstanceStatus, Instances, Roster};
+pub use instance::{
+    Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
+};
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/17";
+pub const ALPN: &[u8] = b"conductor/18";
 
 /// One frame of a subscription: a logged event, where a sign-in stands, or
 /// the host's home as it is now, which replaces the one before.
@@ -382,16 +384,15 @@ pub enum CommandBody {
         request: RequestId,
         answers: Vec<Answer>,
     },
-    /// Stores an instance's credential on the host, replacing any it had.
-    /// The host never sends it back. Like every command it needs a client
-    /// admitted by the ticket's token, which device certificates replace
-    /// with the fleet (§6.1).
+    /// Stores a credential of `provider` on the host. The account its form
+    /// names makes the instance: one that has it takes the credential in
+    /// place of its own, and otherwise the host adds the instance and
+    /// starts its CLI before it answers. The host never sends it back.
+    /// Like every command it needs a client admitted by the ticket's
+    /// token, which device certificates replace with the fleet (§6.1).
     SetCredential {
-        instance: InstanceId,
+        provider: Provider,
         credential: Credential,
-    },
-    ClearCredential {
-        instance: InstanceId,
     },
     /// A bounded diff between this checkpoint and its predecessor.
     GetDiff {
@@ -410,23 +411,16 @@ pub enum CommandBody {
         session: SessionId,
         effort: Effort,
     },
-    /// A new instance of `provider`, with no credential. The host names
-    /// it from its label and starts its CLI before it answers.
-    AddInstance {
-        provider: Provider,
-        label: String,
-    },
-    RenameInstance {
-        instance: InstanceId,
-        label: String,
-    },
     /// Refused while a session runs on the instance. Its closed sessions
-    /// stay, and can't continue.
+    /// stay, and can't continue. A provider's own sign-in stays; on a host
+    /// whose store doesn't open, removing it moves the store aside.
     RemoveInstance {
         instance: InstanceId,
     },
     /// Runs the CLI's own sign-in in the instance's home; every client
-    /// follows it as `Feed::SignIn`. Refused while one runs on it.
+    /// follows it as `Feed::SignIn`. Refused while one runs on it. Once
+    /// the CLI names the account it signed in as, the instance is that
+    /// account's, and its provider has a new own sign-in.
     StartSignIn {
         instance: InstanceId,
     },
@@ -523,10 +517,6 @@ pub enum Rejection {
     InstanceInUse {
         sessions: u64,
     },
-    /// The label won't do, for this reason.
-    InvalidLabel {
-        reason: String,
-    },
     SignInRunning,
     /// No sign-in runs on the instance, or it takes no code now.
     NoCodeAsked,
@@ -603,8 +593,7 @@ impl Rejection {
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }
-            | Self::WorkspaceFailure { reason }
-            | Self::InvalidLabel { reason } => reason.clone(),
+            | Self::WorkspaceFailure { reason } => reason.clone(),
         }
     }
 }

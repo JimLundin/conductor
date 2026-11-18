@@ -11,6 +11,7 @@ pub fn plugin(settings: Settings) -> Plugin {
         profile: claude::profile(),
         settings,
         starter: launched,
+        account: claude::account,
     }
 }
 

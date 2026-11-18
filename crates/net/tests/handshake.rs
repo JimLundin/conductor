@@ -76,8 +76,6 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
     let (conn, mut send) = accept_hello(endpoint).await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
     let unavailable = InstanceStatus {
-        label: String::from("Agent"),
-        provider: Provider::Claude,
         availability: Availability::Unavailable {
             reason: String::from("handshake test"),
         },
@@ -89,7 +87,7 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
             epoch: Epoch(11),
             head_seq: HostSeq(0),
             instances: Instances(
-                [(InstanceId::named("agent"), unavailable)].into(),
+                [(InstanceId::own(Provider::Claude), unavailable)].into(),
             ),
             catalog: proto::Catalog::default(),
             home: None,

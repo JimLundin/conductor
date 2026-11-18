@@ -1,17 +1,17 @@
 use agents::{Failure, Invocation, Pick, SignIn as Flow, Word};
 use proto::{
-    CommandResult, Instance, InstanceId, Instances, Provider, Rejection,
-    SignIn, SignInCode, SignInStep,
+    Account, CommandResult, Instance, InstanceId, Instances, Provider,
+    Rejection, SignIn, SignInCode, SignInStep,
 };
 
 use super::{Effect, Key, Run, SignIns};
 
 fn id() -> InstanceId {
-    InstanceId::named("agent")
+    InstanceId::own(Provider::ALL[0])
 }
 
 fn settings() -> Instance {
-    Instance::new(String::from("Agent"), Provider::ALL[0])
+    Instance::default()
 }
 
 fn key(run: u64) -> Key {
@@ -106,7 +106,11 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
     let submitted = sign_ins.submit(id(), code());
     let twice = sign_ins.submit(id(), code());
     let exited = sign_ins.exited(&key(1), Some(0), "exit status: 0");
-    let checked = sign_ins.checked(&key(1), &Ok(Some(0)));
+    let checked = sign_ins.checked(
+        &key(1),
+        &Ok(Some(0)),
+        Some(String::from("me@example.com")),
+    );
     let listed = sign_ins
         .listed(&key(1), CommandResult::Instances(Instances::default()));
     assert_eq!(
@@ -154,7 +158,10 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
             ),
             (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
             Vec::from([Effect::Check(key(1)), step(SignInStep::Finishing)]),
-            Vec::from([Effect::Refresh(key(1))]),
+            Vec::from([Effect::Refresh(
+                key(1),
+                Some(Account::Named(String::from("me@example.com")))
+            )]),
             Vec::from([step(SignInStep::SignedIn {
                 instances: Instances::default(),
             })]),
@@ -238,7 +245,11 @@ fn a_cancelled_run_is_killed_and_its_later_reports_are_dropped() {
             restarted,
             sign_ins.printed(&key(1), "visit: https://sign.example/in?state=1"),
             sign_ins.exited(&key(1), Some(0), "exit status: 0"),
-            sign_ins.checked(&key(1), &Ok(Some(0))),
+            sign_ins.checked(
+                &key(1),
+                &Ok(Some(0)),
+                Some(String::from("me@example.com"))
+            ),
             sign_ins.listed(
                 &key(1),
                 CommandResult::Instances(Instances::default())
@@ -280,7 +291,7 @@ fn a_run_that_doesnt_start_runs_too_long_or_leaves_the_home_signed_out_fails() {
         [
             unstarted.spawned(&key(1), Err(String::from("no such file"))),
             slow.expired(&key(1)),
-            unchecked.checked(&key(1), &Ok(Some(1))),
+            unchecked.checked(&key(1), &Ok(Some(1)), None),
             unlisted.listed(&key(1), CommandResult::Accepted),
         ],
         [

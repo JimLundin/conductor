@@ -4,7 +4,7 @@
 //! thread's history.
 
 use agents::pin::Cli;
-use agents::{Config, HomeKind, Invocation, Profile, Var};
+use agents::{Config, HomeKind, Invocation, Profile, Reported, Var};
 use proto::Provider;
 
 use crate::prelude::*;
@@ -14,6 +14,8 @@ use crate::{CodexCredential, TurnId};
 const PROVIDER_ID: &str = "conductor";
 /// The variable our provider's `env_key` names, which carries its key.
 pub const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
+/// Where a signed-in home keeps its sign-in, which names its account.
+const AUTH_FILE: &str = "auth.json";
 
 /// `codex` with its home.
 #[must_use]
@@ -56,6 +58,7 @@ pub fn profile() -> Profile {
         },
         version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
         status: login_status(HomeKind::Private),
+        account: Reported::File(String::from(AUTH_FILE)),
         sign_in: crate::sign_in(),
     }
 }

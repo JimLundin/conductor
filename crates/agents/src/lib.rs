@@ -22,7 +22,7 @@ mod step;
 pub use exit::Exit;
 pub use note::Note;
 pub use plan::PlanStep;
-pub use profile::{Config, Profile};
+pub use profile::{Config, Profile, Reported};
 pub use run::{HomeKind, Invocation, Var};
 pub use sign_in::{Failure, Pick, Shown, SignIn, Word, plain};
 pub use step::{

@@ -56,8 +56,8 @@ pub struct HomeLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectGroup {
     pub key: String,
-    pub name: String,
-    /// Its profiles and default branch.
+    pub title: String,
+    /// Its name, which a person types to name it, and its profiles.
     pub detail: String,
     /// One row for each host whose home lists it.
     pub hosts: Vec<CheckoutRow>,
@@ -102,7 +102,7 @@ pub fn screen(
                 .entry(project.id.clone())
                 .or_insert_with(|| ProjectGroup {
                     key: project.id.0.clone(),
-                    name: project.name.clone(),
+                    title: project.title.clone(),
                     detail: detail(&project),
                     hosts: Vec::new(),
                 })
@@ -125,12 +125,9 @@ pub fn screen(
 }
 
 fn detail(project: &proto::Project) -> String {
-    let branch = format!("branch {}", project.branch);
-    project
-        .profiles
-        .iter()
+    core::iter::once(&project.name)
+        .chain(&project.profiles)
         .cloned()
-        .chain([branch])
         .collect::<Vec<String>>()
         .join(" · ")
 }
@@ -204,7 +201,7 @@ fn row(id: HostId, host: &Host, project: &proto::Project) -> CheckoutRow {
                 id,
                 ProjectIntent::Clone(project.id.clone()),
             ),
-            label: format!("Clone {} on {name}", project.name),
+            label: format!("Clone {} on {name}", project.title),
         }),
         host: name,
         state,

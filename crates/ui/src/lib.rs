@@ -32,9 +32,9 @@ use proto::{
 
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
 pub use credentials::{
-    AddForm, ClearButton, CredentialIntent, CredentialsPane, CredentialsScreen,
+    ClearButton, CredentialIntent, CredentialsPane, CredentialsScreen,
     DeviceCode, FieldView, InstanceCredentials, KindForm, PasteForm,
-    RenameForm, SignInButton, SignInView,
+    ProviderForms, SignInButton, SignInView, instance_name,
 };
 pub use host::{HostId, StatusLine};
 pub use new_session::{

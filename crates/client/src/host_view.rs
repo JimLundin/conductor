@@ -1071,7 +1071,7 @@ mod tests {
 
     fn created(directory: &str) -> EventKind {
         EventKind::SessionCreated {
-            instance: InstanceId::named("claude"),
+            instance: InstanceId::own(Provider::Claude),
             provider: Provider::Claude,
             directory: HostPath(text(directory)),
             by: ClientName(text("desk")),
@@ -1214,7 +1214,7 @@ mod tests {
             (
                 SessionId(1),
                 SessionView {
-                    instance: InstanceId::named("claude"),
+                    instance: InstanceId::own(Provider::Claude),
                     provider: Provider::Claude,
                     directory: HostPath(text("/a")),
                     model: None,
@@ -1280,7 +1280,7 @@ mod tests {
             (
                 SessionId(2),
                 SessionView {
-                    instance: InstanceId::named("claude"),
+                    instance: InstanceId::own(Provider::Claude),
                     provider: Provider::Claude,
                     directory: HostPath(text("/b")),
                     model: None,

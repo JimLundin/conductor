@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::HostPath;
 
-/// A project by its folder's name in the home's `projects/`, such as
-/// `conductor`.
+/// A project by its folder's name in the home's `projects/`, a lowercase
+/// ULID. Its name and title may change; its id never does.
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -45,10 +45,12 @@ pub enum HomeSync {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Project {
     pub id: ProjectId,
+    /// Unique in the home: what a person types to name it.
     pub name: String,
+    /// What the app shows.
+    pub title: String,
     /// `None` for a project that is local only, which can't be cloned.
     pub remote: Option<String>,
-    pub branch: String,
     pub profiles: Vec<String>,
     /// Every checkout of it on this host, the one a session starts in
     /// first. None: it isn't checked out here.

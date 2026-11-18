@@ -532,14 +532,7 @@ mod tests {
                     },
                 ])
                 .map(|(provider, availability)| {
-                    (
-                        InstanceId::named(provider.name()),
-                        InstanceStatus {
-                            label: String::from(provider.name()),
-                            provider,
-                            availability,
-                        },
-                    )
+                    (InstanceId::own(provider), InstanceStatus { availability })
                 })
                 .collect(),
         )

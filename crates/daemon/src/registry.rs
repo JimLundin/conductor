@@ -15,7 +15,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use agents::runtime::Command;
-use host::registry::{Job, Launch, Listing, Refreshed, Started, Starting};
+use host::registry::{
+    Change, Job, Launch, Listing, Refreshed, Started, Starting,
+};
 use host::restore::{Created, Recovery, Step, events_of};
 use host::serve::{Configure, SignInOrder};
 use host::sign_in::{Effect as SignInEffect, Key, SignIns};
@@ -396,7 +398,9 @@ impl RegistryActor {
                 self.sign_ins.exited(key, code, &status)
             }
             Report::Expired => self.sign_ins.expired(key),
-            Report::Checked(code) => self.sign_ins.checked(key, &code),
+            Report::Checked(code, account) => {
+                self.sign_ins.checked(key, &code, account)
+            }
             Report::Listed(result) => self.sign_ins.listed(key, result),
         }
     }
@@ -417,9 +421,10 @@ impl RegistryActor {
             }
             SignInEffect::Kill(key) => self.runs.kill(&key),
             SignInEffect::Check(key) => self.runs.check(key),
-            SignInEffect::Refresh(key) => {
+            SignInEffect::Refresh(key, account) => {
                 let (reply, answer) = oneshot::channel();
-                let effects = self.core.signed_in(key.instance.clone(), reply);
+                let effects =
+                    self.core.signed_in(key.instance.clone(), account, reply);
                 self.perform(effects);
                 self.runs.listen(key, answer);
             }
@@ -437,18 +442,9 @@ impl RegistryActor {
     ) -> Result<Vec<Effect>, Stopped> {
         Ok(match configure {
             Configure::SetCredential {
-                instance,
+                provider,
                 credential,
-            } => self.core.set_credential(instance, credential, reply),
-            Configure::ClearCredential(instance) => {
-                self.core.clear_credential(instance, reply)
-            }
-            Configure::Add { provider, label } => {
-                self.core.add_instance(provider, &label, reply)
-            }
-            Configure::Rename { instance, label } => {
-                self.core.rename_instance(instance, &label, reply)
-            }
+            } => self.core.set_credential(provider, credential, reply),
             Configure::Remove(instance) => {
                 let history = self.log.history().await?;
                 let running = host::registry::running(&history);
@@ -488,8 +484,17 @@ impl RegistryActor {
                 change,
                 reply,
             } => {
-                let saved =
-                    self.store.save(&roster).map_err(|err| format!("{err:#}"));
+                let moved = match &change {
+                    Change::SignedIn { from, to } => {
+                        crate::start::move_instance(self.store.dir(), from, to)
+                    }
+                    Change::Credential(_)
+                    | Change::Added(_)
+                    | Change::Removed(_) => Ok(()),
+                };
+                let saved = moved
+                    .and_then(|()| self.store.save(&roster))
+                    .map_err(|err| format!("{err:#}"));
                 self.core.saved(roster, change, reply, saved)
             }
             Effect::Refresh(job) => {
@@ -752,7 +757,7 @@ mod tests {
     const PROVIDER: Provider = Provider::ALL[0];
 
     fn instance() -> InstanceId {
-        InstanceId::named("agent")
+        InstanceId::own(PROVIDER)
     }
 
     /// A provider whose agents send each start they are asked for to

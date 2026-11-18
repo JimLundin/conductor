@@ -308,9 +308,21 @@ impl Session {
         Ok(Flow::Next)
     }
 
-    /// A fresh host's instance of the provider, named after it.
+    /// The instance its sessions run on: the account of the gateway it
+    /// registers, which the gateway's URL names, else the provider's own.
     fn instance(&self) -> InstanceId {
-        InstanceId::named(self.provider.name())
+        let base_url = match self.provider {
+            Provider::Claude => "ANTHROPIC_BASE_URL",
+            Provider::Codex => "CONDUCTOR_CODEX_BASE_URL",
+        };
+        match (self.register, std::env::var(base_url)) {
+            (Register::Env, Ok(url)) => {
+                InstanceId::named(self.provider, url.trim())
+            }
+            (Register::Env | Register::Keep, _) => {
+                InstanceId::own(self.provider)
+            }
+        }
     }
 
     /// Logs only the kind the host now reports, never a value.
@@ -340,7 +352,7 @@ impl Session {
                 let result = self
                     .link
                     .send(CommandBody::SetCredential {
-                        instance: self.instance(),
+                        provider: self.provider,
                         credential: chosen,
                     })
                     .await?;

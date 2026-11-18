@@ -140,19 +140,14 @@ fn row(
     }
 }
 
-/// What the app calls the session's agent: its instance's label, or its
-/// provider's once the host no longer has the instance.
+/// What the app calls the session's agent: its instance's account, or its
+/// provider's label for the provider's own sign-in.
 pub fn agent(
     session: &SessionView,
     known: (Option<&Instances>, &Catalog),
 ) -> String {
-    let (instances, catalog) = known;
-    instances
-        .and_then(|listed| listed.of(&session.instance))
-        .map_or_else(
-            || catalog.label(session.provider),
-            |status| status.label.clone(),
-        )
+    let (_, catalog) = known;
+    crate::credentials::instance_name(&session.instance, catalog)
 }
 
 /// The last segment of a host path, which names the project. The host's OS

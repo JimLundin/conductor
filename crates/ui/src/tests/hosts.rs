@@ -56,10 +56,7 @@ fn named(
 }
 
 fn codex() -> Instances {
-    Instances(BTreeMap::from([(
-        id("codex"),
-        instance("Codex", Provider::Codex, signed_in()),
-    )]))
+    Instances(BTreeMap::from([(id("codex"), instance(signed_in()))]))
 }
 
 fn on(

@@ -114,7 +114,7 @@ mod tests {
         let open = Open::Command(Command {
             id: CommandId(1),
             body: CommandBody::SetCredential {
-                instance: InstanceId::named("work"),
+                provider: Provider::Claude,
                 credential: Credential {
                     kind: String::from("gateway"),
                     values: BTreeMap::from([(
@@ -126,11 +126,11 @@ mod tests {
         });
         assert_eq!(
             encode(&open)?,
-            frame(b"\x02\x01\x06\x04work\x07gateway\x01\x03key\x01k")
+            frame(b"\x02\x01\x06\x00\x07gateway\x01\x03key\x01k")
         );
         assert_eq!(
             format!("{open:?}"),
-            r#"Command(Command { id: CommandId(1), body: SetCredential { instance: InstanceId("work"), credential: Credential { kind: "gateway", .. } } })"#
+            r#"Command(Command { id: CommandId(1), body: SetCredential { provider: Claude, credential: Credential { kind: "gateway", .. } } })"#
         );
         Ok(())
     }
@@ -166,9 +166,7 @@ mod tests {
                 epoch: Epoch(1),
                 head_seq: HostSeq(0),
                 instances: Instances(BTreeMap::from([
-                    (InstanceId::named("claude"), InstanceStatus {
-                        label: String::from("C"),
-                        provider: Provider::Claude,
+                    (InstanceId::own(Provider::Claude), InstanceStatus {
                         availability: Availability::Available {
                             auth: Auth::Stored {
                                 kind: String::from("g"),
@@ -185,9 +183,7 @@ mod tests {
                             },
                         },
                     }),
-                    (InstanceId::named("codex"), InstanceStatus {
-                        label: String::from("X"),
-                        provider: Provider::Codex,
+                    (InstanceId::named(Provider::Codex, "a@b"), InstanceStatus {
                         availability: Availability::Unavailable {
                             reason: String::from("no"),
                         },
@@ -198,7 +194,7 @@ mod tests {
             }))
             ?,
             frame(
-                b"\x00\x04desk\x01\x00\x02\x06claude\x01C\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x05codex\x01X\x01\x01\x02no\x00\x00"
+                b"\x00\x04desk\x01\x00\x02\x00\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x03a@b\x01\x02no\x00\x00"
             )
         );
         assert_eq!(

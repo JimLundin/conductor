@@ -26,7 +26,9 @@ picks up from the branch and the notes.
 The model names the entities from the domain and how they relate. Nothing
 that can be renamed is a key: entities are keyed by ids that never change,
 and names are ordinary properties, unique where a person refers to them by
-name. Commands and the app take names and look up the id.
+name. Commands and the app take names and look up the id. The rule is for
+the owner's own data: an instance's account is named by its provider, not
+by the owner, so it is part of the instance's key.
 
 ### 2.1 Entities
 
@@ -34,7 +36,7 @@ name. Commands and the app take names and look up the id.
 |---|---|---|---|---|
 | Node | `NodeId` (its public key) | name, relay, ticket | home sync state | fleet config |
 | Harness | `HarnessId` (`claude`, `codex`) | name, pinned version | credential forms | the binary (plugin data) |
-| Instance | ULID | node, harness, name (unique per node and harness), credential, model, CLI path | | a node's store |
+| Instance | (node, harness, account) | credential, model, CLI path | | a node's store |
 | Project | ULID | name (unique), title, root commit (unique), remote, profiles | | home `projects/<id>/project.toml` |
 | Issue | ULID | project, title, body, status, priority, labels, branch | notes, checklist | home `projects/<project>/issues/<id>.md` |
 | Session | (issue, instance) | status, model, effort | workspace, transcript | a node's log |
@@ -211,8 +213,9 @@ call that started each, a description, its own transcript and status.
 - **Projects and issues.** A projects view with each project's issues by
   status; an issue shows its checklist, notes and sessions, with *Start a
   session* and *Continue elsewhere*.
-- **Renaming.** Projects, instances and nodes are renamed in the app; a
-  rename changes only the name, never what refers to it.
+- **Renaming.** Projects and nodes are renamed, a project by an edit of
+  its `project.toml`; a rename changes only the name, never what refers to
+  it. An instance isn't renamed: it is its account.
 
 ## 8. Build order
 
@@ -220,8 +223,9 @@ call that started each, a description, its own transcript and status.
 2. The app with several nodes. Done.
 3. The home repository: clone, sync, and projects with their copies. Done
    (architecture §5.4).
-4. Ids instead of names: projects in `projects/<id>/` with a title,
-   instances keyed by a ULID, and renaming both.
+4. Ids instead of names: projects in `projects/<id>/` with a unique name
+   and a title, and instances keyed by their provider's account. Done
+   (architecture §5.2, §5.4).
 5. A session's workspace removed with the session, keeping its branch.
 6. Issues: create, edit, status, checklist and notes in the app.
 7. Sessions on issues: start, finish, continue elsewhere.

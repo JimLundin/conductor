@@ -19,7 +19,9 @@ mod protocol;
 pub mod runtime;
 mod sign_in;
 
-pub use credentials::{CodexCredential, credential, default_model, info};
+pub use credentials::{
+    CodexCredential, account, credential, default_model, info,
+};
 pub use driver::{After, Command, Effect, Failure, Input, Server, Then};
 pub use launch::{
     Edit, History, KEY_VAR, Paging, app_server, cli, config_edits, login,

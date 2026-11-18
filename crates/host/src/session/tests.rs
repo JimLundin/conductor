@@ -878,7 +878,7 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
 #[test]
 fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
     let created = event(EventKind::SessionCreated {
-        instance: InstanceId::named("claude"),
+        instance: InstanceId::own(Provider::Claude),
         provider: Provider::Claude,
         directory: HostPath(text("/work")),
         by: phone(),

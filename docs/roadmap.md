@@ -27,20 +27,25 @@ What is built and what comes next. Update it in the commit that changes it.
   and `login` (now per instance, below). Next: the pins in `agents::pin` and `Provider`
   itself are the last places a new provider is listed.
 
-- **Instances** (§5.2, §6.2, §6.3). A host runs named instances of each
-  provider, such as "Claude (API)" through a gateway beside "Claude
-  (subscription)" on its own sign-in. Each instance has its own credential,
-  its own private home `<data>/home/<instance>`, its own work dir and its
-  own agents, so a Codex instance gets its own app-server. Sessions start
-  on an instance and record it, so Continue and undo stay on it. The app's
-  credentials screen lists the instances, adds one per provider, renames
-  and removes them (refused while a session runs on one), and the
-  new-session picker lists instances. A fresh host gets one instance per
-  provider, named after it; `--cli` and `--model` are each provider's
-  defaults, and `conductord login <instance>` signs one in on the host
-  (ALPN `conductor/14`, credential store format 4, log format 2); the app
-  now signs one in too (item 3). Next: per-instance model and CLI settings
-  from the app; the store already keeps both.
+- **Instances** (§5.2, §6.2, §6.3). A host runs instances, each one
+  account of a provider, such as Claude through a gateway beside Claude on
+  a subscription, keyed by the provider and the account, which the
+  provider names (home step 4). A credential's form names its account (a
+  gateway's URL); a sign-in names it once the CLI reports who it signed in
+  as, and the provider's own instance, where the sign-in ran, becomes that
+  account's. Each instance has its own credential, its own private home
+  `<data>/home/<dir>`, its own work dir and its own agents, so a Codex
+  instance gets its own app-server. Sessions start on an instance and
+  record it, so Continue and undo stay on it. The app's credentials screen
+  lists the instances by account, takes a credential per provider and
+  removes an instance (refused while a session runs on one), and the
+  new-session picker lists instances. `--cli` and `--model` are each
+  provider's defaults, and `conductord login <provider> [--account
+  <account>]` signs one in on the host (ALPN `conductor/18`, credential
+  store format 5, log format 3); the app signs one in too (item 3). Next:
+  per-instance model and CLI settings from the app; the store already
+  keeps both. *Try:* save a gateway in *Credentials* and see its URL listed
+  as an instance beside the provider's own.
 
 - **One agent runtime** (§5.2). The daemon asks one interface for agents:
   `agents::runtime`'s commands and events over a `runtime::Runtime`
@@ -107,10 +112,13 @@ What is built and what comes next. Update it in the commit that changes it.
   section per host with *Forget this host*, and a new session picks a host,
   then one of its instances. *Add host* takes a join link or ticket;
   pairing a host again replaces its ticket. No protocol change.
-- **The home and its projects** (home step 3, architecture §5.4). The home
-  repository `JimLundin/home` lists each project in
-  `projects/<project>/project.toml` (remote, root commit, branch,
-  profiles), which its `repos.sh` and `AGENTS.md` table now read. A host
+- **The home and its projects** (home steps 3 and 4, architecture §5.4).
+  The home repository `JimLundin/home` lists each project in
+  `projects/<id>/project.toml`, its folder named by the project's ULID
+  (name, title, remote, root commit, profiles), which its `repos.sh` and
+  `AGENTS.md` table now read. A name is unique, and the app shows the
+  title; renaming a project is an edit of its file, and it keeps its
+  checkouts and sessions. A host
   given `--home <remote>` (stored, so given once) clones it into
   `<data>/home-repo` and pulls it every five minutes, on *Sync* and before
   a read that needs it; offline and failed pulls are its state (`Synced`,
@@ -119,8 +127,8 @@ What is built and what comes next. Update it in the commit that changes it.
   and clones one from the app into `<data>/projects/<project>`. The new
   `home` core crate holds the decisions. `StartSession` takes a project or
   a directory (ALPN `conductor/17`); the app has a *Projects* view and a
-  project picker in the new-session form. Next: worktrees as their own
-  entity (home step 4). *Try:* start a host with `--home
+  project picker in the new-session form. Next: a session's workspace
+  removed with the session (home step 5). *Try:* start a host with `--home
   https://github.com/JimLundin/home.git --projects <your projects dir>`,
   open *Projects*, clone a project you lack, and start a session in it.
 

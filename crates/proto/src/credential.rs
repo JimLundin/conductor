@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Auth, Provider};
+use crate::{Account, Auth, Provider};
 
 /// What a field holds, which says how the app shows it and how the host
 /// checks it.
@@ -44,6 +44,10 @@ pub struct CredentialForm {
     pub kind: String,
     pub label: String,
     pub fields: Vec<Field>,
+    /// The id of the field whose value is the account the credential signs
+    /// in as, since the provider's CLI names none for it. It is shown to
+    /// every client, so it is never a secret.
+    pub account: String,
 }
 
 /// How a provider the host runs presents itself, as its plugin describes
@@ -126,6 +130,24 @@ impl ProviderInfo {
                 )
             })?
             .check(&credential.values)
+    }
+
+    /// The account `credential` signs in as: the value of its form's
+    /// account field.
+    ///
+    /// # Errors
+    ///
+    /// Why the credential is refused, or that its form names no account.
+    pub fn account(&self, credential: &Credential) -> Result<Account, String> {
+        self.check(credential)?;
+        let form = self.form(&credential.kind).ok_or_else(|| {
+            format!("{} takes no {:?} credential", self.label, credential.kind)
+        })?;
+        let value = credential.value(&form.account).trim();
+        if value.is_empty() {
+            return Err(format!("{} names no account", form.label));
+        }
+        Ok(Account::Named(String::from(value)))
     }
 
     /// What `Welcome` may say about a stored credential: its kind and the
@@ -217,7 +239,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
-    use crate::Auth;
+    use crate::{Account, Auth};
 
     fn field(id: &str, kind: FieldKind, required: bool) -> Field {
         Field {
@@ -241,6 +263,7 @@ mod tests {
                     field("token", FieldKind::Secret, true),
                     field("label", FieldKind::Text, false),
                 ]),
+                account: String::from("url"),
             }]),
         }
     }
@@ -280,6 +303,24 @@ mod tests {
                 Err(String::from(r#"Agent takes no "key" credential"#)),
                 Err(String::from("token is required")),
                 Err(String::from(r#"Gateway has no field "extra""#)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_credential_signs_in_as_its_form_s_account_field() {
+        assert_eq!(
+            [
+                credential(
+                    "gateway",
+                    &[("url", "https://g.example"), ("token", "t")],
+                ),
+                credential("gateway", &[("url", ""), ("token", "t")]),
+            ]
+            .map(|credential| info().account(&credential)),
+            [
+                Ok(Account::Named(String::from("https://g.example"))),
+                Err(String::from("url is required")),
             ]
         );
     }

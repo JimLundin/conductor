@@ -77,7 +77,7 @@ fn HomeLine(line: ui::HomeLine) -> Element {
 fn Project(project: ui::ProjectGroup) -> Element {
     rsx! {
         section { class: "project", "data-project": "{project.key}",
-            h2 { "{project.name}" }
+            h2 { "{project.title}" }
             p { class: "hint muted", "{project.detail}" }
             ul { class: "checkouts",
                 for row in project.hosts {

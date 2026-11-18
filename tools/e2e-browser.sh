@@ -272,10 +272,12 @@ subagents() {
 }
 
 credentials() {
-  # The Claude instance the scenario adds lists its models in its own work
-  # dir.
-  mkdir -p "$scratch/credentials/work/claude-api"
-  head -2 "$recordings/claude-killed.jsonl" >"$scratch/credentials/work/claude-api/stdout.jsonl"
+  # The instance of the gateway's account lists its models in its own work
+  # dir, named by a hash of the account (host::registry::dir).
+  local api
+  api=claude-$(printf '%s' https://gateway.conductor-test.invalid | sha256sum | cut -c1-16)
+  mkdir -p "$scratch/credentials/work/$api"
+  head -2 "$recordings/claude-killed.jsonl" >"$scratch/credentials/work/$api/stdout.jsonl"
   start_host credentials
   echo
   echo "## Credentials, webkit"
@@ -284,9 +286,8 @@ credentials() {
   echo "## Credentials, host log"
   host_log credentials
   echo
-  expect credentials 3 'stored a credential change' "the gateway was stored and cleared, then the added instance's stored"
-  expect credentials 1 'added an instance instance="claude-api"' 'a second Claude instance was added'
-  expect credentials 1 'instance{id=claude-api}: host: ready' 'the added instance started its CLI'
+  expect credentials 2 'added an instance instance=claude https://gateway.conductor-test.invalid' "the gateway's account was added, removed and added again"
+  expect credentials 2 'instance{id=claude https://gateway.conductor-test.invalid}: host: ready' "each time the account's instance started its CLI"
   expect credentials 0 'conductor-test-browser-token' 'the token is in no log line'
 }
 
@@ -301,8 +302,9 @@ sign_in() {
   echo
   expect sign-in 2 'body: StartSignIn {' 'both sign-ins reached the host'
   expect sign-in 2 'code: SignInCode(..)' 'both codes reached the host, logged without their text'
-  expect sign-in 1 'sign-in instance="claude" step=failed: Claude' 'the refused code failed the first sign-in'
-  expect sign-in 1 'sign-in instance="claude" step=signed in' 'the second signed the instance in'
+  expect sign-in 1 'sign-in instance=claude step=failed: Claude' 'the refused code failed the first sign-in'
+  expect sign-in 1 'sign-in instance=claude step=signed in' 'the second signed the instance in'
+  expect sign-in 1 'added an instance instance=claude conductor-test@example.invalid' 'the account the CLI named became an instance'
   expect sign-in 0 'conductor-test-sign-in-code\|conductor-test-wrong-code' 'no code is in a log line'
   if grep -rlq 'conductor-test-sign-in-code\|conductor-test-wrong-code' "$scratch/sign-in"; then
     echo "FAILED: host sign-in: a code is in the data dir"
@@ -330,14 +332,13 @@ two_hosts() {
 }
 
 # listed <home> <id> <remote> <source>: the project's project.toml in the
-# home, with the source's root commit and branch.
+# home, named and titled as its id, with the source's root commit.
 listed() {
-  local root branch
+  local root
   root=$(git -C "$4" rev-list --max-parents=0 HEAD)
-  branch=$(git -C "$4" symbolic-ref --short HEAD)
   mkdir -p "$1/projects/$2"
-  printf 'name = "%s"\nremote = "%s"\nroot = "%s"\nbranch = "%s"\nprofiles = ["rust"]\n' \
-    "$2" "$3" "$root" "$branch" >"$1/projects/$2/project.toml"
+  printf 'name = "%s"\ntitle = "%s"\nremote = "%s"\nroot = "%s"\nprofiles = ["rust"]\n' \
+    "$2" "$2" "$3" "$root" >"$1/projects/$2/project.toml"
 }
 
 projects_scenario() {
