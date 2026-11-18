@@ -1,7 +1,12 @@
-//! Where the host ticket comes from: the join link, then local storage.
+//! Where the hosts' tickets come from: a join link, then local storage.
 
 use proto::{Ticket, TicketError};
-use ui::Opening;
+use ui::{Opening, Saved, State, Stored};
+
+/// The paired hosts, as `ui::encode` writes them.
+const HOSTS: &str = "conductor.hosts";
+/// The one ticket an app from before several hosts saved.
+const TICKET: &str = "conductor.ticket";
 
 /// Accepts what a person pastes: the whole join link, or the bare ticket.
 pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
@@ -12,65 +17,62 @@ pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
     net::parse(ticket)
 }
 
-/// `#join=<ticket>` on first open, saved to local storage and removed from
-/// the address bar so a reload reconnects from storage.
 mod storage {
-    const KEY: &str = "conductor.ticket";
-
     fn local() -> Option<web_sys::Storage> {
         web_sys::window()
             .and_then(|window| window.local_storage().ok().flatten())
     }
 
-    pub fn get() -> Option<String> {
-        local().and_then(|storage| storage.get_item(KEY).ok().flatten())
+    pub fn get(key: &str) -> Option<String> {
+        local().and_then(|storage| storage.get_item(key).ok().flatten())
     }
 
-    pub fn set(text: &str) {
+    pub fn set(key: &str, text: &str) {
         if let Some(storage) = local() {
-            let _ = storage.set_item(KEY, text);
+            let _ = storage.set_item(key, text);
         }
     }
 
-    pub fn remove() {
+    pub fn remove(key: &str) {
         if let Some(storage) = local() {
-            let _ = storage.remove_item(KEY);
+            let _ = storage.remove_item(key);
         }
     }
 }
 
-/// Remembers the host so the next launch reconnects. A Home Screen web app on
-/// iOS has its own storage, separate from Safari's, so it pairs through here.
-pub fn save(ticket: &Ticket) {
-    storage::set(&ticket.to_text());
+/// Remembers the hosts so the next launch reconnects to each. A Home Screen
+/// web app on iOS has its own storage, separate from Safari's, so it pairs
+/// through the app's own form. The older single ticket goes once the list
+/// holds it.
+pub fn save(hosts: &[Saved]) {
+    storage::set(HOSTS, &ui::encode(hosts));
+    storage::remove(TICKET);
 }
 
-/// Drops the saved host, so the next launch asks for a join link. A Home
-/// Screen app can't receive a new join link from the camera; iOS opens those
-/// in Safari, so pairing again starts here.
-pub fn forget() {
-    storage::remove();
-}
-
-pub fn initial() -> Result<Opening, TicketError> {
-    web_sys::window().map_or(Ok(Opening::Unpaired), |window| opened(&window))
-}
-
-/// The join link in the address bar, else the saved host.
-fn opened(window: &web_sys::Window) -> Result<Opening, TicketError> {
-    let hash = window.location().hash().unwrap_or_default();
-    hash.strip_prefix("#join=")
-        .map_or_else(|| opening(storage::get()), |text| joined(window, text))
-}
-
-fn joined(
-    window: &web_sys::Window,
-    text: &str,
-) -> Result<Opening, TicketError> {
-    let ticket = net::parse(text)?;
-    save(&ticket);
-    clear_hash(window);
-    Ok(Opening::Host(ticket))
+/// Opens on the saved hosts and on `#join=<ticket>` in the address bar,
+/// saves them as one list, and takes the join link out of the address bar
+/// so a reload reconnects from storage. A Home Screen app can't receive a
+/// new join link from the camera; iOS opens those in Safari, so pairing
+/// again, or with one more host, starts in the app.
+pub fn open() -> State {
+    let window = web_sys::window();
+    let hash = window
+        .as_ref()
+        .and_then(|shown| shown.location().hash().ok())
+        .unwrap_or_default();
+    let joined = hash.strip_prefix("#join=").map(net::parse);
+    let state = State::new(Opening {
+        stored: Stored {
+            hosts: storage::get(HOSTS),
+            ticket: storage::get(TICKET),
+        },
+        joined,
+    });
+    save(&state.saved());
+    if let Some(shown) = window.filter(|_| hash.starts_with("#join=")) {
+        clear_hash(&shown);
+    }
+    state
 }
 
 fn clear_hash(window: &web_sys::Window) {
@@ -82,12 +84,6 @@ fn clear_hash(window: &web_sys::Window) {
             Some(&path),
         );
     }
-}
-
-fn opening(saved: Option<String>) -> Result<Opening, TicketError> {
-    saved.map_or(Ok(Opening::Unpaired), |text| {
-        net::parse(&text).map(Opening::Host)
-    })
 }
 
 #[cfg(test)]

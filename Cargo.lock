@@ -4982,7 +4982,10 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "client",
+ "data-encoding",
  "proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

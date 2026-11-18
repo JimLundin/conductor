@@ -1,27 +1,41 @@
-//! The session list, the most recently active first, with what each
-//! session waits on.
+//! The session list: a group per host, headed by its name and link
+//! state, each with its sessions, the most recently active first, and what
+//! each waits on.
+
+use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::host_view::{Attention, HostView, SessionView, UndoState};
+use client::host_view::{Attention, SessionView, UndoState};
 use proto::{Catalog, HostPath, Instances, SessionId};
 
 use crate::Place;
+use crate::host::{Host, HostId, StatusLine, by_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionList {
     /// The new-session form is shown.
     pub new_current: bool,
+    pub groups: Vec<HostGroup>,
+}
+
+/// One host's sessions, under its status line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostGroup {
+    pub host: HostId,
+    pub key: String,
+    pub status: StatusLine,
     pub listing: Listing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Listing {
-    Empty(&'static str),
+    Empty(String),
     Rows(Vec<SessionRow>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRow {
+    pub host: HostId,
     pub id: SessionId,
     pub key: String,
     /// The row's `data-status`, which colours its dot.
@@ -34,33 +48,45 @@ pub struct SessionRow {
     pub badge: String,
 }
 
-pub fn list(
-    view: &HostView,
-    place: Place,
-    known: (Option<&Instances>, &Catalog),
-) -> SessionList {
-    let rows = view
-        .recent()
-        .into_iter()
-        .filter_map(|id| {
-            view.sessions
-                .get(&id)
-                .map(|session| row(id, session, place, known))
-        })
-        .collect::<Vec<SessionRow>>();
+pub fn list(hosts: &BTreeMap<HostId, Host>, place: Place) -> SessionList {
     SessionList {
         new_current: place == Place::NewSession,
+        groups: by_name(hosts)
+            .into_iter()
+            .map(|(id, host)| group(id, host, place))
+            .collect(),
+    }
+}
+
+fn group(id: HostId, host: &Host, place: Place) -> HostGroup {
+    let catalog = host.catalog();
+    let known = (host.instances(), &catalog);
+    let rows = host
+        .view
+        .recent()
+        .into_iter()
+        .filter_map(|session| {
+            host.view
+                .sessions
+                .get(&session)
+                .map(|shown| row((id, session), shown, place, known))
+        })
+        .collect::<Vec<SessionRow>>();
+    HostGroup {
+        host: id,
+        key: id.key(),
+        status: host.status_line(),
         listing: match rows.first() {
             Some(_) => Listing::Rows(rows),
-            None => Listing::Empty(
-                "No sessions yet. Start one in a directory on the host.",
-            ),
+            None => {
+                Listing::Empty(format!("No sessions on {} yet.", host.name()))
+            }
         },
     }
 }
 
 fn row(
-    id: SessionId,
+    (host, id): (HostId, SessionId),
     session: &SessionView,
     place: Place,
     known: (Option<&Instances>, &Catalog),
@@ -91,10 +117,11 @@ fn row(
         ),
     };
     SessionRow {
+        host,
         id,
         key: format!("{}", id.0),
         status,
-        current: place == Place::Session(id),
+        current: place == Place::Session(host, id),
         title: short(&session.directory).to_owned(),
         sub: format!("{}, {text}", agent(session, known)),
         branch: session

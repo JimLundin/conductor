@@ -27,10 +27,15 @@ once, and how the whole thing feels.
 
 ## 1. Pairing
 
-- [ ] Desktop browser: open the join link. The status line says Live.
+- [ ] Desktop browser: open the join link. The host's group in the list
+      says Live.
 - [ ] iPhone: scan the QR code with the camera. The app opens and says Live.
 - [ ] iPhone Home Screen app: add it if it isn't already there, open it, and
-      pair with **Pair** (paste the ticket) or **Change host**. It says Live.
+      pair with **Connect** (paste the join link) or **Add host**. It says
+      Live.
+- [ ] A second host: open its join link, or paste it under **Add host**.
+      The list shows both hosts, each under its name, and a new session can
+      start on either.
 
 ## 2. Claude
 

@@ -1,8 +1,8 @@
 //! The app's screen as data (architecture §8). [`State`] is what the app
-//! holds; [`update`] takes what a person or the link does, as an
-//! [`Intent`], and returns the next state and the [`Effect`]s the shell
-//! performs; [`view`] describes the whole [`Screen`], so the app's markup
-//! only draws it. It is pure and `no_std`.
+//! holds, over every paired host; [`update`] takes what a person or a
+//! host's link does, as an [`Intent`], and returns the next state and the
+//! [`Effect`]s the shell performs; [`view`] describes the whole
+//! [`Screen`], so the app's markup only draws it. It is pure and `no_std`.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -13,8 +13,10 @@ mod credentials;
 mod host;
 mod new_session;
 mod prelude;
+mod saved;
 mod session;
 mod sessions;
+mod state;
 mod transcript;
 
 #[cfg(test)]
@@ -29,19 +31,21 @@ use proto::{
 
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
 pub use credentials::{
-    ADD_HEADING, AddForm, ClearButton, CredentialIntent, CredentialsPane,
+    AddForm, ClearButton, CredentialIntent, CredentialsPane, CredentialsScreen,
     DeviceCode, FieldView, InstanceCredentials, KindForm, PasteForm,
     RenameForm, SignInButton, SignInView,
 };
-pub use host::{Detail, HostScreen, StatusLine};
+pub use host::{HostId, StatusLine};
 pub use new_session::{
     Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,
 };
+pub use saved::{Saved, Stored, decode, encode};
 pub use session::{
     Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
     TaskRow, Tasks, UndoNote, WorkspaceContext,
 };
-pub use sessions::{Listing, SessionList, SessionRow};
+pub use sessions::{HostGroup, Listing, SessionList, SessionRow};
+pub use state::{Detail, Dial, HostsScreen, State};
 pub use transcript::{
     Action, AgentGroup, AnsweredQuestion, ApprovalCard, Ask, OptionButton,
     QuestionBody, QuestionCard, QuestionField, QuestionForm, Row, ToolDetail,
@@ -49,81 +53,58 @@ pub use transcript::{
 };
 
 use credentials::{Done, Subject};
-use host::Host;
 
-/// Where the app opens: a host it knows, or the pairing form.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Opening {
-    Host(Ticket),
-    Unpaired,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct State {
-    pairing: Pairing,
-    /// Why the join link the app opened on was refused. The pairing form
-    /// says so each time it opens.
-    first_error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Pairing {
-    Unpaired { text: String, error: Option<String> },
-    Paired(Box<Host>),
-}
-
-impl State {
-    #[must_use]
-    pub fn new(opening: Result<Opening, TicketError>) -> Self {
-        let first_error = opening.as_ref().err().map(invalid);
-        let pairing = match opening {
-            Ok(Opening::Host(ticket)) => {
-                Pairing::Paired(Box::new(Host::new(ticket)))
-            }
-            Ok(Opening::Unpaired) | Err(_) => Pairing::Unpaired {
-                text: String::new(),
-                error: first_error.clone(),
-            },
-        };
-        Self {
-            pairing,
-            first_error,
-        }
-    }
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self::new(Ok(Opening::Unpaired))
-    }
+/// What the app opens on: what local storage holds, and the join link in
+/// the address bar, if any.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Opening {
+    pub stored: Stored,
+    pub joined: Option<Result<Ticket, TicketError>>,
 }
 
 /// What fills the detail pane, and on a phone the whole window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
     Sessions,
+    /// The pairing form, for one more host.
+    AddHost,
     NewSession,
     Credentials,
-    Session(SessionId),
+    Session(HostId, SessionId),
 }
 
-/// Everything a person can do, and what the link and the host's answers
+impl Place {
+    /// The host a session's place is on.
+    const fn host(self) -> Option<HostId> {
+        match self {
+            Self::Session(host, _) => Some(host),
+            Self::Sessions
+            | Self::AddHost
+            | Self::NewSession
+            | Self::Credentials => None,
+        }
+    }
+}
+
+/// Everything a person can do, and what the links and the hosts' answers
 /// bring.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Intent {
     /// The pairing form's text.
     TypeJoin(String),
-    /// The pairing form sent, with what its text parsed to.
+    /// The pairing form sent, with what its text parsed to. A host paired
+    /// again keeps its place and takes the new ticket.
     Join(Result<Ticket, TicketError>),
-    /// Forget this host and pair again.
-    ChangeHost,
-    Link(Update),
+    /// Forget this host; the last one gone, pair again.
+    Forget(HostId),
+    Link(HostId, Update),
     Show(Place),
     DismissNotice,
     Form(FormIntent),
-    Credential(CredentialIntent),
+    Credential(HostId, CredentialIntent),
+    /// Acts on the session shown.
     Session(SessionIntent),
-    /// The host's answer to a command an [`Effect::Send`] sent, or why none
+    /// A host's answer to a command an [`Effect::Send`] sent, or why none
     /// came.
     Replied(Reply, Result<CommandResult, String>),
 }
@@ -131,14 +112,15 @@ pub enum Intent {
 /// What the shell does for an [`update`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Send `body` to the host and return its answer as
+    /// Send `body` to `host` and return its answer as
     /// [`Intent::Replied`] with `reply`.
     Send {
+        host: HostId,
         body: CommandBody,
         reply: Reply,
     },
-    SaveTicket(Ticket),
-    ForgetTicket,
+    /// Keep these hosts in local storage, as [`encode`] writes them.
+    SaveHosts(Vec<Saved>),
     Focus(Focus),
     /// Put the session's effort picker back on this value, which a refused
     /// change left behind.
@@ -163,6 +145,7 @@ pub enum Focus {
 /// it sent the command ignores the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
+    host: HostId,
     visit: u64,
     to: ReplyTo,
 }
@@ -179,6 +162,27 @@ enum ReplyTo {
         checkpoint: CheckpointId,
         request: u64,
     },
+}
+
+/// The host a command goes to, and the visit of the place that sent it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct At {
+    host: HostId,
+    visit: u64,
+}
+
+impl At {
+    const fn send(self, body: CommandBody, to: ReplyTo) -> Effect {
+        Effect::Send {
+            host: self.host,
+            body,
+            reply: Reply {
+                host: self.host,
+                visit: self.visit,
+                to,
+            },
+        }
+    }
 }
 
 /// A key pressed in the composer.
@@ -199,11 +203,12 @@ pub const fn sends(key: Keystroke) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
+    /// No host is paired.
     Pair(Pair),
-    Host(Box<HostScreen>),
+    Hosts(Box<HostsScreen>),
 }
 
-/// Shown until a host is known.
+/// The pairing form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pair {
     pub text: String,
@@ -213,59 +218,10 @@ pub struct Pair {
 
 #[must_use]
 pub fn update(state: State, intent: Intent) -> (State, Vec<Effect>) {
-    let State {
-        pairing,
-        first_error,
-    } = state;
-    let (next, effects) = match (pairing, intent) {
-        (Pairing::Unpaired { error, .. }, Intent::TypeJoin(text)) => {
-            (Pairing::Unpaired { text, error }, Vec::new())
-        }
-        (Pairing::Unpaired { .. }, Intent::Join(Ok(ticket))) => (
-            Pairing::Paired(Box::new(Host::new(ticket.clone()))),
-            Vec::from([Effect::SaveTicket(ticket)]),
-        ),
-        (Pairing::Unpaired { text, .. }, Intent::Join(Err(error))) => (
-            Pairing::Unpaired {
-                text,
-                error: Some(invalid(&error)),
-            },
-            Vec::new(),
-        ),
-        (Pairing::Paired(_), Intent::ChangeHost) => (
-            Pairing::Unpaired {
-                text: String::new(),
-                error: first_error.clone(),
-            },
-            Vec::from([Effect::ForgetTicket]),
-        ),
-        (Pairing::Paired(host), other) => {
-            let (next, effects) = Host::update(*host, other);
-            (Pairing::Paired(Box::new(next)), effects)
-        }
-        (unpaired @ Pairing::Unpaired { .. }, _) => (unpaired, Vec::new()),
-    };
-    (
-        State {
-            pairing: next,
-            first_error,
-        },
-        effects,
-    )
+    state.update(intent)
 }
 
 #[must_use]
 pub fn view(state: &State) -> Screen {
-    match &state.pairing {
-        Pairing::Unpaired { text, error } => Screen::Pair(Pair {
-            text: text.clone(),
-            connect_disabled: text.trim().is_empty(),
-            error: error.clone(),
-        }),
-        Pairing::Paired(host) => Screen::Host(Box::new(host.screen())),
-    }
-}
-
-fn invalid(error: &TicketError) -> String {
-    format!("That join link is not valid: {error}")
+    state.screen()
 }

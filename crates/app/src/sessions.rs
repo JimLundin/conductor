@@ -1,4 +1,5 @@
-//! The session list and the form that starts a session.
+//! The session list, a group per host, and the form that starts a
+//! session.
 
 #![expect(
     clippy::disallowed_types,
@@ -36,7 +37,28 @@ pub fn SessionList(list: ui::SessionList) -> Element {
                     "New session"
                 }
             }
-            match list.listing {
+            for group in list.groups {
+                HostGroup { key: "{group.key}", group }
+            }
+        }
+    }
+}
+
+/// One host's sessions, under its name and link state.
+#[component]
+fn HostGroup(group: ui::HostGroup) -> Element {
+    let status = group.status;
+    rsx! {
+        section { class: "host-group", "aria-label": "{status.host}",
+            header { class: "status", "data-state": "{status.state}",
+                span { class: "dot", "aria-hidden": "true" }
+                span { class: "host", "{status.host}" }
+                span { class: "state", "{status.state}" }
+                if let Some(error) = status.error {
+                    span { class: "error", "{error}" }
+                }
+            }
+            match group.listing {
                 Listing::Rows(rows) => rsx! {
                     ul { class: "session-list",
                         for row in rows {
@@ -53,14 +75,14 @@ pub fn SessionList(list: ui::SessionList) -> Element {
 #[component]
 fn SessionRow(row: ui::SessionRow) -> Element {
     let shell = use_context::<Shell>();
-    let id = row.id;
+    let place = Place::Session(row.host, row.id);
     rsx! {
         li {
             button {
                 class: "session-row",
                 "data-status": "{row.status}",
                 "aria-current": row.current,
-                onclick: move |_| shell.dispatch(Intent::Show(Place::Session(id))),
+                onclick: move |_| shell.dispatch(Intent::Show(place)),
                 span { class: "dot", "aria-hidden": "true" }
                 span { class: "row-text",
                     span { class: "row-title", "{row.title}" }
@@ -81,13 +103,21 @@ pub fn NewSession(form: ui::NewSessionForm) -> Element {
     let change = move |intent| shell.dispatch(Intent::Form(intent));
     rsx! {
         section { class: "pane new-pane",
-            PaneHeader { title: "New session", subtitle: "Runs on the host, in a directory you choose." }
+            PaneHeader { title: "New session", subtitle: "{form.subtitle}" }
             form {
                 class: "new-session",
                 onsubmit: move |event: FormEvent| {
                     event.prevent_default();
                     change(FormIntent::Start);
                 },
+                label { class: "field",
+                    span { class: "field-label", "Host" }
+                    select {
+                        name: "host",
+                        onchange: move |event| change(FormIntent::PickHost(event.value())),
+                        Options { choices: form.hosts }
+                    }
+                }
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",

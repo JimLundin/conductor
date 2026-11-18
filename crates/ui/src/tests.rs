@@ -1,3 +1,5 @@
+mod hosts;
+
 use alloc::collections::BTreeMap;
 
 use client::link::{LinkState, Status, Update};
@@ -17,14 +19,15 @@ use proto::{
 use crate::credentials::{Done, Subject};
 use crate::{
     Action, AgentGroup, Ask, CredentialIntent, Detail, Diff, DiffFile,
-    DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint,
-    HostScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
-    Patch, Place, QuestionBody, Reply, ReplyTo, Row, Screen, SessionIntent,
-    SessionPane, State, ToolDetail, ToolLine, TurnChanges, UndoNote, sends,
-    update, view,
+    DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
+    HostsScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
+    Patch, Place, QuestionBody, Reply, ReplyTo, Row, Saved, Screen,
+    SessionIntent, SessionPane, State, Stored, ToolDetail, ToolLine,
+    TurnChanges, UndoNote, sends, update, view,
 };
 
 const SESSION: SessionId = SessionId(7);
+const HOST: HostId = HostId([9; 32]);
 
 fn text(text: &str) -> String {
     String::from(text)
@@ -38,14 +41,25 @@ fn ticket() -> Ticket {
     }
 }
 
+/// The app opened on a join link, with nothing saved.
+fn joined(link: Result<Ticket, TicketError>) -> State {
+    State::new(Opening {
+        stored: Stored::default(),
+        joined: Some(link),
+    })
+}
+
 /// Paired with a host whose catalog arrived but which isn't live.
 fn paired() -> State {
     let (state, _) = update(
-        State::new(Ok(Opening::Host(ticket()))),
-        Intent::Link(Update::Status(Status {
-            catalog: catalog(),
-            ..Status::default()
-        })),
+        joined(Ok(ticket())),
+        Intent::Link(
+            HOST,
+            Update::Status(Status {
+                catalog: catalog(),
+                ..Status::default()
+            }),
+        ),
     );
     state
 }
@@ -113,11 +127,14 @@ fn run(state: State, intents: Vec<Intent>) -> (State, Vec<Effect>) {
 }
 
 fn event(seq: u64, kind: EventKind) -> Intent {
-    Intent::Link(Update::Event(Event {
-        seq: HostSeq(seq),
-        session: SESSION,
-        kind,
-    }))
+    Intent::Link(
+        HOST,
+        Update::Event(Event {
+            seq: HostSeq(seq),
+            session: SESSION,
+            kind,
+        }),
+    )
 }
 
 fn created() -> EventKind {
@@ -147,14 +164,17 @@ fn signing_in(
     instances: Instances,
     sign_ins: BTreeMap<InstanceId, SignInStep>,
 ) -> Intent {
-    Intent::Link(Update::Status(Status {
-        state: LinkState::Live,
-        host: Some(text("desk")),
-        instances: Some(instances),
-        catalog: catalog(),
-        sign_ins,
-        error: None,
-    }))
+    Intent::Link(
+        HOST,
+        Update::Status(Status {
+            state: LinkState::Live,
+            host: Some(text("desk")),
+            instances: Some(instances),
+            catalog: catalog(),
+            sign_ins,
+            error: None,
+        }),
+    )
 }
 
 fn id(name: &str) -> InstanceId {
@@ -186,14 +206,14 @@ fn opened(more: Vec<Intent>) -> (State, Vec<Effect>) {
     let shown = Vec::from([
         event(1, created()),
         event(2, EventKind::SessionReady),
-        Intent::Show(Place::Session(SESSION)),
+        Intent::Show(Place::Session(HOST, SESSION)),
     ]);
     run(paired(), shown.into_iter().chain(more).collect())
 }
 
-fn screen(state: &State) -> Option<HostScreen> {
+fn screen(state: &State) -> Option<HostsScreen> {
     match view(state) {
-        Screen::Host(host) => Some(*host),
+        Screen::Hosts(host) => Some(*host),
         Screen::Pair(_) => None,
     }
 }
@@ -202,8 +222,20 @@ fn pane(state: &State) -> Option<SessionPane> {
     screen(state).and_then(|host| match host.detail {
         Detail::Session(pane) => Some(*pane),
         Detail::Placeholder(_)
+        | Detail::Pair(_)
         | Detail::NewSession(_)
         | Detail::Credentials(_) => None,
+    })
+}
+
+/// The first host's sessions.
+fn listing(state: &State) -> Option<Listing> {
+    screen(state).and_then(|host| {
+        host.list
+            .groups
+            .into_iter()
+            .next()
+            .map(|group| group.listing)
     })
 }
 
@@ -217,6 +249,7 @@ fn form(state: &State) -> Option<NewSessionForm> {
     screen(state).and_then(|host| match host.detail {
         Detail::NewSession(form) => Some(*form),
         Detail::Placeholder(_)
+        | Detail::Pair(_)
         | Detail::Credentials(_)
         | Detail::Session(_) => None,
     })
@@ -227,8 +260,7 @@ fn sent(effects: &[Effect]) -> Vec<CommandBody> {
         .iter()
         .filter_map(|effect| match effect {
             Effect::Send { body, .. } => Some(body.clone()),
-            Effect::SaveTicket(_)
-            | Effect::ForgetTicket
+            Effect::SaveHosts(_)
             | Effect::Focus(_)
             | Effect::ShowEffort(_)
             | Effect::Copy(_) => None,
@@ -237,7 +269,11 @@ fn sent(effects: &[Effect]) -> Vec<CommandBody> {
 }
 
 const fn reply(to: ReplyTo) -> Reply {
-    Reply { visit: 1, to }
+    Reply {
+        host: HOST,
+        visit: 1,
+        to,
+    }
 }
 
 fn line(state: &'static str, command: &str) -> ToolLine {
@@ -249,32 +285,39 @@ fn line(state: &'static str, command: &str) -> ToolLine {
 
 #[test]
 fn pairing_saves_a_valid_link_reports_a_bad_one_and_forgets_the_host() {
-    let refused = State::new(Err(TicketError::Truncated));
+    let refused = joined(Err(TicketError::Truncated));
     let (typed, _) = run(refused, Vec::from([Intent::TypeJoin(text(" "))]));
-    let (joined, saved) =
+    let (paired_now, saved) =
         run(typed.clone(), Vec::from([Intent::Join(Ok(ticket()))]));
     let (forgot, forgotten) =
-        run(joined.clone(), Vec::from([Intent::ChangeHost]));
+        run(paired_now.clone(), Vec::from([Intent::Forget(HOST)]));
     let pair = |state: &State| match view(state) {
         Screen::Pair(pair) => Some((pair.connect_disabled, pair.error)),
-        Screen::Host(_) => None,
+        Screen::Hosts(_) => None,
     };
     let invalid =
         Some(text("That join link is not valid: ticket is truncated"));
     assert_eq!(
         (
             pair(&typed),
-            screen(&joined).map(|host| host.ticket),
+            screen(&paired_now).map(|host| host.links),
             saved,
             pair(&forgot),
             forgotten,
         ),
         (
             Some((true, invalid.clone())),
-            Some(ticket()),
-            Vec::from([Effect::SaveTicket(ticket())]),
+            Some(Vec::from([crate::Dial {
+                host: HOST,
+                key: ticket().to_text(),
+                ticket: ticket(),
+            }])),
+            Vec::from([Effect::SaveHosts(Vec::from([Saved {
+                ticket: ticket(),
+                name: None,
+            }]))]),
             Some((true, invalid)),
-            Vec::from([Effect::ForgetTicket]),
+            Vec::from([Effect::SaveHosts(Vec::new())]),
         )
     );
 }
@@ -288,7 +331,7 @@ fn a_phone_shows_the_list_until_a_pane_is_chosen() {
     };
     let (reset, _) = run(
         shown.clone(),
-        Vec::from([Intent::Link(Update::Reset(proto::Epoch(2)))]),
+        Vec::from([Intent::Link(HOST, Update::Reset(proto::Epoch(2)))]),
     );
     assert_eq!(
         [
@@ -327,14 +370,14 @@ fn the_list_marks_the_shown_session_and_what_waits_on_a_person() {
             },
         ),
     ]));
-    let row = match screen(&state).map(|host| host.list.listing) {
+    let row = match listing(&state) {
         Some(Listing::Rows(rows)) => rows.into_iter().next().map(|row| {
             (row.status, row.current, row.title, row.sub, row.badge)
         }),
         Some(Listing::Empty(_)) | None => None,
     };
     assert_eq!(
-        (row, screen(&paired()).map(|host| host.list.listing)),
+        (row, listing(&paired())),
         (
             Some((
                 text("approval"),
@@ -343,9 +386,7 @@ fn the_list_marks_the_shown_session_and_what_waits_on_a_person() {
                 text("Claude Code, needs you"),
                 text("1")
             )),
-            Some(Listing::Empty(
-                "No sessions yet. Start one in a directory on the host."
-            )),
+            Some(Listing::Empty(text("No sessions on host 09090909 yet."))),
         )
     );
 }
@@ -619,6 +660,7 @@ fn an_open_approval_offers_its_decisions_and_resolves_in_place() {
             )),
             Vec::from([
                 Effect::Send {
+                    host: HOST,
                     body: CommandBody::Resolve {
                         session: SESSION,
                         request: RequestId(3),
@@ -926,6 +968,7 @@ fn a_closed_session_offers_continue_and_focuses_the_composer_that_follows() {
             }),
             Vec::from([
                 Effect::Send {
+                    host: HOST,
                     body: CommandBody::Continue { session: SESSION },
                     reply: reply(ReplyTo::Notice),
                 },
@@ -981,7 +1024,10 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
     assert_eq!(
         (
             picker,
-            effects,
+            effects
+                .into_iter()
+                .filter(|effect| !matches!(effect, Effect::SaveHosts(_)))
+                .collect::<Vec<Effect>>(),
             put_back,
             pane(&refused).and_then(|shown| shown.notice),
         ),
@@ -992,6 +1038,7 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
                 (text("high"), text("high effort"), false, false),
             ])),
             Vec::from([Effect::Send {
+                host: HOST,
                 body: CommandBody::SetEffort {
                     session: SESSION,
                     effort: Effort::High
@@ -1079,7 +1126,7 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
             Some(Hint {
                 class: "hint error",
                 role: Some("alert"),
-                text: text("Codex can't run on this host: no codex"),
+                text: text("Codex can't run on desk: no codex"),
             }),
             Some((true, "Starting…")),
             Vec::from([CommandBody::StartSession {
@@ -1093,9 +1140,7 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
                 Some(Hint {
                     class: "hint error",
                     role: Some("alert"),
-                    text: text(
-                        "There is no directory at that path on the host."
-                    ),
+                    text: text("There is no directory at that path on desk."),
                 })
             )),
             Some((false, "Start session")),
@@ -1107,9 +1152,8 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
 type Shown = (String, Option<bool>, bool, Option<String>, Vec<String>);
 
 fn credentials(state: &State) -> Vec<Shown> {
-    screen(state).map_or_else(Vec::new, |host| match host.detail {
-        Detail::Credentials(pane) => pane
-            .instances
+    pane_of(state).map_or_else(Vec::new, |pane| {
+        pane.instances
             .into_iter()
             .map(|shown| {
                 (
@@ -1125,10 +1169,7 @@ fn credentials(state: &State) -> Vec<Shown> {
                         .collect(),
                 )
             })
-            .collect(),
-        Detail::Placeholder(_) | Detail::NewSession(_) | Detail::Session(_) => {
-            Vec::new()
-        }
+            .collect()
     })
 }
 
@@ -1142,12 +1183,15 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
         models: Models::none(),
     };
     let fill = |field: &str, value: &str| {
-        Intent::Credential(CredentialIntent::Type {
-            instance: id("claude"),
-            kind: text("gateway"),
-            field: text(field),
-            text: text(value),
-        })
+        Intent::Credential(
+            HOST,
+            CredentialIntent::Type {
+                instance: id("claude"),
+                kind: text("gateway"),
+                field: text(field),
+                text: text(value),
+            },
+        )
     };
     let (filled, _) = run(
         paired(),
@@ -1160,10 +1204,13 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
     );
     let (saving, saved) = run(
         filled.clone(),
-        Vec::from([Intent::Credential(CredentialIntent::Save {
-            instance: id("claude"),
-            kind: text("gateway"),
-        })]),
+        Vec::from([Intent::Credential(
+            HOST,
+            CredentialIntent::Save {
+                instance: id("claude"),
+                kind: text("gateway"),
+            },
+        )]),
     );
     let (stored, _) = run(
         saving.clone(),
@@ -1177,7 +1224,10 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
     );
     let (_, cleared) = run(
         stored.clone(),
-        Vec::from([Intent::Credential(CredentialIntent::Clear(id("claude")))]),
+        Vec::from([Intent::Credential(
+            HOST,
+            CredentialIntent::Clear(id("claude")),
+        )]),
     );
     assert_eq!(
         (
@@ -1209,7 +1259,10 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
             Some(Some(text(
                 "Sent to desk over the encrypted link. This app doesn't keep it; your browser may offer to save it."
             ))),
-            Some(Effect::Focus(Focus::Element(text("claude-credential")))),
+            Some(Effect::Focus(Focus::Element(format!(
+                "{}-claude-credential",
+                HOST.key()
+            )))),
         )
     );
 }
@@ -1238,12 +1291,14 @@ fn two_claudes() -> Instances {
     ]))
 }
 
+/// The first host's credentials.
 fn pane_of(state: &State) -> Option<crate::CredentialsPane> {
     screen(state).and_then(|host| match host.detail {
-        Detail::Credentials(pane) => Some(*pane),
-        Detail::Placeholder(_) | Detail::NewSession(_) | Detail::Session(_) => {
-            None
-        }
+        Detail::Credentials(shown) => shown.hosts.into_iter().next(),
+        Detail::Placeholder(_)
+        | Detail::Pair(_)
+        | Detail::NewSession(_)
+        | Detail::Session(_) => None,
     })
 }
 
@@ -1279,15 +1334,15 @@ fn each_instance_has_its_section_and_each_provider_a_form_to_add_one() {
         Some((
             Vec::from([
                 (
-                    text("claude-credential"),
+                    format!("{}-claude-credential", HOST.key()),
                     text("Claude Code"),
                     text("Claude Code"),
-                    text("Signed in on the host"),
+                    text("Signed in on desk"),
                     false,
                     text("To sign it in on desk: conductord login claude"),
                 ),
                 (
-                    text("claude-api-credential"),
+                    format!("{}-claude-api-credential", HOST.key()),
                     text("Claude (API)"),
                     text("Claude Code"),
                     text("Gateway at https://gw.example"),
@@ -1313,31 +1368,34 @@ fn an_instance_is_added_renamed_and_removed_and_a_refusal_shows_why() {
     let (_, added) = run(
         shown.clone(),
         Vec::from([
-            Intent::Credential(CredentialIntent::TypeNewLabel(
-                Provider::Codex,
-                text(" Codex (API) "),
-            )),
-            Intent::Credential(CredentialIntent::Add(Provider::Codex)),
+            Intent::Credential(
+                HOST,
+                CredentialIntent::TypeNewLabel(
+                    Provider::Codex,
+                    text(" Codex (API) "),
+                ),
+            ),
+            Intent::Credential(HOST, CredentialIntent::Add(Provider::Codex)),
         ]),
     );
     let (renaming, renamed) = run(
         shown.clone(),
         Vec::from([
-            Intent::Credential(CredentialIntent::TypeLabel(
-                api(),
-                text("Work API"),
-            )),
-            Intent::Credential(CredentialIntent::Rename(api())),
+            Intent::Credential(
+                HOST,
+                CredentialIntent::TypeLabel(api(), text("Work API")),
+            ),
+            Intent::Credential(HOST, CredentialIntent::Rename(api())),
         ]),
     );
     let (_, removed) = run(
         shown.clone(),
-        Vec::from([Intent::Credential(CredentialIntent::Remove(api()))]),
+        Vec::from([Intent::Credential(HOST, CredentialIntent::Remove(api()))]),
     );
     let (refused, _) = run(
         shown,
         Vec::from([
-            Intent::Credential(CredentialIntent::Remove(api())),
+            Intent::Credential(HOST, CredentialIntent::Remove(api())),
             Intent::Replied(
                 reply(ReplyTo::Instance(
                     Subject::Instance(api()),
@@ -1376,7 +1434,10 @@ fn an_instance_is_added_renamed_and_removed_and_a_refusal_shows_why() {
                 label: text("Work API"),
             }]),
             Some(text("Sending…")),
-            Some(Effect::Focus(Focus::Element(text("add-instance")))),
+            Some(Effect::Focus(Focus::Element(format!(
+                "{}-add-instance",
+                HOST.key()
+            )))),
             Some(text(
                 "a session is running on it; stop it before removing the instance"
             )),
@@ -1636,7 +1697,7 @@ fn a_refusal_is_the_notice_until_dismissed_and_a_left_pane_drops_late_answers()
     let (dismissed, _) = run(state.clone(), Vec::from([Intent::DismissNotice]));
     let back = Vec::from([
         Intent::Show(Place::Sessions),
-        Intent::Show(Place::Session(SESSION)),
+        Intent::Show(Place::Session(HOST, SESSION)),
     ]);
     let (returned, _) = run(state.clone(), back.clone());
     let (late, _) = run(
@@ -1674,7 +1735,7 @@ fn sign_in_of(state: &State) -> Option<crate::SignInView> {
 }
 
 fn sign_in(intent: CredentialIntent) -> Intent {
-    Intent::Credential(intent)
+    Intent::Credential(HOST, intent)
 }
 
 /// The credentials screen of a host whose Claude instance signs in at

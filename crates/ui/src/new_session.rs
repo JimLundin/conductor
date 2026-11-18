@@ -1,22 +1,27 @@
-//! The form that starts a session: the instance it runs on, its model and
-//! effort, and the directory on the host.
+//! The form that starts a session: the host it runs on, then one of that
+//! host's instances, its model and effort, and the directory there.
+
+use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::host_view::HostView;
 use client::new_session::{
     Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort,
     models, note,
 };
 use proto::{
-    Availability, Catalog, CommandBody, CommandResult, Effort, HostPath,
-    InstanceId, Instances, ModelId,
+    Availability, CommandBody, CommandResult, Effort, HostPath, InstanceId,
+    Instances, ModelId,
 };
 
+use crate::host::{Host, HostId, by_name};
 use crate::sessions::short;
-use crate::{Effect, Reply, ReplyTo};
+use crate::{At, Effect, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormIntent {
+    /// A host's key. Another host has other instances, so the instance,
+    /// model and effort go back to their defaults.
+    PickHost(String),
     /// Another instance offers other models, so the model and effort go
     /// back to their defaults.
     PickInstance(InstanceId),
@@ -30,6 +35,9 @@ pub enum FormIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSessionForm {
+    pub subtitle: String,
+    /// The `select` of the paired hosts, each valued by its key.
+    pub hosts: Vec<Choice>,
     pub instances: Vec<InstanceChoice>,
     /// What the form says under the instances.
     pub instance_hint: Option<Hint>,
@@ -80,6 +88,9 @@ pub struct Suggestion {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Form {
+    /// The host of the session shown last, or the one a person picked;
+    /// `None`, or a host since forgotten, means the first live one.
+    host: Option<HostId>,
     /// `None` until a person picks one: the first available instance.
     instance: Option<InstanceId>,
     model: Option<ModelId>,
@@ -90,7 +101,15 @@ pub struct Form {
 
 impl Default for Form {
     fn default() -> Self {
+        Self::on(None)
+    }
+}
+
+impl Form {
+    /// A blank form on `host`.
+    pub const fn on(host: Option<HostId>) -> Self {
         Self {
+            host,
             instance: None,
             model: None,
             effort: None,
@@ -98,16 +117,29 @@ impl Default for Form {
             attempt: Attempt::Editing,
         }
     }
-}
 
-impl Form {
     pub fn update(
         self,
         intent: FormIntent,
-        instances: Option<&Instances>,
+        hosts: &BTreeMap<HostId, Host>,
         visit: u64,
     ) -> (Self, Vec<Effect>) {
+        let chosen = self.host(hosts);
+        let instances = chosen.and_then(|(_, host)| host.instances());
         match intent {
+            FormIntent::PickHost(key) => {
+                let picked = hosts.keys().find(|id| id.key() == key).copied();
+                (
+                    Self {
+                        host: picked.or(self.host),
+                        instance: None,
+                        model: None,
+                        effort: None,
+                        ..self
+                    },
+                    Vec::new(),
+                )
+            }
             FormIntent::PickInstance(instance) => (
                 Self {
                     instance: Some(instance),
@@ -146,7 +178,9 @@ impl Form {
                 (Self { directory, ..self }, Vec::new())
             }
             FormIntent::Start => {
-                let Some(instance) = self.chosen(instances).cloned() else {
+                let Some(((host, _), instance)) =
+                    chosen.zip(self.chosen(instances).cloned())
+                else {
                     return (self, Vec::new());
                 };
                 let body = CommandBody::StartSession {
@@ -160,13 +194,7 @@ impl Form {
                         attempt: Attempt::Starting,
                         ..self
                     },
-                    Vec::from([Effect::Send {
-                        body,
-                        reply: Reply {
-                            visit,
-                            to: ReplyTo::Start,
-                        },
-                    }]),
+                    Vec::from([At { host, visit }.send(body, ReplyTo::Start)]),
                 )
             }
         }
@@ -177,6 +205,25 @@ impl Form {
             attempt: Attempt::answered(answer),
             ..self
         }
+    }
+
+    /// The host a person picked or the form opened on, if it is still
+    /// paired, else the first live one, else the first.
+    fn host<'a>(
+        &self,
+        hosts: &'a BTreeMap<HostId, Host>,
+    ) -> Option<(HostId, &'a Host)> {
+        let listed = by_name(hosts);
+        let picked = self
+            .host
+            .and_then(|id| hosts.get(&id).map(|host| (id, host)));
+        picked.or_else(|| {
+            listed
+                .iter()
+                .find(|(_, host)| host.live())
+                .or_else(|| listed.first())
+                .copied()
+        })
     }
 
     /// The instance a person picked, if the host still has it, else the
@@ -204,18 +251,15 @@ impl Form {
         })
     }
 
-    pub fn screen(
-        &self,
-        view: &HostView,
-        instances: Option<&Instances>,
-        catalog: &Catalog,
-    ) -> NewSessionForm {
+    pub fn screen(&self, hosts: &BTreeMap<HostId, Host>) -> NewSessionForm {
+        let chosen = self.host(hosts);
+        let name = chosen.map_or_default(|(_, host)| host.name());
+        let instances = chosen.and_then(|(_, host)| host.instances());
+        let catalog = chosen.map_or_default(|(_, host)| host.catalog());
         let (directory_error, instance_error, form_error) = match &self.attempt
         {
             Attempt::Refused(Refusal::Directory) => (
-                Some(String::from(
-                    "There is no directory at that path on the host.",
-                )),
+                Some(format!("There is no directory at that path on {name}.")),
                 None,
                 None,
             ),
@@ -228,10 +272,10 @@ impl Form {
             Attempt::Editing | Attempt::Starting => (None, None, None),
         };
         let picked = self.chosen(instances);
-        let chosen = availability(instances, picked);
-        let offered = models(chosen);
-        let suggestions = view
-            .directories()
+        let available = availability(instances, picked);
+        let offered = models(available);
+        let suggestions = chosen
+            .map_or_default(|(_, host)| host.view.directories())
             .iter()
             .map(|path| Suggestion {
                 name: short(path).to_owned(),
@@ -246,6 +290,13 @@ impl Form {
             };
         let status = picked.and_then(|id| instances?.of(id));
         NewSessionForm {
+            subtitle: String::from(
+                "Runs on the host you choose, in a directory there.",
+            ),
+            hosts: by_name(hosts)
+                .into_iter()
+                .map(|(id, host)| host_choice(id, host, chosen))
+                .collect(),
             instances: instances.map_or_else(Vec::new, |listed| {
                 listed
                     .0
@@ -260,8 +311,11 @@ impl Form {
             }),
             instance_hint: instance_hint(
                 instance_error,
-                note(status.and_then(|it| catalog.of(it.provider)), chosen),
-                status.map_or("That instance", |it| it.label.as_str()),
+                note(status.and_then(|it| catalog.of(it.provider)), available),
+                (
+                    status.map_or("That instance", |it| it.label.as_str()),
+                    &name,
+                ),
             ),
             efforts: self
                 .effort_choices(&efforts(&offered, self.model.as_ref())),
@@ -313,14 +367,33 @@ impl Form {
 
 /// A refusal of the instance, else why the host can't run it, else what
 /// its provider's plugin says of it.
+/// A host in the host picker; one whose link isn't live says so.
+fn host_choice(
+    id: HostId,
+    host: &Host,
+    chosen: Option<(HostId, &Host)>,
+) -> Choice {
+    let name = host.name();
+    Choice {
+        value: id.key(),
+        label: if host.live() {
+            name
+        } else {
+            format!("{name} (offline)")
+        },
+        selected: chosen.is_some_and(|(picked, _)| picked == id),
+        disabled: false,
+    }
+}
+
 fn instance_hint(
     refused: Option<String>,
     note: ProviderNote,
-    label: &str,
+    (label, host): (&str, &str),
 ) -> Option<Hint> {
     match (refused, note) {
         (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => {
-            Some(alert(format!("{label} can't run on this host: {reason}")))
+            Some(alert(format!("{label} can't run on {host}: {reason}")))
         }
         (None, ProviderNote::Says(text)) => Some(Hint {
             class: "hint muted",

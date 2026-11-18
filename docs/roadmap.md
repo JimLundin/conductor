@@ -99,6 +99,14 @@ What is built and what comes next. Update it in the commit that changes it.
 - **App.** One Dioxus web app, installed as an app on the desktop and the
   iPhone: session list, new session, session pane, phone layout. Browser e2e
   on the real daemon with fake CLIs.
+- **Several hosts in one app** (home step 2, architecture §8). The app keeps
+  every paired host in local storage (`conductor.hosts`, keyed by endpoint
+  id, with each host's name; the old single ticket moves in on first
+  load) and a live link to each at once. The list groups sessions by host
+  under each one's name and link state, the credentials screen has a
+  section per host with *Forget this host*, and a new session picks a host,
+  then one of its instances. *Add host* takes a join link or ticket;
+  pairing a host again replaces its ticket. No protocol change.
 
 ## Next
 
@@ -159,8 +167,8 @@ Each item ends in something to try. The fleet design is
    device and host certificates and replaces the shared ticket token;
    `conductord join` and *Add host*; a signed fleet config with the roster,
    pins, settings, API keys and the Claude token, served by any host; a
-   per-host Codex ChatGPT sign-in after a join; several hosts in one
-   sidebar. *Try:* add a second host from the phone and run a Claude
+   per-host Codex ChatGPT sign-in after a join. The app already holds
+   several hosts, each paired by its own ticket. *Try:* add a second host from the phone and run a Claude
    session on it with the fleet's token, without signing in again.
 7. **Push.** (#15) Web Push from the host when an approval or question opens.
    *Try:* lock the phone and get the approval notification.

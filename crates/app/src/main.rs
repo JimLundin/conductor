@@ -1,8 +1,8 @@
-//! The Conductor UI for one host: the session list, a form to start a
-//! session, and each session's transcript. The `ui` crate describes every
-//! screen; these components only draw it. On a phone one screen shows at a
-//! time; on a wide window the list is a sidebar. `dx serve --platform web`
-//! runs it in a browser.
+//! The Conductor UI over every paired host: the session list by host, a
+//! form to start a session on one, and each session's transcript. The `ui`
+//! crate describes every screen; these components only draw it. On a phone
+//! one screen shows at a time; on a wide window the list is a sidebar.
+//! `dx serve --platform web` runs it in a browser.
 
 mod checkpoints;
 mod credentials;

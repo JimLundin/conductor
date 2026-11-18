@@ -106,10 +106,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   height: 100dvh;
 }
 
-/* The connection band. */
-.status {
+/* The band over the panes. */
+.band {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 0 0.55rem;
   padding: env(safe-area-inset-top, 0px) max(0.5rem, env(safe-area-inset-right, 0px)) 0 max(1rem, env(safe-area-inset-left, 0px));
@@ -117,27 +116,41 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   color: var(--band-ink);
   font-size: 0.8125rem;
 }
-.status .dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: #e5735f;
-}
-.status[data-state="Connecting"] .dot,
-.status[data-state="Authenticating"] .dot,
-.status[data-state="CatchingUp"] .dot { background: #f2b24a; }
-.status[data-state="Live"] .dot { background: #5fd08e; }
-.status .host { font-weight: 600; }
-.status .state { color: var(--band-muted); }
-.status .error { flex-basis: 100%; padding-bottom: 0.4rem; color: #f0a090; font-size: 0.75rem; }
-.status .change-host, .status .credentials {
-  margin-left: auto;
+.band-title { font-weight: 600; }
+.band button {
   padding: 0 0.6rem;
   background: transparent;
   color: var(--band-ink);
   font-weight: 500;
 }
-.status .credentials + .change-host { margin-left: 0; }
+.band .credentials { margin-left: auto; }
+.band button[aria-current="true"] { text-decoration: underline; text-underline-offset: 0.3em; }
+
+/* Each host's group in the list: its name and link state, then its
+   sessions. */
+.host-group + .host-group { margin-top: 1.25rem; }
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 0.5rem;
+  padding: 0.25rem 1.25rem 0.5rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.status .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  background: var(--red);
+}
+.status[data-state="Connecting"] .dot,
+.status[data-state="Authenticating"] .dot,
+.status[data-state="CatchingUp"] .dot { background: var(--amber-solid); }
+.status[data-state="Live"] .dot { background: var(--green); }
+.status .host { color: var(--ink); font-weight: 600; }
+.status .error { flex-basis: 100%; color: var(--red); font-size: 0.75rem; }
+.host-credentials + .host-credentials { margin-top: 2rem; }
+.host-credentials > .credential-head h2 { font-size: 1.2rem; }
 
 .panes {
   flex: 1;
@@ -742,7 +755,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 
 @media (hover: hover) and (pointer: fine) {
   .session-row:hover:not([aria-current="true"]), .suggestion:hover { background: var(--raised); }
-  .status .change-host:hover, .status .credentials:hover { color: #ffffff; }
+  .band button:hover { color: #ffffff; }
 }
 
 /* A phone: one screen at a time, pushed in from the right. */

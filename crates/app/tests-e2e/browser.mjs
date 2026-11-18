@@ -34,6 +34,10 @@
 //   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
 //             (the CLI hangs up) and <dir>/notes (never sent to), shot at
 //             1280x800 and 390x844, light and dark.
+//   hosts     Two hosts, desk (the join link) and laptop (SECOND_JOIN),
+//             paired in one app: a Claude session started on each from the
+//             one form, each listed under its own host, both kept across a
+//             reload, desk paired again, and laptop forgotten.
 
 import { chromium, webkit } from 'playwright';
 
@@ -93,14 +97,15 @@ const openRow = async (title, p = page) => {
 };
 /// Starts a session from the New session form and waits until it takes a
 /// message or has closed.
-const startSession = async (agent, directory) => {
+const startSession = async (agent, directory, host) => {
   await back();
   await page.getByRole('button', { name: 'New session' }).click();
+  if (host) await page.locator('select[name="host"]').selectOption({ label: host });
   await page.locator('.segment', { hasText: agent }).click();
   await page.locator('input[name="directory"]').fill(directory);
   await page.getByRole('button', { name: 'Start session' }).click();
   await pane.locator(`.composer textarea[placeholder="Message ${agent}"], .closed-note`).waitFor({ timeout: 20_000 });
-  log(`started a ${agent} session in ${directory}`);
+  log(`started a ${agent} session in ${directory}${host ? ` on ${host}` : ''}`);
 };
 const send = async (prompt) => {
   const composer = pane.locator('.composer textarea');
@@ -155,15 +160,16 @@ log(`status line: "${await statusLine()}"`);
 
 if (scenario === 'turn') {
   check(!page.url().includes('#join='), 'the join fragment was removed from the address bar');
+  const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('conductor.hosts')));
   check(
-    (await page.evaluate(() => localStorage.getItem('conductor.ticket'))) !== null,
-    'the ticket is in local storage',
+    Object.values(saved).length === 1 && Object.values(saved)[0].ticket === joinUrl.replace(/.*#join=/, ''),
+    'the host and its ticket are in local storage, keyed by its id',
   );
   // This host runs no Codex CLI.
   await page.getByRole('button', { name: 'New session' }).click();
   await page.locator('.segment', { hasText: 'Codex' }).click();
   const why = await page.locator('.providers .hint').innerText();
-  check(why.startsWith("Codex can't run on this host: "), `the form says why Codex is unavailable ("${why}")`);
+  check(why.startsWith("Codex can't run on conductor: "), `the form says why Codex is unavailable on the host, by name ("${why}")`);
 
   await turn({
     beforeApprove: async () => {
@@ -207,15 +213,16 @@ if (scenario === 'turn') {
   log(`Live ${Date.now() - pasted}ms after pasting the join link`);
   // The camera can't hand a new join link to a Home Screen app, so a paired
   // app must be able to drop its host and pair again from inside.
-  await installed.getByRole('button', { name: 'Change host' }).click();
+  await installed.getByRole('button', { name: 'Credentials' }).click();
+  await installed.getByRole('button', { name: 'Forget conductor' }).click();
   await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 10_000 });
   await installed.reload();
   await installed.getByRole('heading', { name: 'Connect to a host' }).waitFor({ timeout: 30_000 });
-  check(true, 'Change host forgets the saved host, across a relaunch');
+  check(true, 'forgetting the only host asks for a join link, across a relaunch');
   await installed.locator('form.pair input').fill(joinUrl);
   await installed.locator('form.pair button').click();
   await installed.locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
-  check(true, 'pairing again after Change host reaches Live');
+  check(true, 'pairing again after forgetting the host reaches Live');
   await fresh.close();
 } else if (scenario === 'worktrees') {
   // Harness provides one idle session with three completed checkpointed turns.
@@ -520,7 +527,7 @@ if (scenario === 'turn') {
   const claude = page.getByRole('region', { name: 'Claude Code' });
   const codex = page.getByRole('region', { name: 'Codex' });
   const state = claude.locator('.credential-state');
-  check((await state.innerText()) === "The host's own CLI, signed in on its own", 'Claude starts on its own CLI');
+  check((await state.innerText()) === "conductor's own CLI, signed in on its own", 'Claude starts on its own CLI');
   check(
     (await codex.locator('.credential-state').innerText()).startsWith('Not available:'),
     'Codex is unavailable on this host'
@@ -567,9 +574,9 @@ if (scenario === 'turn') {
   check(!kept.includes(TOKEN), 'the token is in no storage, the URL or the DOM');
   await page.screenshot({ path: out });
   await claude.getByRole('button', { name: 'Clear the Claude Code credential' }).click();
-  await state.filter({ hasText: "The host's own CLI" }).waitFor({ timeout: 10_000 });
+  await state.filter({ hasText: "conductor's own CLI" }).waitFor({ timeout: 10_000 });
   check((await claude.getByRole('status').innerText()) === 'Cleared on conductor.', 'the clear is confirmed');
-  check((await page.evaluate(() => document.activeElement?.id)) === 'claude-credential', 'focus moves to the Claude heading');
+  check((await page.evaluate(() => document.activeElement?.id))?.endsWith('-claude-credential'), 'focus moves to the Claude heading');
 
   // A second instance of Claude, added from the app, has a section and a
   // credential of its own, and the new-session picker lists it.
@@ -581,7 +588,7 @@ if (scenario === 'turn') {
   check((await add.getByRole('status').innerText()) === 'Added on conductor.', 'the add is confirmed');
   check((await api.locator('.credential-provider').innerText()) === 'Claude Code', 'the new instance runs Claude Code');
   check(
-    (await api.locator('.credential-state').innerText()) === "The host's own CLI, signed in on its own",
+    (await api.locator('.credential-state').innerText()) === "conductor's own CLI, signed in on its own",
     'the new instance starts on its own CLI'
   );
   check(
@@ -593,7 +600,7 @@ if (scenario === 'turn') {
   await api.getByRole('button', { name: 'Save gateway' }).click();
   await api.locator('.credential-state').filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: 10_000 });
   check(
-    (await state.innerText()) === "The host's own CLI, signed in on its own",
+    (await state.innerText()) === "conductor's own CLI, signed in on its own",
     "the new instance's gateway leaves the first Claude instance on its own CLI"
   );
   await back();
@@ -613,7 +620,7 @@ if (scenario === 'turn') {
   await page.getByRole('button', { name: 'Credentials' }).click();
   const claude = page.getByRole('region', { name: 'Claude Code' });
   const state = claude.locator('.credential-state');
-  check((await state.innerText()) === "The host's own CLI, signed in on its own", 'Claude starts on its own CLI');
+  check((await state.innerText()) === "conductor's own CLI, signed in on its own", 'Claude starts on its own CLI');
   const signIn = async () => {
     await claude.getByRole('button', { name: 'Sign in: Claude Code' }).click();
     await claude.getByRole('link', { name: 'Open the sign-in page' }).waitFor({ timeout: 20_000 });
@@ -652,7 +659,7 @@ if (scenario === 'turn') {
   await claude.getByRole('button', { name: 'Send code' }).click();
   await field.waitFor({ state: 'detached', timeout: 20_000 });
   log('the field went once the code was sent');
-  await state.filter({ hasText: 'Signed in on the host' }).waitFor({ timeout: 20_000 });
+  await state.filter({ hasText: 'Signed in on conductor' }).waitFor({ timeout: 20_000 });
   check(
     (await claude.locator('.sign-in [role="status"]').innerText()) === 'Signed in on conductor.',
     'the instance is signed in, without a reload'
@@ -677,7 +684,7 @@ if (scenario === 'turn') {
   await page.getByRole('button', { name: 'Credentials' }).click();
   check(
     (await page.getByRole('region', { name: 'Claude Code' }).locator('.credential-state').innerText()) ===
-      'Signed in on the host',
+      'Signed in on conductor',
     'a reload finds the instance signed in'
   );
 } else if (scenario === 'screens') {
@@ -724,6 +731,72 @@ if (scenario === 'turn') {
     }
     await context.close();
   }
+} else if (scenario === 'hosts') {
+  const secondJoin = process.env.SECOND_JOIN;
+  const group = (name) => page.locator('.host-group', { has: page.locator('.status .host', { hasText: new RegExp(`^${name}$`) }) });
+  const rowsOf = async (name) => (await group(name).locator('.row-title').allInnerTexts()).join(', ');
+  const names = async () => (await page.locator('.host-group .status .host').allInnerTexts()).join(', ');
+  const bothLive = async () => {
+    for (const name of ['desk', 'laptop']) {
+      await group(name).locator('header.status[data-state="Live"]').waitFor({ timeout: 60_000 });
+    }
+  };
+  await page.getByRole('button', { name: 'Add host' }).click();
+  await page.locator('.detail form.pair input').fill(secondJoin);
+  await page.locator('.detail form.pair button').click();
+  await bothLive();
+  check((await names()) === 'desk, laptop', 'the list has a group per host, each under its name');
+  check(
+    (await group('laptop').locator('.list-empty').innerText()) === 'No sessions on laptop yet.',
+    'an empty host says so by name',
+  );
+  const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('conductor.hosts')));
+  check(
+    Object.values(saved).map((host) => host.name).sort().join(', ') === 'desk, laptop',
+    'local storage keeps both hosts, with the names they gave',
+  );
+  await back();
+  await page.getByRole('button', { name: 'New session' }).click();
+  const hosts = page.locator('select[name="host"] option');
+  check((await hosts.allInnerTexts()).join(', ') === 'desk, laptop', 'the form picks a host first, from the paired ones');
+  await startSession('Claude Code', `${dir}/desk`, 'desk');
+  check((await pane.locator('.pane-title p').innerText()) === `${dir}/desk on desk`, 'the session pane names its host');
+  await startSession('Claude Code', `${dir}/laptop`, 'laptop');
+  check((await pane.locator('.pane-title p').innerText()) === `${dir}/laptop on laptop`, 'the second session runs on the other host');
+  await back();
+  await page.getByRole('button', { name: 'New session' }).click();
+  check(
+    (await page.locator('select[name="host"]').evaluate((select) => select.selectedOptions[0].label)) === 'laptop',
+    'a new session starts on the host of the session shown last',
+  );
+  await back();
+  check((await rowsOf('desk')) === 'desk' && (await rowsOf('laptop')) === 'laptop', 'each session is listed under its own host');
+  await page.screenshot({ path: out });
+  log(`screenshot ${out}`);
+
+  await page.reload();
+  await bothLive();
+  check((await rowsOf('desk')) === 'desk' && (await rowsOf('laptop')) === 'laptop', 'both hosts and their sessions are back after a reload');
+
+  // desk's join link again replaces its ticket; it stays one host.
+  await page.getByRole('button', { name: 'Add host' }).click();
+  await page.locator('.detail form.pair input').fill(joinUrl);
+  await page.locator('.detail form.pair button').click();
+  await bothLive();
+  check((await names()) === 'desk, laptop' && (await rowsOf('desk')) === 'desk', 'pairing desk again keeps one desk and its session');
+
+  await page.getByRole('button', { name: 'Credentials' }).click();
+  check(
+    (await page.locator('.host-credentials h2').allInnerTexts()).join(', ') === 'desk, laptop',
+    'the credentials cover each host, grouped by host',
+  );
+  await page.getByRole('button', { name: 'Forget laptop' }).click();
+  await back();
+  await page.locator('.host-group').nth(1).waitFor({ state: 'detached', timeout: 10_000 });
+  check((await names()) === 'desk', 'forgetting laptop drops its group');
+  await page.reload();
+  await waitFor('header.status[data-state="Live"]', 60_000);
+  check((await names()) === 'desk' && (await rowsOf('desk')) === 'desk', 'laptop stays forgotten after a reload');
 } else {
   throw new Error(`unknown scenario ${scenario}`);
 }

@@ -1408,11 +1408,13 @@ The owner settled these on 2026-11-12.
 
 ## 7. The client (`crates/client`, `crates/net`)
 
-- `HostLink` (in `net`) is one per host. One task owns the connection and walks
+- `HostLink` (in `net`) is one per host, and the app keeps one live for
+  every paired host at once. One task owns each connection and walks
   `Disconnected → Connecting → Authenticating → CatchingUp → Live`,
-  reconnecting with jittered backoff. It keeps the cursor, so every
-  reconnect resubscribes after the last applied seq, with no duplicates and
-  no gaps.
+  reconnecting with jittered backoff, each host on its own. It keeps the
+  cursor, so every reconnect resubscribes after the last applied seq, with
+  no duplicates and no gaps. A new link starts with no cursor, so the host
+  resets what the app holds for it before it catches up.
 - `HostView` (in `client`, the pure `no_std` core) folds a host's events
   into what the UI renders: sessions,
   transcripts, tool cards, open requests, what the composer and the
@@ -1424,14 +1426,39 @@ The owner settled these on 2026-11-12.
 
 Dioxus web, routed through the URL fragment so GitHub Pages never serves an
 unknown path. The app is model, update, view over the pure `no_std` `ui`
-crate. `ui::State` holds the pane shown, the drafts and forms, and the
-host's `HostView` and link `Status`. `ui::update` turns each `Intent` (what
-a person does, a link update, a command's answer) into the next state and
-`Effect`s as data: send a command, save or forget the ticket, move the
-focus. `ui::view` describes the whole `Screen`, down to each string, class
-and enabled flag, and which pane a phone shows. The Dioxus components only
-draw that description and turn events into intents; one signal in the app
-shell holds the state and performs the effects.
+crate. `ui::State` holds every paired host, keyed by its endpoint id
+(`ui::HostId`), each with its ticket, the name from its last `Welcome`, its
+`HostView` and its link `Status` (its instances, catalog and sign-ins).
+Beside the hosts it holds what the person has open: the place shown, which
+names its host when it is a session, and that place's drafts, forms and
+open diffs, dropped when another place shows. `ui::update` turns each
+`Intent` (what a person does, a host's link update, a command's answer)
+into the next state and `Effect`s as data: send a command to a host, save
+the hosts, move the focus. A link update, a credential change and each
+`Effect::Send` name their host, and an answer comes back to the host and
+the place that asked. `ui::view` describes the whole `Screen`, down to each
+string, class and enabled flag, and which pane a phone shows. The Dioxus
+components only draw that description and turn events into intents; one
+signal in the app shell holds the state and performs the effects, and the
+shell keeps a `HostLink` for each host the screen lists, keyed by its
+ticket.
+
+- **Several hosts.** The session list has a group per host, headed by its
+  name and link state, with its own error line; the detail pane shows the
+  selected session of its host. The credentials screen has a section per
+  host with its instances and *Forget this host*. A new session picks a host
+  first, by default the host of the session shown last, else the first
+  live one, then one of that host's instances. Where the app speaks of a
+  host it names it.
+- **Pairing.** A join link (`#join=`) or a ticket pasted under *Add host*
+  adds a host; pairing a host again gives it the new ticket and keeps its
+  sessions. Forgetting the last host returns to the pairing screen. A Home
+  Screen app on iOS has its own storage and can't receive a join link from
+  the camera, so it pairs from its own form.
+- **Storage.** Local storage keeps `conductor.hosts`, a JSON object keyed
+  by each host's endpoint id in hex, holding its ticket text and name
+  (`ui::encode`, `ui::decode`). The first launch after the single-host app
+  takes its `conductor.ticket` into the list and removes it.
 
 We port T3 Code's designs, not its code (`apps/web/src/components/`):
 

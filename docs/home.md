@@ -185,8 +185,8 @@ records: their output belongs to the parent's attempt.
 
 ## 7. The app
 
-- **Several hosts.** The app keeps every paired host (it holds one ticket
-  today) and shows each one's instances and availability.
+- **Several hosts.** The app keeps every paired host and shows each one's
+  sessions, instances and availability (architecture §8). Done.
 - **Projects and issues.** A projects view, each with its issues by status;
   an issue shows its notes and attempts, with *Assign* and *Continue*.
 - **Sessions** stay as they are, reached from their work or from the host,
@@ -195,7 +195,7 @@ records: their output belongs to the parent's attempt.
 ## 8. Build order
 
 1. Sub-agents in the session model (host only; no home needed). Done.
-2. The app with several hosts.
+2. The app with several hosts. Done.
 3. The home repository: clone, sync, and projects with checkouts.
 4. Issues: create, edit, status, notes, in the app.
 5. Work: assign an issue to a host and instance, finish, continue.

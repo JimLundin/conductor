@@ -1,4 +1,4 @@
-//! The host's instances and their credentials: what each instance signs in
+//! Each host's instances and their credentials: what each instance signs in
 //! with, its CLI's own sign-in run from the app, a form for each kind of
 //! credential its provider's plugin describes, a button to clear the
 //! stored one, its label to rename it, a button to remove it, and a form
@@ -15,12 +15,9 @@ use proto::{
     Provider, ProviderInfo, SignInCode, SignInStep,
 };
 
+use crate::host::{Host, HostId};
 use crate::new_session::{Hint, alert};
-use crate::{Effect, Focus, Reply, ReplyTo};
-
-/// The id of the heading of the forms that add instances, where the focus
-/// goes once a removed instance's section has gone.
-pub const ADD_HEADING: &str = "add-instance";
+use crate::{At, Effect, Focus, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialIntent {
@@ -54,10 +51,28 @@ pub enum CredentialIntent {
     CopySignInCode(InstanceId, String),
 }
 
+/// Every paired host's instances, a section per host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialsScreen {
+    pub hosts: Vec<CredentialsPane>,
+}
+
+/// One host's instances.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialsPane {
+    pub host: HostId,
+    /// The id of the host's heading, which labels its section.
+    pub heading: String,
+    pub name: String,
+    /// The host's link state, also its `data-state`.
+    pub state: String,
+    /// Forgets the host on this device.
+    pub forget: ClearButton,
     pub subtitle: String,
     pub instances: Vec<InstanceCredentials>,
+    /// The id of the heading of the forms that add instances, where the
+    /// focus goes once a removed instance's section has gone.
+    pub add_heading: String,
     /// A form per provider the host's plugins describe.
     pub add: Vec<AddForm>,
     /// What came of the last removal, whose section has gone.
@@ -228,7 +243,7 @@ impl Forms {
     pub fn update(
         mut self,
         intent: CredentialIntent,
-        visit: u64,
+        at: At,
         known: (Option<&Instances>, &Catalog),
     ) -> (Self, Vec<Effect>) {
         let (instances, catalog) = known;
@@ -252,12 +267,12 @@ impl Forms {
                     .and_then(|info| info.form(&kind))
                     .cloned();
                 match described {
-                    Some(form) => self.save(instance, &form, visit),
+                    Some(form) => self.save(instance, &form, at),
                     None => (self, Vec::new()),
                 }
             }
             CredentialIntent::Clear(instance) => {
-                let focus = Focus::Element(heading(&instance));
+                let focus = Focus::Element(heading(at.host, &instance));
                 let body = CommandBody::ClearCredential {
                     instance: instance.clone(),
                 };
@@ -265,7 +280,7 @@ impl Forms {
                     Subject::Instance(instance),
                     Done::Cleared,
                     body,
-                    visit,
+                    at,
                 );
                 // The button goes once the clear lands, so focus goes to
                 // the heading instead of the page.
@@ -277,7 +292,7 @@ impl Forms {
                 (self, Vec::new())
             }
             CredentialIntent::Rename(instance) => {
-                let effects = self.rename(instance, visit);
+                let effects = self.rename(instance, at);
                 (self, effects)
             }
             CredentialIntent::Remove(instance) => {
@@ -288,11 +303,10 @@ impl Forms {
                     Subject::Instance(instance),
                     Done::Removed,
                     body,
-                    visit,
+                    at,
                 );
-                effects.push(Effect::Focus(Focus::Element(String::from(
-                    ADD_HEADING,
-                ))));
+                effects
+                    .push(Effect::Focus(Focus::Element(add_heading(at.host))));
                 (self, effects)
             }
             CredentialIntent::TypeNewLabel(provider, text) => {
@@ -308,7 +322,7 @@ impl Forms {
                     });
                 let body = CommandBody::AddInstance { provider, label };
                 let effects =
-                    self.send(Subject::Add(provider), Done::Added, body, visit);
+                    self.send(Subject::Add(provider), Done::Added, body, at);
                 (self, effects)
             }
             signing @ (CredentialIntent::StartSignIn(_)
@@ -316,13 +330,13 @@ impl Forms {
             | CredentialIntent::SubmitSignInCode(_)
             | CredentialIntent::CancelSignIn(_)
             | CredentialIntent::CopySignInCode(..)) => {
-                self.signing(signing, visit)
+                self.signing(signing, at)
             }
         }
     }
 
     /// Renames the instance to the label typed for it.
-    fn rename(&mut self, instance: InstanceId, visit: u64) -> Vec<Effect> {
+    fn rename(&mut self, instance: InstanceId, at: At) -> Vec<Effect> {
         let label = self
             .labels
             .get(&instance)
@@ -331,14 +345,14 @@ impl Forms {
             instance: instance.clone(),
             label,
         };
-        self.send(Subject::Instance(instance), Done::Renamed, body, visit)
+        self.send(Subject::Instance(instance), Done::Renamed, body, at)
     }
 
     /// What a sign-in's controls do.
     fn signing(
         mut self,
         intent: CredentialIntent,
-        visit: u64,
+        at: At,
     ) -> (Self, Vec<Effect>) {
         match intent {
             CredentialIntent::StartSignIn(instance) => {
@@ -346,7 +360,7 @@ impl Forms {
                 let body = CommandBody::StartSignIn {
                     instance: instance.clone(),
                 };
-                let effects = self.sign_in(instance, body, visit);
+                let effects = self.sign_in(instance, body, at);
                 (self, effects)
             }
             CredentialIntent::TypeSignInCode(instance, text) => {
@@ -359,7 +373,7 @@ impl Forms {
                     instance: instance.clone(),
                     code: SignInCode(String::from(typed.trim())),
                 };
-                let effects = self.sign_in(instance, body, visit);
+                let effects = self.sign_in(instance, body, at);
                 (self, effects)
             }
             CredentialIntent::CancelSignIn(instance) => {
@@ -367,7 +381,7 @@ impl Forms {
                 let body = CommandBody::CancelSignIn {
                     instance: instance.clone(),
                 };
-                let effects = self.sign_in(instance, body, visit);
+                let effects = self.sign_in(instance, body, at);
                 (self, effects)
             }
             CredentialIntent::CopySignInCode(instance, code) => {
@@ -389,9 +403,9 @@ impl Forms {
         &mut self,
         instance: InstanceId,
         body: CommandBody,
-        visit: u64,
+        at: At,
     ) -> Vec<Effect> {
-        self.send(Subject::Instance(instance), Done::SignIn, body, visit)
+        self.send(Subject::Instance(instance), Done::SignIn, body, at)
     }
 
     /// Drops what the person typed or copied for the instance's last
@@ -408,16 +422,10 @@ impl Forms {
         subject: Subject,
         done: Done,
         body: CommandBody,
-        visit: u64,
+        at: At,
     ) -> Vec<Effect> {
         self.sent.insert(subject.clone(), Sent::Sending);
-        Vec::from([Effect::Send {
-            body,
-            reply: Reply {
-                visit,
-                to: ReplyTo::Instance(subject, done),
-            },
-        }])
+        Vec::from([at.send(body, ReplyTo::Instance(subject, done))])
     }
 
     /// Sends the form's values, the text ones trimmed, and empties its
@@ -426,7 +434,7 @@ impl Forms {
         mut self,
         instance: InstanceId,
         form: &CredentialForm,
-        visit: u64,
+        at: At,
     ) -> (Self, Vec<Effect>) {
         let key = (instance.clone(), form.kind.clone());
         let draft = self.drafts.remove(&key).unwrap_or_default();
@@ -449,7 +457,7 @@ impl Forms {
             credential,
         };
         let effects =
-            self.send(Subject::Instance(instance), Done::Stored, body, visit);
+            self.send(Subject::Instance(instance), Done::Stored, body, at);
         (self, effects)
     }
 
@@ -460,6 +468,7 @@ impl Forms {
         subject: Subject,
         done: Done,
         answer: Result<CommandResult, String>,
+        host: &str,
     ) -> Self {
         let sent = match answer {
             Ok(CommandResult::Instances(_)) => Sent::Done(done),
@@ -473,9 +482,7 @@ impl Forms {
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Diff(_),
-            ) => Sent::Failed(String::from(
-                "The host gave an unexpected answer.",
-            )),
+            ) => Sent::Failed(format!("{host} gave an unexpected answer.")),
             Err(error) => Sent::Failed(error),
         };
         match (&subject, &sent) {
@@ -494,23 +501,35 @@ impl Forms {
     /// A section for each instance the host has, with where its sign-in
     /// from the app stands, and a form for adding one of each provider its
     /// plugins describe.
-    pub fn screen(
-        &self,
-        host: &str,
-        instances: Option<&Instances>,
-        catalog: &Catalog,
-        sign_ins: &BTreeMap<InstanceId, SignInStep>,
-    ) -> CredentialsPane {
-        let listed = instances.map_or_else(Vec::new, |known| {
-            known
+    pub fn screen(&self, id: HostId, known: &Host) -> CredentialsPane {
+        let name = known.name();
+        let host = name.as_str();
+        let instances = known.instances();
+        let catalog = &known.catalog();
+        let sign_ins = known.sign_ins();
+        let listed = instances.map_or_else(Vec::new, |listed| {
+            listed
                 .0
                 .iter()
-                .map(|(id, status)| {
-                    self.instance(id, status, catalog, (host, sign_ins.get(id)))
+                .map(|(instance, status)| {
+                    self.instance(
+                        (id, instance),
+                        status,
+                        catalog,
+                        (host, sign_ins.get(instance)),
+                    )
                 })
                 .collect()
         });
         CredentialsPane {
+            host: id,
+            heading: format!("host-{}", id.key()),
+            state: known.status_line().state,
+            forget: ClearButton {
+                label: format!("Forget {host}"),
+                disabled: false,
+            },
+            add_heading: add_heading(id),
             subtitle: format!(
                 "How {host} reaches each agent's model. Each instance has its own credential and its own sign-in."
             ),
@@ -521,6 +540,7 @@ impl Forms {
                 .map(|(&provider, info)| self.add_form(provider, info, host))
                 .collect(),
             removed: self.removed(instances, host),
+            name,
         }
     }
 
@@ -528,7 +548,7 @@ impl Forms {
     /// stands at `step`.
     fn instance(
         &self,
-        instance: &InstanceId,
+        (id, instance): (HostId, &InstanceId),
         status: &InstanceStatus,
         catalog: &Catalog,
         (host, step): (&str, Option<&SignInStep>),
@@ -541,10 +561,10 @@ impl Forms {
         let renamed = value.trim();
         InstanceCredentials {
             instance: instance.clone(),
-            heading: heading(instance),
+            heading: heading(id, instance),
             name: status.label.clone(),
             provider: catalog.label(status.provider),
-            state: describe(info, &status.availability),
+            state: describe(info, &status.availability, host),
             login: format!(
                 "To sign it in on {host}: conductord login {}",
                 instance.0
@@ -792,8 +812,12 @@ const fn autocomplete(kind: FieldKind) -> &'static str {
     }
 }
 
-fn heading(instance: &InstanceId) -> String {
-    format!("{}-credential", instance.0)
+fn heading(host: HostId, instance: &InstanceId) -> String {
+    format!("{}-{}-credential", host.key(), instance.0)
+}
+
+fn add_heading(host: HostId) -> String {
+    format!("{}-add-instance", host.key())
 }
 
 /// Whether the host stores a credential for the instance, which a person
@@ -839,6 +863,7 @@ fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
 fn describe(
     info: Option<&ProviderInfo>,
     availability: &Availability,
+    host: &str,
 ) -> String {
     match availability {
         Availability::Available {
@@ -854,11 +879,11 @@ fn describe(
         Availability::Available {
             auth: Auth::SignedIn,
             ..
-        } => String::from("Signed in on the host"),
+        } => format!("Signed in on {host}"),
         Availability::Available {
             auth: Auth::Unmanaged,
             ..
-        } => String::from("The host's own CLI, signed in on its own"),
+        } => format!("{host}'s own CLI, signed in on its own"),
         Availability::Unavailable { reason } => {
             format!("Not available: {reason}")
         }

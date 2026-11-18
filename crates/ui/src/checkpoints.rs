@@ -18,7 +18,7 @@ pub enum DiffState {
 }
 
 impl DiffState {
-    pub fn answered(answer: Result<CommandResult, String>) -> Self {
+    pub fn answered(answer: Result<CommandResult, String>, host: &str) -> Self {
         match answer {
             Ok(CommandResult::Diff(changes)) => Self::Loaded(changes),
             Ok(CommandResult::Rejected(reason)) => Self::Failed(reason.label()),
@@ -26,7 +26,7 @@ impl DiffState {
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Instances(_),
-            ) => Self::Failed(String::from("The host did not return changes.")),
+            ) => Self::Failed(format!("{host} did not return changes.")),
             Err(reason) => Self::Failed(reason),
         }
     }

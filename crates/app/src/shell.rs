@@ -1,5 +1,6 @@
-//! The app shell: it holds the state, feeds it every intent and link update
-//! through `ui::update`, and performs the effects that come back.
+//! The app shell: it holds the state, feeds it every intent and each
+//! host's link updates through `ui::update`, and performs the effects that
+//! come back. It keeps one live link per paired host.
 
 #![expect(
     clippy::disallowed_types,
@@ -18,15 +19,16 @@
     reason = "rsx! expands each \"{text}\" node to format!"
 )]
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sessions::SessionList;
 use crate::ticket;
 use dioxus::prelude::*;
 use net::{HostLink, LinkOptions, Update};
-use proto::{CommandBody, CommandResult, Ticket};
+use proto::{CommandBody, CommandResult};
 use tokio::sync::mpsc;
-use ui::{Detail, Effect, Focus, Intent, Place, Screen, State};
+use ui::{Detail, Dial, Effect, Focus, HostId, Intent, Place, Screen, State};
 
 #[expect(
     clippy::volatile_composites,
@@ -34,18 +36,14 @@ use ui::{Detail, Effect, Focus, Intent, Place, Screen, State};
 )]
 const CSS: Asset = asset!("/assets/main.css");
 
-/// Where commands go.
-#[derive(Clone)]
-enum Link {
-    Waiting,
-    Live(Rc<HostLink>),
-}
+/// Each host's live link, with the ticket it dialled.
+type Links = BTreeMap<HostId, (String, Rc<HostLink>)>;
 
 /// The one place that holds the state.
 #[derive(Clone, Copy)]
 pub struct Shell {
     state: Signal<State>,
-    link: Signal<Link>,
+    links: Signal<Links>,
 }
 
 impl Shell {
@@ -61,14 +59,18 @@ impl Shell {
 
     fn perform(self, effect: Effect) {
         match effect {
-            Effect::Send { body, reply } => {
+            Effect::Send { host, body, reply } => {
+                let link = self
+                    .links
+                    .read()
+                    .get(&host)
+                    .map(|(_, link)| Rc::clone(link));
                 spawn(async move {
-                    let answer = send(self.link.cloned(), body).await;
+                    let answer = send(link, body).await;
                     self.dispatch(Intent::Replied(reply, answer));
                 });
             }
-            Effect::SaveTicket(ticket) => ticket::save(&ticket),
-            Effect::ForgetTicket => ticket::forget(),
+            Effect::SaveHosts(hosts) => ticket::save(&hosts),
             Effect::Focus(focus) => {
                 document::eval(&script(&focus));
             }
@@ -106,78 +108,83 @@ fn script(focus: &Focus) -> String {
 
 #[component]
 pub fn App() -> Element {
-    let state = use_signal(|| State::new(ticket::initial()));
-    let link = use_signal(|| Link::Waiting);
-    use_context_provider(|| Shell { state, link });
+    let state = use_signal(ticket::open);
+    let links = use_signal(Links::new);
+    use_context_provider(|| Shell { state, links });
     let screen = ui::view(&state.read());
     rsx! {
         document::Stylesheet { href: CSS }
         match screen {
-            Screen::Pair(pair) => rsx! { Pair { pair } },
-            Screen::Host(host) => rsx! { Host { host: *host } },
+            Screen::Pair(pair) => rsx! {
+                main { class: "empty",
+                    h1 { "Connect to a host" }
+                    p { "Paste the join link your host printed when it started." }
+                    Pair { pair }
+                }
+            },
+            Screen::Hosts(hosts) => rsx! { Hosts { hosts: *hosts } },
         }
     }
 }
 
-/// Shown until a host is known. The host prints its join link when it starts;
-/// opening that link pairs Safari, and pasting it here pairs a Home Screen app.
+/// The join link form. The host prints its join link when it starts;
+/// opening that link pairs Safari, and pasting it here pairs a Home Screen
+/// app.
 #[component]
 fn Pair(pair: ui::Pair) -> Element {
     let shell = use_context::<Shell>();
     let text = pair.text.clone();
     rsx! {
-        main { class: "empty",
-            h1 { "Connect to a host" }
-            p { "Paste the join link your host printed when it started." }
-            form {
-                class: "pair",
-                onsubmit: move |event: FormEvent| {
-                    event.prevent_default();
-                    shell.dispatch(Intent::Join(ticket::parse_join(&text)));
-                },
-                input {
-                    r#type: "url",
-                    placeholder: "https://…#join=…",
-                    autocomplete: "off",
-                    value: "{pair.text}",
-                    oninput: move |event| shell.dispatch(Intent::TypeJoin(event.value())),
-                }
-                button { r#type: "submit", disabled: pair.connect_disabled, "Connect" }
+        form {
+            class: "pair",
+            onsubmit: move |event: FormEvent| {
+                event.prevent_default();
+                shell.dispatch(Intent::Join(ticket::parse_join(&text)));
+            },
+            input {
+                r#type: "url",
+                placeholder: "https://…#join=…",
+                autocomplete: "off",
+                value: "{pair.text}",
+                oninput: move |event| shell.dispatch(Intent::TypeJoin(event.value())),
             }
-            if let Some(message) = pair.error {
-                p { class: "error", "{message}" }
-            }
+            button { r#type: "submit", disabled: pair.connect_disabled, "Connect" }
+        }
+        if let Some(message) = pair.error {
+            p { class: "error", "{message}" }
         }
     }
 }
 
-/// The screens over one host, and the link that feeds them while they show.
+/// The screens over every paired host, and a link to each while they show.
 #[component]
-fn Host(host: ui::HostScreen) -> Element {
-    let shell = use_context::<Shell>();
-    let ticket = host.ticket.clone();
-    use_future(move || run_link(ticket.clone(), shell));
-    use_drop(move || {
-        let mut link = shell.link;
-        link.set(Link::Waiting);
-    });
+fn Hosts(hosts: ui::HostsScreen) -> Element {
     rsx! {
-        div { class: "app", "data-screen": host.shown,
-            StatusLine { status: host.status }
+        for dial in hosts.links {
+            Link { key: "{dial.key}", dial }
+        }
+        div { class: "app", "data-screen": hosts.shown,
+            Band { add_current: hosts.add_current, credentials_current: hosts.credentials_current }
             div { class: "panes",
-                SessionList { list: host.list }
+                SessionList { list: hosts.list }
                 main { class: "detail",
-                    match host.detail {
+                    match hosts.detail {
                         Detail::Placeholder(text) => rsx! {
                             div { class: "placeholder",
                                 p { "{text}" }
                             }
                         },
+                        Detail::Pair(pair) => rsx! {
+                            section { class: "pane new-pane",
+                                PaneHeader { title: "Add a host", subtitle: "Paste the join link it printed when it started." }
+                                div { class: "new-session", Pair { pair } }
+                            }
+                        },
                         Detail::NewSession(form) => rsx! {
                             crate::sessions::NewSession { form: *form }
                         },
-                        Detail::Credentials(pane) => rsx! {
-                            crate::credentials::CredentialsPane { pane: *pane }
+                        Detail::Credentials(screen) => rsx! {
+                            crate::credentials::CredentialsScreen { screen: *screen }
                         },
                         Detail::Session(pane) => rsx! {
                             crate::session::SessionPane { key: "{pane.key}", pane: *pane }
@@ -187,6 +194,19 @@ fn Host(host: ui::HostScreen) -> Element {
             }
         }
     }
+}
+
+/// One host's link, for as long as the host stays paired with this ticket.
+#[component]
+fn Link(dial: Dial) -> Element {
+    let shell = use_context::<Shell>();
+    let key = dial.key.clone();
+    use_future(move || run_link(dial.clone(), shell));
+    use_drop(move || {
+        let mut links = shell.links;
+        links.write().retain(|_, (dialled, _)| *dialled != key);
+    });
+    rsx! {}
 }
 
 /// A screen's title bar. The back button shows only on a phone, where the
@@ -215,25 +235,22 @@ pub fn PaneHeader(
 }
 
 #[component]
-fn StatusLine(status: ui::StatusLine) -> Element {
+fn Band(add_current: bool, credentials_current: bool) -> Element {
     let shell = use_context::<Shell>();
     rsx! {
-        header { class: "status", "data-state": "{status.state}",
-            span { class: "dot" }
-            span { class: "host", "{status.host}" }
-            span { class: "state", "{status.state}" }
+        header { class: "band",
+            span { class: "band-title", "Conductor" }
             button {
                 class: "credentials",
+                "aria-current": credentials_current,
                 onclick: move |_| shell.dispatch(Intent::Show(Place::Credentials)),
                 "Credentials"
             }
             button {
-                class: "change-host",
-                onclick: move |_| shell.dispatch(Intent::ChangeHost),
-                "Change host"
-            }
-            if let Some(error) = status.error {
-                span { class: "error", "{error}" }
+                class: "add-host",
+                "aria-current": add_current,
+                onclick: move |_| shell.dispatch(Intent::Show(Place::AddHost)),
+                "Add host"
             }
         }
     }
@@ -243,10 +260,10 @@ fn StatusLine(status: ui::StatusLine) -> Element {
     clippy::future_not_send,
     reason = "runs on the single-threaded UI executor and holds signals and an Rc'd link"
 )]
-async fn run_link(ticket: Ticket, shell: Shell) {
+async fn run_link(dial: Dial, shell: Shell) {
     let options = LinkOptions::new(net::platform::client_name());
-    let started = HostLink::start(&ticket, options).await;
-    follow(started.ok(), shell).await;
+    let started = HostLink::start(&dial.ticket, options).await;
+    follow(dial, started.ok(), shell).await;
 }
 
 #[expect(
@@ -254,16 +271,17 @@ async fn run_link(ticket: Ticket, shell: Shell) {
     reason = "runs on the single-threaded UI executor and holds signals"
 )]
 async fn follow(
+    dial: Dial,
     started: Option<(HostLink, mpsc::Receiver<Update>)>,
     shell: Shell,
 ) {
     let Some((handle, mut updates)) = started else {
         return;
     };
-    let mut link = shell.link;
-    link.set(Link::Live(Rc::new(handle)));
+    let mut links = shell.links;
+    links.write().insert(dial.host, (dial.key, Rc::new(handle)));
     while let Some(update) = updates.recv().await {
-        shell.dispatch(Intent::Link(update));
+        shell.dispatch(Intent::Link(dial.host, update));
     }
 }
 
@@ -271,11 +289,12 @@ async fn follow(
     clippy::future_not_send,
     reason = "runs on the single-threaded UI executor and holds the Rc'd link"
 )]
-async fn send(link: Link, body: CommandBody) -> Result<CommandResult, String> {
+async fn send(
+    link: Option<Rc<HostLink>>,
+    body: CommandBody,
+) -> Result<CommandResult, String> {
     match link {
-        Link::Live(host) => {
-            host.send(body).await.map_err(|err| err.to_string())
-        }
-        Link::Waiting => Err(String::from("Not connected to the host yet.")),
+        Some(host) => host.send(body).await.map_err(|err| err.to_string()),
+        None => Err(String::from("Not connected to this host yet.")),
     }
 }

@@ -12,7 +12,8 @@
 # Chromium), the
 # credentials forms and a second Claude instance added from the app
 # (credentials, WebKit), Claude signed in from the app on the fake's sign-in
-# (sign-in, WebKit), and the screenshots of the
+# (sign-in, WebKit), two hosts paired in one app with a session started on
+# each (hosts, Chromium), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
 # and docs/p1/screens/phone-light-tasks.png. Every scenario runs even after
@@ -250,6 +251,24 @@ sign_in() {
   echo "ok: host sign-in: no code is in the data dir"
 }
 
+two_hosts() {
+  session "$scratch/hosts/desk" claude-approve.jsonl
+  session "$scratch/hosts/laptop" claude-approve.jsonl
+  start_host desk --name desk
+  local first=$join
+  start_host laptop --name laptop
+  echo
+  echo "## Two hosts in one app, chromium"
+  SECOND_JOIN=$join ENGINE=chromium node crates/app/tests-e2e/browser.mjs "$first" "$scratch/hosts.png" hosts "$scratch/hosts"
+  echo
+  echo "## Two hosts, host logs"
+  host_log desk
+  host_log laptop
+  echo
+  expect desk 1 'serve: command client="iPhone"' "desk's session started on desk"
+  expect laptop 1 'serve: command client="iPhone"' "laptop's session started on laptop"
+}
+
 screens() {
   # conductor runs, held mid-reply; scratch's CLI hangs up as the session
   # starts; notes is never sent a message.
@@ -300,6 +319,7 @@ out=docs/p1/browser-run.txt
   scenario "subagents, chromium" subagents
   scenario "credentials, webkit" credentials
   scenario "sign-in, webkit" sign_in
+  scenario "hosts, chromium" two_hosts
   scenario "screens, chromium" screens
   echo
   echo "## Summary"

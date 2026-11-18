@@ -18,28 +18,57 @@
 )]
 
 use dioxus::prelude::*;
-use ui::{ADD_HEADING, CredentialIntent, Intent};
+use ui::{CredentialIntent, HostId, Intent};
 
 use crate::sessions::Hint;
 use crate::{PaneHeader, Shell};
 
 #[component]
-pub fn CredentialsPane(pane: ui::CredentialsPane) -> Element {
+pub fn CredentialsScreen(screen: ui::CredentialsScreen) -> Element {
     rsx! {
         section { class: "pane new-pane",
-            PaneHeader { title: "Credentials", subtitle: "{pane.subtitle}" }
+            PaneHeader { title: "Credentials", subtitle: "Each host's instances, and how each reaches its agent's model." }
             div { class: "new-session",
-                for instance in pane.instances {
-                    InstanceCredentials { key: "{instance.heading}", instance }
+                for pane in screen.hosts {
+                    CredentialsPane { key: "{pane.heading}", pane }
                 }
-                section { class: "credential", "aria-labelledby": ADD_HEADING,
-                    h3 { id: ADD_HEADING, tabindex: "-1", "Add an instance" }
-                    if let Some(hint) = pane.removed {
-                        Hint { hint }
-                    }
-                    for form in pane.add {
-                        AddForm { key: "{form.button}", form }
-                    }
+            }
+        }
+    }
+}
+
+/// One host's instances, and the button that forgets the host.
+#[component]
+fn CredentialsPane(pane: ui::CredentialsPane) -> Element {
+    let shell = use_context::<Shell>();
+    let host = pane.host;
+    use_context_provider(|| host);
+    rsx! {
+        section { class: "host-credentials", "aria-labelledby": "{pane.heading}", "data-state": "{pane.state}",
+            div { class: "credential-head",
+                div {
+                    h2 { id: "{pane.heading}", tabindex: "-1", "{pane.name}" }
+                    p { class: "hint muted", "{pane.subtitle}" }
+                }
+                button {
+                    r#type: "button",
+                    class: "clear forget",
+                    "aria-label": "{pane.forget.label}",
+                    disabled: pane.forget.disabled,
+                    onclick: move |_| shell.dispatch(Intent::Forget(host)),
+                    "Forget this host"
+                }
+            }
+            for instance in pane.instances {
+                InstanceCredentials { key: "{instance.heading}", instance }
+            }
+            section { class: "credential", "aria-labelledby": "{pane.add_heading}",
+                h3 { id: "{pane.add_heading}", tabindex: "-1", "Add an instance" }
+                if let Some(hint) = pane.removed {
+                    Hint { hint }
+                }
+                for form in pane.add {
+                    AddForm { key: "{form.button}", form }
                 }
             }
         }
@@ -52,6 +81,7 @@ pub fn CredentialsPane(pane: ui::CredentialsPane) -> Element {
 #[component]
 fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let clear = instance.instance.clone();
     let remove = instance.instance.clone();
     rsx! {
@@ -68,7 +98,7 @@ fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
                         class: "clear",
                         "aria-label": "{button.label}",
                         disabled: button.disabled,
-                        onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::Clear(clear.clone()))),
+                        onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::Clear(clear.clone()))),
                         "Clear"
                     }
                 }
@@ -77,7 +107,7 @@ fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
                     class: "clear remove",
                     "aria-label": "{instance.remove.label}",
                     disabled: instance.remove.disabled,
-                    onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::Remove(remove.clone()))),
+                    onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::Remove(remove.clone()))),
                     "Remove"
                 }
             }
@@ -98,6 +128,7 @@ fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
 #[component]
 fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let start = instance.clone();
     let cancel = instance.clone();
     rsx! {
@@ -108,7 +139,7 @@ fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
                     class: "start",
                     "aria-label": "{button.label}",
                     disabled: button.disabled,
-                    onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::StartSignIn(start.clone()))),
+                    onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::StartSignIn(start.clone()))),
                     "{button.text}"
                 }
             }
@@ -136,7 +167,7 @@ fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
                     class: "clear",
                     "aria-label": "{button.label}",
                     disabled: button.disabled,
-                    onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::CancelSignIn(cancel.clone()))),
+                    onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::CancelSignIn(cancel.clone()))),
                     "Cancel"
                 }
             }
@@ -147,6 +178,7 @@ fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
 #[component]
 fn DeviceCode(instance: proto::InstanceId, code: ui::DeviceCode) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let copied = code.code.clone();
     rsx! {
         p { class: "device-code",
@@ -155,7 +187,7 @@ fn DeviceCode(instance: proto::InstanceId, code: ui::DeviceCode) -> Element {
                 r#type: "button",
                 class: "clear",
                 "aria-label": "{code.copy_label}",
-                onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::CopySignInCode(
+                onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::CopySignInCode(
                     instance.clone(),
                     copied.clone(),
                 ))),
@@ -169,6 +201,7 @@ fn DeviceCode(instance: proto::InstanceId, code: ui::DeviceCode) -> Element {
 #[component]
 fn PasteForm(form: ui::PasteForm) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let submit = form.instance.clone();
     let typed = form.instance.clone();
     rsx! {
@@ -177,7 +210,7 @@ fn PasteForm(form: ui::PasteForm) -> Element {
             "aria-label": "{form.label}",
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
-                shell.dispatch(Intent::Credential(CredentialIntent::SubmitSignInCode(submit.clone())));
+                shell.dispatch(Intent::Credential(host, CredentialIntent::SubmitSignInCode(submit.clone())));
             },
             label { class: "field",
                 span { class: "field-label", "Code from the sign-in page" }
@@ -188,7 +221,7 @@ fn PasteForm(form: ui::PasteForm) -> Element {
                     autocorrect: "off",
                     spellcheck: "false",
                     value: "{form.value}",
-                    oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::TypeSignInCode(
+                    oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::TypeSignInCode(
                         typed.clone(),
                         event.value(),
                     ))),
@@ -202,6 +235,7 @@ fn PasteForm(form: ui::PasteForm) -> Element {
 #[component]
 fn Rename(instance: proto::InstanceId, form: ui::RenameForm) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let typed = instance.clone();
     rsx! {
         form {
@@ -209,7 +243,7 @@ fn Rename(instance: proto::InstanceId, form: ui::RenameForm) -> Element {
             "aria-label": "{form.label}",
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
-                shell.dispatch(Intent::Credential(CredentialIntent::Rename(instance.clone())));
+                shell.dispatch(Intent::Credential(host, CredentialIntent::Rename(instance.clone())));
             },
             label { class: "field",
                 span { class: "field-label", "Label" }
@@ -217,7 +251,7 @@ fn Rename(instance: proto::InstanceId, form: ui::RenameForm) -> Element {
                     r#type: "text",
                     autocomplete: "off",
                     value: "{form.value}",
-                    oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::TypeLabel(
+                    oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::TypeLabel(
                         typed.clone(),
                         event.value(),
                     ))),
@@ -231,6 +265,7 @@ fn Rename(instance: proto::InstanceId, form: ui::RenameForm) -> Element {
 #[component]
 fn AddForm(form: ui::AddForm) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let provider = form.provider;
     rsx! {
         form {
@@ -238,7 +273,7 @@ fn AddForm(form: ui::AddForm) -> Element {
             "aria-label": "{form.button}",
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
-                shell.dispatch(Intent::Credential(CredentialIntent::Add(provider)));
+                shell.dispatch(Intent::Credential(host, CredentialIntent::Add(provider)));
             },
             label { class: "field",
                 span { class: "field-label", "Label" }
@@ -247,7 +282,7 @@ fn AddForm(form: ui::AddForm) -> Element {
                     autocomplete: "off",
                     placeholder: "{form.placeholder}",
                     value: "{form.value}",
-                    oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::TypeNewLabel(
+                    oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::TypeNewLabel(
                         provider,
                         event.value(),
                     ))),
@@ -264,6 +299,7 @@ fn AddForm(form: ui::AddForm) -> Element {
 #[component]
 fn KindForm(form: ui::KindForm) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let instance = form.instance.clone();
     let kind = form.kind.clone();
     rsx! {
@@ -272,7 +308,7 @@ fn KindForm(form: ui::KindForm) -> Element {
             "aria-label": "{form.label}",
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
-                shell.dispatch(Intent::Credential(CredentialIntent::Save {
+                shell.dispatch(Intent::Credential(host, CredentialIntent::Save {
                     instance: instance.clone(),
                     kind: kind.clone(),
                 }));
@@ -288,6 +324,7 @@ fn KindForm(form: ui::KindForm) -> Element {
 #[component]
 fn Field(field: ui::FieldView) -> Element {
     let shell = use_context::<Shell>();
+    let host = use_context::<HostId>();
     let instance = field.instance.clone();
     let kind = field.kind.clone();
     let id = field.field.clone();
@@ -302,7 +339,7 @@ fn Field(field: ui::FieldView) -> Element {
                 autocorrect: "off",
                 spellcheck: "false",
                 value: "{field.value}",
-                oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::Type {
+                oninput: move |event| shell.dispatch(Intent::Credential(host, CredentialIntent::Type {
                     instance: instance.clone(),
                     kind: kind.clone(),
                     field: id.clone(),

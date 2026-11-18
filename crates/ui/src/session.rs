@@ -19,7 +19,7 @@ use crate::checkpoints::{self, DiffState, TurnChanges};
 use crate::new_session::Choice;
 use crate::sessions::{agent, short};
 use crate::transcript::{self, AgentGroup, Row, card_id};
-use crate::{Effect, Focus, Reply, ReplyTo};
+use crate::{At, Effect, Focus, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionIntent {
@@ -168,32 +168,26 @@ impl Pane {
         intent: SessionIntent,
         id: SessionId,
         session: &SessionView,
-        visit: u64,
+        at: At,
     ) -> (Self, Vec<Effect>) {
         match intent {
             SessionIntent::TypeMessage(draft) => {
                 (Self { draft, ..self }, Vec::new())
             }
-            SessionIntent::SendMessage => self.send_message(id, session, visit),
+            SessionIntent::SendMessage => self.send_message(id, session, at),
             SessionIntent::Interrupt => (
                 self,
-                Vec::from([notify(
-                    CommandBody::Interrupt { session: id },
-                    visit,
-                )]),
+                Vec::from([notify(CommandBody::Interrupt { session: id }, at)]),
             ),
             SessionIntent::Continue => (
                 Self {
                     focus_composer: true,
                     ..self
                 },
-                Vec::from([notify(
-                    CommandBody::Continue { session: id },
-                    visit,
-                )]),
+                Vec::from([notify(CommandBody::Continue { session: id }, at)]),
             ),
             SessionIntent::PickEffort(word) => {
-                (self, set_effort(&word, id, session.effort, visit))
+                (self, set_effort(&word, id, session.effort, at))
             }
             SessionIntent::Decide(request, decision) => (
                 self,
@@ -204,7 +198,7 @@ impl Pane {
                             request,
                             decision,
                         },
-                        visit,
+                        at,
                     ),
                     focus_card(request),
                 ]),
@@ -230,11 +224,11 @@ impl Pane {
                 Vec::new(),
             ),
             SessionIntent::SendAnswer(request) => {
-                let effects = self.send_answer(request, id, session, visit);
+                let effects = self.send_answer(request, id, session, at);
                 (self, effects)
             }
             SessionIntent::ShowChanges(checkpoint) => {
-                self.load_diff(id, checkpoint, visit)
+                self.load_diff(id, checkpoint, at)
             }
             SessionIntent::CloseChanges(checkpoint) => {
                 self.close_diff(checkpoint)
@@ -246,7 +240,7 @@ impl Pane {
                         session: id,
                         checkpoint,
                     },
-                    visit,
+                    at,
                 )]),
             ),
             SessionIntent::Mounted(mount) => self.mounted(mount),
@@ -258,7 +252,7 @@ impl Pane {
         self,
         id: SessionId,
         session: &SessionView,
-        visit: u64,
+        at: At,
     ) -> (Self, Vec<Effect>) {
         match (session.controls().composer, self.draft.trim()) {
             (host_view::Composer::Open, "")
@@ -275,7 +269,7 @@ impl Pane {
                         draft: String::new(),
                         ..self
                     },
-                    Vec::from([notify(body, visit)]),
+                    Vec::from([notify(body, at)]),
                 )
             }
         }
@@ -287,7 +281,7 @@ impl Pane {
         request: RequestId,
         id: SessionId,
         session: &SessionView,
-        visit: u64,
+        at: At,
     ) -> Vec<Effect> {
         self.draft_for(session, request)
             .and_then(|draft| draft.answers())
@@ -299,7 +293,7 @@ impl Pane {
                             request,
                             answers,
                         },
-                        visit,
+                        at,
                     ),
                     focus_card(request),
                 ])
@@ -372,7 +366,7 @@ impl Pane {
         self,
         session: SessionId,
         checkpoint: CheckpointId,
-        visit: u64,
+        at: At,
     ) -> (Self, Vec<Effect>) {
         if let Some(DiffState::Loading(_)) = self.diffs.get(&checkpoint) {
             return (self, Vec::new());
@@ -386,19 +380,16 @@ impl Pane {
                 requests: request,
                 ..self
             },
-            Vec::from([Effect::Send {
-                body: CommandBody::GetDiff {
+            Vec::from([at.send(
+                CommandBody::GetDiff {
                     session,
                     checkpoint,
                 },
-                reply: Reply {
-                    visit,
-                    to: ReplyTo::Diff {
-                        checkpoint,
-                        request,
-                    },
+                ReplyTo::Diff {
+                    checkpoint,
+                    request,
                 },
-            }]),
+            )]),
         )
     }
 
@@ -408,12 +399,13 @@ impl Pane {
         checkpoint: CheckpointId,
         request: u64,
         answer: Result<CommandResult, String>,
+        host: &str,
     ) -> Self {
         if self.diffs.get(&checkpoint) != Some(&DiffState::Loading(request)) {
             return self;
         }
         let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::answered(answer));
+        diffs.insert(checkpoint, DiffState::answered(answer, host));
         Self { diffs, ..self }
     }
 
@@ -422,7 +414,7 @@ impl Pane {
         id: SessionId,
         session: &SessionView,
         known: (Option<&Instances>, &Catalog),
-        notice: Option<String>,
+        (notice, host): (Option<String>, String),
     ) -> SessionPane {
         let controls = session.controls();
         let provider = agent(session, known);
@@ -442,7 +434,7 @@ impl Pane {
         SessionPane {
             key: format!("{}", id.0),
             title: short(&session.directory).to_owned(),
-            subtitle: session.directory.0.clone(),
+            subtitle: format!("{} on {host}", session.directory.0),
             pill: format!("{provider}, {status}"),
             model: session.model.as_ref().map_or_else(
                 || String::from("default model"),
@@ -647,14 +639,8 @@ fn focus_card(request: RequestId) -> Effect {
 }
 
 /// A command whose only answer worth showing is a refusal.
-const fn notify(body: CommandBody, visit: u64) -> Effect {
-    Effect::Send {
-        body,
-        reply: Reply {
-            visit,
-            to: ReplyTo::Notice,
-        },
-    }
+const fn notify(body: CommandBody, at: At) -> Effect {
+    at.send(body, ReplyTo::Notice)
 }
 
 /// Sends `SetEffort`. A refusal puts the picker back on `shown`, the
@@ -663,18 +649,17 @@ fn set_effort(
     word: &str,
     id: SessionId,
     shown: Option<Effort>,
-    visit: u64,
+    at: At,
 ) -> Vec<Effect> {
     Effort::parse(word)
-        .map(|effort| Effect::Send {
-            body: CommandBody::SetEffort {
-                session: id,
-                effort,
-            },
-            reply: Reply {
-                visit,
-                to: ReplyTo::Effort(shown),
-            },
+        .map(|effort| {
+            at.send(
+                CommandBody::SetEffort {
+                    session: id,
+                    effort,
+                },
+                ReplyTo::Effort(shown),
+            )
         })
         .into_iter()
         .collect()
