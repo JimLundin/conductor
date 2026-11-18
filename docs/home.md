@@ -25,34 +25,123 @@ another provider, and picks up from the branch and the notes.
 
 ## 2. The model
 
+The model fixes the entities and how they relate. What may happen to them,
+such as whether two sessions may run in one worktree at once, is policy
+(§2.4), which can change without changing the model.
+
+### 2.1 Entities
+
+| Entity | Key | Holds | Stored in |
+|---|---|---|---|
+| Device | node id | name, certificate | fleet config |
+| Host | node id | name, relay, ticket | fleet config |
+| Provider | enum | its plugin: code and `agents::Profile` data | the binary |
+| Instance | slug | label, credential, settings, private home | host store |
+| Profile | slug (`rust`) | instructions, check and CI configs | home `standards/` |
+| Project | slug (`conductor`) | remote, root commit, default branch | home `projects/<project>/project.toml` |
+| Issue | ULID | title, body, status, priority, labels | home `projects/<project>/issues/` |
+| Note | issue and time | author, text | in its issue's file, append-only |
+| Work | ULID | status, outcome, summary, times | home `projects/<project>/work/` |
+| HomeClone | its host | remote, last sync, state | host store |
+| Checkout | host and path | the project it matched, how | host store |
+| Worktree | ULID | path, branch, base commit, state, last activity | host store |
+| Checkpoint | its worktree and id | commit, the turn it precedes | host log |
+| Session | ULID | conversation id, status, model, effort, transcript | host log |
+| SubAgent | provider id | description, status, transcript | host log |
+| Task, Request | as today | | host log |
+
+Ids are ULIDs where several hosts create them at once, so no two hosts pick
+the same id and merging the home never collides on a name. An issue is
+shown by its title and a short prefix of its id.
+
+### 2.2 Relationships
+
+Each line reads left to right with the left count first.
+
+**Fleet**
+- Device `*` – `*` Host: any paired device talks to any host.
+- Host `1` – `*` Instance; Provider `1` – `*` Instance.
+- Host `1` – `1` HomeClone.
+
+**Home**
+- Project `1` – `*` Issue.
+- Issue `0..1` – `*` Issue: a parent and its sub-issues.
+- Issue `1` – `*` Note. A note's author is a Device or a Work.
+- Project `*` – `*` Profile.
+
+**Where code lives**
+- Project `1` – `*` Checkout, and Host `1` – `*` Checkout: a host may hold
+  more than one checkout of a project.
+- Checkout `1` – `*` Worktree: a worktree is made from one checkout's
+  repository.
+- Worktree `1` – `*` Checkpoint.
+
+**Doing work**
+- Issue `1` – `*` Work: the attempts at an issue.
+- Work `0..1` – `0..1` Work through `continues`: an attempt picks up from at
+  most one earlier attempt, and is picked up by at most one.
+- Work `1` – `1` Worktree: an attempt is one branch, checked out in one
+  worktree on one host. A worktree with no Work serves an ad-hoc session.
+- Worktree `1` – `*` Session: the sessions that run in it.
+- Instance `1` – `*` Session.
+- Session `1` – `*` SubAgent, Task and Request.
+
+**Derived, never stored twice**
+- A session's Work, Issue and Project follow from its worktree.
+- A Work's sessions are the sessions in its worktree.
+- A worktree's lineage follows from its Work's `continues`. Continuing
+  always makes a Work, so an ad-hoc worktree is never continued.
+
+### 2.3 Lifecycles
+
+```
+Issue     open ─► ready ─► in-progress ─► review ─► done
+             └──────────────────────────────────► dropped
+Work      running ─► stopped ─► finished | abandoned
+Worktree  active ─► idle ─► cleaned
+Session   starting ─► idle ⇄ running ─► closed     (as built)
+```
+
+A worktree is active while a session in it runs a turn, and idle
+otherwise.
+
+### 2.4 Policy
+
+- **Sessions in a worktree.** The model allows several. The policy for now:
+  a worktree runs one turn at a time, so a second session in it waits for
+  the running turn to end before its own starts. A session can still read
+  the worktree's diff and history while another runs.
+- **Cleaning a worktree.** A worktree is cleaned when its Work finishes or
+  is abandoned, or when it has been idle for seven days, whichever comes
+  first. Idle means no session in it has run a turn, been started or been
+  continued in that time. Cleaning never loses work:
+  1. anything uncommitted becomes one more checkpoint commit;
+  2. the branch is pushed to the project's remote, or kept as a local ref
+     when there is none or the push fails;
+  3. the worktree directory and its checkpoint refs are removed.
+
+  The branch stays until it is merged or the work is discarded. A cleaned
+  worktree's sessions stay in the log as closed; continuing one makes a new
+  worktree from the kept branch.
+- **Existing worktrees** are adopted on upgrade as ad-hoc worktrees and go
+  through the same rules.
+
+### 2.5 Storage layout
+
 ```
 Fleet                      architecture §6: trust, hosts, credentials (signed, secret)
 └── Home                   one git repository, cloned on every host (no secrets)
-    ├── standards/         profiles: instructions, CI and check configs per language
+    ├── standards/         profiles
     ├── instructions/      rules for every session in every project
     └── projects/<project>/
-        ├── project.toml   remote, root commit, profiles, default branch
+        ├── project.toml
         ├── issues/<issue>.md
         └── work/<issue>/<work>.toml
 
-Host (each machine)        host-local, in its own store
-├── Instances              built: provider, label, credential or sign-in
-├── Checkouts              project → path on this host
-└── Sessions               built: one agent conversation, now with sub-agents
+Host (each machine)        its own store and log
+├── HomeClone, Instances, Checkouts, Worktrees
+└── Sessions with their checkpoints, sub-agents, tasks and requests
 ```
-
-| Entity | Id | Lives in | Written by |
-|---|---|---|---|
-| Project | slug (`conductor`) | home `project.toml` | the app |
-| Issue | ULID, globally unique; shown by its title and a short prefix of the id | home `issues/` | the app, and agents through Conductor |
-| Work | ULID | home `work/` | the host running it |
-| Standard profile | slug (`rust`) | home `standards/` | the owner, by commit |
-| Checkout | project id on a host | host store | the host |
-| Instance, session | as today | host store and log | the host |
-| Sub-agent | the provider's id, under its session | host log | the host |
-
-Ids are ULIDs where several hosts create them at once, so two hosts never
-pick the same id and merging the home never collides on a name.
 
 ## 3. The home repository
 
@@ -197,10 +286,12 @@ records: their output belongs to the parent's attempt.
 1. Sub-agents in the session model (host only; no home needed). Done.
 2. The app with several hosts. Done.
 3. The home repository: clone, sync, and projects with checkouts.
-4. Issues: create, edit, status, notes, in the app.
-5. Work: assign an issue to a host and instance, finish, continue.
-6. Standards and instructions composed into sessions.
-7. Agents reporting progress notes during work.
+4. Worktrees as their own entity: sessions run in one, one turn at a time,
+   and cleaning after the work ends or seven idle days (§2.4).
+5. Issues: create, edit, status, notes, in the app.
+6. Work: assign an issue to a host and instance, finish, continue.
+7. Standards and instructions composed into sessions.
+8. Agents reporting progress notes during work.
 
 Each step is usable on its own and keeps the gate green.
 
