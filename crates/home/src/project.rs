@@ -1,8 +1,7 @@
 //! A project's `projects/<project>/project.toml` in the home.
 //!
 //! It gives (docs/home.md §3) its remote, the root commit that identifies
-//! its checkouts, its default branch, its standards profiles, and where the
-//! owner usually checks it out, relative to the home.
+//! its checkouts, its default branch and its standards profiles.
 
 use proto::ProjectId;
 use serde::Deserialize;
@@ -19,8 +18,6 @@ pub struct Project {
     pub root: String,
     pub branch: String,
     pub profiles: Vec<String>,
-    /// Where it is usually checked out, relative to the home.
-    pub path: Option<String>,
 }
 
 /// The file's fields. Others are left for later steps to read.
@@ -32,7 +29,6 @@ struct File {
     branch: String,
     #[serde(default)]
     profiles: Vec<String>,
-    path: Option<String>,
 }
 
 /// The projects a home lists, by id, and why any of its folders isn't one.
@@ -78,7 +74,6 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
         root: commit(file.root)?,
         branch: file.branch,
         profiles: file.profiles,
-        path: file.path.map(relative).transpose()?,
     })
 }
 
@@ -105,14 +100,4 @@ fn commit(root: String) -> Result<String, String> {
     (hex && matches!(root.len(), 40 | 64))
         .then_some(root)
         .ok_or_else(|| String::from("root is not a commit id"))
-}
-
-/// A path under the home, which can't leave it.
-fn relative(path: String) -> Result<String, String> {
-    let inside = path
-        .split('/')
-        .all(|part| !part.is_empty() && part != "." && part != "..");
-    (inside && !path.contains('\\'))
-        .then_some(path)
-        .ok_or_else(|| String::from("path is not a relative path in the home"))
 }

@@ -275,14 +275,14 @@ two_hosts() {
 }
 
 # listed <home> <id> <remote> <source>: the project's project.toml in the
-# home, with the source's root commit and branch, usually at <id>.
+# home, with the source's root commit and branch.
 listed() {
   local root branch
   root=$(git -C "$4" rev-list --max-parents=0 HEAD)
   branch=$(git -C "$4" symbolic-ref --short HEAD)
   mkdir -p "$1/projects/$2"
-  printf 'name = "%s"\nremote = "%s"\nroot = "%s"\nbranch = "%s"\nprofiles = ["rust"]\npath = "%s"\n' \
-    "$2" "$3" "$root" "$branch" "$2" >"$1/projects/$2/project.toml"
+  printf 'name = "%s"\nremote = "%s"\nroot = "%s"\nbranch = "%s"\nprofiles = ["rust"]\n' \
+    "$2" "$3" "$root" "$branch" >"$1/projects/$2/project.toml"
 }
 
 projects_scenario() {
