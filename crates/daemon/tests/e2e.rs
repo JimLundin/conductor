@@ -32,14 +32,14 @@ use net::{
     Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
 };
 use proto::{
-    Answer, Auth, AuthToken, Availability, Change, ClaudeCredential,
-    ClientName, CloseReason, CodexCredential, CommandBody, CommandResult,
-    Credential, Decision, Effort, Epoch, Event, EventKind, FileChange,
-    HostPath, HostSeq, ModelChoice, ModelId, Models, Provider, Providers,
-    Question, QuestionOption, Rejection, RequestId, Resolution, Selection,
-    SessionId, Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
-    ToolPhase, TurnOutcome,
+    Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
+    CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
+    EventKind, FileChange, HostPath, HostSeq, ModelChoice, ModelId, Models,
+    Provider, Providers, Question, QuestionOption, Rejection, RequestId,
+    Resolution, Selection, SessionId, Task, TaskId, TaskStatus, ToolCallId,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
+use runtime::Settings;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -197,7 +197,8 @@ async fn serve_log(
     log: Log,
 ) -> Fallible<Fixture> {
     let (store, stored) = Store::open(data)?;
-    let registry = Registry::spawn(log.clone(), launchers, store, stored);
+    let registry =
+        Registry::spawn(log.clone(), launchers, store, stored, catalog());
     let _ = tokio::time::timeout(STEP, registry.providers())
         .await
         .map_err(
@@ -257,6 +258,7 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
         ]),
         store,
         stored,
+        catalog(),
     );
     let _ = tokio::time::timeout(STEP, registry.providers())
         .await
@@ -2243,9 +2245,7 @@ async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
     std::fs::create_dir_all(data.join("probe"))?;
     std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n"))?;
     let credential = match Store::open(data)?.1 {
-        Stored::Opened(credentials) => {
-            claude::runtime::credential(&credentials)
-        }
+        Stored::Opened(credentials) => claude::credential(&credentials),
         Stored::Unreadable(_) => None,
     };
     let launchers = Launchers::from([
@@ -2284,8 +2284,9 @@ fn with_claude(claude: Availability) -> Providers {
 
 fn gateway(models: Models) -> Availability {
     Availability::Available {
-        auth: Auth::Gateway {
-            base_url: String::from(GATEWAY),
+        auth: Auth::Stored {
+            kind: String::from("gateway"),
+            url: Some(String::from(GATEWAY)),
         },
         models,
     }
@@ -2321,10 +2322,7 @@ fn refused_for_no_credential() -> CommandResult {
 
 fn claude_gateway() -> CommandBody {
     CommandBody::SetCredential {
-        credential: Credential::Claude(ClaudeCredential::Gateway {
-            base_url: String::from(GATEWAY),
-            token: String::from(CLAUDE_TOKEN),
-        }),
+        credential: claude_credential(CLAUDE_TOKEN),
     }
 }
 
@@ -2481,8 +2479,9 @@ const LISTED: &[&str] = &[
 /// model as the default (`Registry::models`).
 fn codex_gateway() -> (Auth, Option<String>, Vec<String>) {
     (
-        Auth::Gateway {
-            base_url: String::from(GATEWAY),
+        Auth::Stored {
+            kind: String::from("provider"),
+            url: Some(String::from(GATEWAY)),
         },
         Some(String::from("conductor-test-model")),
         LISTED.iter().copied().map(String::from).collect(),
@@ -2491,12 +2490,16 @@ fn codex_gateway() -> (Auth, Option<String>, Vec<String>) {
 
 fn codex_provider(key: &str) -> CommandBody {
     CommandBody::SetCredential {
-        credential: Credential::Codex(CodexCredential::Provider {
-            name: String::from("Conductor test"),
-            base_url: String::from(GATEWAY),
-            key: String::from(key),
-            model: String::from("conductor-test-model"),
-        }),
+        credential: credential(
+            Provider::Codex,
+            "provider",
+            &[
+                ("name", "Conductor test"),
+                ("base_url", GATEWAY),
+                ("key", key),
+                ("model", "conductor-test-model"),
+            ],
+        ),
     }
 }
 
@@ -2691,19 +2694,21 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
     let fx = claude_host_in(&data).await?;
     let (link, _updates, _) = live(&fx).await?;
     let body = CommandBody::SetCredential {
-        credential: Credential::Claude(ClaudeCredential::Gateway {
-            base_url: String::from(
-                "https://gateway.example/?key=conductor-test",
-            ),
-            token: String::from(CLAUDE_TOKEN),
-        }),
+        credential: credential(
+            Provider::Claude,
+            "gateway",
+            &[
+                ("base_url", "https://gateway.example/?key=conductor-test"),
+                ("token", CLAUDE_TOKEN),
+            ],
+        ),
     };
     assert_eq!(
         (send(&link, body).await?, data.join("credentials").exists()),
         (
             CommandResult::Rejected(Rejection::InvalidCredential {
                 reason: String::from(
-                    "the base URL may not carry a user, a password, a query or a fragment"
+                    "Gateway URL may not carry a user, a password, a query or a fragment"
                 ),
             }),
             false
@@ -3586,10 +3591,37 @@ async fn finished_command(
 }
 
 fn claude_credential(token: &str) -> Credential {
-    Credential::Claude(ClaudeCredential::Gateway {
-        base_url: String::from(GATEWAY),
-        token: String::from(token),
-    })
+    credential(
+        Provider::Claude,
+        "gateway",
+        &[("base_url", GATEWAY), ("token", token)],
+    )
+}
+
+/// A credential of `kind`, with its form's values by field id.
+fn credential(
+    provider: Provider,
+    kind: &str,
+    values: &[(&str, &str)],
+) -> Credential {
+    Credential {
+        provider,
+        kind: String::from(kind),
+        values: values
+            .iter()
+            .map(|(id, value)| (String::from(*id), String::from(*value)))
+            .collect(),
+    }
+}
+
+/// What the providers' plugins describe, as `conductord` hands them to
+/// the daemon.
+fn catalog() -> proto::Catalog {
+    daemon::start::Plugins::from_iter([
+        claude_cli::plugin(Settings::default()),
+        codex_cli::plugin(Settings::default()),
+    ])
+    .catalog()
 }
 
 async fn drive_saved(

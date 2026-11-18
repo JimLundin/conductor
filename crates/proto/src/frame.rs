@@ -69,7 +69,7 @@ mod tests {
 
     use super::{HEADER_LEN, body_len, decode, encode};
     use crate::{
-        Auth, AuthToken, Availability, ClientName, CodexCredential, Command,
+        Auth, AuthToken, Availability, Catalog, ClientName, Command,
         CommandBody, CommandId, CommandResult, Credential, Decision, Effort,
         Epoch, Event, EventKind, Hello, HelloReply, HostSeq, ModelChoice,
         ModelId, Models, Open, Provider, Providers, Rejection, RequestId,
@@ -113,21 +113,23 @@ mod tests {
         let open = Open::Command(Command {
             id: CommandId(1),
             body: CommandBody::SetCredential {
-                credential: Credential::Codex(CodexCredential::Provider {
-                    name: String::from("n"),
-                    base_url: String::from("u"),
-                    key: String::from("k"),
-                    model: String::from("m"),
-                }),
+                credential: Credential {
+                    provider: Provider::Codex,
+                    kind: String::from("gateway"),
+                    values: BTreeMap::from([(
+                        String::from("key"),
+                        String::from("k"),
+                    )]),
+                },
             },
         });
         assert_eq!(
             encode(&open)?,
-            frame(b"\x02\x01\x06\x01\x00\x01n\x01u\x01k\x01m")
+            frame(b"\x02\x01\x06\x01\x07gateway\x01\x03key\x01k")
         );
         assert_eq!(
             format!("{open:?}"),
-            "Command(Command { id: CommandId(1), body: SetCredential { credential: Codex(Provider) } })"
+            r#"Command(Command { id: CommandId(1), body: SetCredential { credential: Credential { provider: Codex, kind: "gateway", .. } } })"#
         );
         Ok(())
     }
@@ -164,8 +166,9 @@ mod tests {
                 head_seq: HostSeq(0),
                 providers: Providers(BTreeMap::from([
                     (Provider::Claude, Availability::Available {
-                        auth: Auth::Gateway {
-                            base_url: String::from("u"),
+                        auth: Auth::Stored {
+                            kind: String::from("g"),
+                            url: Some(String::from("u")),
                         },
                         models: Models {
                             choices: Vec::from([ModelChoice {
@@ -181,10 +184,11 @@ mod tests {
                         reason: String::from("no"),
                     }),
                 ])),
+                catalog: Catalog::default(),
             }))
             ?,
             frame(
-                b"\x00\x04desk\x01\x00\x02\x00\x00\x00\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x02no"
+                b"\x00\x04desk\x01\x00\x02\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x02no\x00"
             )
         );
         assert_eq!(

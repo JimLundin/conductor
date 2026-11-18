@@ -41,6 +41,17 @@ Home Screen. The design is in
   `Unknown`, and each crate maps its events into the provider-agnostic
   `crates/agents`. The processes run in `crates/{claude,codex}-cli`. What
   the CLIs send is in each wire crate's `PROTOCOL.md`.
+- **Providers are plugins.** The daemon library (`crates/daemon`) names no
+  provider: it takes a `runtime::Plugin` per provider, each provider's
+  profile and credential forms as data (`claude::profile`,
+  `codex::profile`) plus its starter, built by `claude_cli::plugin` and
+  `codex_cli::plugin`. Credentials are generic form values
+  (`proto::Credential`); each provider's core reads its own. Only the
+  binary, `crates/conductord`, wires the providers in. Its flags are
+  `conductord host --cli <provider>=<path> --model <provider>=<model>`
+  (each repeatable) and `conductord login <provider>`; build it with
+  `cargo build -p conductord`. Keep provider-specific code out of
+  `daemon`, `host`, `proto`, `client`, `ui` and `app`.
 - **Commits.** End each commit message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Open no pull
   requests on anyone's repository.

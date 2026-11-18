@@ -4,8 +4,8 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
+use codex::CodexCredential;
 use codex::Edit;
-use proto::CodexCredential;
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use super::server::Error;
@@ -91,7 +91,7 @@ fn section<'a>(table: &'a mut Table, key: &str) -> Option<&'a mut Table> {
 
 #[cfg(test)]
 mod tests {
-    use proto::CodexCredential;
+    use codex::CodexCredential;
 
     use super::with_provider;
 

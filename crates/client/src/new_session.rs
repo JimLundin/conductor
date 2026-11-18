@@ -2,16 +2,9 @@
 
 use crate::prelude::*;
 use proto::{
-    Availability, CommandResult, Effort, ModelId, Models, Provider, Rejection,
+    Availability, CommandResult, Effort, ModelId, Models, ProviderInfo,
+    Rejection,
 };
-
-#[must_use]
-pub fn label(provider: Provider) -> String {
-    String::from(match provider {
-        Provider::Claude => "Claude Code",
-        Provider::Codex => "Codex",
-    })
-}
 
 /// What the form says under the chosen provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,25 +12,25 @@ pub enum ProviderNote {
     Nothing,
     /// The host can't run it, for this reason.
     Unavailable(String),
-    /// Codex's sandbox (`WorkspaceWrite`, asking `OnRequest`) lets it run
-    /// commands and write in the session's directory and `/tmp` unasked.
-    WritesUnasked,
+    /// What the provider's plugin says of it, such as what its agent does
+    /// without asking.
+    Says(String),
 }
 
-/// `availability` is `None` until the host has said.
+/// `info` and `availability` are `None` until the host has said.
 #[must_use]
 pub fn note(
-    provider: Provider,
+    info: Option<&ProviderInfo>,
     availability: Option<&Availability>,
 ) -> ProviderNote {
-    match (provider, availability) {
-        (_, Some(Availability::Unavailable { reason })) => {
+    match (availability, info.and_then(|known| known.note.clone())) {
+        (Some(Availability::Unavailable { reason }), _) => {
             ProviderNote::Unavailable(reason.clone())
         }
-        (Provider::Codex, Some(Availability::Available { .. }) | None) => {
-            ProviderNote::WritesUnasked
+        (Some(Availability::Available { .. }) | None, Some(text)) => {
+            ProviderNote::Says(text)
         }
-        (Provider::Claude, Some(Availability::Available { .. }) | None) => {
+        (Some(Availability::Available { .. }) | None, None) => {
             ProviderNote::Nothing
         }
     }
@@ -134,7 +127,7 @@ impl Attempt {
 mod tests {
     use proto::{
         Auth, Availability, CommandResult, Effort, ModelChoice, ModelId,
-        Models, Provider, Rejection,
+        Models, ProviderInfo, Rejection,
     };
 
     use super::{
@@ -143,29 +136,37 @@ mod tests {
     };
 
     #[test]
-    fn the_form_says_why_a_provider_is_unavailable_and_that_codex_writes_unasked()
-     {
+    fn the_form_says_why_a_provider_is_unavailable_else_its_plugin_s_note() {
         let unavailable = Availability::Unavailable {
-            reason: String::from("codex is not on PATH"),
+            reason: String::from("not on PATH"),
         };
         let available = Availability::Available {
             auth: Auth::SignedIn,
             models: Models::none(),
         };
+        let info = |note: Option<&str>| ProviderInfo {
+            label: String::from("Agent"),
+            note: note.map(String::from),
+            credentials: Vec::new(),
+        };
+        let noted = info(Some("writes unasked"));
+        let quiet = info(None);
         assert_eq!(
             [
-                (Provider::Codex, Some(&unavailable)),
-                (Provider::Claude, Some(&unavailable)),
-                (Provider::Codex, Some(&available)),
-                (Provider::Codex, None),
-                (Provider::Claude, Some(&available)),
+                (Some(&noted), Some(&unavailable)),
+                (Some(&quiet), Some(&unavailable)),
+                (Some(&noted), Some(&available)),
+                (Some(&noted), None),
+                (Some(&quiet), Some(&available)),
+                (None, None),
             ]
-            .map(|(provider, availability)| note(provider, availability)),
+            .map(|(info, availability)| note(info, availability)),
             [
-                ProviderNote::Unavailable(String::from("codex is not on PATH")),
-                ProviderNote::Unavailable(String::from("codex is not on PATH")),
-                ProviderNote::WritesUnasked,
-                ProviderNote::WritesUnasked,
+                ProviderNote::Unavailable(String::from("not on PATH")),
+                ProviderNote::Unavailable(String::from("not on PATH")),
+                ProviderNote::Says(String::from("writes unasked")),
+                ProviderNote::Says(String::from("writes unasked")),
+                ProviderNote::Nothing,
                 ProviderNote::Nothing,
             ]
         );

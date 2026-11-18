@@ -89,6 +89,7 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
                     .map(|provider| (provider, unavailable.clone()))
                     .into(),
             ),
+            catalog: proto::Catalog::default(),
         }),
     )
     .await?;

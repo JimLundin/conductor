@@ -21,10 +21,10 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    Answer, Auth, Availability, Change, CheckpointId, ClaudeCredential,
-    ClientName, CloseReason, CodexCredential, CommandBody, CommandResult,
-    Credential, Decision, Event, EventKind, HostPath, HostSeq, Provider,
-    Question, RequestId, SessionId, Ticket, TurnOutcome,
+    Answer, Auth, Availability, Change, CheckpointId, ClientName, CloseReason,
+    CommandBody, CommandResult, Credential, Decision, Event, EventKind,
+    HostPath, HostSeq, Provider, Question, RequestId, SessionId, Ticket,
+    TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -312,20 +312,24 @@ impl Session {
     async fn register(&self) -> anyhow::Result<()> {
         let credential = match (self.register, self.provider) {
             (Register::Keep, _) => None,
-            (Register::Env, Provider::Claude) => {
-                Some(Credential::Claude(ClaudeCredential::Gateway {
-                    base_url: var("ANTHROPIC_BASE_URL")?,
-                    token: var("ANTHROPIC_AUTH_TOKEN")?,
-                }))
-            }
-            (Register::Env, Provider::Codex) => {
-                Some(Credential::Codex(CodexCredential::Provider {
-                    name: var("CONDUCTOR_CODEX_NAME")?,
-                    base_url: var("CONDUCTOR_CODEX_BASE_URL")?,
-                    key: var("CONDUCTOR_CODEX_KEY")?,
-                    model: var("CONDUCTOR_CODEX_MODEL")?,
-                }))
-            }
+            (Register::Env, Provider::Claude) => Some(credential(
+                Provider::Claude,
+                "gateway",
+                [
+                    ("base_url", var("ANTHROPIC_BASE_URL")?),
+                    ("token", var("ANTHROPIC_AUTH_TOKEN")?),
+                ],
+            )),
+            (Register::Env, Provider::Codex) => Some(credential(
+                Provider::Codex,
+                "provider",
+                [
+                    ("name", var("CONDUCTOR_CODEX_NAME")?),
+                    ("base_url", var("CONDUCTOR_CODEX_BASE_URL")?),
+                    ("key", var("CONDUCTOR_CODEX_KEY")?),
+                    ("model", var("CONDUCTOR_CODEX_MODEL")?),
+                ],
+            )),
         };
         match credential {
             None => Ok(()),
@@ -338,7 +342,7 @@ impl Session {
                     CommandResult::Providers(providers) => {
                         match providers.of(self.provider) {
                             Some(Availability::Available {
-                                auth: Auth::Gateway { .. },
+                                auth: Auth::Stored { .. },
                                 ..
                             }) => Ok("gateway"),
                             Some(
@@ -820,5 +824,21 @@ mod tests {
                 Some(CheckpointId(2))
             ]
         );
+    }
+}
+
+/// A credential of `kind`, with the values of its form's fields by id.
+fn credential<const N: usize>(
+    provider: Provider,
+    kind: &str,
+    values: [(&str, String); N],
+) -> Credential {
+    Credential {
+        provider,
+        kind: String::from(kind),
+        values: values
+            .into_iter()
+            .map(|(id, value)| (String::from(id), value))
+            .collect(),
     }
 }

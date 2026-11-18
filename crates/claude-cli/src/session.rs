@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use proto::{ClaudeCredential, Effort, Models};
+use claude::ClaudeCredential;
+use proto::{Effort, Models};
 use serde_json::Value;
 
 use agents::Exit;

@@ -3,8 +3,7 @@
 
 use crate::prelude::*;
 use client::host_view::{Attention, HostView, SessionView, UndoState};
-use client::new_session::label;
-use proto::{HostPath, SessionId};
+use proto::{Catalog, HostPath, SessionId};
 
 use crate::Place;
 
@@ -35,14 +34,14 @@ pub struct SessionRow {
     pub badge: String,
 }
 
-pub fn list(view: &HostView, place: Place) -> SessionList {
+pub fn list(view: &HostView, place: Place, catalog: &Catalog) -> SessionList {
     let rows = view
         .recent()
         .into_iter()
         .filter_map(|id| {
             view.sessions
                 .get(&id)
-                .map(|session| row(id, session, place))
+                .map(|session| row(id, session, place, catalog))
         })
         .collect::<Vec<SessionRow>>();
     SessionList {
@@ -56,7 +55,12 @@ pub fn list(view: &HostView, place: Place) -> SessionList {
     }
 }
 
-fn row(id: SessionId, session: &SessionView, place: Place) -> SessionRow {
+fn row(
+    id: SessionId,
+    session: &SessionView,
+    place: Place,
+    catalog: &Catalog,
+) -> SessionRow {
     let (status, text, badge) = match (&session.undo, session.attention()) {
         (UndoState::Undoing(_), _) => (
             String::from("undoing"),
@@ -88,7 +92,7 @@ fn row(id: SessionId, session: &SessionView, place: Place) -> SessionRow {
         status,
         current: place == Place::Session(id),
         title: short(&session.directory).to_owned(),
-        sub: format!("{}, {text}", label(session.provider)),
+        sub: format!("{}, {text}", catalog.label(session.provider)),
         branch: session
             .workspace
             .as_ref()

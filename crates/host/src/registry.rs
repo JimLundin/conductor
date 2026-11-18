@@ -21,8 +21,8 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 
 use proto::{
-    Auth, Availability, CommandResult, Credential, Credentials, Effort,
-    ModelId, Models, Provider, Providers, Rejection, SessionId,
+    Auth, Availability, Catalog, CommandResult, Credential, Credentials,
+    Effort, ModelId, Models, Provider, Providers, Rejection, SessionId,
 };
 
 use crate::Note;
@@ -186,6 +186,8 @@ enum Refresh<S, R> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registry<S, H, R> {
     launchers: BTreeMap<Provider, Launcher<S>>,
+    /// How each provider presents itself, and the credentials it takes.
+    catalog: Catalog,
     /// A provider with none is idle.
     refreshes: BTreeMap<Provider, Refresh<S, R>>,
     stored: Stored,
@@ -200,14 +202,22 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     pub const fn new(
         launchers: BTreeMap<Provider, Launcher<S>>,
         stored: Stored,
+        catalog: Catalog,
     ) -> Self {
         Self {
             launchers,
+            catalog,
             refreshes: BTreeMap::new(),
             stored,
             sessions: BTreeMap::new(),
             jobs: 0,
         }
+    }
+
+    /// What `Welcome` tells a client of each provider that never changes.
+    #[must_use]
+    pub const fn catalog(&self) -> &Catalog {
+        &self.catalog
     }
 
     /// What `Welcome` tells a client the host can run.
@@ -301,8 +311,13 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         credential: Credential,
         reply: R,
     ) -> Vec<Effect<S, R>> {
-        let provider = credential.provider();
-        match (credential.check(), &self.stored) {
+        let provider = credential.provider;
+        let checked = self
+            .catalog
+            .of(provider)
+            .ok_or_else(|| format!("this host doesn't run {}", provider.name()))
+            .and_then(|info| info.check(&credential));
+        match (checked, &self.stored) {
             (Err(reason), _) => Vec::from([Effect::Reply(
                 reply,
                 CommandResult::Rejected(Rejection::InvalidCredential {
@@ -461,7 +476,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             id: self.jobs,
             provider,
             start: start.clone(),
-            signs_in: signs_in(&credentials, provider, *own).map(drop),
+            signs_in: self.signs_in(&credentials, provider, *own).map(drop),
             credentials,
         };
         let (replies, run) = match self.refreshes.remove(&provider) {
@@ -513,9 +528,26 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             (
                 Launcher::Ready { start, own, .. },
                 Stored::Opened(credentials),
-            ) => signs_in(credentials, provider, *own)
+            ) => self
+                .signs_in(credentials, provider, *own)
                 .map(|auth| (start.clone(), auth)),
         }
+    }
+
+    /// How `provider` signs in with `credentials`, or that it can't.
+    fn signs_in(
+        &self,
+        credentials: &Credentials,
+        provider: Provider,
+        own: OwnSignIn,
+    ) -> Result<Auth, String> {
+        credentials
+            .of(provider)
+            .zip(self.catalog.of(provider))
+            .map_or_else(
+                || own.auth(),
+                |(credential, info)| Ok(info.auth(credential)),
+            )
     }
 
     fn launcher_of(&self, provider: Provider) -> Result<&Launcher<S>, String> {
@@ -532,15 +564,6 @@ pub fn unprepared(error: GitError) -> Rejection {
         GitError::NotRepository => Rejection::NotGitRepository,
         GitError::Failed(reason) => Rejection::WorkspaceFailure { reason },
     }
-}
-
-/// How `provider` signs in with `credentials`, or that it can't.
-fn signs_in(
-    credentials: &Credentials,
-    provider: Provider,
-    own: OwnSignIn,
-) -> Result<Auth, String> {
-    credentials.auth(provider).map_or_else(|| own.auth(), Ok)
 }
 
 const fn unavailable(reason: String) -> Rejection {

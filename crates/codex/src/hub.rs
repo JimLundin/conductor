@@ -15,8 +15,8 @@
 //! opaque `T`, a model listing's `M`, a credential change's answer `C`, and
 //! a thread's route to its session `R`; `E` is why the server didn't start.
 
+use crate::CodexCredential;
 use agents::Exit;
-use proto::CodexCredential;
 
 use crate::prelude::*;
 use crate::{CodexEvent, ThreadEvent, ThreadId};
@@ -339,8 +339,8 @@ fn take<T, M, C, R, E>(ask: Ask<T, M>) -> Effect<T, M, C, R, E> {
 
 #[cfg(test)]
 mod tests {
+    use crate::CodexCredential;
     use agents::Exit;
-    use proto::CodexCredential;
     use serde_json::json;
 
     use super::{Ask, Command, Effect, Hub, Input, Routed};

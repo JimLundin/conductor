@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+mod credentials;
 mod driver;
 mod launch;
 mod mapping;
@@ -16,6 +17,7 @@ mod prelude;
 mod protocol;
 pub mod runtime;
 
+pub use credentials::{ClaudeCredential, credential, info};
 pub use driver::{After, Command, Effect, Failure, Input, Session, Then};
 pub use launch::{
     Launch, Resume, SANDBOX_TOOLS, Sandbox, SettingSource, VersionPolicy,

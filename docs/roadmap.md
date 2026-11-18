@@ -6,13 +6,26 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
-  `agents`, `claude`, `codex` and `host`; `net`, `daemon`, `runtime`,
-  `claude-cli`, `codex-cli` and `install` declare themselves the shell.
+  `agents`, `claude`, `codex` and `host`; `net`, `daemon`, `conductord`,
+  `runtime`, `claude-cli`, `codex-cli`, `install` and `app` declare
+  themselves the shell.
   `client` holds the host link's state machine, and `host` holds
   checkpoints and tasks. Next: the shell still makes most decisions, and
   `exceptions.toml` lists each shell file that does as debt. Move the
   registry, serve, log and workspace decisions into `host`, retiring an
   entry with each.
+
+- **Providers as plugins** (§5.2, §6.3). The daemon library takes a map of
+  `runtime::Plugin`s and names no provider: each is its `agents::Profile`
+  as data (CLI pin, probes, login, home config, label, note and credential
+  forms) plus its starter, which takes the stored credentials over the
+  runtime protocol. Credentials are generic form values the app draws
+  from `Welcome.catalog`, checked by their form and read by each
+  provider's core (ALPN `conductor/13`, credential store format 3). The
+  binary moved to `crates/conductord`, the one place that wires the
+  providers, with `--cli <provider>=<path>`, `--model <provider>=<model>`
+  and `login <provider>`. Next: the pins in `agents::pin` and `Provider`
+  itself are the last places a new provider is listed.
 
 - **One agent runtime** (§5.2). The daemon asks one interface for agents:
   `agents::runtime`'s commands and events over a `runtime::Runtime`

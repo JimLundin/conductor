@@ -13,8 +13,8 @@ use std::path::Path;
 
 use host::log::{Begun, Effect, Kind, Log as Core, Ticket};
 use proto::{
-    CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, Providers,
-    SessionId, Subscribe, Welcome,
+    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
+    Providers, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -111,6 +111,7 @@ enum LogMsg {
     },
     Welcome {
         providers: Providers,
+        catalog: Catalog,
         reply: oneshot::Sender<Welcome>,
     },
     Subscribe {
@@ -284,8 +285,14 @@ impl Log {
     pub async fn welcome(
         &self,
         providers: Providers,
+        catalog: Catalog,
     ) -> Result<Welcome, Stopped> {
-        self.ask(|reply| LogMsg::Welcome { providers, reply }).await
+        self.ask(|reply| LogMsg::Welcome {
+            providers,
+            catalog,
+            reply,
+        })
+        .await
     }
 
     /// The events after `after`, then the live feed.
@@ -392,8 +399,12 @@ impl LogActor {
                 self.perform(effects)?;
                 let _ = reply.send(event);
             }
-            LogMsg::Welcome { providers, reply } => {
-                let _ = reply.send(self.core.welcome(providers));
+            LogMsg::Welcome {
+                providers,
+                catalog,
+                reply,
+            } => {
+                let _ = reply.send(self.core.welcome(providers, catalog));
             }
             LogMsg::Subscribe { after, reply } => {
                 let _ = reply.send(Subscription {
@@ -485,8 +496,8 @@ impl LogActor {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Auth, Availability, Epoch, EventKind, HostSeq, Models, Provider,
-        Providers, SessionId, Welcome,
+        Auth, Availability, Catalog, Epoch, EventKind, HostSeq, Models,
+        Provider, Providers, SessionId, Welcome,
     };
 
     use super::Log;
@@ -536,12 +547,13 @@ mod tests {
         .await?;
         log.append(SessionId(1), message("a")).await?;
         assert_eq!(
-            log.welcome(providers()).await?,
+            log.welcome(providers(), Catalog::default()).await?,
             Welcome {
                 host: String::from("test"),
                 epoch: Epoch(5),
                 head_seq: HostSeq(2),
                 providers: providers(),
+                catalog: Catalog::default(),
             }
         );
         let seen = [

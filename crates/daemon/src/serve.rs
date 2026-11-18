@@ -119,7 +119,8 @@ impl Conductor {
         let connection = conn.stable_id();
         let providers = self.registry.providers().await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome providers ready");
-        let welcome = self.log.welcome(providers).await?;
+        let welcome =
+            self.log.welcome(providers, self.registry.catalog()).await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome log ready");
         Ok(welcome)
     }

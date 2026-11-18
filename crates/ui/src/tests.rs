@@ -2,10 +2,11 @@ use alloc::collections::BTreeMap;
 
 use client::link::{LinkState, Status, Update};
 use proto::{
-    Auth, AuthToken, Availability, Checkpoint, CheckpointDiff, CheckpointFile,
-    CheckpointId, ClientName, CloseReason, CommandBody, CommandResult,
-    Decision, DiffExtent, Effort, Event, EventKind, FilePatch, HistoryAnchor,
-    HostPath, HostSeq, ModelChoice, ModelId, Models, Provider, Providers,
+    Auth, AuthToken, Availability, Catalog, Checkpoint, CheckpointDiff,
+    CheckpointFile, CheckpointId, ClientName, CloseReason, CommandBody,
+    CommandResult, Credential, CredentialForm, Decision, DiffExtent, Effort,
+    Event, EventKind, Field, FieldKind, FilePatch, HistoryAnchor, HostPath,
+    HostSeq, ModelChoice, ModelId, Models, Provider, ProviderInfo, Providers,
     Question, QuestionOption, Rejection, RequestId, Resolution, Selection,
     SessionId, Ticket, TicketError, ToolCallId, ToolKind, ToolOutcome,
     ToolPhase, TurnOutcome, UndoAvailability,
@@ -14,7 +15,7 @@ use proto::{
 use crate::credentials::Done;
 use crate::{
     Action, Ask, CredentialIntent, Detail, Diff, DiffFile, DiffPanel, Effect,
-    EffortControl, Field, Focus, Footer, FormIntent, Hint, HostScreen, Intent,
+    EffortControl, Focus, Footer, FormIntent, Hint, HostScreen, Intent,
     Keystroke, Listing, Mount, NewSessionForm, Opening, Patch, Place,
     QuestionBody, Reply, ReplyTo, Row, Screen, SessionIntent, SessionPane,
     State, ToolDetail, ToolLine, TurnChanges, UndoNote, sends, update, view,
@@ -34,8 +35,66 @@ fn ticket() -> Ticket {
     }
 }
 
+/// Paired with a host whose catalog arrived but which isn't live.
 fn paired() -> State {
-    State::new(Ok(Opening::Host(ticket())))
+    let (state, _) = update(
+        State::new(Ok(Opening::Host(ticket()))),
+        Intent::Link(Update::Status(Status {
+            catalog: catalog(),
+            ..Status::default()
+        })),
+    );
+    state
+}
+
+/// The providers as a host's plugins describe them.
+fn catalog() -> Catalog {
+    let field = |id: &str, label: &str, kind| Field {
+        id: text(id),
+        label: text(label),
+        kind,
+        placeholder: String::new(),
+        required: true,
+    };
+    let form = |kind: &str, label: &str, fields| CredentialForm {
+        kind: text(kind),
+        label: text(label),
+        fields,
+    };
+    Catalog(BTreeMap::from([
+        (
+            Provider::Claude,
+            ProviderInfo {
+                label: text("Claude Code"),
+                note: None,
+                credentials: Vec::from([form(
+                    "gateway",
+                    "Gateway",
+                    Vec::from([
+                        field("base_url", "Gateway URL", FieldKind::Url),
+                        field("token", "Token", FieldKind::Secret),
+                    ]),
+                )]),
+            },
+        ),
+        (
+            Provider::Codex,
+            ProviderInfo {
+                label: text("Codex"),
+                note: Some(text("Codex runs commands without asking.")),
+                credentials: Vec::from([form(
+                    "provider",
+                    "Model provider",
+                    Vec::from([
+                        field("name", "Provider name", FieldKind::Text),
+                        field("base_url", "Base URL", FieldKind::Url),
+                        field("model", "Model", FieldKind::Text),
+                        field("key", "Key", FieldKind::Secret),
+                    ]),
+                )]),
+            },
+        ),
+    ]))
 }
 
 /// Applies each intent in turn, and gathers the effects.
@@ -80,6 +139,7 @@ fn status(providers: Providers) -> Intent {
         state: LinkState::Live,
         host: Some(text("desk")),
         providers: Some(providers),
+        catalog: catalog(),
         error: None,
     }))
 }
@@ -916,15 +976,20 @@ type Shown = (String, Option<bool>, bool, Option<String>, Vec<String>);
 fn credentials(state: &State) -> Vec<Shown> {
     screen(state).map_or_else(Vec::new, |host| match host.detail {
         Detail::Credentials(pane) => pane
-            .forms
+            .providers
             .into_iter()
-            .map(|form| {
+            .map(|provider| {
                 (
-                    form.state,
-                    form.clear.map(|clear| clear.disabled),
-                    form.save_disabled,
-                    form.outcome.map(|hint| hint.text),
-                    form.fields.into_iter().map(|field| field.value).collect(),
+                    provider.state,
+                    provider.clear.map(|clear| clear.disabled),
+                    provider.forms.iter().any(|form| form.save_disabled),
+                    provider.outcome.map(|hint| hint.text),
+                    provider
+                        .forms
+                        .into_iter()
+                        .flat_map(|form| form.fields)
+                        .map(|field| field.value)
+                        .collect(),
                 )
             })
             .collect(),
@@ -937,28 +1002,35 @@ fn credentials(state: &State) -> Vec<Shown> {
 #[test]
 fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
     let gateway = Availability::Available {
-        auth: Auth::Gateway {
-            base_url: text("https://gw.example"),
+        auth: Auth::Stored {
+            kind: text("gateway"),
+            url: Some(text("https://gw.example")),
         },
         models: Models::none(),
     };
-    let fill = |field, value: &str| {
-        Intent::Credential(CredentialIntent::Type(field, text(value)))
+    let fill = |field: &str, value: &str| {
+        Intent::Credential(CredentialIntent::Type {
+            provider: Provider::Claude,
+            kind: text("gateway"),
+            field: text(field),
+            text: text(value),
+        })
     };
     let (filled, _) = run(
         paired(),
         Vec::from([
             status(claude(gateway)),
             Intent::Show(Place::Credentials),
-            fill(Field::GatewayUrl, " https://gw.example "),
-            fill(Field::GatewayToken, "secret"),
+            fill("base_url", " https://gw.example "),
+            fill("token", "secret"),
         ]),
     );
     let (saving, saved) = run(
         filled.clone(),
-        Vec::from([Intent::Credential(CredentialIntent::Save(
-            Provider::Claude,
-        ))]),
+        Vec::from([Intent::Credential(CredentialIntent::Save {
+            provider: Provider::Claude,
+            kind: text("gateway"),
+        })]),
     );
     let (stored, _) = run(
         saving.clone(),
@@ -995,12 +1067,14 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
                 (text("Waiting for the host"), None, true, None, blank),
             ]),
             Vec::from([CommandBody::SetCredential {
-                credential: proto::Credential::Claude(
-                    proto::ClaudeCredential::Gateway {
-                        base_url: text("https://gw.example"),
-                        token: text("secret"),
-                    }
-                ),
+                credential: Credential {
+                    provider: Provider::Claude,
+                    kind: text("gateway"),
+                    values: BTreeMap::from([
+                        (text("base_url"), text("https://gw.example")),
+                        (text("token"), text("secret")),
+                    ]),
+                },
             }]),
             Some(Some(text(
                 "Sent to desk over the encrypted link. This app doesn't keep it; your browser may offer to save it."

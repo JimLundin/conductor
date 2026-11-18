@@ -8,6 +8,7 @@
 
 extern crate alloc;
 
+mod credentials;
 mod driver;
 pub mod hub;
 mod launch;
@@ -16,6 +17,7 @@ mod prelude;
 mod protocol;
 pub mod runtime;
 
+pub use credentials::{CodexCredential, credential, default_model, info};
 pub use driver::{After, Command, Effect, Failure, Input, Server, Then};
 pub use launch::{
     Edit, History, KEY_VAR, Paging, app_server, cli, config_edits, login,

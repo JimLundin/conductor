@@ -13,7 +13,7 @@ use agents::runtime::Command;
 use host::registry::{Job, Launch, Listing, Refreshed};
 use host::restore::{Created, Recovery, Step, events_of};
 use proto::{
-    Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
+    Catalog, Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
     Credentials, Effort, Event, EventKind, HistoryAnchor, HostPath, ModelId,
     Models, Provider, Providers, Rejection, SessionId, UndoAvailability,
     Workspace,
@@ -42,6 +42,7 @@ type Effect = host::registry::Effect<Starter, Reply>;
 #[derive(Debug, Clone)]
 pub struct Registry {
     inbox: mpsc::Sender<RegistryMsg>,
+    catalog: Catalog,
 }
 
 enum RegistryMsg {
@@ -84,24 +85,32 @@ struct RegistryActor {
 }
 
 impl Registry {
-    /// `stored` is what `store` held when it opened.
+    /// `stored` is what `store` held when it opened, and `catalog` how
+    /// each provider presents itself and the credentials it takes.
     #[must_use]
     pub fn spawn(
         log: Log,
         launchers: Launchers,
         store: Store,
         stored: Stored,
+        catalog: Catalog,
     ) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
             store,
-            core: Core::new(launchers, stored),
+            core: Core::new(launchers, stored, catalog.clone()),
             refreshes: JoinSet::new(),
         };
         let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
-        Self { inbox }
+        Self { inbox, catalog }
+    }
+
+    /// How each provider presents itself, which `Welcome` carries.
+    #[must_use]
+    pub fn catalog(&self) -> Catalog {
+        self.catalog.clone()
     }
 
     /// Checks the directory and the provider, logs `SessionCreated` and
@@ -612,9 +621,13 @@ mod tests {
             Launchers::from([(PROVIDER, launcher(started))]),
             store,
             stored,
+            proto::Catalog::default(),
         );
         let providers = registry.providers().await?;
-        assert_eq!(second.welcome(providers).await?.epoch, epoch);
+        assert_eq!(
+            second.welcome(providers, registry.catalog()).await?.epoch,
+            epoch
+        );
         assert_recovered(&second.subscribe(HostSeq(4)).await?.replay);
         let (session, models) = registry
             .relaunch(id)
@@ -679,18 +692,21 @@ mod tests {
             .conversation(id, String::from("restored-native-conversation"))
             .await?;
         first
-            .welcome(proto::Providers(
-                Provider::ALL
-                    .map(|provider| {
-                        (
-                            provider,
-                            proto::Availability::Unavailable {
-                                reason: String::from("test"),
-                            },
-                        )
-                    })
-                    .into(),
-            ))
+            .welcome(
+                proto::Providers(
+                    Provider::ALL
+                        .map(|provider| {
+                            (
+                                provider,
+                                proto::Availability::Unavailable {
+                                    reason: String::from("test"),
+                                },
+                            )
+                        })
+                        .into(),
+                ),
+                proto::Catalog::default(),
+            )
             .await
             .map(|welcome| welcome.epoch)
     }

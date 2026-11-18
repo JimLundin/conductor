@@ -12,8 +12,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use codex::CodexCredential;
 use n0_future::StreamExt;
-use proto::{CodexCredential, Effort};
+use proto::Effort;
 use serde_json::Value;
 
 use agents::Exit;

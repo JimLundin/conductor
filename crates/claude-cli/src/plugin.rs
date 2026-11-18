@@ -4,13 +4,12 @@ use runtime::{Launch, Plugin, Settings, Starter};
 
 use crate::{ClaudeLaunch, starter};
 
-/// Claude, run as `settings` say. A Claude credential names no model.
+/// Claude, run as `settings` say.
 #[must_use]
 pub fn plugin(settings: Settings) -> Plugin {
     Plugin {
         profile: claude::profile(),
         settings,
-        named: |_| None,
         starter: launched,
     }
 }
@@ -20,7 +19,7 @@ fn launched(launch: Launch) -> Starter {
     starter(ClaudeLaunch {
         claude_path: launch.path,
         home: launch.home,
-        credential: claude::runtime::credential(&launch.credentials),
+        credential: None,
         probe: launch.data_dir.join("probe"),
     })
 }

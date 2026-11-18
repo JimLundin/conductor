@@ -1,12 +1,10 @@
 //! A provider as the host runs it. The host knows each provider only by its
-//! [`Plugin`]: the CLI's profile as data, the settings the host was started
-//! with, and the two functions only the provider can supply.
+//! [`Plugin`]: data, and the one function only the provider can supply.
 
 use std::path::PathBuf;
 
 use agents::Profile;
 use install::Home;
-use proto::{Credentials, ModelId};
 
 use crate::Starter;
 
@@ -20,28 +18,24 @@ pub struct Settings {
     pub model: Option<String>,
 }
 
-/// What a provider's agents start with.
+/// Where a provider's agents run.
+///
+/// The data dir is where a provider keeps what its CLI needs beside the
+/// home. The agents start with no credential; the host hands them the
+/// stored ones with `Command::Credentials`, as it does each change.
 #[derive(Debug, Clone)]
 pub struct Launch {
-    /// The CLI that passed its probe.
     pub path: PathBuf,
     pub home: Home,
-    /// Everything the store holds; each provider reads its own.
-    pub credentials: Credentials,
-    /// The host's data dir, where a provider keeps what its CLI needs
-    /// beside its home.
     pub data_dir: PathBuf,
 }
 
-/// The functions are plain `fn`s, not closures or trait objects: a plugin
-/// holds no state, and its starter holds whatever its agents share.
+/// The profile and settings are data; the starter is the provider's
+/// runner, which speaks `agents::runtime` and so holds everything else a
+/// provider decides, such as what its credentials become.
 #[derive(Debug, Clone)]
 pub struct Plugin {
     pub profile: Profile,
     pub settings: Settings,
-    /// The default model the stored credentials make, read by the
-    /// provider's core.
-    pub named: fn(&Credentials) -> Option<ModelId>,
-    /// Starts the provider's agents.
     pub starter: fn(Launch) -> Starter,
 }

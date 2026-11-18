@@ -198,7 +198,7 @@ client:
 
 | Stream | Purpose |
 |---|---|
-| `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, providers }`. |
+| `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, providers, catalog }`. `catalog` is how each provider presents itself and the credential forms it takes (§6.3). |
 | `Open::Command` | One `Command` → one `CommandResult`, then the stream closes. |
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor, then streams live. A cursor from another epoch is refused. |
 
@@ -262,24 +262,60 @@ the runtime protocol `agents::runtime`. The session sends a `Command`
 (start or resume at a history anchor, send, interrupt, reply, list or
 revert turns, list models, set credentials, shut down) and waits for its
 `Outcome`; meanwhile the agent reports `Step`s. The handle is
-`runtime::Runtime`, a channel pair, and each provider hands the daemon a
-`runtime::Starter` for its agents. `host::session` and the daemon's
-session actor know no provider; the registry maps each `Provider` to its
-starter, built in `start.rs`.
+`runtime::Runtime`, a channel pair.
+
+The daemon knows each provider only by the `runtime::Plugin` it is handed,
+in a `daemon::start::Plugins` map keyed by `Provider`. A plugin is data
+plus one function:
+
+- `profile: agents::Profile`, data from the provider's core
+  (`claude::profile`, `codex::profile`): the `Provider`; its
+  `proto::ProviderInfo` (the label the app shows, a note for the
+  new-session form, and the credential forms of §6.3); the pinned build
+  (`agents::pin::Cli`); the config its private home starts with; and the
+  `--version`, sign-in check and `login` runs as `agents::Invocation`s.
+- `settings: runtime::Settings`: the CLI path and the model the command
+  line gave it.
+- `starter: fn(runtime::Launch) -> runtime::Starter`: the provider's
+  runner, started on the CLI that passed its probe, in its private home,
+  with the data dir.
+
+The starter's agents start with no credential. The host hands them the
+stored credentials with `Command::Credentials` at start, as it does after
+each change, and the `Outcome::Configured` answer names the default model
+the credential implies. So each provider's core reads its own credential
+and decides what it becomes; the daemon only carries the generic values.
+The daemon makes each private home under `<data>/home/<provider>` from the
+profile (§6.2), runs the probes and installs as `host::start` decides, and
+sends the plugins' `ProviderInfo` to clients as `Welcome.catalog`.
+`host::session` and the daemon's session actor know no provider, and
+`crates/daemon` depends on no provider crate outside its tests.
 
 - `agents`: the provider-agnostic API: the runtime protocol, `Step`,
-  `Reply`, the native request and turn ids, `PlanStep`, `Exit` and the
-  `Note`s a core logs through its shell. Pure `no_std`.
+  `Reply`, the native request and turn ids, `PlanStep`, `Exit`, the
+  `Note`s a core logs through its shell, and a provider's `Profile`.
+  Pure `no_std`.
 - `claude` and `codex`: each provider's wire (stream-json, JSON-RPC), its
   mapping into `agents`, and the state machines that drive it: the process
   actor (`driver`), the runtime that turns commands into calls and events
-  into steps (`runtime`), and Codex's `hub`. Claude's resume fallbacks
+  into steps (`runtime`), and Codex's `hub`. Each also holds its profile
+  and its credential forms, and reads its credential from the generic
+  values. Claude's resume fallbacks
   live in `claude::runtime`: a missing conversation with no message seen
   starts fresh, and an undo's fork whose target exists resumes the target.
   Pure `no_std`; they log nothing themselves.
-- `runtime`: the shell's handle type and the starter both providers share.
+- `runtime`: the shell's handle type, the starter, and `Plugin`.
 - `claude-cli` and `codex-cli`: run each CLI's process over tokio and each
-  agent's runtime task, with their replay tests. All logging happens here.
+  agent's runtime task, with their replay tests, and build their plugins
+  (`claude_cli::plugin`, `codex_cli::plugin`). All logging happens here.
+- `daemon`: the host behind `conductord`, a library that takes the
+  plugins.
+- `conductord`: the binary, the one place that names the providers. It
+  parses the command line, builds each provider's plugin with its
+  settings and calls into `daemon`. Its flags are generic:
+  `conductord host [--cli <provider>=<path>]... [--model
+  <provider>=<model>]...` and `conductord login <provider>`, parsed in
+  `host::start`.
 - The Codex hub, `codex_cli::Hub`, is the one task that owns the host's
   `codex app-server` and routes each thread's events to its agent's
   runtime; its decisions are the state machine `codex::hub`. It is
@@ -663,13 +699,32 @@ The browser flow, `account/login/start { type: "chatgpt" }`, returns an
 `localhost:1455` ([codex-app-server], [codex-src], verified). A phone can't
 reach that, so it is not offered.
 
+#### Credentials are data
+
+No wire or store type names a provider's credential. Each provider's
+plugin describes the kinds it takes in its `ProviderInfo`, which
+`Welcome.catalog` carries: a `CredentialForm { kind, label, fields }`, and
+each `Field { id, label, kind, placeholder, required }` of kind `Text`,
+`Url` or `Secret`. The app draws each form from that description (`ui`
+builds it, knowing no provider), and a credential travels and is stored as
+`Credential { provider, kind, values }`, its form's values by field id.
+The host checks it against the form (`ProviderInfo::check`): the kind is
+one the provider takes, every value is a field's, a required field is not
+empty, and a `Url` field is plain `http(s)://host/path`. The provider's
+core reads its values into its own type (`claude::ClaudeCredential`,
+`codex::CodexCredential`) and decides what they become: environment,
+config edits and the default model. Another kind is another form in the
+provider's core, and the daemon, `host`, `proto`, `client`, `ui` and the
+app don't change.
+
 #### Built first: gateway credentials
 
 The owner reaches both models through a gateway today, so that kind is the
-first one built. The others in the table become variants of the same
-types.
+first one built. The others in the table become more forms.
 
-- **Claude:** `ClaudeCredential::Gateway { base_url, token }`. A Claude
+- **Claude:** the form `gateway`, with a `Gateway URL` (`base_url`, a URL)
+  and a `Token` (`token`, a secret), read into
+  `ClaudeCredential::Gateway { base_url, token }`. A Claude
   session gets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in its
   environment when it starts. The private home already scrubs both from
   the host's environment (§6.2), so only the stored values reach it.
@@ -692,7 +747,9 @@ types.
   next session. Clearing a Claude credential
   doesn't stop the sessions already running on it, unlike Codex below; to
   cut off a leaked token, revoke it at the gateway.
-- **Codex:** `CodexCredential::Provider { name, base_url, key, model }`.
+- **Codex:** the form `provider`, with a `Provider name`, a `Base URL`, a
+  `Model` and a `Key` (a secret), read into `CodexCredential::Provider {
+  name, base_url, key, model }`, whose model is the provider's default.
   Before the app-server starts, the host writes
   `[model_providers.conductor]` (`name`, `base_url`, `env_key =
   "CONDUCTOR_CODEX_KEY"`, `wire_api = "responses"`, the only one Codex
@@ -715,13 +772,15 @@ types.
   status takes it at once. Another client sees the change at its next
   `Welcome`. Like every command they need a client admitted by the ticket's
   token, which the device certificates of §6.1 replace.
-- **Write-only:** `Availability::Available { auth }` reports `Gateway {
-  base_url }`, `SignedIn` or `Unmanaged` (a `--cli <provider>=<path>`
-  CLI), and never a token or key. The credentials' `Debug`
-  prints only their kind, so no command log line carries a value. A
+- **Write-only:** `Availability::Available { auth }` reports `Stored {
+  kind, url }` (the credential's kind and its `Url` field's value),
+  `SignedIn` or `Unmanaged` (a `--cli <provider>=<path>` CLI), and never a
+  token or key. A `Credential`'s `Debug` prints only its provider and
+  kind, and each provider's own credential type only its kind, so no
+  command log line carries a value. A
   provider with no credential, no signed-in private home and no
   development CLI is `Unavailable { reason: "no credential configured" }`.
-  A stored credential takes precedence over the home's sign-in. A base URL
+  A stored credential takes precedence over the home's sign-in. A URL
   with a user, a password, a query or a fragment is refused, since it is
   shown to every client and written into Codex's config.
 
@@ -807,14 +866,14 @@ in no trace output. The Claude token goes from the host that minted it to
 the root host on `conductor-fleet` and never reaches the browser.
 
 `Welcome.providers` says whether the host can run each provider and how it
-signs in: `Availability::Available { auth }`, built with `Gateway`,
-`SignedIn` and `Unmanaged` and growing `ApiKey` and `Subscription`, or
-`Unavailable { reason }`. The sidebar shows a host that needs a sign-in,
+signs in: `Availability::Available { auth }`, built with `Stored`,
+`SignedIn` and `Unmanaged`, where an API key or a subscription token is
+one more stored kind, or `Unavailable { reason }`. The sidebar shows a host that needs a sign-in,
 with the button.
 
 #### The browser holds a secret only in flight
 
-The key field is `type="password"` with `autocomplete="new-password"`,
+A `Secret` field, such as the key, is `type="password"` with `autocomplete="new-password"`,
 since password managers ignore `off` there. The app sends
 the value on the encrypted iroh link, clears the field, and never writes it
 to IndexedDB, local storage, the URL or a log. Under the field the app says
@@ -843,7 +902,9 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   written whole and then linked to its name, so two first starts agree on
   one key.
 - The credentials are one value, `proto::Credentials`, one optional
-  credential per provider, in `<data>/credentials`: a format byte, a fresh
+  `Credential` per provider, in `<data>/credentials`: a format byte (3,
+  since credentials are form values; an older store reads as one that
+  doesn't open), a fresh
   24-byte nonce and the postcard sealed with the format and the file's
   purpose as associated data. A save writes and syncs a new file and
   renames it over the old one, then syncs the directory (Unix). It is the
@@ -1031,7 +1092,7 @@ that moves keeps its id, and the app merges sessions from every host.
 so the same id can appear in two hosts' logs after a move (§6.8).
 
 The id change landed with durability, before redb tables keyed on it. It
-changes the wire format. The current protocol ALPN is `conductor/10`,
+changes the wire format. The protocol ALPN was then `conductor/10`,
 including the appended workspace, checkpoint, diff and undo wire variants.
 
 ### 6.8 Move a session to another host

@@ -9,10 +9,10 @@ use client::host_view::{
     self, Interrupt, Item, Resume, SessionStatus, SessionView, UndoState,
     Working,
 };
-use client::new_session::{efforts, label, models};
+use client::new_session::{efforts, models};
 use proto::{
-    CheckpointId, CloseReason, CommandBody, CommandResult, Decision, Effort,
-    Providers, Question, RequestId, SessionId, Task, TaskStatus,
+    Catalog, CheckpointId, CloseReason, CommandBody, CommandResult, Decision,
+    Effort, Providers, Question, RequestId, SessionId, Task, TaskStatus,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
@@ -420,10 +420,11 @@ impl Pane {
         id: SessionId,
         session: &SessionView,
         providers: Option<&Providers>,
+        catalog: &Catalog,
         notice: Option<String>,
     ) -> SessionPane {
         let controls = session.controls();
-        let provider = label(session.provider);
+        let provider = catalog.label(session.provider);
         let status = match session.undo {
             UndoState::Undoing(_) => String::from("undoing"),
             UndoState::Failed { .. } => String::from("recovery needed"),

@@ -4,13 +4,13 @@
 
 use agents::pin::Cli;
 use agents::{Config, HomeKind, Invocation, Note, Profile, Var};
-use proto::{ClaudeCredential, Effort, Provider};
+use proto::{Effort, Provider};
 use serde_json::Value;
 
 use crate::prelude::*;
 use crate::{
-    ClaudeEvent, MessageId, PermissionMode, SessionId, UnsupportedVersion,
-    check_version,
+    ClaudeCredential, ClaudeEvent, MessageId, PermissionMode, SessionId,
+    UnsupportedVersion, check_version,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +185,7 @@ pub fn login(home: HomeKind) -> Invocation {
 pub fn profile() -> Profile {
     Profile {
         provider: Provider::Claude,
+        info: crate::info(),
         pin: Cli::Claude,
         config: Config {
             file: String::from("settings.json"),
@@ -398,7 +399,7 @@ pub const fn unprotected(
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Note, Var};
-    use proto::{ClaudeCredential, Effort, Provider};
+    use proto::{Effort, Provider};
     use serde_json::json;
 
     use super::{
@@ -406,7 +407,8 @@ mod tests {
         profile, reported_refusal, sandbox, session, unprotected,
     };
     use crate::{
-        ClaudeEvent, MessageId, PermissionMode, SessionId, UnsupportedVersion,
+        ClaudeCredential, ClaudeEvent, MessageId, PermissionMode, SessionId,
+        UnsupportedVersion,
     };
 
     #[test]

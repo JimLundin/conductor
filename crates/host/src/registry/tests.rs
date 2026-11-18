@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    Auth, Availability, ClaudeCredential, CommandResult, Credential,
-    Credentials, Effort, ModelChoice, ModelId, Models, Provider, Providers,
-    Rejection, SessionId,
+    Auth, Availability, Catalog, CommandResult, Credential, CredentialForm,
+    Credentials, Effort, Field, FieldKind, ModelChoice, ModelId, Models,
+    Provider, ProviderInfo, Providers, Rejection, SessionId,
 };
 
 use super::{
@@ -58,7 +58,46 @@ fn registry(own: OwnSignIn, stored: Stored) -> Test {
             (Provider::Codex, Launcher::Unavailable(text("no codex"))),
         ]),
         stored,
+        catalog(),
     )
+}
+
+/// Each provider takes a gateway: a URL and a token.
+fn catalog() -> Catalog {
+    let field = |id: &str, kind| Field {
+        id: text(id),
+        label: text(id),
+        kind,
+        placeholder: String::new(),
+        required: true,
+    };
+    let info = ProviderInfo {
+        label: text("Agent"),
+        note: None,
+        credentials: Vec::from([CredentialForm {
+            kind: text("gateway"),
+            label: text("Gateway"),
+            fields: Vec::from([
+                field("base_url", FieldKind::Url),
+                field("token", FieldKind::Secret),
+            ]),
+        }]),
+    };
+    Catalog(
+        Provider::ALL
+            .map(|provider| (provider, info.clone()))
+            .into(),
+    )
+}
+
+fn gateway_at(base_url: &str, token: &str) -> Credential {
+    Credential {
+        provider: Provider::Claude,
+        kind: text("gateway"),
+        values: [("base_url", base_url), ("token", token)]
+            .map(|(id, value)| (text(id), text(value)))
+            .into(),
+    }
 }
 
 fn opened() -> Stored {
@@ -66,10 +105,7 @@ fn opened() -> Stored {
 }
 
 fn gateway(token: &str) -> Credential {
-    Credential::Claude(ClaudeCredential::Gateway {
-        base_url: text(GATEWAY),
-        token: text(token),
-    })
+    gateway_at(GATEWAY, token)
 }
 
 fn unavailable(reason: &str) -> Availability {
@@ -195,12 +231,8 @@ fn a_provider_without_a_sign_in_or_a_readable_store_is_unavailable() {
         })
     );
     assert_eq!(
-        Registry::<&str, u8, &str>::new(BTreeMap::new(), opened()).start(
-            Provider::Claude,
-            true,
-            None,
-            None
-        ),
+        Registry::<&str, u8, &str>::new(BTreeMap::new(), opened(), catalog())
+            .start(Provider::Claude, true, None, None),
         Err(Rejection::ProviderUnavailable {
             reason: text("this host doesn't run Claude")
         })
@@ -273,8 +305,9 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
         Vec::from([Effect::Refresh(job(3, newest))])
     );
     let result = CommandResult::Providers(claude(Availability::Available {
-        auth: Auth::Gateway {
-            base_url: text(GATEWAY),
+        auth: Auth::Stored {
+            kind: text("gateway"),
+            url: Some(text(GATEWAY)),
         },
         models: Models {
             choices: Vec::new(),
@@ -369,10 +402,7 @@ fn a_refresh_that_leaves_no_sign_in_fails_after_the_credentials_take() {
 fn credentials_are_checked_and_an_unreadable_store_is_only_cleared() {
     let mut registry =
         registry(OwnSignIn::Unmanaged, Stored::Unreadable(text("sealed")));
-    let bad = Credential::Claude(ClaudeCredential::Gateway {
-        base_url: text("ftp://x"),
-        token: text("t"),
-    });
+    let bad = gateway_at("ftp://x", "t");
     assert_eq!(
         (
             registry.set_credential(bad, "bad"),
@@ -390,7 +420,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_cleared() {
             Vec::from([Effect::Reply(
                 "bad",
                 rejected(Rejection::InvalidCredential {
-                    reason: text("the base URL must be http or https")
+                    reason: text("base_url must be http or https")
                 })
             )]),
             Vec::from([Effect::Reply(

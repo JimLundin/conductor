@@ -7,9 +7,10 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use codex::CodexCredential;
 use codex::hub::{Ask, Command, Routed};
 use codex::{CodexEvent, ThreadId, ThreadOptions};
-use proto::{CodexCredential, Models};
+use proto::Models;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{CodexServer, CodexThread, Error, ServerOptions};

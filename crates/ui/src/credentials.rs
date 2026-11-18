@@ -1,13 +1,14 @@
-//! The host's credentials: what each provider signs in with, a form to set
-//! a gateway for it, and a button to clear it. A secret only passes
-//! through: its field is cleared once it is sent, and nothing keeps it
-//! (§6.3).
+//! The host's credentials: what each provider signs in with, a form for
+//! each kind of credential its plugin describes, and a button to clear the
+//! stored one. A secret only passes through: its field is cleared once it
+//! is sent, and nothing keeps it (§6.3).
+
+use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::new_session::label;
 use proto::{
-    Auth, Availability, ClaudeCredential, CodexCredential, CommandBody,
-    CommandResult, Credential, Provider, Providers,
+    Auth, Availability, Catalog, CommandBody, CommandResult, Credential,
+    CredentialForm, Field, FieldKind, Provider, ProviderInfo, Providers,
 };
 
 use crate::new_session::{Hint, alert};
@@ -15,41 +16,51 @@ use crate::{Effect, Focus, Reply, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialIntent {
-    Type(Field, String),
-    Save(Provider),
+    /// `text` is typed into the field `field` of `provider`'s form of
+    /// `kind`.
+    Type {
+        provider: Provider,
+        kind: String,
+        field: String,
+        text: String,
+    },
+    Save {
+        provider: Provider,
+        kind: String,
+    },
     Clear(Provider),
-}
-
-/// A field of a credential form.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Field {
-    GatewayUrl,
-    GatewayToken,
-    ProviderName,
-    ProviderUrl,
-    ProviderModel,
-    ProviderKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialsPane {
     pub subtitle: String,
-    pub forms: Vec<CredentialForm>,
+    pub providers: Vec<ProviderCredentials>,
 }
 
+/// One provider: what it signs in with now, and a form for each kind of
+/// credential it takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CredentialForm {
+pub struct ProviderCredentials {
     pub provider: Provider,
-    /// The heading's id, which labels the form and takes the focus when
-    /// the clear button goes.
-    pub heading: &'static str,
+    /// The heading's id, which labels the provider's section and takes
+    /// the focus when the clear button goes.
+    pub heading: String,
     pub name: String,
     /// What the provider signs in with now.
     pub state: String,
     pub clear: Option<ClearButton>,
-    pub fields: Vec<FieldView>,
+    pub forms: Vec<KindForm>,
     pub outcome: Option<Hint>,
-    pub save_label: &'static str,
+}
+
+/// The form of one kind of credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KindForm {
+    pub provider: Provider,
+    pub kind: String,
+    pub label: String,
+    pub fields: Vec<FieldView>,
+    pub save_label: String,
     pub save_disabled: bool,
 }
 
@@ -61,20 +72,22 @@ pub struct ClearButton {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldView {
-    pub field: Field,
-    pub label: &'static str,
-    pub kind: &'static str,
-    pub placeholder: &'static str,
+    pub provider: Provider,
+    pub kind: String,
+    pub field: String,
+    pub label: String,
+    /// The input's `type`.
+    pub input: &'static str,
+    pub placeholder: String,
     /// A password manager ignores `off` on a password field, so a secret
     /// says it is new and isn't filled in from a saved one.
     pub autocomplete: &'static str,
     pub value: String,
 }
 
-/// What came of the last thing a form sent.
+/// What came of the last thing a provider's forms sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
-    Nothing,
     Sending,
     Done(Done),
     Failed(String),
@@ -87,127 +100,109 @@ pub enum Done {
     Cleared,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What each form's fields hold, and what each provider's forms sent last.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Forms {
-    claude: Gateway,
-    codex: CodexProvider,
-}
-
-/// Claude Code's gateway.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Gateway {
-    base_url: String,
-    token: String,
-    sent: Sent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CodexProvider {
-    name: String,
-    base_url: String,
-    model: String,
-    key: String,
-    sent: Sent,
-}
-
-impl Default for Forms {
-    fn default() -> Self {
-        Self {
-            claude: Gateway {
-                base_url: String::new(),
-                token: String::new(),
-                sent: Sent::Nothing,
-            },
-            codex: CodexProvider {
-                name: String::new(),
-                base_url: String::new(),
-                model: String::new(),
-                key: String::new(),
-                sent: Sent::Nothing,
-            },
-        }
-    }
+    drafts: BTreeMap<(Provider, String), BTreeMap<String, String>>,
+    sent: BTreeMap<Provider, Sent>,
 }
 
 impl Forms {
     pub fn update(
-        self,
+        mut self,
         intent: CredentialIntent,
         visit: u64,
+        catalog: &Catalog,
     ) -> (Self, Vec<Effect>) {
         match intent {
-            CredentialIntent::Type(field, text) => {
-                (self.typed(field, text), Vec::new())
+            CredentialIntent::Type {
+                provider,
+                kind,
+                field,
+                text,
+            } => {
+                self.drafts
+                    .entry((provider, kind))
+                    .or_default()
+                    .insert(field, text);
+                (self, Vec::new())
             }
-            CredentialIntent::Save(Provider::Claude) => {
-                let Gateway {
-                    base_url, token, ..
-                } = self.claude;
-                let credential =
-                    Credential::Claude(ClaudeCredential::Gateway {
-                        base_url: base_url.trim().to_owned(),
-                        token,
-                    });
+            CredentialIntent::Save { provider, kind } => {
+                let described = catalog
+                    .of(provider)
+                    .and_then(|info| info.form(&kind))
+                    .cloned();
+                match described {
+                    Some(form) => self.save(provider, &form, visit),
+                    None => (self, Vec::new()),
+                }
+            }
+            CredentialIntent::Clear(provider) => {
+                self.sent.insert(provider, Sent::Sending);
                 (
-                    Self {
-                        claude: Gateway {
-                            base_url,
-                            token: String::new(),
-                            sent: Sent::Sending,
+                    self,
+                    Vec::from([
+                        Effect::Send {
+                            body: CommandBody::ClearCredential { provider },
+                            reply: Reply {
+                                visit,
+                                to: ReplyTo::Credential(
+                                    provider,
+                                    Done::Cleared,
+                                ),
+                            },
                         },
-                        ..self
-                    },
-                    Vec::from([store(credential, Provider::Claude, visit)]),
+                        // The button goes once the clear lands, so focus
+                        // goes to the heading instead of the page.
+                        Effect::Focus(Focus::Element(heading(provider))),
+                    ]),
                 )
             }
-            CredentialIntent::Save(Provider::Codex) => {
-                let CodexProvider {
-                    name,
-                    base_url,
-                    model,
-                    key,
-                    ..
-                } = self.codex;
-                let credential = Credential::Codex(CodexCredential::Provider {
-                    name: name.trim().to_owned(),
-                    base_url: base_url.trim().to_owned(),
-                    key,
-                    model: model.trim().to_owned(),
-                });
-                (
-                    Self {
-                        codex: CodexProvider {
-                            name,
-                            base_url,
-                            model,
-                            key: String::new(),
-                            sent: Sent::Sending,
-                        },
-                        ..self
-                    },
-                    Vec::from([store(credential, Provider::Codex, visit)]),
-                )
-            }
-            CredentialIntent::Clear(provider) => (
-                self.sent(provider, Sent::Sending),
-                Vec::from([
-                    Effect::Send {
-                        body: CommandBody::ClearCredential { provider },
-                        reply: Reply {
-                            visit,
-                            to: ReplyTo::Credential(provider, Done::Cleared),
-                        },
-                    },
-                    // The button goes once the clear lands, so focus goes
-                    // to the heading instead of the page.
-                    Effect::Focus(Focus::Element(heading(provider).to_owned())),
-                ]),
-            ),
         }
     }
 
+    /// Sends the form's values, the text ones trimmed, and empties its
+    /// secrets.
+    fn save(
+        mut self,
+        provider: Provider,
+        form: &CredentialForm,
+        visit: u64,
+    ) -> (Self, Vec<Effect>) {
+        let draft = self
+            .drafts
+            .remove(&(provider, form.kind.clone()))
+            .unwrap_or_default();
+        let values = form
+            .fields
+            .iter()
+            .map(|field| (field.id.clone(), sent_value(field, &draft)))
+            .collect::<BTreeMap<String, String>>();
+        let kept = draft
+            .into_iter()
+            .filter(|(id, _)| !secret(form, id))
+            .collect::<BTreeMap<String, String>>();
+        self.drafts.insert((provider, form.kind.clone()), kept);
+        self.sent.insert(provider, Sent::Sending);
+        let credential = Credential {
+            provider,
+            kind: form.kind.clone(),
+            values,
+        };
+        (
+            self,
+            Vec::from([Effect::Send {
+                body: CommandBody::SetCredential { credential },
+                reply: Reply {
+                    visit,
+                    to: ReplyTo::Credential(provider, Done::Stored),
+                },
+            }]),
+        )
+    }
+
     pub fn replied(
-        self,
+        mut self,
         provider: Provider,
         done: Done,
         answer: Result<CommandResult, String>,
@@ -226,232 +221,136 @@ impl Forms {
             )),
             Err(error) => Sent::Failed(error),
         };
-        self.sent(provider, sent)
+        self.sent.insert(provider, sent);
+        self
     }
 
-    fn typed(self, field: Field, text: String) -> Self {
-        let Self { claude, codex } = self;
-        match field {
-            Field::GatewayUrl => Self {
-                claude: Gateway {
-                    base_url: text,
-                    ..claude
-                },
-                codex,
-            },
-            Field::GatewayToken => Self {
-                claude: Gateway {
-                    token: text,
-                    ..claude
-                },
-                codex,
-            },
-            Field::ProviderName => Self {
-                codex: CodexProvider {
-                    name: text,
-                    ..codex
-                },
-                claude,
-            },
-            Field::ProviderUrl => Self {
-                codex: CodexProvider {
-                    base_url: text,
-                    ..codex
-                },
-                claude,
-            },
-            Field::ProviderModel => Self {
-                codex: CodexProvider {
-                    model: text,
-                    ..codex
-                },
-                claude,
-            },
-            Field::ProviderKey => Self {
-                codex: CodexProvider { key: text, ..codex },
-                claude,
-            },
-        }
-    }
-
-    fn sent(self, provider: Provider, sent: Sent) -> Self {
-        match provider {
-            Provider::Claude => Self {
-                claude: Gateway {
-                    sent,
-                    ..self.claude
-                },
-                ..self
-            },
-            Provider::Codex => Self {
-                codex: CodexProvider { sent, ..self.codex },
-                ..self
-            },
-        }
-    }
-
+    /// A section for each provider the host's plugins describe.
     pub fn screen(
         &self,
         host: &str,
         providers: Option<&Providers>,
+        catalog: &Catalog,
     ) -> CredentialsPane {
-        let known = |provider| providers.and_then(|all| all.of(provider));
-        let claude = &self.claude;
-        let codex = &self.codex;
         CredentialsPane {
             subtitle: format!("How {host} reaches each agent's model."),
-            forms: Vec::from([
-                CredentialForm {
-                    save_label: "Save gateway",
-                    save_disabled: claude.base_url.trim().is_empty()
-                        || claude.token.is_empty(),
-                    fields: Vec::from([
-                        field(
-                            Field::GatewayUrl,
-                            "Gateway URL",
-                            "url",
-                            "https://gateway.example.com",
-                            &claude.base_url,
-                        ),
-                        field(
-                            Field::GatewayToken,
-                            "Token",
-                            "password",
-                            "",
-                            &claude.token,
-                        ),
-                    ]),
-                    ..form(
-                        Provider::Claude,
-                        known(Provider::Claude),
-                        &claude.sent,
+            providers: catalog
+                .0
+                .iter()
+                .map(|(&provider, info)| {
+                    self.provider(
+                        provider,
+                        info,
+                        providers.and_then(|known| known.of(provider)),
                         host,
                     )
-                },
-                CredentialForm {
-                    save_label: "Save provider",
-                    save_disabled: codex.name.trim().is_empty()
-                        || codex.base_url.trim().is_empty()
-                        || codex.model.trim().is_empty()
-                        || codex.key.is_empty(),
-                    fields: Vec::from([
-                        field(
-                            Field::ProviderName,
-                            "Provider name",
-                            "text",
-                            "Gateway",
-                            &codex.name,
-                        ),
-                        field(
-                            Field::ProviderUrl,
-                            "Base URL",
-                            "url",
-                            "https://gateway.example.com/v1",
-                            &codex.base_url,
-                        ),
-                        field(
-                            Field::ProviderModel,
-                            "Model",
-                            "text",
-                            "gpt-6",
-                            &codex.model,
-                        ),
-                        field(
-                            Field::ProviderKey,
-                            "Key",
-                            "password",
-                            "",
-                            &codex.key,
-                        ),
-                    ]),
-                    ..form(
-                        Provider::Codex,
-                        known(Provider::Codex),
-                        &codex.sent,
-                        host,
-                    )
-                },
-            ]),
+                })
+                .collect(),
+        }
+    }
+
+    fn provider(
+        &self,
+        provider: Provider,
+        info: &ProviderInfo,
+        availability: Option<&Availability>,
+        host: &str,
+    ) -> ProviderCredentials {
+        let sent = self.sent.get(&provider);
+        ProviderCredentials {
+            provider,
+            heading: heading(provider),
+            name: info.label.clone(),
+            state: describe(info, availability),
+            clear: stored(availability).then(|| ClearButton {
+                label: format!("Clear the {} credential", info.label),
+                disabled: sent == Some(&Sent::Sending),
+            }),
+            forms: info
+                .credentials
+                .iter()
+                .map(|form| self.form(provider, form))
+                .collect(),
+            outcome: sent.and_then(|last| outcome(last, host)),
+        }
+    }
+
+    fn form(&self, provider: Provider, form: &CredentialForm) -> KindForm {
+        let empty = BTreeMap::new();
+        let draft = self
+            .drafts
+            .get(&(provider, form.kind.clone()))
+            .unwrap_or(&empty);
+        KindForm {
+            provider,
+            kind: form.kind.clone(),
+            label: form.label.clone(),
+            fields: form
+                .fields
+                .iter()
+                .map(|field| FieldView {
+                    provider,
+                    kind: form.kind.clone(),
+                    field: field.id.clone(),
+                    label: field.label.clone(),
+                    input: input(field.kind),
+                    placeholder: field.placeholder.clone(),
+                    autocomplete: autocomplete(field.kind),
+                    value: draft.get(&field.id).cloned().unwrap_or_default(),
+                })
+                .collect(),
+            save_label: format!("Save {}", form.label.to_lowercase()),
+            save_disabled: form.fields.iter().any(|field| {
+                field.required && sent_value(field, draft).is_empty()
+            }),
         }
     }
 }
 
-const fn store(
-    credential: Credential,
-    provider: Provider,
-    visit: u64,
-) -> Effect {
-    Effect::Send {
-        body: CommandBody::SetCredential { credential },
-        reply: Reply {
-            visit,
-            to: ReplyTo::Credential(provider, Done::Stored),
-        },
+/// What a field sends: a secret as typed, anything else trimmed.
+fn sent_value(field: &Field, draft: &BTreeMap<String, String>) -> String {
+    let typed = draft.get(&field.id).map_or("", String::as_str);
+    match field.kind {
+        FieldKind::Secret => String::from(typed),
+        FieldKind::Text | FieldKind::Url => String::from(typed.trim()),
     }
 }
 
-/// A form's heading, state, clear button and outcome; its fields come
-/// from the provider's form.
-fn form(
-    provider: Provider,
-    availability: Option<&Availability>,
-    sent: &Sent,
-    host: &str,
-) -> CredentialForm {
-    CredentialForm {
-        provider,
-        heading: heading(provider),
-        name: label(provider),
-        state: describe(availability),
-        clear: match availability {
-            Some(Availability::Available {
-                auth: Auth::Gateway { .. },
-                ..
-            }) => Some(ClearButton {
-                label: format!("Clear the {} credential", label(provider)),
-                disabled: *sent == Sent::Sending,
-            }),
-            Some(
-                Availability::Available {
-                    auth: Auth::SignedIn | Auth::Unmanaged,
-                    ..
-                }
-                | Availability::Unavailable { .. },
-            )
-            | None => None,
-        },
-        fields: Vec::new(),
-        outcome: outcome(sent, host),
-        save_label: "",
-        save_disabled: true,
+fn secret(form: &CredentialForm, id: &str) -> bool {
+    form.fields
+        .iter()
+        .any(|field| field.id == id && field.kind == FieldKind::Secret)
+}
+
+const fn input(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Text => "text",
+        FieldKind::Url => "url",
+        FieldKind::Secret => "password",
     }
 }
 
-const fn heading(provider: Provider) -> &'static str {
-    match provider {
-        Provider::Claude => "claude-credential",
-        Provider::Codex => "codex-credential",
+const fn autocomplete(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Secret => "new-password",
+        FieldKind::Text | FieldKind::Url => "off",
     }
 }
 
-fn field(
-    field: Field,
-    label: &'static str,
-    kind: &'static str,
-    placeholder: &'static str,
-    value: &str,
-) -> FieldView {
-    FieldView {
-        field,
-        label,
-        kind,
-        placeholder,
-        autocomplete: match kind {
-            "password" => "new-password",
-            _ => "off",
-        },
-        value: value.to_owned(),
-    }
+fn heading(provider: Provider) -> String {
+    format!("{}-credential", provider.name())
+}
+
+/// Whether the host stores a credential for the provider, which a person
+/// may clear.
+const fn stored(availability: Option<&Availability>) -> bool {
+    matches!(
+        availability,
+        Some(Availability::Available {
+            auth: Auth::Stored { .. },
+            ..
+        })
+    )
 }
 
 fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
@@ -463,7 +362,6 @@ fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
         })
     };
     match sent {
-        Sent::Nothing => None,
         Sent::Sending => status(String::from("Sending…")),
         Sent::Done(Done::Stored) => status(format!(
             "Sent to {host} over the encrypted link. This app doesn't keep it; your browser may offer to save it."
@@ -473,13 +371,23 @@ fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
     }
 }
 
-/// What a provider signs in with, in words. Never more than the base URL.
-fn describe(availability: Option<&Availability>) -> String {
+/// What a provider signs in with, in words. Never more than a stored
+/// credential's kind and URL.
+fn describe(
+    info: &ProviderInfo,
+    availability: Option<&Availability>,
+) -> String {
     match availability {
         Some(Availability::Available {
-            auth: Auth::Gateway { base_url },
+            auth: Auth::Stored { kind, url },
             ..
-        }) => format!("Gateway at {base_url}"),
+        }) => {
+            let label = info
+                .form(kind)
+                .map_or_else(|| kind.clone(), |form| form.label.clone());
+            url.as_ref()
+                .map_or_else(|| label.clone(), |at| format!("{label} at {at}"))
+        }
         Some(Availability::Available {
             auth: Auth::SignedIn,
             ..

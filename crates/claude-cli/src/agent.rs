@@ -10,12 +10,13 @@ use std::future::pending;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use claude::ClaudeCredential;
 use claude::runtime::{Call, Effect, Input, Refusal, Spawn};
 use claude::{
     ClaudeEvent, PermissionMode, Resume, SettingSource, VersionPolicy,
 };
 use install::Home;
-use proto::{ClaudeCredential, Models};
+use proto::Models;
 use runtime::{Plug, Runtime, Starter};
 use tokio::sync::{mpsc, watch};
 

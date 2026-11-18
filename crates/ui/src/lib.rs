@@ -29,8 +29,8 @@ use proto::{
 
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
 pub use credentials::{
-    ClearButton, CredentialForm, CredentialIntent, CredentialsPane, Field,
-    FieldView,
+    ClearButton, CredentialIntent, CredentialsPane, FieldView, KindForm,
+    ProviderCredentials,
 };
 pub use host::{Detail, HostScreen, StatusLine};
 pub use new_session::{

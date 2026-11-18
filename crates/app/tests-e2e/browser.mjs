@@ -12,7 +12,8 @@
 //             and pairing a fresh install.
 //   codex     Two Codex sessions in <dir>/first and <dir>/second, one
 //             approved and one denied.
-//   credentials  A Claude gateway entered, shown as configured, and
+//   credentials  The forms the host's catalog describes, and a Claude
+//             gateway entered in its form, shown as configured, and
 //             cleared; <dir> is unused.
 //   questions A Claude question in <dir>/question answered by tapping an
 //             option, and a command in <dir>/for-session allowed for the
@@ -470,12 +471,32 @@ if (scenario === 'turn') {
   const GATEWAY = 'https://gateway.conductor-test.invalid';
   const TOKEN = 'conductor-test-browser-token';
   await page.getByRole('button', { name: 'Credentials' }).click();
-  const claude = page.getByRole('form', { name: 'Claude Code' });
+  // Each section and its fields come from the host's catalog, which each
+  // provider's plugin describes.
+  const claude = page.getByRole('region', { name: 'Claude Code' });
+  const codex = page.getByRole('region', { name: 'Codex' });
   const state = claude.locator('.credential-state');
   check((await state.innerText()) === "The host's own CLI, signed in on its own", 'Claude starts on its own CLI');
   check(
-    (await page.getByRole('form', { name: 'Codex' }).locator('.credential-state').innerText()).startsWith('Not available:'),
+    (await codex.locator('.credential-state').innerText()).startsWith('Not available:'),
     'Codex is unavailable on this host'
+  );
+  const labels = async (form) =>
+    (await form.locator('.field-label').allInnerTexts()).join(', ');
+  check(
+    (await labels(claude.getByRole('form', { name: 'Gateway' }))) === 'Gateway URL, Token',
+    "Claude's gateway form has the fields its plugin describes"
+  );
+  const provider = codex.getByRole('form', { name: 'Model provider' });
+  check(
+    (await labels(provider)) === 'Provider name, Base URL, Model, Key',
+    "Codex's provider form has the fields its plugin describes"
+  );
+  check(
+    (await provider.getByLabel('Key').getAttribute('type')) === 'password' &&
+      (await provider.getByLabel('Base URL').getAttribute('type')) === 'url' &&
+      (await provider.getByRole('button', { name: 'Save model provider' }).isDisabled()),
+    'a field kind sets its input type, and a required field left empty holds the save back'
   );
   const token = claude.getByLabel('Token');
   check((await token.getAttribute('type')) === 'password', 'the token field is a password field');

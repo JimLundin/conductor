@@ -10,7 +10,6 @@ pub fn plugin(settings: Settings) -> Plugin {
     Plugin {
         profile: codex::profile(),
         settings,
-        named: codex::runtime::named,
         starter: launched,
     }
 }
@@ -21,7 +20,7 @@ fn launched(launch: Launch) -> Starter {
     starter(Hub::spawn(ServerOptions {
         codex_path: launch.path,
         home: launch.home,
-        credential: codex::runtime::credential(&launch.credentials),
+        credential: None,
         cwd: launch.data_dir,
         stdout_log: None,
     }))

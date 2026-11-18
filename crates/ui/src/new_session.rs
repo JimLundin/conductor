@@ -4,12 +4,12 @@
 use crate::prelude::*;
 use client::host_view::HostView;
 use client::new_session::{
-    Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort, label,
+    Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort,
     models, note,
 };
 use proto::{
-    Availability, CommandBody, CommandResult, Effort, HostPath, ModelId,
-    Provider, Providers,
+    Availability, Catalog, CommandBody, CommandResult, Effort, HostPath,
+    ModelId, Provider, Providers,
 };
 
 use crate::sessions::short;
@@ -177,6 +177,7 @@ impl Form {
         &self,
         view: &HostView,
         providers: Option<&Providers>,
+        catalog: &Catalog,
     ) -> NewSessionForm {
         let (directory_error, provider_error, form_error) = match &self.attempt
         {
@@ -215,13 +216,16 @@ impl Form {
             providers: Provider::ALL
                 .map(|choice| ProviderChoice {
                     provider: choice,
-                    label: label(choice),
+                    label: catalog.label(choice),
                     state: word(availability(providers, choice)),
                     checked: choice == self.provider,
                 })
                 .to_vec(),
-            provider_hint: self
-                .provider_hint(provider_error, note(self.provider, chosen)),
+            provider_hint: self.provider_hint(
+                provider_error,
+                note(catalog.of(self.provider), chosen),
+                catalog,
+            ),
             efforts: self
                 .effort_choices(&efforts(&offered, self.model.as_ref())),
             models: self.model_choices(&offered),
@@ -236,25 +240,24 @@ impl Form {
     }
 
     /// A refusal of the provider, else why the host can't run it, else
-    /// what Codex does unasked.
+    /// what its plugin says of it.
     fn provider_hint(
         &self,
         refused: Option<String>,
         note: ProviderNote,
+        catalog: &Catalog,
     ) -> Option<Hint> {
         match (refused, note) {
             (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => {
                 Some(alert(format!(
                     "{} can't run on this host: {reason}",
-                    label(self.provider)
+                    catalog.label(self.provider)
                 )))
             }
-            (None, ProviderNote::WritesUnasked) => Some(Hint {
+            (None, ProviderNote::Says(text)) => Some(Hint {
                 class: "hint muted",
                 role: None,
-                text: String::from(
-                    "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network.",
-                ),
+                text,
             }),
             (None, ProviderNote::Nothing) => None,
         }

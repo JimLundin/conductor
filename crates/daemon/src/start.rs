@@ -10,14 +10,15 @@ use crate::log::Log;
 use crate::registry::{Launcher, Launchers, Registry};
 use crate::serve::Conductor;
 use agents::Profile;
+use agents::runtime::Command;
 use anyhow::Context;
-use host::start::{Defaults, Next, Output};
+use host::start::{Next, Output};
 use install::process::command;
 use install::{Home, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
-use proto::{Credentials, Provider, Ticket};
+use proto::{Catalog, Credentials, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin};
@@ -35,6 +36,29 @@ impl FromIterator<Plugin> for Plugins {
                 .collect(),
         )
     }
+}
+
+impl Plugins {
+    /// How each provider presents itself, as its plugin says.
+    #[must_use]
+    pub fn catalog(&self) -> Catalog {
+        Catalog(
+            self.0
+                .iter()
+                .map(|(&provider, plugin)| {
+                    (provider, plugin.profile.info.clone())
+                })
+                .collect(),
+        )
+    }
+}
+
+/// What the registry starts with.
+struct Registered {
+    launchers: Launchers,
+    store: Store,
+    stored: Stored,
+    catalog: Catalog,
 }
 
 /// How `conductord host` serves.
@@ -65,13 +89,20 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     let data_dir = data_dir_or_default(given)?;
     let (store, stored) = Store::open(&data_dir)?;
     let credentials = stored.credentials();
+    let catalog = plugins.catalog();
     let mut launchers = Launchers::new();
     for (provider, plugin) in plugins.0 {
         let launcher = launcher(plugin, &data_dir, &credentials).await?;
         launchers.insert(provider, launcher);
     }
+    let registered = Registered {
+        launchers,
+        store,
+        stored,
+        catalog,
+    };
     let Hosted { router, log } =
-        listen(data_dir, web_url, name, launchers, store, stored).await?;
+        listen(data_dir, web_url, name, registered).await?;
     let ended = tokio::select! {
         result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
         () = log.stopped() => Err(anyhow::Error::from(crate::Stopped {})),
@@ -92,16 +123,14 @@ async fn launcher(
     let Plugin {
         profile,
         settings,
-        named,
         starter,
     } = plugin;
     let home = private_home(data_dir, &profile)?;
-    let defaults = Defaults {
-        named: named(credentials),
-        chosen: settings.model,
-    };
-    let mut next =
-        host::start::start(profile.provider.name(), settings.path, defaults);
+    let mut next = host::start::start(
+        profile.provider.name(),
+        settings.path,
+        settings.model,
+    );
     loop {
         next = match next {
             Next::Install(installing) => installing.installed(
@@ -113,7 +142,6 @@ async fn launcher(
                 let start = starter(Launch {
                     path: path.clone(),
                     home: home.clone(),
-                    credentials: credentials.clone(),
                     data_dir: data_dir.to_path_buf(),
                 });
                 let program = path.display().to_string();
@@ -127,8 +155,13 @@ async fn launcher(
                     .await,
             ),
             Next::ListModels(listing) => {
-                let listed = listing.start().models().await;
-                listing.listed(listed)
+                let mut runtime = listing.start().start();
+                let named = runtime
+                    .ask(Command::Credentials(credentials.clone()))
+                    .await
+                    .configured();
+                let listed = runtime.ask(Command::Models).await.models();
+                listing.listed(named, listed)
             }
             Next::Done(launcher, notes) => {
                 notes.iter().for_each(crate::log_note);
@@ -204,10 +237,14 @@ async fn listen(
     data_dir: PathBuf,
     web_url: String,
     name: String,
-    launchers: Launchers,
-    store: Store,
-    stored: Stored,
+    registered: Registered,
 ) -> anyhow::Result<Hosted> {
+    let Registered {
+        launchers,
+        store,
+        stored,
+        catalog,
+    } = registered;
     let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(n0_relays()))
         .secret_key(crate::load_or_create_key(&data_dir)?)
@@ -224,7 +261,13 @@ async fn listen(
     let log = Log::open(name, &data_dir.join("conductor.redb"))?;
     let conductor = Conductor {
         log: log.clone(),
-        registry: Registry::spawn(log.clone(), launchers, store, stored),
+        registry: Registry::spawn(
+            log.clone(),
+            launchers,
+            store,
+            stored,
+            catalog,
+        ),
         token,
     };
     let ticket = Ticket {

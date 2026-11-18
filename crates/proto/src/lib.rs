@@ -20,6 +20,7 @@
 
 extern crate alloc;
 
+mod credential;
 mod frame;
 mod ticket;
 
@@ -30,13 +31,17 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
+pub use credential::{
+    Catalog, Credential, CredentialForm, Credentials, Field, FieldKind,
+    ProviderInfo,
+};
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/12";
+pub const ALPN: &[u8] = b"conductor/13";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -131,6 +136,9 @@ pub struct Welcome {
     pub epoch: Epoch,
     pub head_seq: HostSeq,
     pub providers: Providers,
+    /// How each provider presents itself and the credentials it takes.
+    /// Unlike `providers` it doesn't change while the host runs.
+    pub catalog: Catalog,
 }
 
 /// Whether the host can run each provider, and how it signs in. A host
@@ -230,149 +238,14 @@ impl Models {
 /// and never carries a secret: credentials are write-only (§6.3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Auth {
-    /// A gateway credential the host stores, at this base URL.
-    Gateway { base_url: String },
+    /// A credential the host stores, of this kind, reaching this URL if
+    /// its form has one ([`ProviderInfo::auth`]).
+    Stored { kind: String, url: Option<String> },
     /// The CLI's own sign-in in the host's private home (`conductord login`).
     SignedIn,
     /// A CLI the host was started with (`--cli <provider>=<path>`),
     /// which signs in however it does.
     Unmanaged,
-}
-
-/// The credentials a host stores, at most one per provider.
-///
-/// This is the unit the fleet config (§6.5) carries to every host. Other
-/// kinds, an API key and the Claude subscription token, become variants of
-/// each provider's enum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Credentials(BTreeMap<Provider, Credential>);
-
-/// One provider's credential, as `SetCredential` carries it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Credential {
-    Claude(ClaudeCredential),
-    Codex(CodexCredential),
-}
-
-/// Its `Debug` shows only the kind, so no value reaches a log.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ClaudeCredential {
-    /// Claude Code's `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
-    Gateway { base_url: String, token: String },
-}
-
-/// Its `Debug` shows only the kind, so no value reaches a log.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CodexCredential {
-    /// A custom model provider: Codex's `[model_providers.<id>]` with
-    /// `name` and `base_url`, selected with `model`. Its `wire_api` is
-    /// `responses`, the only one Codex 0.166 knows. The key reaches Codex in
-    /// the environment variable the section's `env_key` names, never in its
-    /// config.
-    Provider {
-        name: String,
-        base_url: String,
-        key: String,
-        model: String,
-    },
-}
-
-impl core::fmt::Debug for ClaudeCredential {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Gateway { .. } => write!(f, "Gateway"),
-        }
-    }
-}
-
-impl core::fmt::Debug for CodexCredential {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Provider { .. } => write!(f, "Provider"),
-        }
-    }
-}
-
-impl Credentials {
-    #[must_use]
-    pub const fn none() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    /// These credentials with `credential` in its provider's place.
-    #[must_use]
-    pub fn set(mut self, credential: Credential) -> Self {
-        self.0.insert(credential.provider(), credential);
-        self
-    }
-
-    #[must_use]
-    pub fn clear(mut self, provider: Provider) -> Self {
-        self.0.remove(&provider);
-        self
-    }
-
-    #[must_use]
-    pub fn of(&self, provider: Provider) -> Option<&Credential> {
-        self.0.get(&provider)
-    }
-
-    /// What `Welcome` may say about a provider's credential: its kind and
-    /// base URL.
-    #[must_use]
-    pub fn auth(&self, provider: Provider) -> Option<Auth> {
-        self.of(provider).map(|credential| Auth::Gateway {
-            base_url: String::from(credential.base_url()),
-        })
-    }
-}
-
-impl Credential {
-    #[must_use]
-    pub const fn provider(&self) -> Provider {
-        match self {
-            Self::Claude(_) => Provider::Claude,
-            Self::Codex(_) => Provider::Codex,
-        }
-    }
-
-    /// Refuses a base URL that isn't plain `http(s)://host/path`. The URL is
-    /// shown to every client and written into Codex's config, so it must
-    /// not hide a secret in userinfo, a query or a fragment.
-    ///
-    /// # Errors
-    ///
-    /// Why the base URL is refused.
-    pub fn check(&self) -> Result<(), String> {
-        let url = url::Url::parse(self.base_url())
-            .map_err(|err| format!("the base URL: {err}"))?;
-        match (
-            url.scheme(),
-            url.username(),
-            url.password(),
-            url.query(),
-            url.fragment(),
-        ) {
-            ("http" | "https", "", None, None, None) => Ok(()),
-            ("http" | "https", _, _, _, _) => Err(String::from(
-                "the base URL may not carry a user, a password, a query or a fragment",
-            )),
-            (_, _, _, _, _) => {
-                Err(String::from("the base URL must be http or https"))
-            }
-        }
-    }
-}
-
-impl Credential {
-    fn base_url(&self) -> &str {
-        match self {
-            Self::Claude(ClaudeCredential::Gateway { base_url, .. })
-            | Self::Codex(CodexCredential::Provider { base_url, .. }) => {
-                base_url
-            }
-        }
-    }
 }
 
 impl Providers {
@@ -1013,8 +886,6 @@ pub enum CloseReason {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClaudeCredential, Credential};
-
     #[test]
     fn constant_cursor_saturates_without_wrapping() {
         const LAST: super::HostSeq = super::HostSeq(u64::MAX).next();
@@ -1063,40 +934,5 @@ mod tests {
             Vec::from([1, 1, 1])
         );
         Ok(())
-    }
-
-    #[test]
-    fn a_base_url_may_not_hide_a_secret() {
-        let checked = [
-            "https://gateway.example/v1",
-            "https://user:pw@gateway.example",
-            "https://gateway.example/?key=1",
-            "https://gateway.example/#k",
-            "ftp://gateway.example",
-            "gateway.example",
-        ]
-        .into_iter()
-        .map(|base_url| {
-            Credential::Claude(ClaudeCredential::Gateway {
-                base_url: String::from(base_url),
-                token: String::from("t"),
-            })
-            .check()
-        })
-        .collect::<Vec<Result<(), String>>>();
-        let hidden = Err(String::from(
-            "the base URL may not carry a user, a password, a query or a fragment",
-        ));
-        assert_eq!(
-            checked,
-            Vec::from([
-                Ok(()),
-                hidden.clone(),
-                hidden.clone(),
-                hidden,
-                Err(String::from("the base URL must be http or https")),
-                Err(String::from("the base URL: relative URL without a base")),
-            ])
-        );
     }
 }

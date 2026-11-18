@@ -4,7 +4,7 @@
 use crate::prelude::*;
 use client::host_view::{HostView, SessionView};
 use client::link::{LinkState, Status, Update, shown_after};
-use proto::{CommandResult, Effort, Providers, SessionId, Ticket};
+use proto::{Catalog, CommandResult, Effort, Providers, SessionId, Ticket};
 
 use crate::credentials::{CredentialsPane, Forms};
 use crate::new_session::{Form, NewSessionForm};
@@ -92,8 +92,11 @@ impl Host {
                 (Self { form, ..self }, effects)
             }
             Intent::Credential(change) => {
-                let (credentials, effects) =
-                    self.credentials.update(change, self.visit);
+                let (credentials, effects) = self.credentials.update(
+                    change,
+                    self.visit,
+                    &catalog(self.status.as_ref()),
+                );
                 (
                     Self {
                         credentials,
@@ -243,7 +246,11 @@ impl Host {
                 | Detail::Session(_) => "detail",
             },
             status: self.status_line(),
-            list: sessions::list(&self.view, self.place),
+            list: sessions::list(
+                &self.view,
+                self.place,
+                &catalog(self.status.as_ref()),
+            ),
             detail,
         }
     }
@@ -252,9 +259,10 @@ impl Host {
     /// the placeholder, and a phone to the list, its only way out.
     fn detail(&self) -> Detail {
         let known = providers(self.status.as_ref());
+        let catalog = catalog(self.status.as_ref());
         match (self.place, selected(&self.view, self.place)) {
             (Place::NewSession, _) => Detail::NewSession(Box::new(
-                self.form.screen(&self.view, known),
+                self.form.screen(&self.view, known, &catalog),
             )),
             (Place::Credentials, _) => {
                 let host = self
@@ -263,7 +271,7 @@ impl Host {
                     .and_then(|status| status.host.clone())
                     .unwrap_or_else(|| String::from("the host"));
                 Detail::Credentials(Box::new(
-                    self.credentials.screen(&host, known),
+                    self.credentials.screen(&host, known, &catalog),
                 ))
             }
             (Place::Session(_), Some((id, session))) => {
@@ -271,6 +279,7 @@ impl Host {
                     id,
                     session,
                     known,
+                    &catalog,
                     self.notice.clone(),
                 )))
             }
@@ -281,10 +290,11 @@ impl Host {
     }
 
     fn status_line(&self) -> StatusLine {
-        let shown = self.status.clone().unwrap_or(Status {
+        let shown = self.status.clone().unwrap_or_else(|| Status {
             state: LinkState::Disconnected,
             host: None,
             providers: None,
+            catalog: Catalog::default(),
             error: None,
         });
         StatusLine {
@@ -297,6 +307,11 @@ impl Host {
 
 fn providers(status: Option<&Status>) -> Option<&Providers> {
     status.and_then(|known| known.providers.as_ref())
+}
+
+/// How each provider presents itself, once the host has said.
+fn catalog(status: Option<&Status>) -> Catalog {
+    status.map_or_default(|known| known.catalog.clone())
 }
 
 /// The session shown, if the host still reports it.

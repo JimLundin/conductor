@@ -90,12 +90,13 @@ fn the_welcome_names_the_head_and_a_subscription_needs_the_epoch() {
         .into(),
     );
     assert_eq!(
-        log.welcome(providers.clone()),
+        log.welcome(providers.clone(), proto::Catalog::default()),
         Welcome {
             host: String::from("test"),
             epoch: Epoch(5),
             head_seq: HostSeq(1),
             providers,
+            catalog: proto::Catalog::default(),
         }
     );
     let from = |epoch| Subscribe {
@@ -286,24 +287,27 @@ fn a_restored_log_continues_from_its_head() {
         HostSeq(8)
     );
     assert_eq!(
-        log.welcome(Providers(
-            [
-                (
-                    Provider::Claude,
-                    Availability::Available {
-                        auth: proto::Auth::SignedIn,
-                        models: Models::none(),
-                    },
-                ),
-                (
-                    Provider::Codex,
-                    Availability::Unavailable {
-                        reason: String::from("no codex"),
-                    },
-                ),
-            ]
-            .into(),
-        ))
+        log.welcome(
+            Providers(
+                [
+                    (
+                        Provider::Claude,
+                        Availability::Available {
+                            auth: proto::Auth::SignedIn,
+                            models: Models::none(),
+                        },
+                    ),
+                    (
+                        Provider::Codex,
+                        Availability::Unavailable {
+                            reason: String::from("no codex"),
+                        },
+                    ),
+                ]
+                .into(),
+            ),
+            proto::Catalog::default()
+        )
         .head_seq,
         HostSeq(8)
     );

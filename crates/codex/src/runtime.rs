@@ -10,16 +10,14 @@
 
 use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
 use agents::{Note, Step};
-use proto::{
-    CloseReason, CodexCredential, Credential, Credentials, Effort,
-    HistoryAnchor, ModelId, Models, Provider,
-};
+use proto::{CloseReason, Effort, HistoryAnchor, ModelId, Models};
 
 use crate::hub::Routed;
 use crate::prelude::*;
 use crate::{
-    ApprovalId, ApprovalPolicy, CodexEvent, Decision, Sandbox, ThreadId,
-    ThreadOptions, TurnId, codex_answer, codex_note, codex_steps,
+    ApprovalId, ApprovalPolicy, CodexCredential, CodexEvent, Decision, Sandbox,
+    ThreadId, ThreadOptions, TurnId, codex_answer, codex_note, codex_steps,
+    credential, default_model,
 };
 
 /// The thread to open: resumed from Codex's own history, or a new one.
@@ -274,31 +272,6 @@ const fn answered(then: Then, outcome: Result<(), String>) -> Outcome {
     }
 }
 
-/// Codex's credential among the host's.
-#[must_use]
-pub fn credential(credentials: &Credentials) -> Option<CodexCredential> {
-    match credentials.of(Provider::Codex) {
-        Some(Credential::Codex(codex)) => Some(codex.clone()),
-        Some(Credential::Claude(_)) | None => None,
-    }
-}
-
-/// The model a credential makes the default: a model provider's gateway
-/// serves the one it names.
-#[must_use]
-pub fn default_model(credential: &CodexCredential) -> ModelId {
-    match credential {
-        CodexCredential::Provider { model, .. } => ModelId(model.clone()),
-    }
-}
-
-/// The model the host's credentials make Codex's default, if they hold
-/// Codex's.
-#[must_use]
-pub fn named(credentials: &Credentials) -> Option<ModelId> {
-    credential(credentials).as_ref().map(default_model)
-}
-
 fn call(call: Call, then: Then) -> Vec<Effect> {
     Vec::from([Effect::Call { call, then }])
 }
@@ -312,17 +285,16 @@ mod tests {
     use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClientName, CloseReason, CodexCredential, Credential, Credentials,
-        Decision as Chosen, Effort, HistoryAnchor, HostPath, ModelId, Provider,
-        SessionId,
+        ClientName, CloseReason, Credential, Credentials, Decision as Chosen,
+        Effort, HistoryAnchor, HostPath, ModelId, Provider, SessionId,
     };
     use serde_json::json;
 
-    use super::{Call, Effect, Input, Open, Runtime, Then, named, resume};
+    use super::{Call, Effect, Input, Open, Runtime, Then, resume};
     use crate::hub::Routed;
     use crate::{
-        ApprovalId, ApprovalPolicy, CodexEvent, Decision, Sandbox, ThreadEvent,
-        ThreadId, ThreadOptions, TurnId,
+        ApprovalId, ApprovalPolicy, CodexCredential, CodexEvent, Decision,
+        Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId,
     };
 
     fn text(value: &str) -> String {
@@ -556,8 +528,18 @@ mod tests {
             key: text("secret"),
             model: text("gw-model"),
         };
-        let credentials =
-            Credentials::none().set(Credential::Codex(gateway.clone()));
+        let credentials = Credentials::none().set(Credential {
+            provider: Provider::Codex,
+            kind: text("provider"),
+            values: [
+                ("name", "gateway"),
+                ("base_url", "https://gateway.example"),
+                ("key", "secret"),
+                ("model", "gw-model"),
+            ]
+            .map(|(id, value)| (text(id), text(value)))
+            .into(),
+        });
         let mut runtime = Runtime::new();
         assert_eq!(
             walk(
@@ -577,23 +559,6 @@ mod tests {
                 Vec::from([Effect::Credential(None)]),
                 outcome(Outcome::Configured(Ok(None))),
             ])
-        );
-    }
-
-    #[test]
-    fn a_stored_codex_credential_names_the_default() {
-        let gateway = CodexCredential::Provider {
-            name: text("gateway"),
-            base_url: text("https://gateway.example"),
-            key: text("secret"),
-            model: text("gw-model"),
-        };
-        assert_eq!(
-            [
-                named(&Credentials::none().set(Credential::Codex(gateway))),
-                named(&Credentials::none()),
-            ],
-            [Some(ModelId(text("gw-model"))), None]
         );
     }
 }

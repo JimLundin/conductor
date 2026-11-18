@@ -11,14 +11,15 @@
 use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
 use agents::{Note, Step};
 use proto::{
-    ClaudeCredential, CloseReason, Credential, Credentials, Effort,
-    HistoryAnchor, HostPath, Models, Provider, SessionId as Session,
+    CloseReason, Effort, HistoryAnchor, HostPath, Models, Provider,
+    SessionId as Session,
 };
 
 use crate::prelude::*;
 use crate::{
-    ClaudeEvent, MessageId, PermissionDecision, PermissionRequestId, Resume,
-    Sandbox, SessionId, claude_answer, claude_steps, unprotected,
+    ClaudeCredential, ClaudeEvent, MessageId, PermissionDecision,
+    PermissionRequestId, Resume, Sandbox, SessionId, claude_answer,
+    claude_steps, credential, unprotected,
 };
 
 /// Why the CLI did not start, and the conversation it found missing if
@@ -373,30 +374,20 @@ fn resume(
     }
 }
 
-/// Claude's credential among the host's.
-#[must_use]
-pub fn credential(credentials: &Credentials) -> Option<ClaudeCredential> {
-    match credentials.of(Provider::Claude) {
-        Some(Credential::Claude(claude)) => Some(claude.clone()),
-        Some(Credential::Codex(_)) | None => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClaudeCredential, ClientName, CloseReason, Credential, Credentials,
-        Decision, Effort, HistoryAnchor, HostPath, ModelId, Provider,
-        SessionId as Session,
+        ClientName, CloseReason, Credential, Credentials, Decision, Effort,
+        HistoryAnchor, HostPath, ModelId, Provider, SessionId as Session,
     };
     use serde_json::json;
 
     use super::{Call, Effect, Input, Refusal, Runtime, Spawn, Then, attempts};
     use crate::{
-        ClaudeEvent, MessageId, PermissionDecision, PermissionRequestId,
-        Resume, Sandbox, SessionId,
+        ClaudeCredential, ClaudeEvent, MessageId, PermissionDecision,
+        PermissionRequestId, Resume, Sandbox, SessionId,
     };
 
     fn id(text: &str) -> SessionId {
@@ -701,8 +692,16 @@ mod tests {
             base_url: text("https://gateway.example"),
             token: text("secret"),
         };
-        let credentials =
-            Credentials::none().set(Credential::Claude(gateway.clone()));
+        let credentials = Credentials::none().set(Credential {
+            provider: Provider::Claude,
+            kind: text("gateway"),
+            values: [
+                ("base_url", "https://gateway.example"),
+                ("token", "secret"),
+            ]
+            .map(|(id, value)| (text(id), text(value)))
+            .into(),
+        });
         let mut runtime = Runtime::new(Sandbox::Missing);
         let seen =
             runtime.step(Input::Command(Command::Credentials(credentials)));

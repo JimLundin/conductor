@@ -5,10 +5,10 @@
 
 use agents::pin::Cli;
 use agents::{Config, HomeKind, Invocation, Profile, Var};
-use proto::{CodexCredential, Provider};
+use proto::Provider;
 
-use crate::TurnId;
 use crate::prelude::*;
+use crate::{CodexCredential, TurnId};
 
 /// Our provider's id in `model_providers`.
 const PROVIDER_ID: &str = "conductor";
@@ -48,6 +48,7 @@ pub fn login(home: HomeKind) -> Invocation {
 pub fn profile() -> Profile {
     Profile {
         provider: Provider::Codex,
+        info: crate::info(),
         pin: Cli::Codex,
         config: Config {
             file: String::from("config.toml"),
@@ -227,13 +228,13 @@ impl History {
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Var};
-    use proto::{CodexCredential, Provider};
+    use proto::Provider;
 
     use super::{
         Edit, History, Paging, app_server, cli, config_edits, login, profile,
         version,
     };
-    use crate::TurnId;
+    use crate::{CodexCredential, TurnId};
 
     #[test]
     fn the_profile_runs_codex_in_its_private_home() {

@@ -17,8 +17,8 @@ use core::time::Duration;
 use crate::host_view::HostView;
 use crate::prelude::*;
 use proto::{
-    Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Providers, Subscribe,
-    Welcome,
+    Catalog, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Providers,
+    Subscribe, Welcome,
 };
 
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
@@ -46,6 +46,8 @@ pub struct Status {
     pub host: Option<String>,
     /// What the host can run, from its last `Welcome`.
     pub providers: Option<Providers>,
+    /// How each provider presents itself, from the last `Welcome`.
+    pub catalog: Catalog,
     /// Why the last connection ended, until the next one is live.
     pub error: Option<String>,
 }
@@ -485,6 +487,7 @@ impl Link {
         let shown = self.publish(Status {
             host: Some(welcome.host),
             providers: Some(welcome.providers),
+            catalog: welcome.catalog,
             state: LinkState::CatchingUp,
             ..self.status.clone()
         });
@@ -636,8 +639,8 @@ mod tests {
     use core::time::Duration;
 
     use proto::{
-        AuthToken, Availability, ClientName, Epoch, Event, EventKind, Hello,
-        HelloReply, HostSeq, Provider, Providers, SessionId, Subscribe,
+        AuthToken, Availability, Catalog, ClientName, Epoch, Event, EventKind,
+        Hello, HelloReply, HostSeq, Provider, Providers, SessionId, Subscribe,
         Welcome,
     };
 
@@ -670,6 +673,7 @@ mod tests {
             epoch: Epoch(epoch),
             head_seq: HostSeq(head),
             providers: providers("test"),
+            catalog: Catalog::default(),
         }
     }
 
@@ -699,6 +703,7 @@ mod tests {
             state,
             host: Some(String::from("host")),
             providers: Some(providers("test")),
+            catalog: Catalog::default(),
             error: error.map(String::from),
         }
     }

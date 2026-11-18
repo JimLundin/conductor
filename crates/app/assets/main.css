@@ -701,7 +701,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .start { min-height: 50px; font-size: 1.0625rem; }
 
 /* Credentials, one form per provider. */
-.credential { display: flex; flex-direction: column; gap: 1rem; }
+.credential, .credential-kind { display: flex; flex-direction: column; gap: 1rem; }
 .credential + .credential { padding-top: 1.4rem; border-top: 1px solid var(--line); }
 .credential-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .credential-head h3 { margin: 0; font-size: 1.0625rem; font-weight: 650; }

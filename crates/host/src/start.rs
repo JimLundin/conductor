@@ -50,19 +50,11 @@ pub enum Next<P, S> {
     /// Run the sign-in check of the CLI at `P`, and hand how it exited to
     /// [`Checking::checked`].
     CheckSignIn(P, Checking<S>),
-    /// List what [`Listing::start`] offers, and hand it to
-    /// [`Listing::listed`].
+    /// Hand [`Listing::start`]'s agents the stored credentials and list
+    /// what it then offers, and hand both outcomes to [`Listing::listed`].
     ListModels(Listing<S>),
     /// Run the provider as the launcher says, after logging the notes.
     Done(Launcher<S>, Vec<Note>),
-}
-
-/// The defaults a session gets when it names no model: the one the stored
-/// credential `named`, then the one the host was started with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Defaults {
-    pub named: Option<ModelId>,
-    pub chosen: Option<String>,
 }
 
 /// How a probe of the CLI exited.
@@ -73,23 +65,25 @@ pub struct Output {
 }
 
 /// Starts the CLI called `name`: the `given` one, or else the pinned one.
+/// A session that names no model gets the one the stored credential names,
+/// else `chosen`, the one the host was started with.
 #[must_use]
 pub fn start<P, S>(
     name: &str,
     given: Option<P>,
-    defaults: Defaults,
+    chosen: Option<String>,
 ) -> Next<P, S> {
     match given {
         Some(path) => Next::Probe(
             path,
             Probing {
                 pinned: false,
-                defaults,
+                chosen,
             },
         ),
         None => Next::Install(Installing {
             name: String::from(name),
-            defaults,
+            chosen,
         }),
     }
 }
@@ -114,7 +108,7 @@ fn succeeded(code: Option<i32>) -> bool {
 #[derive(Debug)]
 pub struct Installing {
     name: String,
-    defaults: Defaults,
+    chosen: Option<String>,
 }
 
 impl Installing {
@@ -125,7 +119,7 @@ impl Installing {
                 installed,
                 Probing {
                     pinned: true,
-                    defaults: self.defaults,
+                    chosen: self.chosen,
                 },
             ),
             Err(err) => unavailable(format!(
@@ -140,7 +134,7 @@ impl Installing {
 #[derive(Debug)]
 pub struct Probing {
     pinned: bool,
-    defaults: Defaults,
+    chosen: Option<String>,
 }
 
 impl Probing {
@@ -171,7 +165,7 @@ impl Probing {
             path: program,
             version,
             start,
-            defaults: self.defaults,
+            chosen: self.chosen,
         };
         if self.pinned {
             Next::CheckSignIn(path, Checking { cli })
@@ -190,7 +184,7 @@ struct Cli<S> {
     path: String,
     version: String,
     start: S,
-    defaults: Defaults,
+    chosen: Option<String>,
 }
 
 /// The pinned CLI's sign-in check is running against its private home.
@@ -225,11 +219,27 @@ impl<S> Listing<S> {
         &self.cli.start
     }
 
-    /// The CLI offers what it `listed`. One that could not list them, for
-    /// instance because it is not signed in yet, offers only the default.
+    /// The agents were `configured` with the stored credentials, which name
+    /// a default model or not, and the CLI offers what it then `listed`. One that
+    /// could not list them, for instance because it is not signed in yet,
+    /// offers only the default. Agents that refused the credentials can't
+    /// run.
     #[must_use]
-    pub fn listed<P>(self, listed: Result<Models, String>) -> Next<P, S> {
+    pub fn listed<P>(
+        self,
+        configured: Result<Option<ModelId>, String>,
+        listed: Result<Models, String>,
+    ) -> Next<P, S> {
         let Self { cli, own } = self;
+        let named = match configured {
+            Ok(model) => model,
+            Err(reason) => {
+                return unavailable(format!(
+                    "{} refused the stored credential: {reason}",
+                    cli.path
+                ));
+            }
+        };
         let (models, mut notes) = match listed {
             Ok(models) => (models, Vec::new()),
             Err(reason) => {
@@ -248,8 +258,8 @@ impl<S> Listing<S> {
                 own,
                 offer: Offer {
                     listed: models,
-                    named: cli.defaults.named,
-                    chosen: cli.defaults.chosen.map(ModelId),
+                    named,
+                    chosen: cli.chosen.map(ModelId),
                 },
             },
             notes,
@@ -268,7 +278,7 @@ fn unavailable<P, S>(reason: String) -> Next<P, S> {
 mod tests {
     use proto::{Effort, ModelChoice, ModelId, Models, Provider};
 
-    use super::{Defaults, Next, Output, setting, signed_in, start};
+    use super::{Next, Output, setting, signed_in, start};
     use crate::Note;
     use crate::registry::{Launcher, Offer, OwnSignIn};
 
@@ -287,13 +297,6 @@ mod tests {
                 )),
             ]
         );
-    }
-
-    fn defaults() -> Defaults {
-        Defaults {
-            named: Some(ModelId(String::from("named"))),
-            chosen: Some(String::from("haiku")),
-        }
     }
 
     fn ran(code: i32) -> Output {
@@ -320,6 +323,7 @@ mod tests {
         installed: Result<&'static str, String>,
         version: Result<Output, String>,
         check: Result<Option<i32>, String>,
+        named: Result<Option<ModelId>, String>,
         models: Result<Models, String>,
     }
 
@@ -328,6 +332,7 @@ mod tests {
             installed: Ok("/pinned"),
             version: Ok(ran(0)),
             check: Ok(Some(0)),
+            named: Ok(Some(ModelId(String::from("named")))),
             models: Ok(listed()),
         }
     }
@@ -338,7 +343,8 @@ mod tests {
         probes: &Probes,
     ) -> (Vec<&'static str>, Launcher<&'static str>, Vec<Note>) {
         let mut seen = Vec::new();
-        let mut next: Step = start("claude", given, defaults());
+        let mut next: Step =
+            start("claude", given, Some(String::from("haiku")));
         loop {
             next = match next {
                 Next::Install(installing) => {
@@ -360,7 +366,7 @@ mod tests {
                 }
                 Next::ListModels(listing) => {
                     seen.push(listing.start());
-                    listing.listed(probes.models.clone())
+                    listing.listed(probes.named.clone(), probes.models.clone())
                 }
                 Next::Done(launcher, notes) => break (seen, launcher, notes),
             }
@@ -416,6 +422,23 @@ mod tests {
                 (steps.clone(), ready(OwnSignIn::Missing, listed())),
                 (steps, ready(OwnSignIn::Missing, listed())),
             ]
+        );
+    }
+
+    #[test]
+    fn agents_that_refuse_the_stored_credential_are_unavailable() {
+        let (_, launcher, _) = walk(
+            Some("/given"),
+            &Probes {
+                named: Err(String::from("bad key")),
+                ..probes()
+            },
+        );
+        assert_eq!(
+            launcher,
+            Launcher::Unavailable(String::from(
+                "/given refused the stored credential: bad key"
+            ))
         );
     }
 

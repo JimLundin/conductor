@@ -21,9 +21,9 @@ use proto::Credentials;
 
 pub use host::registry::Stored;
 
-/// Format 2 keys the credentials by provider; a format 1 store reads as
-/// one that doesn't open, which a Clear moves aside.
-const FORMAT: u8 = 2;
+/// Format 3 holds each credential as its form's values; an older store
+/// reads as one that doesn't open, which a Clear moves aside.
+const FORMAT: u8 = 3;
 const PURPOSE: &[u8] = b"conductor credentials 1";
 const NONCE_LEN: usize = 24;
 

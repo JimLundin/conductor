@@ -11,8 +11,8 @@ use alloc::collections::{BTreeMap, VecDeque};
 use core::mem;
 
 use proto::{
-    CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, Providers,
-    SessionId, Subscribe, Welcome,
+    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
+    Providers, SessionId, Subscribe, Welcome,
 };
 
 use crate::prelude::*;
@@ -134,12 +134,13 @@ impl Log {
     }
 
     #[must_use]
-    pub fn welcome(&self, providers: Providers) -> Welcome {
+    pub fn welcome(&self, providers: Providers, catalog: Catalog) -> Welcome {
         Welcome {
             host: self.name.clone(),
             epoch: self.epoch,
             head_seq: self.head(),
             providers,
+            catalog,
         }
     }
 
