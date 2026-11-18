@@ -11,8 +11,8 @@ use proto::{Checkout, HostPath, Origin, ProjectId};
 use crate::prelude::*;
 use crate::project::Project;
 
-/// A directory the host searches for checkouts, and the names of the
-/// directories in it.
+/// A directory the host searches for checkouts, and the directories in it
+/// and in those, each by its path relative to it (`apps/conductor`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Root {
     pub path: String,
@@ -20,7 +20,7 @@ pub struct Root {
 }
 
 /// The paths to look for checkouts at, each once: those found before, then
-/// in each root each project's usual path and each directory in it, then
+/// each directory in each root that isn't hidden or in a hidden one, then
 /// the host's own clones.
 #[must_use]
 pub fn candidates(
@@ -29,21 +29,16 @@ pub fn candidates(
     known: &[String],
     clones: &str,
 ) -> Vec<String> {
-    let usual = roots.iter().flat_map(|root| {
-        let paths = projects
+    let searched = roots.iter().flat_map(|root| {
+        root.entries
             .iter()
-            .filter_map(|project| project.path.as_deref());
-        let entries = root
-            .entries
-            .iter()
-            .map(String::as_str)
-            .filter(|entry| !entry.starts_with('.'));
-        paths.chain(entries).map(|name| join(&root.path, name))
+            .filter(|entry| !entry.split('/').any(|name| name.starts_with('.')))
+            .map(|entry| join(&root.path, entry))
     });
     let own = projects
         .iter()
         .map(|project| clone_path(clones, &project.id));
-    known.iter().cloned().chain(usual).chain(own).fold(
+    known.iter().cloned().chain(searched).chain(own).fold(
         Vec::new(),
         |mut listed, path| {
             if !listed.contains(&path) {

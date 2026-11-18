@@ -545,8 +545,9 @@ is home step 3: the clone, its sync, and each project's checkouts.
 
 - **The home's files.** `projects/<project>/project.toml` lists each
   project with its `name`, `remote` (absent when local only), `root` (the
-  first commit of its first-parent history), default `branch`, `profiles`,
-  and `path`, where the owner usually checks it out relative to the home.
+  first commit of its first-parent history), default `branch` and
+  `profiles`; other keys are ignored. The home is shared by every host, so
+  it never says where a host keeps a checkout.
   The `home` core crate parses them (`home::project`), matches checkouts
   (`home::checkout`), says where the clone stands (`home::sync`) and builds
   what the host reports. It is a core of its own rather than part of
@@ -570,9 +571,9 @@ is home step 3: the clone, its sync, and each project's checkouts.
   history has the project's root commit and its `origin` is the project's
   remote, compared without scheme, user, `.git` or case; a local-only
   project's checkouts have no `origin`. The host probes, in order, the
-  checkouts it found before, then in each search root (`--projects <dir>`,
-  repeatable) each project's `path` and each directory, then its own
-  clones, running `rev-parse --show-toplevel`, `rev-list --max-parents=0
+  checkouts it found before (host-local, in `<data>/home.state`), then in
+  each search root (`--projects <dir>`, repeatable) each directory and each
+  directory in those, skipping hidden ones, then its own clones, running `rev-parse --show-toplevel`, `rev-list --max-parents=0
   HEAD` and `remote get-url origin` in each; the decisions are
   `home::checkout`. A project may have several checkouts on a host
   (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in

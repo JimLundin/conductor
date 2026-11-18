@@ -5998,7 +5998,7 @@ fn listed_project(
         folder.join("project.toml"),
         format!(
             "name = \"{id}\"\nremote = \"{remote}\"\nroot = \"{root}\"\n\
-             branch = \"{branch}\"\nprofiles = [\"rust\"]\npath = \"{id}\"\n"
+             branch = \"{branch}\"\nprofiles = [\"rust\"]\n"
         ),
     )?;
     Ok(())
@@ -6033,9 +6033,9 @@ fn found(path: &Path, origin: proto::Origin) -> Fallible<proto::Checkout> {
 }
 
 /// A home listing alpha and beta, each with a bare remote, and a search
-/// root holding the person's checkout of alpha, which matches; one with
-/// alpha's remote but other history, and one with alpha's history but
-/// another remote, which don't.
+/// root holding the person's checkout of alpha one level down, which
+/// matches; one with alpha's remote but other history, and one with alpha's
+/// history but another remote, which don't.
 struct Homeland {
     scratch: PathBuf,
     roots: PathBuf,
@@ -6059,7 +6059,7 @@ fn homeland() -> Fallible<Homeland> {
             .to_owned();
     let (_, alpha) = bare(&sources.join("alpha"), "alpha")?;
     let (_, beta) = bare(&sources.join("beta"), "beta")?;
-    git(&roots, &["clone", "--quiet", &alpha, "alpha"])?;
+    git(&roots, &["clone", "--quiet", &alpha, "apps/alpha"])?;
     let impostor = roots.join("impostor");
     let _ = rooted(&impostor)?;
     std::fs::write(
@@ -6075,7 +6075,7 @@ fn homeland() -> Fallible<Homeland> {
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/e2e/claude-approve.jsonl"),
-        roots.join("alpha").join("stdout.jsonl"),
+        roots.join("apps").join("alpha").join("stdout.jsonl"),
     )?;
     let home_source = sources.join("home");
     std::fs::create_dir_all(&home_source)?;
@@ -6158,7 +6158,7 @@ async fn starts_in_alpha(
     );
     let session = started_session(&send(link, in_project("alpha")).await?)?;
     let events = events_until(updates, Until::Ready).await?;
-    let alpha = land.roots.join("alpha");
+    let alpha = land.roots.join("apps").join("alpha");
     let checkout = std::fs::canonicalize(&alpha)?.display().to_string();
     let placed = events
         .iter()
@@ -6221,7 +6221,7 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
         ),
         (
             Vec::from([found(
-                &land.roots.join("alpha"),
+                &land.roots.join("apps").join("alpha"),
                 proto::Origin::Found
             )?]),
             Vec::new()

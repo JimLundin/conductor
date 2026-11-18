@@ -18,7 +18,7 @@ fn id(name: &str) -> ProjectId {
     ProjectId(String::from(name))
 }
 
-fn project(name: &str, remote: Option<&str>, path: Option<&str>) -> Project {
+fn project(name: &str, remote: Option<&str>) -> Project {
     Project {
         id: id(name),
         name: String::from(name),
@@ -26,7 +26,6 @@ fn project(name: &str, remote: Option<&str>, path: Option<&str>) -> Project {
         root: String::from(ROOT),
         branch: String::from("main"),
         profiles: Vec::from([String::from("rust")]),
-        path: path.map(String::from),
     }
 }
 
@@ -56,8 +55,7 @@ fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
         parse("conductor", &text),
         Ok(Project {
             name: String::from("Conductor"),
-            path: Some(String::from("apps/conductor")),
-            ..project("conductor", Some(REMOTE), None)
+            ..project("conductor", Some(REMOTE))
         })
     );
     let local =
@@ -66,19 +64,17 @@ fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
         parse("sop", &local),
         Ok(Project {
             profiles: Vec::new(),
-            ..project("sop", None, None)
+            ..project("sop", None)
         })
     );
 }
 
 #[test]
 fn a_project_toml_that_wont_do_says_why() {
-    let fields = |root: &str, path: &str| {
-        format!(
-            "name = \"x\"\nroot = \"{root}\"\nbranch = \"main\"\npath = \"{path}\"\n"
-        )
+    let fields = |root: &str| {
+        format!("name = \"x\"\nroot = \"{root}\"\nbranch = \"main\"\n")
     };
-    let good = fields(ROOT, "x");
+    let good = fields(ROOT);
     assert_eq!(
         [
             parse("Sales", &good),
@@ -86,17 +82,9 @@ fn a_project_toml_that_wont_do_says_why() {
             parse("-x", &good),
             parse("a.b", &good),
             parse("x", "name = \"x\"\n"),
-            parse(
-                "x",
-                &fields("FC27E50EFB661D7EF4A45D3EDBE0234FF0A6FBD5", "x")
-            ),
-            parse("x", &fields("fc27e50", "x")),
-            parse("x", &fields(&"g".repeat(40), "x")),
-            parse("x", &fields(ROOT, "../x")),
-            parse("x", &fields(ROOT, "/x")),
-            parse("x", &fields(ROOT, "a//b")),
-            parse("x", &fields(ROOT, "a/./b")),
-            parse("x", &fields(ROOT, "a\\\\b")),
+            parse("x", &fields("FC27E50EFB661D7EF4A45D3EDBE0234FF0A6FBD5")),
+            parse("x", &fields("fc27e50")),
+            parse("x", &fields(&"g".repeat(40))),
         ]
         .map(|parsed| parsed.err().map(|err| first_words(&err))),
         [
@@ -108,15 +96,10 @@ fn a_project_toml_that_wont_do_says_why() {
             Some(String::from("root is not")),
             Some(String::from("root is not")),
             Some(String::from("root is not")),
-            Some(String::from("path is not")),
-            Some(String::from("path is not")),
-            Some(String::from("path is not")),
-            Some(String::from("path is not")),
-            Some(String::from("path is not")),
         ]
     );
     assert!(parse("x-2", &good).is_ok());
-    assert!(parse("x", &fields(&"a".repeat(64), "a/b")).is_ok());
+    assert!(parse("x", &fields(&"a".repeat(64))).is_ok());
 }
 
 fn first_words(text: &str) -> String {
@@ -147,24 +130,24 @@ fn a_listing_is_by_id_and_names_the_folders_that_arent_projects() {
 }
 
 #[test]
-fn candidates_are_known_paths_then_usual_paths_and_entries_then_clones_each_once()
+fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once()
  {
-    let projects = [
-        project("conductor", Some(REMOTE), None),
-        project("keyframe", None, Some("keyframe/keyframe")),
-    ];
+    let projects = [project("conductor", Some(REMOTE)), project("sop", None)];
     let roots = [
         Root {
             path: String::from("/home/me/projects/"),
             entries: Vec::from([
                 String::from(".cache"),
+                String::from(".cache/sop"),
+                String::from("apps"),
+                String::from("apps/.git"),
+                String::from("apps/conductor"),
                 String::from("conductor"),
-                String::from("keyframe"),
             ]),
         },
         Root {
             path: String::from("/srv"),
-            entries: Vec::new(),
+            entries: Vec::from([String::from("sop")]),
         },
     ];
     assert_eq!(
@@ -176,11 +159,11 @@ fn candidates_are_known_paths_then_usual_paths_and_entries_then_clones_each_once
         ),
         [
             "/home/me/projects/conductor",
-            "/home/me/projects/keyframe/keyframe",
-            "/home/me/projects/keyframe",
-            "/srv/keyframe/keyframe",
+            "/home/me/projects/apps",
+            "/home/me/projects/apps/conductor",
+            "/srv/sop",
             "/data/projects/conductor",
-            "/data/projects/keyframe",
+            "/data/projects/sop",
         ]
     );
 }
@@ -218,13 +201,9 @@ fn only_the_top_of_a_repository_with_a_commit_is_probed() {
 #[test]
 fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
     let projects = [
-        project("conductor", Some(REMOTE), None),
-        project("sop", None, None),
-        project(
-            "other",
-            Some("https://github.com/JimLundin/other.git"),
-            None,
-        ),
+        project("conductor", Some(REMOTE)),
+        project("sop", None),
+        project("other", Some("https://github.com/JimLundin/other.git")),
     ];
     let probes = [
         probe(
@@ -346,10 +325,7 @@ fn home(checkouts: &[&str]) -> Home {
     view(
         REMOTE,
         &Sync::new().after(Ok(()), true, 5),
-        &[
-            project("conductor", Some(REMOTE), None),
-            project("sop", None, None),
-        ],
+        &[project("conductor", Some(REMOTE)), project("sop", None)],
         (
             &BTreeMap::from([(
                 id("conductor"),
@@ -430,10 +406,7 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
 
 #[test]
 fn only_a_known_project_with_a_remote_clones() {
-    let projects = [
-        project("conductor", Some(REMOTE), None),
-        project("sop", None, None),
-    ];
+    let projects = [project("conductor", Some(REMOTE)), project("sop", None)];
     assert_eq!(
         [
             remote_of(&projects, &id("conductor")),

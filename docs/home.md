@@ -152,12 +152,13 @@ holds `standards/`, the shared `AGENTS.md` and the list of projects
 `<data>/home-repo` (not `<data>/home`, which holds each instance's private
 CLI home). Adopting it takes a few changes there:
 
-- `projects/<project>/` holds the tracker. Today the project repositories
-  themselves are checked out beside `standards/` and ignored by the home's
-  `.gitignore`; the new `projects/` folder is tracked and holds only
-  Conductor's files, never a checkout.
+- `projects/<project>/` holds the tracker: only Conductor's files, never a
+  checkout.
 - `project.toml` becomes the list of projects, and the `AGENTS.md` table and
-  `repos.sh` read it instead of keeping their own.
+  `repos.sh` read it instead of keeping their own. It gives each project's
+  `name`, `remote` (absent when local only), `root`, `branch` and
+  `profiles`. The home never records where a host keeps a checkout; a host
+  finds its checkouts by root commit and remote.
 - `instructions/` holds what the shared `AGENTS.md` says today, split into
   the rules for every session and those for one profile.
 

@@ -355,20 +355,40 @@ fn folders(clone: &Path) -> Vec<(String, Result<String, String>)> {
         .collect()
 }
 
-/// A search root and the directories in it, by name.
+/// A search root with the directories in it and in each of those that
+/// isn't hidden, so a checkout one level down is found too.
 fn root(path: &Path) -> Root {
-    let mut entries = std::fs::read_dir(path)
+    let mut entries = directories(path)
         .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .flat_map(|name| {
+            let deeper = if name.starts_with('.') {
+                Vec::new()
+            } else {
+                directories(&path.join(&name))
+            };
+            let inner = deeper
+                .into_iter()
+                .map(|inner| format!("{name}/{inner}"))
+                .collect::<Vec<String>>();
+            core::iter::once(name).chain(inner)
+        })
         .collect::<Vec<String>>();
     entries.sort();
     Root {
         path: path.to_string_lossy().into_owned(),
         entries,
     }
+}
+
+/// The names of the directories in `path`.
+fn directories(path: &Path) -> Vec<String> {
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
 }
 
 async fn probes(paths: Vec<String>) -> Vec<Probe> {

@@ -65,7 +65,7 @@ struct HostArgs {
     #[arg(long, value_name = "REMOTE")]
     home: Option<String>,
     /// A directory to look for the home's projects in: each directory in
-    /// it, and each project's usual path under it. Give it once for each.
+    /// it and in those. Give it once for each.
     #[arg(long = "projects", value_name = "DIR")]
     projects: Vec<PathBuf>,
 }

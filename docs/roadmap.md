@@ -109,8 +109,8 @@ What is built and what comes next. Update it in the commit that changes it.
   pairing a host again replaces its ticket. No protocol change.
 - **The home and its projects** (home step 3, architecture §5.4). The home
   repository `JimLundin/home` lists each project in
-  `projects/<project>/project.toml` (remote, root commit, branch, profiles,
-  usual path), which its `repos.sh` and `AGENTS.md` table now read. A host
+  `projects/<project>/project.toml` (remote, root commit, branch,
+  profiles), which its `repos.sh` and `AGENTS.md` table now read. A host
   given `--home <remote>` (stored, so given once) clones it into
   `<data>/home-repo` and pulls it every five minutes, on *Sync* and before
   a read that needs it; offline and failed pulls are its state (`Synced`,
