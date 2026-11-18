@@ -19,10 +19,16 @@ Home Screen. The design is in
 - **No API is stable.** Every crate is internal to this workspace. Change a
   public API whenever a clearer shape appears, and update its callers in
   the same change; never keep an old shape for compatibility.
-- **Gate.** `tools/check.sh` (the standard's `rust/check.sh`, the run-record
-  IP scrub, and clippy for the wasm crates) passes on every commit. Set
-  `STANDARDS` when the standards checkout is elsewhere. `tools/check.sh
-  full` adds mutation testing and the slow checks.
+- **Gate.** `tools/check.sh [commit|step|release]` runs the standard's
+  `rust/check.sh`, which also runs Conductor's suites in `checks.toml`: the
+  run-record IP scrub and clippy for the wasm crates at `commit`, and the
+  browser suite (`tools/e2e-browser.sh`) at `release`, or at `step` when
+  `crates/{app,ui,net,proto,client}` change. Run `commit` before each
+  commit and `step` (the default) before merging a task branch; `release`
+  adds mutation testing and the slow checks, only in CI or when asked. It
+  checks only what changed since the merge base with `main` (`--all` checks
+  everything) and reports `cached` for a tree that already passed. Set
+  `STANDARDS` when the standards checkout is elsewhere.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo

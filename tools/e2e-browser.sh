@@ -18,13 +18,16 @@
 # Chromium), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
-# and docs/p1/screens/phone-light-tasks.png. Every scenario runs even after
+# and docs/p1/screens/phone-light-tasks.png, or the same under $E2E_RECORD
+# (the gate's suite writes them to target/). Every scenario runs even after
 # one fails; the script exits non-zero if any did.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
 port=${PORT:-8080}
 recordings=$PWD/fixtures/e2e
+record=${E2E_RECORD:-docs/p1}
+mkdir -p "$record/screens"
 claude=$PWD/crates/claude-cli/tests/fake-claude.sh
 
 target=$(tools/target-dir)
@@ -187,7 +190,7 @@ tasks() {
   start_host tasks
   echo
   echo "## Tasks and the effort changed between turns, webkit"
-  run webkit tasks docs/p1/screens/phone-light-tasks.png "$scratch/tasks"
+  run webkit tasks "$record/screens/phone-light-tasks.png" "$scratch/tasks"
   echo
   echo "## Tasks, host log"
   host_log tasks
@@ -329,7 +332,7 @@ screens() {
   start_host screens
   echo
   echo "## Screens, chromium"
-  run chromium screens docs/p1/screens "$scratch/screens"
+  run chromium screens "$record/screens" "$scratch/screens"
 }
 
 # scenario <name> <function>: runs the function in a shell of its own that
@@ -355,7 +358,7 @@ scenario() {
   fi
 }
 
-out=docs/p1/browser-run.txt
+out=$record/browser-run.txt
 {
   echo "# Web build in headless Chromium and WebKit (390x844) against conductord host on the fake CLIs, $(date -u +%FT%TZ)"
   echo

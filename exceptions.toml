@@ -40,6 +40,11 @@ path = "crates/app/src/shell.rs"
 rule = "clippy::future_not_send"
 reason = "the link tasks run on the single-threaded UI executor and hold Dioxus signals and an Rc'd link"
 
+[[exception]]
+path = "provider_refresh_orders_codex_configuration_without_blocking_claude"
+rule = "flaky"
+reason = "it gives the phone's connection and the Claude start 2 s (RESPONSIVE) while the Codex refresh is held, and with the whole suite running on a 7 GB host the relay handshake sometimes takes longer; it passes alone and on the retry"
+
 # Debt: shell code that still makes decisions. Each entry goes as its
 # decisions move into a core crate.
 

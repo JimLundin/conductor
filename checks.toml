@@ -1,0 +1,35 @@
+# Conductor's own suites, which the shared standard runs beside its checks.
+# A suite runs at a tier, and every tier above it, when one of its `when`
+# entries matches what changed: a path glob, an affected workspace package
+# (changed, or depending on one that changed), or any change at all when the
+# entry names neither.
+
+[[suite]]
+name = "ip-scrub"
+command = "git ls-files -z 'docs/**/*.txt' 'docs/**/*.log' 'docs/**/NOTES.md' | xargs -0 python3 tools/scrub-ips.py --check && echo 'no public addresses in the run records'"
+[[suite.when]]
+tier = "commit"
+paths = ["docs/**/*.txt", "docs/**/*.log", "docs/**/NOTES.md", "tools/scrub-ips.py"]
+
+[[suite]]
+name = "wasm-clippy"
+command = "tools/wasm-clippy.sh"
+[[suite.when]]
+tier = "commit"
+packages = ["proto", "client", "net", "app"]
+
+[[suite]]
+name = "browser"
+command = "E2E_RECORD=target/e2e-browser tools/e2e-browser.sh"
+[[suite.when]]
+tier = "release"
+[[suite.when]]
+tier = "step"
+paths = [
+    "crates/app/**",
+    "crates/ui/**",
+    "crates/net/**",
+    "crates/proto/**",
+    "crates/client/**",
+    "tools/e2e-browser.sh",
+]
