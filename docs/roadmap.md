@@ -17,7 +17,7 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **Providers as plugins** (§5.2, §6.3). The daemon library takes a map of
   `runtime::Plugin`s and names no provider: each is its `agents::Profile`
-  as data (CLI pin, probes, login, home config, label, note and credential
+  as data (CLI pin, probes, sign-in, home config, label, note and credential
   forms) plus its starter, which takes the stored credentials over the
   runtime protocol. Credentials are generic form values the app draws
   from `Welcome.catalog`, checked by their form and read by each
@@ -38,8 +38,8 @@ What is built and what comes next. Update it in the commit that changes it.
   new-session picker lists instances. A fresh host gets one instance per
   provider, named after it; `--cli` and `--model` are each provider's
   defaults, and `conductord login <instance>` signs one in on the host
-  (ALPN `conductor/14`, credential store format 4, log format 2). Next:
-  sign-in from the app (item 3), and per-instance model and CLI settings
+  (ALPN `conductor/14`, credential store format 4, log format 2); the app
+  now signs one in too (item 3). Next: per-instance model and CLI settings
   from the app; the store already keeps both.
 
 - **One agent runtime** (§5.2). The daemon asks one interface for agents:
@@ -55,8 +55,8 @@ What is built and what comes next. Update it in the commit that changes it.
   Code and Codex into its data dir, checks their hashes and runs only those,
   with private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off. Gateway
   credentials run them (`tools/live-host.sh --register`). Subscription
-  sign-in and its check on a host without the CLIs are postponed to #12;
-  `conductord login <instance>` remains as the host-terminal fallback.
+  sign-in from the app is item 3; `conductord login <instance>` remains as
+  the host-terminal fallback.
 
 - **Responsive provider refresh** (#23). Credential saves, model discovery
   and Codex reconfiguration no longer hold the registry or the global
@@ -130,13 +130,21 @@ Each item ends in something to try. The fleet design is
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
    app's credentials screen and stored encrypted under `<data>/store.key`;
-   `tools/live-host.sh --register` runs the pinned CLIs on them. Next: API
-   keys, the Claude `setup-token` token and the Codex device-code sign-in,
-   entered on the phone, and the platform keystores for the host key.
-   `Welcome` reports each instance's sign-in kind. A sign-in from the app
-   runs per instance, in the instance's home, as `conductord login
-   <instance>` does on the host today. *Try:* on a fresh host, sign in to
-   Claude and Codex from the iPhone without touching the host's keyboard.
+   `tools/live-host.sh --register` runs the pinned CLIs on them. Built on
+   `app-login`: an instance's subscription sign-in from the app, by the
+   CLI's own sign-in in the instance's home (`claude auth login
+   --claudeai`, whose page gives a code to paste back; `codex login
+   --device-auth`, a link and a one-time code). Each provider's core
+   describes its sign-in as data (`agents::SignIn`); `StartSignIn`,
+   `SubmitSignInCode` and `CancelSignIn` run it, and every client follows
+   it live as `Feed::SignIn`, stored nowhere. A sign-in that ends signed in
+   re-runs the instance's sign-in check and model listing, so it turns
+   available without a restart (ALPN `conductor/15`). Next: API keys, the
+   Claude `setup-token` token and the platform keystores for the host key;
+   a real sign-in of each pinned CLI from the iPhone (the fake's flow and
+   both CLIs' recorded output are tested, a completed real sign-in is
+   not). *Try:* on a fresh host, sign in to Claude and Codex from the
+   iPhone without touching the host's keyboard.
 4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard
    store the event log, command receipts, open requests and conversation ids.
    The host key, ticket token and epoch persist; clients resume their cursors
@@ -171,7 +179,7 @@ Each item ends in something to try. The fleet design is
     `docs/home.md` §6). Built on `subagents`, for Claude: a session's
     sub-agents are child sessions in the model (`EventKind::Subagent`, its
     start, activity and end, in the session's own log, ALPN
-    `conductor/15`), from the CLI's `task_started`, its frames with
+    `conductor/16`), from the CLI's `task_started`, its frames with
     `parent_tool_use_id` and `agent_id`, and `task_notification` (Claude
     `PROTOCOL.md`). `HostView` folds them under their session, and the app
     shows each under the `Agent` call that started it, folded to its

@@ -222,7 +222,7 @@ client:
 |---|---|
 | `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, instances, catalog }`. `instances` is each instance's label, provider and availability; `catalog` is how each provider presents itself and the credential forms it takes (§6.3). |
 | `Open::Command` | One `Command` → one `CommandResult`, then the stream closes. |
-| `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor, then streams live. A cursor from another epoch is refused. |
+| `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, or a live-only `SignIn` step (§6.3). A cursor from another epoch is refused. |
 
 Each frame is a `u32` length and a postcard body.
 
@@ -737,15 +737,16 @@ false`. Even `--version` runs with the
 private home set, because `codex --version` writes helper binaries into
 `CODEX_HOME/tmp` (observed).
 
-Until the app can sign in (§6.3), `conductord login <instance>` runs the
-sign-in on the host's terminal against the instance's private home, its
-provider's: `claude auth login
---claudeai`, §6.3's per-host mode, which stores its own credential, and
-`codex login --device-auth`. A private home signed in this way counts as
-configured (`Auth::SignedIn`, §6.3). The host checks it once, when it
-starts, with `claude auth status` and `codex login status` (15 s at most
-each), so a sign-in made while the host runs, or one that expires, shows
-only after a restart.
+The app signs an instance in (§6.3, *Sign in from the phone*), and
+`conductord login <instance>` does the same on the host's terminal: both
+run the CLI's own sign-in against the instance's private home, its
+provider's `claude auth login --claudeai`, §6.3's per-host mode, which
+stores its own credential, or `codex login --device-auth`. A private home
+signed in this way counts as configured (`Auth::SignedIn`, §6.3). The host
+checks it with `claude auth status` and `codex login status` (15 s at most
+each) when it starts and again after a sign-in from the app, so a sign-in
+from the app shows at once, while one made on the terminal while the host
+runs, or one that expires, shows only after a restart.
 
 Optional host setup on Linux and WSL2: `sudo apt install bubblewrap
 socat`. With them Claude runs its commands in its own sandbox and the
@@ -907,50 +908,81 @@ each host makes its own login and keeps it in that host's `CODEX_HOME`.
 
 #### Sign in from the phone
 
-The host runs the CLI's sign-in and the phone does the browser part.
+The host runs the CLI's own sign-in and the phone does the browser part.
+Built: the per-host subscription sign-in of each provider, on one host.
 
-1. In the app, the owner picks *Sign in to Claude* or *Sign in to Codex* on
-   a host. The app sends `StartLogin { instance }`, and the sign-in runs
-   in that instance's private home.
-2. **Claude, shared token.** The host runs `claude setup-token` with its
-   private `CLAUDE_CONFIG_DIR`, on pipes, and reads the URL it prints. The
-   app shows *Open Anthropic sign-in*. The owner signs in on Anthropic's
-   page, which shows a code, pastes the code into the app, and the app
-   sends `SubmitLoginCode { login, code }`. The host writes the code to the
-   CLI's stdin, reads the token the CLI prints, and sends it to the root
-   host, which puts it in the fleet config (§6.5). Relaying the code
-   through the app is an owner decision (F5, §6.10). That the CLI prints
-   the URL, reads the code and prints the token when its stdin and stdout
-   are pipes is inferred, and experiment E1 checks it; if it needs a terminal, the host
-   runs it under a pseudo-terminal.
-3. **Claude, per-host fallback.** The same flow with `claude auth login
-   --claudeai`, which "reads the pasted code from standard input"
-   ([troubleshoot], verified) and stores the result itself. Nothing goes to
-   the fleet config.
-4. **Codex.** The host calls `account/login/start { type:
-   "chatgptDeviceCode" }` on its app-server. The app shows the
-   `verificationUrl` and the `userCode` with a copy button. The owner opens
-   the URL and enters the code, and `account/login/completed` ends the
-   flow. Codex writes `auth.json` in the instance's `CODEX_HOME`, on that
-   instance's own app-server.
-5. **API keys.** The app has a form per kind of credential on each
+1. On the credentials screen, each instance's section offers *Sign in*.
+   The app sends `StartSignIn { instance }`, and the host runs the
+   instance's CLI sign-in in its private home, its stdin, stdout and
+   stderr on pipes. A host runs one sign-in per instance at a time and
+   refuses a second start (`Rejection::SignInRunning`) until the first ends
+   or is cancelled, so two devices never race one CLI; *Cancel*
+   (`CancelSignIn { instance }`) kills it, as do a 15-minute limit (Codex's
+   one-time code expires then) and the host stopping.
+2. **What the CLI prints is read as its plugin describes.** Each provider's
+   core gives an `agents::SignIn` in its `Profile`: the run; where the
+   output shows the link (`Pick { after, word: Link }`, the first `https://`
+   word after that text) and any code to enter on the page (`word: Code`,
+   six or more capitals, digits and dashes); whether the page gives a code
+   the CLI reads back on stdin (`paste`); and what a failure the CLI prints
+   means (`Failure { says, means }`). It exits 0 when it succeeds. The host
+   strips terminal colours and keeps the output only until the link is
+   there. The daemon, `host`, `proto`, `client`, `ui` and the app read only
+   that description.
+3. **Claude, per-host.** `claude auth login --claudeai` on pipes prints
+   "Opening browser to sign in…", then "If the browser didn't open, visit:
+   <url>", whose page "shows a code instead of returning to `localhost`"
+   ([troubleshoot], verified), then waits at "Paste code here if prompted >"
+   (observed with 2.1.316, `fixtures/claude/sign-in.txt`). The app shows
+   *Open the sign-in page* (a new tab) and a password field; the code goes
+   in `SubmitSignInCode { instance, code }` and the host writes it to the
+   CLI's stdin. A wrong code prints "Login failed: That code wasn't
+   accepted…" on stderr and exits 1 (observed). The CLI stores the result
+   itself; nothing goes to a fleet config.
+4. **Codex, per-host.** `codex login --device-auth` prints the link
+   `https://auth.openai.com/codex/device` and a one-time code, coloured even
+   on a pipe (observed with 0.166.0, `fixtures/codex/sign-in.txt`), and
+   exits once the owner has entered the code on that page. The app shows the
+   link and the code with a copy button. Codex writes `auth.json` in the
+   instance's `CODEX_HOME`. Its failure texts, a device code login that is
+   not enabled and the code timing out, are from the pinned binary's strings
+   and not observed. The app-server's `account/login/start { type:
+   "chatgptDeviceCode" }` would do the same; the CLI keeps one mechanism for
+   both providers.
+5. **After it.** A sign-in that exits 0 runs the CLI's sign-in check against
+   the home; one that passes makes the instance sign in on its own
+   (`OwnSignIn::SignedIn`) and refreshes it, which lists its models. The
+   last step, `SignedIn { instances }`, carries what the host runs then, so
+   every client's availability turns at once, without a restart or a new
+   `Welcome`. A CLI the host was given (`--cli`) is checked the same way
+   after a sign-in from the app, though it isn't at start.
+6. **Claude, shared token (planned).** The same flow with `claude
+   setup-token`, which prints the token instead of storing it; the host
+   sends the token to the root host, which puts it in the fleet config
+   (§6.5). Relaying the code through the app is an owner decision (F5,
+   §6.10). Experiment E1 checks that it works on pipes as `auth login`
+   does.
+7. **API keys.** The app has a form per kind of credential on each
    instance. `SetCredential { instance, credential }` goes to the root
    host, which puts it in the fleet config, so every host gets it.
 
-Whether the app can start a sign-in today: not trivially. Each step above
-needs a live-only exchange the protocol doesn't have yet: `StartLogin`
-must answer with a URL or a device code, and Claude's flow then needs
-`SubmitLoginCode` written to a CLI process the host holds open between two
-commands, with the code kept out of the log and the receipts (the
-credential ledger stores every result). The pieces the instances add are
-in place: the sign-in runs in the instance's home and on its app-server,
-and the host's sign-in check would have to run again after it, since it
-runs only when an instance's CLI starts.
-
-The login URL, the user code and the pasted code are live-only messages.
-They are not events in the log, are never written to the store, and appear
-in no trace output. The Claude token goes from the host that minted it to
-the root host on `conductor-fleet` and never reaches the browser.
+**Live only, stored nowhere.** The steps, `Starting`, `Open { url, code,
+paste }`, `Finishing`, `SignedIn { instances }`, `Failed { reason }` and
+`Cancelled`, reach clients as `Feed::SignIn` frames on the subscription
+beside its events. They are not events: the log neither stores nor replays
+them, and a new subscription starts with the sign-ins running then, taken
+in the same registry turn as the feed of later steps. The sign-in commands
+keep no receipt (`Ledger::Unrecorded`), and their answers are `Accepted`
+or a rejection, so nothing in the ledger holds a code. `SignInCode`'s
+`Debug` prints `SignInCode(..)`, so the command log line shows no code; the
+host logs each step's name and a failure's reason, never the link, the
+output or a code. The end-to-end test signs in with a wrong and a right
+code on the stand-in (`fixtures/fake-login.py`) and finds neither in the
+captured log, the stored events and receipts, or any file of the data dir;
+the browser run checks the host log, the data dir and the page's storage
+and DOM. The Claude token of the shared mode is to go from the host that
+minted it to the root host on `conductor-fleet` and never reach the
+browser.
 
 `Welcome.instances` says whether the host can run each instance and how it
 signs in: `Availability::Available { auth }`, built with `Stored`,

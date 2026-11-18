@@ -41,4 +41,10 @@ pub enum Note {
     InstanceRemoved {
         instance: InstanceId,
     },
+    /// A sign-in from the app took this step, named without its link or
+    /// code.
+    SignIn {
+        instance: InstanceId,
+        step: String,
+    },
 }

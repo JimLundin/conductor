@@ -43,8 +43,9 @@ Home Screen. The design is in
   the CLIs send is in each wire crate's `PROTOCOL.md`.
 - **Providers are plugins.** The daemon library (`crates/daemon`) names no
   provider: it takes a `runtime::Plugin` per provider, each provider's
-  profile and credential forms as data (`claude::profile`,
-  `codex::profile`) plus its starter, built by `claude_cli::plugin` and
+  profile, its sign-in (`agents::SignIn`) and credential forms as data
+  (`claude::profile`, `codex::profile`) plus its starter, built by
+  `claude_cli::plugin` and
   `codex_cli::plugin`. Credentials are generic form values
   (`proto::Credential`); each provider's core reads its own. Only the
   binary, `crates/conductord`, wires the providers in. Its flags are
@@ -62,6 +63,11 @@ Home Screen. The design is in
   describes (`Catalog`: label, note, credential forms) is keyed by
   `Provider`. A fresh host gets one instance per provider, with the
   provider's name as its id.
+- **Sign-ins are live only.** A sign-in from the app reaches clients as
+  `Feed::SignIn` frames, never as events; its commands keep no receipt;
+  and a pasted code (`proto::SignInCode`, whose `Debug` hides it), a
+  CLI's sign-in output and its link go to no event, receipt, store or log
+  line.
 - **Commits.** End each commit message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Open no pull
   requests on anyone's repository.

@@ -1,12 +1,12 @@
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandId,
     CommandResult, Effort, Epoch, Hello, HostSeq, InstanceId, Models, Open,
-    Provider, Rejection, SessionId, Subscribe,
+    Provider, Rejection, SessionId, SignInCode, Subscribe,
 };
 
 use super::{
-    Admission, Configure, Ledger, Order, Relaunch, Route, Stream, admit, route,
-    stream,
+    Admission, Configure, Ledger, Order, Relaunch, Route, SignInOrder, Stream,
+    admit, route, stream,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -157,6 +157,37 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
         )
     );
     assert_eq!(send.ledger(), Ledger::Session);
+}
+
+#[test]
+fn sign_in_commands_keep_no_receipt() {
+    let work = || InstanceId::named("work");
+    let code = || SignInCode(String::from("pasted#code"));
+    let routed = [
+        CommandBody::StartSignIn { instance: work() },
+        CommandBody::SubmitSignInCode {
+            instance: work(),
+            code: code(),
+        },
+        CommandBody::CancelSignIn { instance: work() },
+    ]
+    .map(|body| route(body, phone()));
+    assert_eq!(
+        routed.each_ref().map(Route::ledger),
+        [Ledger::Unrecorded; 3]
+    );
+    assert_eq!(
+        routed,
+        [
+            Route::SignIn(SignInOrder::Start(work())),
+            Route::SignIn(SignInOrder::Submit(work(), code())),
+            Route::SignIn(SignInOrder::Cancel(work())),
+        ]
+    );
+    assert_eq!(
+        format!("{:?}", routed[1]),
+        "SignIn(Submit(InstanceId(\"work\"), SignInCode(..)))"
+    );
 }
 
 #[test]

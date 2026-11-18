@@ -1,10 +1,13 @@
-//! How a provider CLI child process is started and stopped.
+//! How a provider CLI child process is started and stopped, and how its
+//! sign-in runs on pipes.
 
+use std::io;
 use std::path::Path;
-use std::process::ExitStatus;
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use agents::{Exit, Invocation, Var};
 
@@ -76,4 +79,80 @@ async fn waited(
 async fn killed(mut child: Child) -> std::io::Result<ExitStatus> {
     let _ = child.start_kill();
     child.wait().await
+}
+
+/// A CLI's sign-in, running with its output on pipes. Dropping it kills
+/// the CLI.
+#[derive(Debug)]
+pub struct SignInRun {
+    child: Child,
+    out: ChildStdout,
+    err: ChildStderr,
+}
+
+/// Starts `program` as `run` says, in `home`, for a sign-in, and returns
+/// it with its stdin.
+///
+/// # Errors
+///
+/// Why it could not start.
+pub fn sign_in(
+    program: &Path,
+    home: &Home,
+    run: Invocation,
+) -> io::Result<(SignInRun, ChildStdin)> {
+    let mut cmd = no_window(command(program, home, run));
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take().ok_or_else(|| unpiped("stdin"))?;
+    let out = child.stdout.take().ok_or_else(|| unpiped("stdout"))?;
+    let err = child.stderr.take().ok_or_else(|| unpiped("stderr"))?;
+    Ok((SignInRun { child, out, err }, stdin))
+}
+
+fn unpiped(stream: &str) -> io::Error {
+    io::Error::other(format!("the sign-in's {stream} is not a pipe"))
+}
+
+impl SignInRun {
+    /// Hands each line the CLI prints, on either stream, to `printed`, and
+    /// returns how it exited once both streams have closed.
+    ///
+    /// # Errors
+    ///
+    /// Why waiting for it failed.
+    pub async fn finish(
+        mut self,
+        printed: impl Fn(String),
+    ) -> io::Result<ExitStatus> {
+        tokio::join!(lines(self.out, &printed), lines(self.err, &printed));
+        self.child.wait().await
+    }
+}
+
+/// Each line of `stream`, invalid UTF-8 replaced, until it closes or fails.
+async fn lines(stream: impl AsyncRead + Unpin, printed: &impl Fn(String)) {
+    let mut reader = BufReader::new(stream);
+    let mut line = Vec::new();
+    while reader.read_until(b'\n', &mut line).await.unwrap_or(0) > 0 {
+        printed(
+            String::from_utf8_lossy(&line)
+                .trim_end_matches(['\r', '\n'])
+                .to_owned(),
+        );
+        line.clear();
+    }
+}
+
+/// Writes `line` to a sign-in's stdin, ended with a newline.
+///
+/// # Errors
+///
+/// Why the write failed, for instance because the CLI has exited.
+pub async fn write_line(stdin: &mut ChildStdin, line: &str) -> io::Result<()> {
+    stdin.write_all(format!("{line}\n").as_bytes()).await?;
+    stdin.flush().await
 }

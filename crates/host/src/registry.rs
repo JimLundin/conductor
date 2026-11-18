@@ -42,7 +42,8 @@ use crate::workspace::GitError;
 /// instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnSignIn {
-    /// The private home is signed in (`conductord login <instance>`).
+    /// The private home is signed in, from the app or with `conductord
+    /// login <instance>`.
     SignedIn,
     /// A CLI given on the command line, signed in however it is.
     Unmanaged,
@@ -419,6 +420,29 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             Launcher::Ready { start, .. } => Ok(start.clone()),
             Launcher::Unavailable(reason) => Err(reason.clone()),
         }
+    }
+
+    /// How the host runs `instance`, if it has it: its label, provider,
+    /// CLI, model and credential.
+    #[must_use]
+    pub fn settings(&self, instance: &InstanceId) -> Option<Instance> {
+        self.roster.of(instance).cloned()
+    }
+
+    /// The instance's home passed its CLI's sign-in check after a sign-in
+    /// from the app: its CLI signs in on its own from now on, and it lists
+    /// what it offers then. `reply` gets what the host runs once it has.
+    pub fn signed_in(
+        &mut self,
+        instance: InstanceId,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        if let Some(Launcher::Ready { own, .. }) =
+            self.launchers.get_mut(&instance)
+        {
+            *own = OwnSignIn::SignedIn;
+        }
+        self.schedule(instance, Vec::from([reply]))
     }
 
     /// Stores an instance's credential and refreshes the instance. A

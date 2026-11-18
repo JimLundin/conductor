@@ -30,7 +30,8 @@ use proto::{
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
 pub use credentials::{
     ADD_HEADING, AddForm, ClearButton, CredentialIntent, CredentialsPane,
-    FieldView, InstanceCredentials, KindForm, RenameForm,
+    DeviceCode, FieldView, InstanceCredentials, KindForm, PasteForm,
+    RenameForm, SignInButton, SignInView,
 };
 pub use host::{Detail, HostScreen, StatusLine};
 pub use new_session::{
@@ -142,6 +143,8 @@ pub enum Effect {
     /// Put the session's effort picker back on this value, which a refused
     /// change left behind.
     ShowEffort(String),
+    /// Put this text on the clipboard.
+    Copy(String),
 }
 
 /// Where focus goes once a control it was on goes away.

@@ -56,7 +56,7 @@ pub fn profile() -> Profile {
         },
         version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
         status: login_status(HomeKind::Private),
-        login: login(HomeKind::Private),
+        sign_in: crate::sign_in(),
     }
 }
 
@@ -244,7 +244,7 @@ mod tests {
             (
                 profile.provider,
                 profile.config.file.as_str(),
-                [profile.version, profile.status, profile.login]
+                [profile.version, profile.status, profile.sign_in.run]
             ),
             (
                 Provider::Codex,

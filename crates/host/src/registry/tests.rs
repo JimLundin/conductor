@@ -986,3 +986,64 @@ fn a_directory_outside_git_is_refused_as_such() {
         ]
     );
 }
+
+#[test]
+fn a_sign_in_from_the_app_makes_the_home_sign_in_and_relists_its_models() {
+    let mut registry = registry(OwnSignIn::Missing, &opened());
+    let availability = |registry: &Test| {
+        registry
+            .instances()
+            .of(&id("claude"))
+            .map(|status| status.availability.clone())
+    };
+    let before = availability(&registry);
+    let refresh = registry.signed_in(id("claude"), "signed in");
+    let during = availability(&registry);
+    let answered = registry.refreshed(Refreshed {
+        id: 1,
+        instance: id("claude"),
+        listing: Ok(Listing {
+            models: listed(),
+            named: None,
+        }),
+    });
+    let signed_in = Availability::Available {
+        auth: Auth::SignedIn,
+        models: listed(),
+    };
+    assert_eq!(
+        (
+            before,
+            refresh,
+            during,
+            availability(&registry),
+            registry.settings(&id("claude")),
+            registry.settings(&id("gemini")),
+        ),
+        (
+            Some(Availability::Unavailable {
+                reason: text("no credential configured")
+            }),
+            Vec::from([Effect::Refresh(Job {
+                id: 1,
+                instance: id("claude"),
+                start: "claude",
+                credential: None,
+                signs_in: Ok(()),
+            })]),
+            Some(Availability::Unavailable {
+                reason: text("refreshing the instance's models")
+            }),
+            Some(signed_in),
+            Some(Instance::new(text("Claude Code"), Provider::Claude)),
+            None,
+        )
+    );
+    assert_eq!(
+        answered,
+        Vec::from([Effect::Reply(
+            "signed in",
+            CommandResult::Instances(registry.instances())
+        )])
+    );
+}

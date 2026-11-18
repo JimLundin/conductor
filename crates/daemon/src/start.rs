@@ -9,6 +9,7 @@ use crate::credentials::Store;
 use crate::log::Log;
 use crate::registry::{Builder, Launcher, Launchers, Registry, Setup};
 use crate::serve::Conductor;
+use crate::sign_in::{Signer, Signing};
 use agents::runtime::Command;
 use anyhow::Context;
 use host::start::{Next, Output};
@@ -63,6 +64,50 @@ pub fn builder(plugins: Plugins, data_dir: PathBuf) -> Builder {
     })
 }
 
+/// Says how each instance signs in from the app, by its plugin.
+#[must_use]
+pub fn signer(plugins: Plugins, data_dir: PathBuf) -> Signer {
+    Signer::new(move |id, instance| {
+        let each = plugins.clone();
+        let data = data_dir.clone();
+        async move { signing(&each, &data, &id, &instance).await }
+    })
+}
+
+/// How `instance` signs in: the CLI its settings give, or else the pinned
+/// one, installed if it isn't, in the instance's home, as its plugin
+/// describes.
+///
+/// # Errors
+///
+/// No plugin runs its provider, or its home or CLI can't be had.
+pub async fn signing(
+    plugins: &Plugins,
+    data_dir: &Path,
+    id: &InstanceId,
+    instance: &Instance,
+) -> Result<Signing, String> {
+    let Prepared {
+        plugin,
+        settings,
+        home,
+        work: _,
+    } = prepare(plugins, data_dir, id, instance)?;
+    let profile = plugin.profile;
+    let program = match settings.path {
+        Some(given) => given,
+        None => install(profile.pin, data_dir)
+            .await
+            .map_err(|err| err.to_string())?,
+    };
+    Ok(Signing {
+        program,
+        home,
+        flow: profile.sign_in,
+        check: profile.status,
+    })
+}
+
 /// How `conductord host` serves.
 #[derive(Debug, Clone)]
 pub struct Hosting {
@@ -101,7 +146,8 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         store,
         stored,
         catalog,
-        builder: builder(plugins, data_dir.clone()),
+        builder: builder(plugins.clone(), data_dir.clone()),
+        signer: signer(plugins, data_dir.clone()),
     };
     let Hosted { router, log } = listen(data_dir, web_url, name, setup).await?;
     let ended = tokio::select! {
@@ -234,8 +280,8 @@ async fn run(
     }
 }
 
-/// Signs an instance's pinned CLI in on this terminal, into the
-/// instance's private home. Until the app can sign in (docs/roadmap.md).
+/// Signs an instance's CLI in on this terminal, into the instance's
+/// private home, as the app's sign-in does on pipes.
 ///
 /// # Errors
 ///
@@ -249,19 +295,18 @@ pub async fn login(
     let data_dir = data_dir_or_default(given)?;
     let (_, stored) = Store::open(&data_dir)?;
     let roster = stored.roster(&plugins.catalog());
-    let provider = roster
+    let settings = roster
         .of(&instance)
-        .with_context(|| format!("this host has no instance {}", instance.0))?
-        .provider;
-    let plugin = plugins
-        .0
-        .get(&provider)
-        .with_context(|| format!("no plugin runs {}", provider.name()))?;
-    let home = private_home(&data_dir, &instance, plugin)
+        .with_context(|| format!("this host has no instance {}", instance.0))?;
+    let Signing {
+        program,
+        home,
+        flow,
+        ..
+    } = signing(&plugins, &data_dir, &instance, settings)
+        .await
         .map_err(anyhow::Error::msg)?;
-    let profile = &plugin.profile;
-    let cli = install(profile.pin, &data_dir).await?;
-    let status = command(&cli, &home, profile.login.clone()).status().await?;
+    let status = command(&program, &home, flow.run).status().await?;
     host::start::signed_in(status.code(), &status.to_string())
         .map_err(anyhow::Error::msg)
 }
@@ -291,7 +336,7 @@ const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// How the CLI's own sign-in check against its private home exited, if it
 /// ran to the end within `SIGN_IN_CHECK`.
-async fn sign_in_check(
+pub(crate) async fn sign_in_check(
     mut status: tokio::process::Command,
 ) -> Result<Option<i32>, String> {
     status.kill_on_drop(true);

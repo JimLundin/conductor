@@ -1,8 +1,8 @@
 //! The host's instances and their credentials: what each instance signs in
-//! with, a form for each kind of credential its provider's plugin
-//! describes, a button to clear the stored one, its label, a button to
-//! remove it, and a form per provider to add another instance. The forms
-//! are drawn from the host's description of them.
+//! with, its sign-in from the app, a form for each kind of credential its
+//! provider's plugin describes, a button to clear the stored one, its
+//! label, a button to remove it, and a form per provider to add another
+//! instance. The forms are drawn from the host's description of them.
 
 #![expect(
     clippy::disallowed_types,
@@ -81,6 +81,7 @@ fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
                     "Remove"
                 }
             }
+            SignIn { instance: instance.instance.clone(), view: instance.sign_in }
             Rename { instance: instance.instance.clone(), form: instance.rename }
             for form in instance.forms {
                 KindForm { key: "{form.kind}", form }
@@ -89,6 +90,111 @@ fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
             if let Some(hint) = instance.outcome {
                 Hint { hint }
             }
+        }
+    }
+}
+
+/// The instance's sign-in from the app, as `ui` describes it.
+#[component]
+fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
+    let shell = use_context::<Shell>();
+    let start = instance.clone();
+    let cancel = instance.clone();
+    rsx! {
+        div { class: "sign-in",
+            if let Some(button) = view.start {
+                button {
+                    r#type: "button",
+                    class: "start",
+                    "aria-label": "{button.label}",
+                    disabled: button.disabled,
+                    onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::StartSignIn(start.clone()))),
+                    "{button.text}"
+                }
+            }
+            if let Some(hint) = view.progress {
+                Hint { hint }
+            }
+            if let Some(url) = view.link {
+                a {
+                    class: "sign-in-link",
+                    href: url,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    "Open the sign-in page"
+                }
+            }
+            if let Some(code) = view.code {
+                DeviceCode { instance, code }
+            }
+            if let Some(form) = view.paste {
+                PasteForm { form }
+            }
+            if let Some(button) = view.cancel {
+                button {
+                    r#type: "button",
+                    class: "clear",
+                    "aria-label": "{button.label}",
+                    disabled: button.disabled,
+                    onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::CancelSignIn(cancel.clone()))),
+                    "Cancel"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DeviceCode(instance: proto::InstanceId, code: ui::DeviceCode) -> Element {
+    let shell = use_context::<Shell>();
+    let copied = code.code.clone();
+    rsx! {
+        p { class: "device-code",
+            code { "{code.code}" }
+            button {
+                r#type: "button",
+                class: "clear",
+                "aria-label": "{code.copy_label}",
+                onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::CopySignInCode(
+                    instance.clone(),
+                    copied.clone(),
+                ))),
+                "{code.copy}"
+            }
+        }
+    }
+}
+
+/// The code the sign-in page gives, in a password field like any secret.
+#[component]
+fn PasteForm(form: ui::PasteForm) -> Element {
+    let shell = use_context::<Shell>();
+    let submit = form.instance.clone();
+    let typed = form.instance.clone();
+    rsx! {
+        form {
+            class: "credential-kind",
+            "aria-label": "{form.label}",
+            onsubmit: move |event: FormEvent| {
+                event.prevent_default();
+                shell.dispatch(Intent::Credential(CredentialIntent::SubmitSignInCode(submit.clone())));
+            },
+            label { class: "field",
+                span { class: "field-label", "Code from the sign-in page" }
+                input {
+                    r#type: "password",
+                    autocomplete: "new-password",
+                    autocapitalize: "off",
+                    autocorrect: "off",
+                    spellcheck: "false",
+                    value: "{form.value}",
+                    oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::TypeSignInCode(
+                        typed.clone(),
+                        event.value(),
+                    ))),
+                }
+            }
+            button { r#type: "submit", class: "start", disabled: form.submit_disabled, "Send code" }
         }
     }
 }

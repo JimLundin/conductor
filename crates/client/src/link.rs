@@ -10,6 +10,7 @@
 //! `net` owns the connection: it performs each [`Effect`] and feeds back what
 //! happened as an [`Input`].
 
+use alloc::collections::BTreeMap;
 use core::cmp::Ordering;
 use core::fmt;
 use core::time::Duration;
@@ -17,8 +18,8 @@ use core::time::Duration;
 use crate::host_view::HostView;
 use crate::prelude::*;
 use proto::{
-    Catalog, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Instances,
-    Subscribe, Welcome,
+    Catalog, Epoch, Event, EventKind, Feed as Frame, Hello, HelloReply,
+    HostSeq, InstanceId, Instances, SignIn, SignInStep, Subscribe, Welcome,
 };
 
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
@@ -49,6 +50,9 @@ pub struct Status {
     pub instances: Option<Instances>,
     /// How each provider presents itself, from the last `Welcome`.
     pub catalog: Catalog,
+    /// Where each instance's sign-in from the app stands, since the last
+    /// `Welcome`. A cancelled one has none.
+    pub sign_ins: BTreeMap<InstanceId, SignInStep>,
     /// Why the last connection ended, until the next one is live.
     pub error: Option<String>,
 }
@@ -164,6 +168,7 @@ pub enum Input {
     /// The subscription is open and its events will follow.
     Subscribed,
     Event(Event),
+    SignIn(SignIn),
     Lost(Lost),
     /// The random number [`Operation::Draw`] asked for.
     Drawn(u64),
@@ -188,12 +193,13 @@ impl From<Option<HelloReply>> for Input {
     }
 }
 
-impl From<Option<Event>> for Input {
-    fn from(frame: Option<Event>) -> Self {
-        frame.map_or(
-            Self::Lost(Lost::HostClosed(Stream::Subscription)),
-            Self::Event,
-        )
+impl From<Option<Frame>> for Input {
+    fn from(frame: Option<Frame>) -> Self {
+        match frame {
+            Some(Frame::Event(event)) => Self::Event(event),
+            Some(Frame::SignIn(sign_in)) => Self::SignIn(sign_in),
+            None => Self::Lost(Lost::HostClosed(Stream::Subscription)),
+        }
     }
 }
 
@@ -363,6 +369,9 @@ impl Link {
             (Phase::Connected(feed), Input::Event(event)) => {
                 self.apply(feed, event)
             }
+            (Phase::Connected(_), Input::SignIn(sign_in)) => {
+                self.signs_in(sign_in)
+            }
             (
                 Phase::Greeting | Phase::Subscribing(_) | Phase::Connected(_),
                 Input::Lost(lost),
@@ -485,10 +494,12 @@ impl Link {
             live_at: welcome.head_seq,
         };
         let reset = self.adopt(feed.epoch);
+        // The subscription starts with the sign-ins running now.
         let shown = self.publish(Status {
             host: Some(welcome.host),
             instances: Some(welcome.instances),
             catalog: welcome.catalog,
+            sign_ins: BTreeMap::new(),
             state: LinkState::CatchingUp,
             ..self.status.clone()
         });
@@ -550,6 +561,22 @@ impl Link {
                 join([Vec::from([Effect::Forward(Update::Event(event))]), live])
             }
         }
+    }
+
+    /// Shows the sign-in's step. A signed-in one brings what the host runs
+    /// now, and a cancelled one leaves none.
+    fn signs_in(&mut self, sign_in: SignIn) -> Vec<Effect> {
+        let SignIn { instance, step } = sign_in;
+        let mut next = self.status.clone();
+        if let SignInStep::SignedIn { instances } = &step {
+            next.instances = Some(instances.clone());
+        }
+        if step == SignInStep::Cancelled {
+            next.sign_ins.remove(&instance);
+        } else {
+            next.sign_ins.insert(instance, step);
+        }
+        self.publish(next)
     }
 
     /// Goes live once the link has applied the host's head as of `Welcome`.
@@ -637,12 +664,13 @@ fn backoff(failures: u32, random: u64) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeMap;
     use core::time::Duration;
 
     use proto::{
         AuthToken, Availability, Catalog, ClientName, Epoch, Event, EventKind,
-        Hello, HelloReply, HostSeq, InstanceId, InstanceStatus, Instances,
-        Provider, SessionId, Subscribe, Welcome,
+        Feed, Hello, HelloReply, HostSeq, InstanceId, InstanceStatus,
+        Instances, Provider, SessionId, SignIn, SignInStep, Subscribe, Welcome,
     };
 
     use super::{
@@ -713,6 +741,7 @@ mod tests {
             host: Some(String::from("host")),
             instances: Some(instances("test")),
             catalog: Catalog::default(),
+            sign_ins: BTreeMap::new(),
             error: error.map(String::from),
         }
     }
@@ -1161,7 +1190,7 @@ mod tests {
                     reason: String::from("bad token"),
                 })),
                 Input::from(None::<HelloReply>),
-                Input::from(None::<Event>),
+                Input::from(None::<Feed>),
             ]),
             Vec::from([
                 Input::Lost(Lost::Refused(String::from("bad token"))),
@@ -1252,6 +1281,68 @@ mod tests {
                 ms(40, 0),
             ]),
             Vec::from([125, 250, 250, 500, 1000, 5000, 10_000, 5000])
+        );
+    }
+
+    #[test]
+    fn sign_ins_show_in_the_status_until_cancelled_or_the_next_welcome() {
+        let id = || InstanceId::named("claude");
+        let frame = |step| {
+            Input::from(Some(Feed::SignIn(SignIn {
+                instance: id(),
+                step,
+            })))
+        };
+        let open = SignInStep::Open {
+            url: String::from("https://sign.example/in"),
+            code: None,
+            paste: true,
+        };
+        let signed_in = SignInStep::SignedIn {
+            instances: instances("signed in"),
+        };
+        let (_, seen) = walk(
+            live(),
+            Vec::from([
+                frame(open.clone()),
+                frame(signed_in.clone()),
+                frame(SignInStep::Cancelled),
+                frame(open.clone()),
+                Input::Lost(Lost::Wire(String::from("reset"))),
+                Input::Drawn(0),
+                Input::Elapsed,
+                connected(1),
+                Input::Welcomed(welcome(1, 2)),
+            ]),
+        );
+        let shown = |instances_reason: &str, sign_ins: &[SignInStep]| Status {
+            instances: Some(instances(instances_reason)),
+            sign_ins: sign_ins
+                .iter()
+                .map(|step| (id(), step.clone()))
+                .collect(),
+            ..status(LinkState::Live, None)
+        };
+        let show = |status| Some(Vec::from([Effect::Show(status)]));
+        assert_eq!(
+            (
+                seen.first().cloned(),
+                seen.get(1).cloned(),
+                seen.get(2).cloned(),
+                seen.get(3).cloned(),
+                seen.get(8).and_then(|effects| effects.first().cloned()),
+            ),
+            (
+                show(shown("test", core::slice::from_ref(&open))),
+                show(shown("signed in", &[signed_in])),
+                show(shown("signed in", &[])),
+                show(shown("signed in", &[open])),
+                Some(Effect::Show(Status {
+                    state: LinkState::CatchingUp,
+                    error: Some(String::from("reset")),
+                    ..shown("test", &[])
+                })),
+            )
         );
     }
 }
