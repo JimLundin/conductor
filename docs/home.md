@@ -1,6 +1,6 @@
 # The home: projects, issues and work across the fleet
 
-Status: design for review. Nothing here is built yet. It extends the fleet
+Status: design, decisions in §9. Nothing here is built yet. It extends the fleet
 plan (architecture §6) with what the fleet works *on*.
 
 ## 1. What it adds
@@ -44,7 +44,7 @@ Host (each machine)        host-local, in its own store
 | Entity | Id | Lives in | Written by |
 |---|---|---|---|
 | Project | slug (`conductor`) | home `project.toml` | the app |
-| Issue | ULID, shown as a short number per project | home `issues/` | the app, and agents through Conductor |
+| Issue | ULID, globally unique; shown by its title and a short prefix of the id | home `issues/` | the app, and agents through Conductor |
 | Work | ULID | home `work/` | the host running it |
 | Standard profile | slug (`rust`) | home `standards/` | the owner, by commit |
 | Checkout | project id on a host | host store | the host |
@@ -56,9 +56,19 @@ pick the same id and merging the home never collides on a name.
 
 ## 3. The home repository
 
-The home is an ordinary git repository with a remote (for this owner,
-`JimLundin/home`, the repository that already holds `standards/`). Every
-host keeps a clone in `<data>/home`.
+The home is the owner's home repository, `JimLundin/home`, which already
+holds `standards/`, the shared `AGENTS.md` and the list of projects
+(`repos.sh` and the table in `AGENTS.md`). Every host keeps a clone in
+`<data>/home`. Adopting it takes a few changes there:
+
+- `projects/<project>/` holds the tracker. Today the project repositories
+  themselves are checked out beside `standards/` and ignored by the home's
+  `.gitignore`; the new `projects/` folder is tracked and holds only
+  Conductor's files, never a checkout.
+- `project.toml` becomes the list of projects, and the `AGENTS.md` table and
+  `repos.sh` read it instead of keeping their own.
+- `instructions/` holds what the shared `AGENTS.md` says today, split into
+  the rules for every session and those for one profile.
 
 - **One file per thing.** An issue is one Markdown file with TOML front
   matter; a work record is one TOML file. Two hosts editing different
@@ -84,12 +94,11 @@ host keeps a clone in `<data>/home`.
 ```markdown
 +++
 id = "01JD…"
-number = 42
 title = "Sign in to a subscription from the app"
 status = "in-progress"        # open, ready, in-progress, review, done, dropped
 priority = "high"
 labels = ["app", "credentials"]
-parent = 38                   # optional: a sub-issue
+parent = "01JC…"              # optional: a sub-issue
 created = 2026-11-18T10:12:00Z
 +++
 
@@ -104,7 +113,7 @@ What to build and why, as written by whoever opened it.
 
 ```toml
 id = "01JD…"
-issue = 42
+issue = "01JD…"
 host = "desktop"
 instance = "codex"
 session = "…"                 # the host session that runs it
@@ -190,13 +199,17 @@ work records: their output belongs to the parent's attempt.
 
 Each step is usable on its own and keeps the gate green.
 
-## 9. Open questions
+## 9. Decisions
 
-- **Issue numbers.** Short per-project numbers are friendlier than ULIDs,
-  but two hosts can create issue 43 at once. Proposed: the ULID is the id,
-  and the number is assigned at sync time by the first push to land
-  (renumbering the loser before it is shown anywhere).
-- **Home remote.** Is `JimLundin/home` the home, with `projects/` added
-  beside `standards/`, or a separate repository?
-- **External trackers.** Mirror GitHub issues, or stay the only tracker?
-- **Who may assign.** Any paired device, or only the owner's?
+- **Issue ids** are global ULIDs, unique across every project and host. There
+  are no per-project numbers to collide; the app shows an issue by its title
+  and a short prefix of its id.
+- **The home is `JimLundin/home`**, adjusted as §3 says.
+- **Conductor is the tracker.** It is the only place issues are written. A
+  one-way mirror to GitHub issues may come later, the way the plugins mirror
+  each CLI's own interface, but nothing is read back from it.
+- **Any paired device assigns work on any host.** Clients and hosts form one
+  small network: every paired client may create issues and assign work to
+  any host and instance, and a host may assign work to another host (for
+  example an agent handing a sub-issue on). Trust is the fleet's device and
+  host certificates (architecture §6.1); there are no per-device roles.
