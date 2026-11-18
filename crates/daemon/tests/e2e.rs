@@ -2221,7 +2221,7 @@ fn captured(path: &Path) -> Fallible<String> {
 const GATEWAY: &str = "https://conductor-test.invalid/gateway";
 const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
 const NO_CREDENTIAL: &str = "no credential configured";
-const UNPROTECTED: &str = "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them";
+const UNPROTECTED: &str = "the CLI's commands can read the gateway token; install bubblewrap and socat to sandbox them provider=Claude";
 
 fn read(path: &Path) -> Fallible<String> {
     Ok(std::fs::read_to_string(path)?)

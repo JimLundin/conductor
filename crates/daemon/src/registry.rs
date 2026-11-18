@@ -306,7 +306,7 @@ impl RegistryActor {
                 Vec::new()
             }
             Effect::Log(note) => {
-                runtime::log(&note);
+                crate::log_note(&note);
                 Vec::new()
             }
         }

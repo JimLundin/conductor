@@ -236,7 +236,7 @@ async fn launcher(
                 listing.listed(listed)
             }
             Next::Done(launcher, notes) => {
-                notes.iter().for_each(runtime::log);
+                notes.iter().for_each(crate::log_note);
                 break launcher;
             }
         }

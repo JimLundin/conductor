@@ -1,60 +1,60 @@
-//! What a core decides is worth logging, as data: the shell logs it.
+//! What an agent's core decides is worth logging, as data: the shell logs
+//! each kind with its fields.
+
+use proto::Provider;
 
 use crate::prelude::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Level {
-    Error,
-    Warn,
-    Info,
-    Debug,
-    Trace,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Note {
-    pub level: Level,
-    pub message: String,
-}
-
-impl Note {
-    #[must_use]
-    pub const fn error(message: String) -> Self {
-        Self {
-            level: Level::Error,
-            message,
-        }
-    }
-
-    #[must_use]
-    pub const fn warn(message: String) -> Self {
-        Self {
-            level: Level::Warn,
-            message,
-        }
-    }
-
-    #[must_use]
-    pub const fn info(message: String) -> Self {
-        Self {
-            level: Level::Info,
-            message,
-        }
-    }
-
-    #[must_use]
-    pub const fn debug(message: String) -> Self {
-        Self {
-            level: Level::Debug,
-            message,
-        }
-    }
-
-    #[must_use]
-    pub const fn trace(message: String) -> Self {
-        Self {
-            level: Level::Trace,
-            message,
-        }
-    }
+pub enum Note {
+    /// The CLI's stdout failed to read, which ends the agent.
+    Unreadable { provider: Provider, error: String },
+    /// The line passes on as an unknown frame.
+    NotJson {
+        provider: Provider,
+        error: String,
+        line: String,
+    },
+    /// A frame that maps to no step.
+    Unmapped { provider: Provider, frame: String },
+    UnmappedOnThread {
+        provider: Provider,
+        thread: String,
+        frame: String,
+    },
+    ThreadSettings {
+        provider: Provider,
+        thread: String,
+        settings: String,
+    },
+    /// A response to a request nobody waits on.
+    UnknownResponse { provider: Provider, request: String },
+    /// The CLI asked for something Conductor does not serve, and was
+    /// refused.
+    Unsupported { provider: Provider, request: String },
+    /// A line nobody waits on failed to write.
+    Unwritten {
+        provider: Provider,
+        writing: String,
+        error: String,
+    },
+    /// The CLI asked a question whose answer it would keep secret, and was
+    /// declined.
+    SecretDeclined { provider: Provider },
+    Answering {
+        provider: Provider,
+        approval: String,
+        thread: String,
+    },
+    /// The CLI's version is outside the tested range, and it runs anyway.
+    Untested {
+        provider: Provider,
+        found: String,
+        supported: String,
+    },
+    /// The CLI reported no version, and it runs anyway.
+    Unversioned { provider: Provider },
+    /// The CLI's commands run unsandboxed with a gateway credential, so
+    /// they can read its token.
+    GatewayExposed { provider: Provider },
 }

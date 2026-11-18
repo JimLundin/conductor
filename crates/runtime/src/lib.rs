@@ -6,8 +6,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use agents::Note;
 use agents::runtime::{Command, Event, Outcome};
-use agents::{Level, Note};
 use proto::Models;
 use tokio::sync::mpsc;
 
@@ -105,14 +105,71 @@ impl fmt::Debug for Starter {
     }
 }
 
-/// Logs what a core decided to report.
+/// Logs what an agent's core decided to report.
 pub fn log(note: &Note) {
-    let message = &note.message;
-    match note.level {
-        Level::Error => tracing::error!("{message}"),
-        Level::Warn => tracing::warn!("{message}"),
-        Level::Info => tracing::info!("{message}"),
-        Level::Debug => tracing::debug!("{message}"),
-        Level::Trace => tracing::trace!("{message}"),
+    match note {
+        Note::Unreadable { provider, error } => {
+            tracing::error!(target: "agent", ?provider, %error, "reading stdout failed");
+        }
+        Note::NotJson {
+            provider,
+            error,
+            line,
+        } => {
+            tracing::warn!(target: "agent", ?provider, %error, %line, "printed a line that is not JSON");
+        }
+        Note::Unmapped { provider, frame } => {
+            tracing::trace!(target: "agent", ?provider, %frame, "unmapped frame");
+        }
+        Note::UnmappedOnThread {
+            provider,
+            thread,
+            frame,
+        } => {
+            tracing::trace!(target: "agent", ?provider, %thread, %frame, "unmapped thread frame");
+        }
+        Note::ThreadSettings {
+            provider,
+            thread,
+            settings,
+        } => {
+            tracing::debug!(target: "agent", ?provider, %thread, %settings, "thread settings");
+        }
+        Note::UnknownResponse { provider, request } => {
+            tracing::warn!(target: "agent", ?provider, %request, "response for unknown request");
+        }
+        Note::Unsupported { provider, request } => {
+            tracing::warn!(target: "agent", ?provider, %request, "refused a request conductor does not handle");
+        }
+        Note::Unwritten {
+            provider,
+            writing,
+            error,
+        } => {
+            tracing::error!(target: "agent", ?provider, %writing, %error, "write failed");
+        }
+        Note::SecretDeclined { provider } => {
+            tracing::info!(target: "agent", ?provider, "declined a question that asks for a secret answer");
+        }
+        Note::Answering {
+            provider,
+            approval,
+            thread,
+        } => {
+            tracing::debug!(target: "agent", ?provider, %approval, %thread, "answering");
+        }
+        Note::Untested {
+            provider,
+            found,
+            supported,
+        } => {
+            tracing::warn!(target: "agent", ?provider, %found, %supported, "running an untested version");
+        }
+        Note::Unversioned { provider } => {
+            tracing::warn!(target: "agent", ?provider, "running a CLI that did not report its version");
+        }
+        Note::GatewayExposed { provider } => {
+            tracing::warn!(target: "agent", ?provider, "the CLI's commands can read the gateway token; install bubblewrap and socat to sandbox them");
+        }
     }
 }

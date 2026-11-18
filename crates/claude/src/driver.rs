@@ -9,6 +9,7 @@
 use core::fmt;
 
 use agents::{Exit, Note};
+use proto::Provider;
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -198,9 +199,10 @@ impl<R> Session<R> {
             Input::Read(Ok(Some(line))) => self.line(&line),
             Input::Read(Ok(None)) => self.stop(After::Nothing),
             Input::Read(Err(error)) => {
-                let mut effects = Vec::from([Effect::Log(Note::error(
-                    format!("reading claude stdout: {error}"),
-                ))]);
+                let mut effects = Vec::from([Effect::Log(Note::Unreadable {
+                    provider: Provider::Claude,
+                    error,
+                })]);
                 effects.extend(self.stop(After::Nothing));
                 effects
             }
@@ -215,9 +217,11 @@ impl<R> Session<R> {
         match parse_line(line) {
             Ok(inbound) => self.inbound(inbound),
             Err(error) => Vec::from([
-                Effect::Log(Note::warn(format!(
-                    "claude printed a non-JSON line ({error}): {line}"
-                ))),
+                Effect::Log(Note::NotJson {
+                    provider: Provider::Claude,
+                    error: error.to_string(),
+                    line: line.to_owned(),
+                }),
                 Effect::Emit(ClaudeEvent::Unknown(Value::String(
                     line.to_owned(),
                 ))),
@@ -247,8 +251,10 @@ impl<R> Session<R> {
             } => {
                 let message =
                     format!("unsupported control request subtype: {subtype}");
-                let mut effects =
-                    Vec::from([Effect::Log(Note::warn(message.clone()))]);
+                let mut effects = Vec::from([Effect::Log(Note::Unsupported {
+                    provider: Provider::Claude,
+                    request: subtype.clone(),
+                })]);
                 effects.extend(self.write(
                     Outbound::ControlError {
                         request_id,
@@ -307,9 +313,10 @@ impl<R> Session<R> {
     ) -> Vec<Effect<R, S, E>> {
         self.pending.remove(request_id).map_or_else(
             || {
-                Vec::from([Effect::Log(Note::warn(format!(
-                    "control_response for unknown request {request_id}"
-                )))])
+                Vec::from([Effect::Log(Note::UnknownResponse {
+                    provider: Provider::Claude,
+                    request: request_id.to_owned(),
+                })])
             },
             |(call, reply)| {
                 Vec::from([Effect::Reply(
@@ -456,15 +463,20 @@ fn failed<R, S, E: fmt::Display>(
         | Then::Control { reply, .. } => {
             Vec::from([Effect::Reply(reply, Err(failure))])
         }
-        Then::Refusal { subtype } => Vec::from([Effect::Log(Note::error(
-            format!("replying to {subtype}: {failure}"),
-        ))]),
+        Then::Refusal { subtype } => {
+            Vec::from([Effect::Log(Note::Unwritten {
+                provider: Provider::Claude,
+                writing: format!("refusing {subtype}"),
+                error: failure.to_string(),
+            })])
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use agents::{Exit, Note};
+    use proto::Provider;
     use serde_json::{Value, json};
 
     use super::{After, Command, Effect, Failure, Input, Session, Then};
@@ -592,9 +604,10 @@ mod tests {
                     })
                 )]),
                 Vec::from([Effect::Reply(1, Ok(json!({ "ok": true })))]),
-                Vec::from([Effect::Log(Note::warn(String::from(
-                    "control_response for unknown request req_1"
-                )))]),
+                Vec::from([Effect::Log(Note::UnknownResponse {
+                    provider: Provider::Claude,
+                    request: String::from("req_1"),
+                })]),
             ])
         );
     }
@@ -626,9 +639,11 @@ mod tests {
             Vec::from([
                 Vec::from([Effect::Reply(1, Err(Failure::Io("broken pipe")))]),
                 Vec::from([Effect::Reply(2, Err(Failure::Io("broken pipe")))]),
-                Vec::from([Effect::Log(Note::error(String::from(
-                    "replying to hook_callback: claude i/o: broken pipe"
-                )))]),
+                Vec::from([Effect::Log(Note::Unwritten {
+                    provider: Provider::Claude,
+                    writing: String::from("refusing hook_callback"),
+                    error: String::from("claude i/o: broken pipe"),
+                })]),
             ])
         );
     }
@@ -645,7 +660,10 @@ mod tests {
         assert_eq!(
             seen,
             Vec::from([
-                Effect::Log(Note::warn(String::from(message))),
+                Effect::Log(Note::Unsupported {
+                    provider: Provider::Claude,
+                    request: String::from("hook_callback"),
+                }),
                 written(
                     Outbound::ControlError {
                         request_id: String::from("cli_1"),
@@ -758,9 +776,11 @@ mod tests {
         assert_eq!(
             seen,
             Vec::from([
-                Effect::Log(Note::warn(String::from(
-                    "claude printed a non-JSON line (expected value at line 1 column 1): oops"
-                ))),
+                Effect::Log(Note::NotJson {
+                    provider: Provider::Claude,
+                    error: String::from("expected value at line 1 column 1"),
+                    line: String::from("oops"),
+                }),
                 Effect::Emit(ClaudeEvent::Unknown(Value::String(
                     String::from("oops")
                 )))
@@ -839,9 +859,10 @@ mod tests {
             Vec::from([
                 Vec::from([Effect::Stop(After::Nothing)]),
                 Vec::from([
-                    Effect::Log(Note::error(String::from(
-                        "reading claude stdout: reset"
-                    ))),
+                    Effect::Log(Note::Unreadable {
+                        provider: Provider::Claude,
+                        error: String::from("reset"),
+                    }),
                     Effect::Stop(After::Nothing)
                 ]),
                 Vec::from([Effect::Stop(After::End)]),

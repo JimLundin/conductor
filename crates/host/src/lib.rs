@@ -11,6 +11,7 @@ extern crate alloc;
 
 pub mod checkpoints;
 pub mod log;
+mod note;
 mod prelude;
 pub mod registry;
 pub mod restore;
@@ -20,3 +21,5 @@ pub mod session;
 pub mod start;
 pub mod tasks;
 pub mod workspace;
+
+pub use note::Note;

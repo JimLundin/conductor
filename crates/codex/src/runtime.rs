@@ -306,7 +306,7 @@ mod tests {
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
         ClientName, CloseReason, CodexCredential, Credential, Credentials,
-        Decision as Chosen, Effort, HistoryAnchor, HostPath, ModelId,
+        Decision as Chosen, Effort, HistoryAnchor, HostPath, ModelId, Provider,
         SessionId,
     };
     use serde_json::json;
@@ -512,9 +512,11 @@ mod tests {
             ),
             (
                 Vec::from([
-                    Vec::from([Effect::Log(Note::trace(text(
-                        "unmapped codex thread frame: {\"method\":\"x\"}"
-                    )))]),
+                    Vec::from([Effect::Log(Note::UnmappedOnThread {
+                        provider: Provider::Codex,
+                        thread: text("th_1"),
+                        frame: text("{\"method\":\"x\"}"),
+                    })]),
                     Vec::from([
                         closed(CloseReason::Exited {
                             status: text("exit status: 1"),

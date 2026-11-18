@@ -11,6 +11,7 @@
 use core::fmt;
 
 use agents::{Exit, Note};
+use proto::Provider;
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -219,7 +220,10 @@ impl<R> Server<R> {
             Input::Read(Ok(Some(line))) => self.line(&line),
             Input::Read(Ok(None)) => self.stop(After::Nothing),
             Input::Read(Err(error)) => logged(
-                Note::error(format!("reading codex stdout: {error}")),
+                Note::Unreadable {
+                    provider: Provider::Codex,
+                    error,
+                },
                 self.stop(After::Nothing),
             ),
             Input::Command(command) => self.command(command),
@@ -237,9 +241,11 @@ impl<R> Server<R> {
         match parse_line(line) {
             Ok(inbound) => self.inbound(inbound),
             Err(error) => logged(
-                Note::warn(format!(
-                    "codex printed a non-JSON line ({error}): {line}"
-                )),
+                Note::NotJson {
+                    provider: Provider::Codex,
+                    error: error.to_string(),
+                    line: line.to_owned(),
+                },
                 Vec::from([Effect::Emit(CodexEvent::Unknown(Value::String(
                     line.to_owned(),
                 )))]),
@@ -280,7 +286,10 @@ impl<R> Server<R> {
             } => {
                 let message = format!("conductor does not handle {method}");
                 logged(
-                    Note::warn(message.clone()),
+                    Note::Unsupported {
+                        provider: Provider::Codex,
+                        request: method.clone(),
+                    },
                     self.reject(
                         rpc_id,
                         message,
@@ -290,9 +299,9 @@ impl<R> Server<R> {
                 )
             }
             Inbound::Declined { rpc_id, event } => logged(
-                Note::info(String::from(
-                    "declined a question that asks for a secret answer",
-                )),
+                Note::SecretDeclined {
+                    provider: Provider::Codex,
+                },
                 self.reject(
                     rpc_id,
                     String::from("conductor does not take secret answers"),
@@ -345,9 +354,10 @@ impl<R> Server<R> {
             RequestId::String(_) => None,
         };
         let Some((method, reply)) = waiting else {
-            return Vec::from([Effect::Log(Note::warn(format!(
-                "response for unknown request {id:?}"
-            )))]);
+            return Vec::from([Effect::Log(Note::UnknownResponse {
+                provider: Provider::Codex,
+                request: format!("{id:?}"),
+            })]);
         };
         let initialized = match (method.as_str(), &outcome) {
             (INITIALIZE, Ok(_)) => self.write(
@@ -406,10 +416,11 @@ impl<R> Server<R> {
     ) -> Vec<Effect<R, S, E>> {
         match answered {
             Ok(result) => logged(
-                Note::debug(format!(
-                    "answering {} on thread {}",
-                    id.0, open.thread.0
-                )),
+                Note::Answering {
+                    provider: Provider::Codex,
+                    approval: id.0,
+                    thread: open.thread.0,
+                },
                 self.write(
                     Outbound::Answer {
                         rpc_id: open.rpc_id,
@@ -534,9 +545,11 @@ fn failed<R, S, E: fmt::Display>(
         Then::Request { reply, .. } | Then::Answer(reply) => {
             Vec::from([Effect::Reply(reply, Err(failure))])
         }
-        Then::Logged(context) => Vec::from([Effect::Log(Note::error(
-            format!("{context}: {failure}"),
-        ))]),
+        Then::Logged(context) => Vec::from([Effect::Log(Note::Unwritten {
+            provider: Provider::Codex,
+            writing: context,
+            error: failure.to_string(),
+        })]),
     }
 }
 
@@ -553,6 +566,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use agents::{Exit, Note};
+    use proto::Provider;
     use serde_json::{Value, json};
 
     use super::{After, Command, Effect, Failure, Input, Open, Server, Then};
@@ -655,12 +669,14 @@ mod tests {
                         ),
                         Effect::Reply(1, Ok(json!({ "userAgent": "c/1" }))),
                     ]),
-                    Vec::from([Effect::Log(Note::warn(String::from(
-                        "response for unknown request Integer(1)"
-                    )))]),
-                    Vec::from([Effect::Log(Note::warn(String::from(
-                        "response for unknown request String(\"1\")"
-                    )))]),
+                    Vec::from([Effect::Log(Note::UnknownResponse {
+                        provider: Provider::Codex,
+                        request: String::from("Integer(1)"),
+                    })]),
+                    Vec::from([Effect::Log(Note::UnknownResponse {
+                        provider: Provider::Codex,
+                        request: String::from("String(\"1\")"),
+                    })]),
                 ][..]
             )
         );
@@ -706,9 +722,11 @@ mod tests {
                     )))
                 )]),
                 Vec::from([
-                    Effect::Log(Note::debug(String::from(
-                        "answering 7 on thread th_1"
-                    ))),
+                    Effect::Log(Note::Answering {
+                        provider: Provider::Codex,
+                        approval: String::from("7"),
+                        thread: String::from("th_1"),
+                    }),
                     written(
                         Outbound::Answer {
                             rpc_id: RequestId::Integer(7),
@@ -781,9 +799,10 @@ mod tests {
         assert_eq!(
             &seen[..2],
             [
-                Effect::Log(Note::warn(String::from(
-                    "conductor does not handle item/tool/call"
-                ))),
+                Effect::Log(Note::Unsupported {
+                    provider: Provider::Codex,
+                    request: String::from("item/tool/call"),
+                }),
                 written(
                     Outbound::Reject {
                         rpc_id: RequestId::Integer(9),
@@ -877,15 +896,18 @@ mod tests {
             [
                 Vec::from([Effect::Stop(After::Nothing)]),
                 Vec::from([
-                    Effect::Log(Note::error(String::from(
-                        "reading codex stdout: reset"
-                    ))),
+                    Effect::Log(Note::Unreadable {
+                        provider: Provider::Codex,
+                        error: String::from("reset"),
+                    }),
                     Effect::Stop(After::Nothing)
                 ]),
                 Vec::from([Effect::Reply(1, Err(Failure::Io("broken pipe")))]),
-                Vec::from([Effect::Log(Note::error(String::from(
-                    "rejecting x: codex i/o: broken pipe"
-                )))]),
+                Vec::from([Effect::Log(Note::Unwritten {
+                    provider: Provider::Codex,
+                    writing: String::from("rejecting x"),
+                    error: String::from("codex i/o: broken pipe"),
+                })]),
             ]
         );
     }

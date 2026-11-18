@@ -5,7 +5,8 @@ use agents::{
     NativeRequest, NativeTurn, Note, Reply, Step, reasoning, reasoning_delta,
 };
 use proto::{
-    CloseReason, Decision as Chosen, EventKind, ToolCallId, ToolKind, ToolPhase,
+    CloseReason, Decision as Chosen, EventKind, Provider, ToolCallId, ToolKind,
+    ToolPhase,
 };
 
 use crate::prelude::*;
@@ -35,17 +36,26 @@ pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
 #[must_use]
 pub fn codex_note(event: &CodexEvent) -> Option<Note> {
     match event {
-        CodexEvent::Unknown(frame) => {
-            Some(Note::trace(format!("unmapped codex frame: {frame}")))
-        }
+        CodexEvent::Unknown(frame) => Some(Note::Unmapped {
+            provider: Provider::Codex,
+            frame: frame.to_string(),
+        }),
         CodexEvent::Thread {
+            thread,
             event: ThreadEvent::SettingsChanged(settings),
-            ..
-        } => Some(Note::debug(format!("codex thread settings: {settings:?}"))),
+        } => Some(Note::ThreadSettings {
+            provider: Provider::Codex,
+            thread: thread.0.clone(),
+            settings: format!("{settings:?}"),
+        }),
         CodexEvent::Thread {
+            thread,
             event: ThreadEvent::Unknown(frame),
-            ..
-        } => Some(Note::trace(format!("unmapped codex thread frame: {frame}"))),
+        } => Some(Note::UnmappedOnThread {
+            provider: Provider::Codex,
+            thread: thread.0.clone(),
+            frame: frame.to_string(),
+        }),
         CodexEvent::Thread { .. } | CodexEvent::Exited { .. } => None,
     }
 }

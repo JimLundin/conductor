@@ -248,9 +248,10 @@ impl Runtime {
     fn event(&mut self, event: ClaudeEvent) -> Vec<Effect> {
         let gone = matches!(event, ClaudeEvent::Exited { .. });
         let note = match &event {
-            ClaudeEvent::Unknown(frame) => Some(Effect::Log(Note::trace(
-                format!("unmapped claude frame: {frame}"),
-            ))),
+            ClaudeEvent::Unknown(frame) => Some(Effect::Log(Note::Unmapped {
+                provider: Provider::Claude,
+                frame: frame.to_string(),
+            })),
             _ => None,
         };
         let steps = claude_steps(event)
@@ -387,7 +388,7 @@ mod tests {
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
         ClaudeCredential, ClientName, CloseReason, Credential, Credentials,
-        Decision, Effort, HistoryAnchor, HostPath, ModelId,
+        Decision, Effort, HistoryAnchor, HostPath, ModelId, Provider,
         SessionId as Session,
     };
     use serde_json::json;
@@ -679,9 +680,10 @@ mod tests {
             (seen, again.step(Input::Event(None))),
             (
                 Vec::from([
-                    Vec::from([Effect::Log(Note::trace(text(
-                        "unmapped claude frame: \"x\""
-                    )))]),
+                    Vec::from([Effect::Log(Note::Unmapped {
+                        provider: Provider::Claude,
+                        frame: text("\"x\""),
+                    })]),
                     Vec::from([closed("exit status: 1"), Effect::Release]),
                     Vec::new(),
                 ]),
@@ -708,9 +710,9 @@ mod tests {
             seen,
             Vec::from([
                 Effect::Credential(Some(gateway)),
-                Effect::Log(Note::warn(text(
-                    "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them"
-                ))),
+                Effect::Log(Note::GatewayExposed {
+                    provider: Provider::Claude
+                }),
                 Effect::Emit(Event::Outcome(Outcome::Configured(Ok(None)))),
             ])
         );

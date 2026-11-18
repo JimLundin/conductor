@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use agents::Note;
 use proto::{
     Auth, Availability, ClaudeCredential, CommandResult, Credential,
     Credentials, Effort, ModelChoice, ModelId, Models, Provider, Providers,
@@ -11,6 +10,7 @@ use super::{
     Effect, Job, Launch, Launcher, Listing, Offer, OwnSignIn, Refreshed,
     Registry, Stored, unprepared,
 };
+use crate::Note;
 use crate::session::Choice;
 use crate::workspace::GitError;
 
@@ -90,7 +90,9 @@ fn rejected(rejection: Rejection) -> CommandResult {
 }
 
 fn stored_note() -> Effect<&'static str, &'static str> {
-    Effect::Log(Note::info(text("stored a credential change for Claude")))
+    Effect::Log(Note::CredentialStored {
+        provider: Provider::Claude,
+    })
 }
 
 fn job(id: u64, credentials: Credentials) -> Job<&'static str> {
@@ -305,9 +307,10 @@ fn a_failed_refresh_leaves_the_provider_unavailable_until_the_next() {
     assert_eq!(
         registry.refreshed(refreshed(1, Err(text("probe failed")))),
         Vec::from([
-            Effect::Log(Note::warn(text(
-                "provider refresh failed for Claude: probe failed"
-            ))),
+            Effect::Log(Note::RefreshFailed {
+                provider: Provider::Claude,
+                reason: text("probe failed"),
+            }),
             Effect::Reply("set", failed),
         ])
     );
@@ -439,9 +442,9 @@ fn a_provider_the_host_cannot_run_answers_a_credential_change_at_once() {
     assert_eq!(
         registry.saved(Provider::Codex, codex, "clear", Ok(())),
         Vec::from([
-            Effect::Log(Note::info(text(
-                "stored a credential change for Codex"
-            ))),
+            Effect::Log(Note::CredentialStored {
+                provider: Provider::Codex,
+            }),
             Effect::Reply(
                 "clear",
                 CommandResult::Providers(claude(Availability::Available {

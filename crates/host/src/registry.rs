@@ -20,12 +20,12 @@
 use alloc::collections::BTreeMap;
 use alloc::format;
 
-use agents::Note;
 use proto::{
     Auth, Availability, CommandResult, Credential, Credentials, Effort,
     ModelId, Models, Provider, Providers, Rejection, SessionId,
 };
 
+use crate::Note;
 use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::workspace::GitError;
@@ -367,9 +367,10 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         match saved {
             Ok(()) => {
                 self.stored = Stored::Opened(credentials.clone());
-                let mut effects = Vec::from([Effect::Log(Note::info(
-                    format!("stored a credential change for {provider:?}"),
-                ))]);
+                let mut effects =
+                    Vec::from([Effect::Log(Note::CredentialStored {
+                        provider,
+                    })]);
                 effects.extend(self.schedule(provider, credentials, reply));
                 effects
             }
@@ -429,9 +430,10 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 None
             }
             Err(reason) => {
-                let note = Note::warn(format!(
-                    "provider refresh failed for {provider:?}: {reason}"
-                ));
+                let note = Note::RefreshFailed {
+                    provider,
+                    reason: reason.clone(),
+                };
                 self.refreshes.insert(provider, Refresh::Failed(reason));
                 Some(Effect::Log(note))
             }

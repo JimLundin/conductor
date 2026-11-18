@@ -11,9 +11,9 @@
 
 use alloc::format;
 
-use agents::Note;
 use proto::{ModelId, Models};
 
+use crate::Note;
 use crate::prelude::*;
 use crate::registry::{Launcher, Offer, OwnSignIn};
 
@@ -210,19 +210,16 @@ impl<S> Listing<S> {
         let Self { cli, own } = self;
         let (models, mut notes) = match listed {
             Ok(models) => (models, Vec::new()),
-            Err(reason) => (
-                Models::none(),
-                Vec::from([Note::warn(format!(
-                    "the CLI listed no models: {reason}"
-                ))]),
-            ),
+            Err(reason) => {
+                (Models::none(), Vec::from([Note::NoModels { reason }]))
+            }
         };
-        notes.push(Note::info(format!(
-            "ready: {} {}, signed in {own:?}, {} models",
-            cli.path,
-            cli.version,
-            models.choices.len()
-        )));
+        notes.push(Note::Ready {
+            path: cli.path,
+            version: cli.version,
+            own,
+            models: models.choices.len(),
+        });
         Next::Done(
             Launcher::Ready {
                 start: cli.start,
@@ -239,16 +236,18 @@ impl<S> Listing<S> {
 }
 
 fn unavailable<P, S>(reason: String) -> Next<P, S> {
-    let note = Note::warn(format!("unavailable: {reason}"));
+    let note = Note::Unavailable {
+        reason: reason.clone(),
+    };
     Next::Done(Launcher::Unavailable(reason), Vec::from([note]))
 }
 
 #[cfg(test)]
 mod tests {
-    use agents::Note;
     use proto::{Effort, ModelChoice, ModelId, Models};
 
     use super::{Defaults, Next, Output, signed_in, start};
+    use crate::Note;
     use crate::registry::{Launcher, Offer, OwnSignIn};
 
     type Step = Next<&'static str, &'static str>;
@@ -350,9 +349,12 @@ mod tests {
             (
                 Vec::from(["/given", "start"]),
                 ready(OwnSignIn::Unmanaged, listed()),
-                Vec::from([Note::info(String::from(
-                    "ready: /given 1.2.3 (Claude Code), signed in Unmanaged, 1 models"
-                ))]),
+                Vec::from([Note::Ready {
+                    path: String::from("/given"),
+                    version: String::from("1.2.3 (Claude Code)"),
+                    own: OwnSignIn::Unmanaged,
+                    models: 1,
+                }]),
             )
         );
     }
@@ -390,12 +392,20 @@ mod tests {
             },
         );
         assert_eq!(
-            (launcher, notes.first()),
+            (launcher, notes),
             (
                 ready(OwnSignIn::Unmanaged, Models::none()),
-                Some(&Note::warn(String::from(
-                    "the CLI listed no models: not signed in"
-                )))
+                Vec::from([
+                    Note::NoModels {
+                        reason: String::from("not signed in")
+                    },
+                    Note::Ready {
+                        path: String::from("/given"),
+                        version: String::from("1.2.3 (Claude Code)"),
+                        own: OwnSignIn::Unmanaged,
+                        models: 0,
+                    },
+                ])
             )
         );
     }
@@ -411,9 +421,17 @@ mod tests {
                     ..probes()
                 },
             );
-            (seen.len(), launcher, notes.len())
+            (seen.len(), launcher, notes)
         };
-        let reason = |text: &str| Launcher::Unavailable(String::from(text));
+        let after = |steps: usize, reason: &str| {
+            (
+                steps,
+                Launcher::Unavailable(String::from(reason)),
+                Vec::from([Note::Unavailable {
+                    reason: String::from(reason),
+                }]),
+            )
+        };
         assert_eq!(
             [
                 unavailable(Err(String::from("offline")), Ok(ran(0))),
@@ -421,9 +439,9 @@ mod tests {
                 unavailable(Ok("/pinned"), Err(String::from("no such file"))),
             ],
             [
-                (1, reason("installing the pinned claude: offline"), 1),
-                (2, reason("/pinned --version exited with Some(2)"), 1),
-                (2, reason("/pinned does not run: no such file"), 1),
+                after(1, "installing the pinned claude: offline"),
+                after(2, "/pinned --version exited with Some(2)"),
+                after(2, "/pinned does not run: no such file"),
             ]
         );
     }

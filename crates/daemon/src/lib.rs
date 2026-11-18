@@ -14,6 +14,7 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 
 use anyhow::Context;
+use host::Note;
 use host::secret::Secret;
 use install::Home;
 use iroh::SecretKey;
@@ -189,6 +190,32 @@ pub fn random_token() -> anyhow::Result<AuthToken> {
 /// Fails if the OS has no random source.
 pub fn random_epoch() -> anyhow::Result<Epoch> {
     Ok(Epoch(getrandom::u64().context("no random source")?))
+}
+
+/// Logs what the host's core decided to report.
+fn log_note(note: &Note) {
+    match note {
+        Note::Ready {
+            path,
+            version,
+            own,
+            models,
+        } => {
+            tracing::info!(target: "host", %path, %version, ?own, models, "ready");
+        }
+        Note::Unavailable { reason } => {
+            tracing::warn!(target: "host", %reason, "unavailable");
+        }
+        Note::NoModels { reason } => {
+            tracing::warn!(target: "host", %reason, "the CLI listed no models");
+        }
+        Note::CredentialStored { provider } => {
+            tracing::info!(target: "host", ?provider, "stored a credential change");
+        }
+        Note::RefreshFailed { provider, reason } => {
+            tracing::warn!(target: "host", %reason, ?provider, "provider refresh failed");
+        }
+    }
 }
 
 #[cfg(test)]

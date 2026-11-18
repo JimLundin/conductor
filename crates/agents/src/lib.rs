@@ -17,7 +17,7 @@ pub mod runtime;
 mod step;
 
 pub use exit::Exit;
-pub use note::{Level, Note};
+pub use note::Note;
 pub use plan::PlanStep;
 pub use run::{HomeKind, Invocation, Var};
 pub use step::{

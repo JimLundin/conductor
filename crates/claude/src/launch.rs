@@ -3,7 +3,7 @@
 //! runs.
 
 use agents::{HomeKind, Invocation, Note, Var};
-use proto::{ClaudeCredential, Effort};
+use proto::{ClaudeCredential, Effort, Provider};
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -345,13 +345,15 @@ pub fn admit(
         (
             Err(UnsupportedVersion::Outside { found, supported }),
             VersionPolicy::AllowUntested,
-        ) => Ok(Some(Note::warn(format!(
-            "running untested claude {found} (supported: {supported})"
-        )))),
+        ) => Ok(Some(Note::Untested {
+            provider: Provider::Claude,
+            found,
+            supported,
+        })),
         (Err(UnsupportedVersion::Unreported), VersionPolicy::AllowUntested) => {
-            Ok(Some(Note::warn(String::from(
-                "running a claude that did not report its version",
-            ))))
+            Ok(Some(Note::Unversioned {
+                provider: Provider::Claude,
+            }))
         }
         (Err(unsupported), VersionPolicy::SupportedOnly) => Err(unsupported),
     }
@@ -360,15 +362,15 @@ pub fn admit(
 /// The warning a gateway credential gets when Claude's commands run
 /// unsandboxed, since they then inherit its token.
 #[must_use]
-pub fn unprotected(
+pub const fn unprotected(
     credential: Option<&ClaudeCredential>,
     sandbox: Sandbox,
 ) -> Option<Note> {
     match (credential, sandbox) {
         (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) => {
-            Some(Note::warn(String::from(
-                "Claude's commands can read the gateway token; install bubblewrap and socat to sandbox them",
-            )))
+            Some(Note::GatewayExposed {
+                provider: Provider::Claude,
+            })
         }
         _ => None,
     }
@@ -377,7 +379,7 @@ pub fn unprotected(
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Note, Var};
-    use proto::{ClaudeCredential, Effort};
+    use proto::{ClaudeCredential, Effort, Provider};
     use serde_json::json;
 
     use super::{
@@ -596,12 +598,14 @@ mod tests {
                 ),
             ],
             [
-                Ok(Some(Note::warn(String::from(
-                    "running untested claude 1.0.0 (supported: 2.1.316 to 2.1.322)"
-                )))),
-                Ok(Some(Note::warn(String::from(
-                    "running a claude that did not report its version"
-                )))),
+                Ok(Some(Note::Untested {
+                    provider: Provider::Claude,
+                    found: String::from("1.0.0"),
+                    supported: String::from("2.1.316 to 2.1.322"),
+                })),
+                Ok(Some(Note::Unversioned {
+                    provider: Provider::Claude,
+                })),
                 Err(UnsupportedVersion::Unreported),
                 Ok(None)
             ]
@@ -616,11 +620,17 @@ mod tests {
         };
         assert_eq!(
             [
-                unprotected(Some(&gateway), Sandbox::Missing).is_some(),
-                unprotected(Some(&gateway), Sandbox::Available).is_some(),
-                unprotected(None, Sandbox::Missing).is_some(),
+                unprotected(Some(&gateway), Sandbox::Missing),
+                unprotected(Some(&gateway), Sandbox::Available),
+                unprotected(None, Sandbox::Missing),
             ],
-            [true, false, false]
+            [
+                Some(Note::GatewayExposed {
+                    provider: Provider::Claude
+                }),
+                None,
+                None
+            ]
         );
     }
 }
