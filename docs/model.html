@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conductor: the application model</title>
+<style>
+  :root {
+    --ink: #1d2433; --muted: #5d6677; --line: #8a93a6; --paper: #f6f4ef; --card: #fff;
+    --fleet: #6b5bd6; --home: #1f8a5b; --store: #c27a12; --log: #2f6fd1; --binary: #8a5a3c;
+    --built: #1f8a5b; --building: #c27a12; --planned: #8a93a6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--paper); }
+  header, section { max-width: 1320px; margin: 0 auto; padding: 0 24px; }
+  header { padding-top: 28px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  h2 { font-size: 16px; margin: 32px 0 10px; }
+  .lede { color: var(--muted); margin: 0 0 16px; max-width: 80ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  #canvas { position: relative; max-width: 1320px; margin: 0 auto; padding: 16px 24px 32px; }
+  #grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(5, 1fr); grid-auto-rows: minmax(150px, auto); gap: 56px 64px; }
+  svg#wires { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; overflow: visible; }
+  .entity { background: var(--card); border: 1px solid #d8d4cb; border-top: 4px solid var(--c); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); align-self: start; }
+  .entity h3 { margin: 0; padding: 8px 10px 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .entity .where { font-size: 11px; color: var(--c); font-weight: 600; padding: 0 10px; text-transform: uppercase; letter-spacing: .03em; }
+  .entity ul { list-style: none; margin: 6px 0 8px; padding: 0 10px; font-size: 12.5px; }
+  .entity li { display: flex; gap: 6px; padding: 1px 0; color: #303849; }
+  .entity li b { font: 600 10px/16px ui-monospace, monospace; color: var(--muted); min-width: 18px; }
+  .status { font: 600 10.5px/1 system-ui; padding: 3px 6px; border-radius: 10px; color: #fff; background: var(--s); white-space: nowrap; }
+  .card { font: 600 11px/1 ui-monospace, monospace; fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 4px; }
+  .rel { font: 11px/1 system-ui; fill: var(--muted); paint-order: stroke; stroke: var(--paper); stroke-width: 4px; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); border-radius: 8px; overflow: hidden; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #ece8df; vertical-align: top; }
+  th { background: #efebe2; font-weight: 600; }
+  td code, li code, p code { font: 12px ui-monospace, monospace; background: #efebe2; padding: 1px 4px; border-radius: 3px; }
+  .notes li { margin: 4px 0; }
+  footer { max-width: 1320px; margin: 24px auto 40px; padding: 0 24px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Conductor: the application model</h1>
+  <p class="lede">Entities, keys and how they relate, from <code>docs/home.md</code> §2. Lines connect related entities; the label at each end is that end's cardinality. Colour says where an entity is stored; the badge says whether it is built.</p>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--fleet)"></i>Fleet config (signed, secret)</span>
+    <span><i class="swatch" style="background:var(--home)"></i>Home repo (git, shared, no secrets)</span>
+    <span><i class="swatch" style="background:var(--store)"></i>Host store (local)</span>
+    <span><i class="swatch" style="background:var(--log)"></i>Host log (local, durable events)</span>
+    <span><i class="swatch" style="background:var(--binary)"></i>The binary</span>
+    <span><i class="dot" style="background:var(--built)"></i>built</span>
+    <span><i class="dot" style="background:var(--building)"></i>building</span>
+    <span><i class="dot" style="background:var(--planned)"></i>planned</span>
+  </div>
+</header>
+
+<div id="canvas">
+  <svg id="wires" aria-hidden="true"></svg>
+  <div id="grid"></div>
+</div>
+
+<section>
+  <h2>Relationships</h2>
+  <table id="relations"><thead><tr><th>From</th><th>To</th><th>Cardinality</th><th>Meaning</th></tr></thead><tbody></tbody></table>
+
+  <h2>Derived, never stored twice</h2>
+  <ul class="notes">
+    <li>A session's Work, Issue and Project follow from its Worktree.</li>
+    <li>A Work's Sessions are the sessions in its Worktree.</li>
+    <li>A Worktree's lineage follows from its Work's <code>continues</code>; continuing always makes a Work.</li>
+  </ul>
+
+  <h2>Policy (changes without changing the model)</h2>
+  <ul class="notes">
+    <li>A worktree runs one turn at a time: a second session's turn there waits for the running one to end.</li>
+    <li>A worktree is cleaned when its Work finishes, or after seven idle days. Uncommitted changes are checkpointed and the branch pushed or kept before the directory goes.</li>
+    <li>The home never records where a host keeps a checkout; a host finds its checkouts by root commit and remote.</li>
+  </ul>
+</section>
+<footer>Source of truth: <code>docs/home.md</code>. Update this file with it.</footer>
+
+<script>
+const S = { fleet: "--fleet", home: "--home", store: "--store", log: "--log", binary: "--binary" };
+const where = { fleet: "fleet config", home: "home repo", store: "host store", log: "host log", binary: "binary" };
+
+const entities = [
+  // id, column, row, store, status, fields: [marker, text]
+  ["Profile",    1, 1, "home",   "planned",  [["PK","slug (rust, …)"],["","instructions"],["","check and CI configs"]]],
+  ["Project",    2, 1, "home",   "built",    [["PK","slug"],["","remote, root commit"],["","default branch"]]],
+  ["Checkout",   3, 1, "store",  "built",    [["PK","host + path"],["FK","project"],["","origin: found | cloned"]]],
+  ["Host",       4, 1, "fleet",  "built",    [["PK","node id"],["","name, relay, ticket"]]],
+  ["Device",     5, 1, "fleet",  "planned",  [["PK","node id"],["","name, certificate"]]],
+  ["Issue",      1, 2, "home",   "planned",  [["PK","ULID"],["FK","project"],["FK","parent issue"],["","title, body, status"],["","priority, labels"]]],
+  ["Work",       2, 2, "home",   "planned",  [["PK","ULID"],["FK","issue"],["FK","host, instance"],["","branch"],["FK","continues (work)"],["","worktree (pointer, on its host)"],["","status, outcome, summary"]]],
+  ["Worktree",   3, 2, "store",  "building", [["PK","ULID"],["FK","checkout"],["","path, branch, base commit"],["","state, last activity"]]],
+  ["Instance",   4, 2, "store",  "built",    [["PK","slug"],["FK","host, provider"],["","label, credential"],["","settings, private home"]]],
+  ["HomeClone",  5, 2, "store",  "built",    [["PK","host"],["","remote, last sync"],["","sync state"]]],
+  ["Note",       1, 3, "home",   "planned",  [["PK","issue + time"],["FK","author: device | work"],["","text (append-only)"]]],
+  ["Checkpoint", 2, 3, "log",    "built",    [["PK","worktree + id"],["","commit, turn"]]],
+  ["Session",    3, 3, "log",    "built",    [["PK","ULID"],["FK","worktree, instance"],["","conversation id"],["","status, model, effort"],["","transcript"]]],
+  ["Provider",   5, 3, "binary", "built",    [["PK","enum"],["","plugin: code + Profile data"],["","credential forms"]]],
+  ["SubAgent",   2, 4, "log",    "built",    [["PK","provider id"],["FK","session, tool call"],["","description, status"]]],
+  ["Task",       3, 4, "log",    "built",    [["PK","id"],["FK","session"],["","text, status"]]],
+  ["Request",    4, 4, "log",    "built",    [["PK","id"],["FK","session"],["","approval | question"]]],
+];
+
+const relations = [
+  // a, b, card a, card b, meaning
+  ["Device", "Host", "*", "*", "any paired device talks to any host"],
+  ["Host", "Instance", "1", "*", ""],
+  ["Provider", "Instance", "1", "*", "an instance is a configured account of one provider"],
+  ["Host", "HomeClone", "1", "1", "each host keeps its own clone of the home"],
+  ["Project", "Issue", "1", "*", ""],
+  ["Issue", "Issue", "0..1", "*", "parent and sub-issues"],
+  ["Issue", "Note", "1", "*", "append-only; authored by a Device or a Work"],
+  ["Project", "Profile", "*", "*", "e.g. rust"],
+  ["Project", "Checkout", "1", "*", "a host may hold several checkouts of one project"],
+  ["Host", "Checkout", "1", "*", ""],
+  ["Checkout", "Worktree", "1", "*", ""],
+  ["Issue", "Work", "1", "*", "the attempts at an issue"],
+  ["Work", "Work", "0..1", "0..1", "continues: an attempt picks up from one earlier attempt"],
+  ["Work", "Worktree", "1", "0..1", "an attempt runs in one worktree; a worktree without Work serves an ad-hoc session"],
+  ["Worktree", "Session", "1", "*", "one turn at a time per worktree"],
+  ["Instance", "Session", "1", "*", ""],
+  ["Worktree", "Checkpoint", "1", "*", ""],
+  ["Session", "SubAgent", "1", "*", ""],
+  ["Session", "Task", "1", "*", ""],
+  ["Session", "Request", "1", "*", ""],
+];
+
+const grid = document.getElementById("grid");
+const statusColor = { built: "var(--built)", building: "var(--building)", planned: "var(--planned)" };
+for (const [id, col, row, store, status, fields] of entities) {
+  const el = document.createElement("article");
+  el.className = "entity"; el.id = id;
+  el.style.gridColumn = col; el.style.gridRow = row;
+  el.style.setProperty("--c", `var(${S[store]})`);
+  el.innerHTML =
+    `<h3>${id}<span class="status" style="--s:${statusColor[status]}">${status}</span></h3>` +
+    `<div class="where">${where[store]}</div>` +
+    `<ul>${fields.map(([m, t]) => `<li><b>${m}</b><span>${t}</span></li>`).join("")}</ul>`;
+  grid.appendChild(el);
+}
+
+const body = document.querySelector("#relations tbody");
+for (const [a, b, ca, cb, meaning] of relations) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${a}</td><td>${b}</td><td><code>${ca}</code> : <code>${cb}</code></td><td>${meaning}</td>`;
+  body.appendChild(tr);
+}
+
+const svg = document.getElementById("wires");
+const NS = "http://www.w3.org/2000/svg";
+
+function box(id) {
+  const c = document.getElementById("canvas").getBoundingClientRect();
+  const r = document.getElementById(id).getBoundingClientRect();
+  return { x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height,
+           cx: r.left - c.left + r.width / 2, cy: r.top - c.top + r.height / 2 };
+}
+
+// Where the segment from a box's centre towards (tx, ty) leaves the box.
+function edge(b, tx, ty) {
+  const dx = tx - b.cx, dy = ty - b.cy;
+  const sx = dx === 0 ? Infinity : (b.w / 2) / Math.abs(dx);
+  const sy = dy === 0 ? Infinity : (b.h / 2) / Math.abs(dy);
+  const s = Math.min(sx, sy);
+  return { x: b.cx + dx * s, y: b.cy + dy * s };
+}
+
+function add(tag, attrs, text) {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text !== undefined) el.textContent = text;
+  svg.appendChild(el);
+  return el;
+}
+
+function label(p, q, text) {
+  const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+  const ux = (q.x - p.x) / len, uy = (q.y - p.y) / len;
+  add("text", { x: p.x + ux * 16 - uy * 9, y: p.y + uy * 16 + ux * 9 + 4, class: "card", "text-anchor": "middle" }, text);
+}
+
+function draw() {
+  svg.replaceChildren();
+  for (const [a, b, ca, cb] of relations) {
+    const A = box(a);
+    if (a === b) {
+      const x = A.x + A.w, y = A.y + 26;
+      add("path", { d: `M ${x} ${y} h 26 v 34 h -26`, fill: "none", stroke: "var(--line)", "stroke-width": 1.5 });
+      add("text", { x: x + 30, y: y + 4, class: "card" }, ca);
+      add("text", { x: x + 30, y: y + 38, class: "card" }, cb);
+      continue;
+    }
+    const B = box(b);
+    const p = edge(A, B.cx, B.cy), q = edge(B, A.cx, A.cy);
+    add("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: "var(--line)", "stroke-width": 1.5 });
+    label(p, q, ca);
+    label(q, p, cb);
+  }
+}
+
+draw();
+addEventListener("resize", draw);
+</script>
+</body>
+</html>
