@@ -3,7 +3,7 @@
 # GitHub Pages does, and drives headless Chromium and WebKit at an iPhone
 # viewport against `conductord host` running the fake CLIs
 # (crates/*-cli/tests/fake-*.sh) through n0's relays. Each scenario gets its
-# own host: a Claude turn with approval in both engines (turn), two Codex
+# own host: a Claude turn with approval in each engine (turn), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
 # CLI continued and the Thinking disclosure (continue), a checklist shown as the
@@ -11,7 +11,8 @@
 # screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
-# and docs/p1/screens/phone-light-tasks.png.
+# and docs/p1/screens/phone-light-tasks.png. Every scenario runs even after
+# one fails; the script exits non-zero if any did.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
@@ -107,31 +108,25 @@ turn_run() {
   run "$1" "$2" "$3" "$scratch/$2-$1"
 }
 
-out=docs/p1/browser-run.txt
-set +e
-(
-  set -e
-  hosts=()
-  trap 'kill "${hosts[@]}" 2>/dev/null || true' EXIT
-  echo "# Web build in headless Chromium and WebKit (390x844) against conductord host on the fake CLIs, $(date -u +%FT%TZ)"
+# turn_in <engine>: the Claude turn in one engine, on a host of its own.
+turn_in() {
+  start_host "turn-$1"
   echo
-  wasm=$(ls -t "$target"/dx/app/release/web/public/assets/*.wasm | head -1)
-  echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
-
-  start_host turn
-  echo
-  echo "## Turn, Chromium"
-  turn_run chromium turn "$scratch/chromium.png"
-  echo
-  echo "## Turn, WebKit"
-  turn_run webkit turn "$scratch/webkit.png"
+  echo "## Turn, $1"
+  turn_run "$1" turn "$scratch/$1.png"
   sleep 2
   echo
-  echo "## Turn, host log"
-  host_log turn
+  echo "## Turn, $1, host log"
+  host_log "turn-$1"
   echo
-  expect turn 6 'serve: command client="iPhone"' 'both turns'"'"' commands reached the host'
+  expect "turn-$1" 1 'host: ready path=.* version=fake-claude own=Unmanaged models=4' 'the host found Claude'
+  expect "turn-$1" 3 'serve: command client="iPhone"' 'the start, the message and the approval reached the host'
+}
 
+turn_chromium() { turn_in chromium; }
+turn_webkit() { turn_in webkit; }
+
+codex_scenario() {
   session "$scratch/codex" codex-two-threads-listed.jsonl
   repo "$scratch/codex/first"
   repo "$scratch/codex/second"
@@ -143,8 +138,10 @@ set +e
   echo "## Codex, host log"
   host_log codex
   echo
-  expect codex 1 'version=fake-codex' 'the host found Codex'
+  expect codex 1 'host: ready path=.* version=fake-codex own=Unmanaged' 'the host found Codex'
+}
 
+questions() {
   session "$scratch/questions/question" claude-question.jsonl
   session "$scratch/questions/for-session" claude-for-session.jsonl
   start_host questions
@@ -158,7 +155,9 @@ set +e
   expect questions 7 'serve: command client="iPhone"' 'both starts, three messages, the answer and the approval reached the host'
   expect questions 1 'body: Answer {' 'one answer reached the host'
   expect questions 1 'decision: ApproveForSession' 'one approval for the session reached the host'
+}
 
+continue_scenario() {
   session "$scratch/continue/killed" claude-killed.jsonl
   cp "$recordings/claude-resumed.jsonl" "$scratch/continue/killed/stdout.2.jsonl"
   session "$scratch/continue/reasoning" claude-reasoning.jsonl paced
@@ -172,7 +171,9 @@ set +e
   echo
   expect continue-host 1 'body: Continue {' 'one Continue reached the host'
   expect continue-host 1 'model: Some(ModelId("sonnet")), effort: Some(High)' 'the picked model and effort reached the host'
+}
 
+tasks() {
   session "$scratch/tasks" claude-checklist-effort.jsonl
   start_host tasks
   echo
@@ -186,9 +187,11 @@ set +e
   # The CLI gets the effort right before the next message, not mid-turn.
   order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/tasks/stdin.jsonl" | tr '\n' ' ')
   [ "$order" = '"subtype":"initialize" "text":"plan" "subtype":"apply_flag_settings" "text":"pong" ' ] ||
-    { echo "FAILED: host tasks: what the CLI read ($order)"; exit 1; }
+    { echo "FAILED: host tasks: what the CLI read ($order)"; return 1; }
   echo "ok: host tasks: the CLI read apply_flag_settings right before the next message"
+}
 
+credentials() {
   start_host credentials
   echo
   echo "## Credentials, webkit"
@@ -199,7 +202,9 @@ set +e
   echo
   expect credentials 2 'stored a credential change' 'the gateway was stored, then cleared'
   expect credentials 0 'conductor-test-browser-token' 'the token is in no log line'
+}
 
+screens() {
   # conductor runs, held mid-reply; scratch's CLI hangs up as the session
   # starts; notes is never sent a message.
   session "$scratch/screens/conductor" claude-approve.jsonl held
@@ -209,9 +214,53 @@ set +e
   echo
   echo "## Screens, chromium"
   run chromium screens docs/p1/screens "$scratch/screens"
-) >"$out" 2>&1
-status=$?
+}
+
+# scenario <name> <function>: runs the function in a shell of its own that
+# stops at its first failure and stops its hosts, and records the outcome.
+# The shell must not run as a condition, where errexit is off.
+failed=()
+scenario() {
+  local status
+  set +e
+  (
+    set -e
+    hosts=()
+    trap 'kill "${hosts[@]}" 2>/dev/null || true' EXIT
+    "$2"
+  )
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "PASSED: $1"
+  else
+    echo "FAILED: $1 (exit $status)"
+    failed+=("$1")
+  fi
+}
+
+out=docs/p1/browser-run.txt
+{
+  echo "# Web build in headless Chromium and WebKit (390x844) against conductord host on the fake CLIs, $(date -u +%FT%TZ)"
+  echo
+  wasm=$(ls -t "$target"/dx/app/release/web/public/assets/*.wasm | head -1)
+  echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
+  scenario "turn, chromium" turn_chromium
+  scenario "turn, webkit" turn_webkit
+  scenario "codex, chromium" codex_scenario
+  scenario "questions, webkit" questions
+  scenario "continue, chromium" continue_scenario
+  scenario "tasks, webkit" tasks
+  scenario "credentials, webkit" credentials
+  scenario "screens, chromium" screens
+  echo
+  echo "## Summary"
+  if [ "${#failed[@]}" -eq 0 ]; then
+    echo "all scenarios passed"
+  else
+    echo "failed: ${failed[*]}"
+  fi
+} >"$out" 2>&1
 python3 tools/scrub-ips.py "$out"
-set -e
 cat "$out"
-exit $status
+[ "${#failed[@]}" -eq 0 ]
