@@ -1,185 +1,142 @@
-# The home: projects, issues and work across the fleet
+# The home: projects, issues and sessions across the fleet
 
-Status: design, decisions in §9. Steps 1 to 3 of §8 are built; the rest is
-not yet.
-It extends the fleet plan (architecture §6) with what the fleet works *on*.
+Status: design, decisions in §9; §8 says what is built. `docs/model.html`
+draws §2. It extends the fleet plan (architecture §6) with what the fleet
+works *on*.
 
 ## 1. What it adds
 
-Today Conductor runs sessions on hosts, each on one of a host's instances
-(an account with a provider). The home adds the work those sessions do:
+Conductor runs agent sessions on nodes, each on one of a node's instances
+(an agent harness with one account). The home adds what those sessions work
+on:
 
 - **Projects**: the repositories the fleet works in.
-- **Issues**: what needs doing in a project, the tracker.
-- **Work**: one attempt at an issue, by one agent, on one host and
-  instance. An issue can take several attempts, on different instances,
-  providers or hosts, each continuing from the last.
+- **Issues**: what needs doing in a project. Conductor is the tracker.
 - **Standards**: shared instructions and check configs, by language, that
   every session in a matching project follows.
-- **Sub-agents**: the agents a session starts, shown under it.
 
 The point is continuity without transcripts. A conversation belongs to one
-provider and one account. Work belongs to the issue: its branch, its
-commits and the notes each attempt leaves. So when a subscription runs low,
-the next attempt starts on the API instance, on another host or with
-another provider, and picks up from the branch and the notes.
+harness and one account; the work belongs to the issue, its branch and its
+notes. So when a subscription runs low, a new session on the same issue
+starts on the API instance, on another node or with another harness, and
+picks up from the branch and the notes.
 
 ## 2. The model
 
-The model fixes the entities and how they relate. What may happen to them,
-such as whether two sessions may run in one worktree at once, is policy
-(§2.4), which can change without changing the model.
+The model names the entities from the domain and how they relate. Nothing
+that can be renamed is a key: entities are keyed by ids that never change,
+and names are ordinary properties, unique where a person refers to them by
+name. Commands and the app take names and look up the id.
 
 ### 2.1 Entities
 
-| Entity | Key | Holds | Stored in |
-|---|---|---|---|
-| Device | node id | name, certificate | fleet config |
-| Host | node id | name, relay, ticket | fleet config |
-| Provider | enum | its plugin: code and `agents::Profile` data | the binary |
-| Instance | slug | label, credential, settings, private home | host store |
-| Profile | slug (`rust`) | instructions, check and CI configs | home `standards/` |
-| Project | slug (`conductor`) | remote, root commit, default branch | home `projects/<project>/project.toml` |
-| Issue | ULID | title, body, status, priority, labels | home `projects/<project>/issues/` |
-| Note | issue and time | author, text | in its issue's file, append-only |
-| Work | ULID | status, outcome, summary, times | home `projects/<project>/work/` |
-| HomeClone | its host | remote, last sync, state | host store |
-| Checkout | host and path | the project it matched, how | host store |
-| Worktree | ULID | path, branch, base commit, state, last activity | host store |
-| Checkpoint | its worktree and id | commit, the turn it precedes | host log |
-| Session | ULID | conversation id, status, model, effort, transcript | host log |
-| SubAgent | provider id | description, status, transcript | host log |
-| Task, Request | as today | | host log |
+| Entity | Key | Properties | Parts | Stored in |
+|---|---|---|---|---|
+| Node | `NodeId` (its public key) | name, relay, ticket | home sync state | fleet config |
+| Harness | `HarnessId` (`claude`, `codex`) | name, pinned version | credential forms | the binary (plugin data) |
+| Instance | ULID | node, harness, name (unique per node and harness), credential, model, CLI path | | a node's store |
+| Project | ULID | name (unique), title, root commit (unique), remote, profiles | | home `projects/<id>/project.toml` |
+| Issue | ULID | project, title, body, status, priority, labels, branch | notes, checklist | home `projects/<project>/issues/<id>.md` |
+| Session | (issue, instance) | status, model, effort | workspace, transcript | a node's log |
 
-Ids are ULIDs where several hosts create them at once, so no two hosts pick
-the same id and merging the home never collides on a name. An issue is
-shown by its title and a short prefix of its id.
+Two relations carry data of their own and are keyed by what they join:
+
+| Relation | Key | Properties | Stored in |
+|---|---|---|---|
+| Pairing | (node, node) | | fleet config |
+| Copy | (node, project) | path on the node | a node's store |
 
 ### 2.2 Relationships
 
-Each line reads left to right with the left count first.
-
-**Fleet**
-- Device `*` – `*` Host: any paired device talks to any host.
-- Host `1` – `*` Instance; Provider `1` – `*` Instance.
-- Host `1` – `1` HomeClone.
-
-**Home**
+- Node `1` – `*` Instance; Harness `1` – `*` Instance.
+- Node `*` – `*` Node, through Pairing: any paired node may drive any other.
+- Node `*` – `*` Project, through Copy: a node has at most one copy of a
+  project.
 - Project `1` – `*` Issue.
-- Issue `0..1` – `*` Issue: a parent and its sub-issues.
-- Issue `1` – `*` Note. A note's author is a Device or a Work.
-- Project `*` – `*` Profile.
+- Issue `1` – `*` Session, and Instance `1` – `*` Session: a session is one
+  instance working on one issue, at most one per pair, so two sessions of
+  one instance never race on an issue.
 
-**Where code lives**
-- Project `1` – `*` Checkout, and Host `1` – `*` Checkout: a host may hold
-  more than one checkout of a project.
-- Checkout `1` – `*` Worktree: a worktree is made from one checkout's
-  repository.
-- Worktree `1` – `*` Checkpoint.
+A session's node and project follow from its instance and issue, so they
+are never stored and can't disagree.
 
-**Doing work**
-- Issue `1` – `*` Work: the attempts at an issue.
-- Work `0..1` – `0..1` Work through `continues`: an attempt picks up from at
-  most one earlier attempt, and is picked up by at most one.
-- Work `1` – `1` Worktree: an attempt is one branch, checked out in one
-  worktree on one host. A worktree with no Work serves an ad-hoc session.
-- Worktree `1` – `*` Session: the sessions that run in it.
-- Instance `1` – `*` Session.
-- Session `1` – `*` SubAgent, Task and Request.
+### 2.3 Parts
 
-**Derived, never stored twice**
-- A session's Work, Issue and Project follow from its worktree.
-- A Work's sessions are the sessions in its worktree.
-- A worktree's lineage follows from its Work's `continues`. Continuing
-  always makes a Work, so an ad-hoc worktree is never continued.
+- **A session's workspace** is what it needs to work on its issue: a git
+  worktree of the node's copy of the project, on the session's own branch
+  cut from the issue's branch (a branch is checked out in one place at a
+  time). It is made when the session starts and removed with the session;
+  what the session did reaches the issue by landing its branch on the
+  issue's branch. Each turn is a commit on that branch, so undoing a turn
+  resets the branch.
+- **A session's transcript** holds its events, tasks, requests and
+  sub-agents. A sub-agent is something an agent does inside its session,
+  like a tool call, so it can't belong to another issue.
+- **The harness's own id for the conversation** (Claude's session id,
+  Codex's thread id) is its plugin's bookkeeping, kept in the session's
+  workspace, not part of the model.
+- **An issue's notes** are an append-only list, its checklist a list of
+  items. There are no sub-issues: work is broken down by a checklist or by
+  several issues.
 
-### 2.3 Lifecycles
+### 2.4 Rules the structure doesn't show
 
-```
-Issue     open ─► ready ─► in-progress ─► review ─► done
-             └──────────────────────────────────► dropped
-Work      running ─► stopped ─► finished | abandoned
-Worktree  active ─► idle ─► cleaned
-Session   starting ─► idle ⇄ running ─► closed     (as built)
-```
+- Every session belongs to an issue; a quick, unplanned session gets an
+  issue made for it.
+- A session's instance runs on a node that has a copy of its issue's
+  project.
+- Continuing on another instance or node is a new session on the same
+  issue, starting from the issue's branch and notes, not from an earlier
+  transcript.
+- The home never records where a node keeps anything: a node finds its copy
+  of a project by root commit and remote. The root commit identifies the
+  copy but isn't the key, since a fork or a templated repository shares it.
 
-A worktree is active while a session in it runs a turn, and idle
-otherwise.
-
-### 2.4 Policy
-
-- **Sessions in a worktree.** The model allows several. The policy for now:
-  a worktree runs one turn at a time, so a second session in it waits for
-  the running turn to end before its own starts. A session can still read
-  the worktree's diff and history while another runs.
-- **Cleaning a worktree.** A worktree is cleaned when its Work finishes or
-  is abandoned, or when it has been idle for seven days, whichever comes
-  first. Idle means no session in it has run a turn, been started or been
-  continued in that time. Cleaning never loses work:
-  1. anything uncommitted becomes one more checkpoint commit;
-  2. the branch is pushed to the project's remote, or kept as a local ref
-     when there is none or the push fails;
-  3. the worktree directory and its checkpoint refs are removed.
-
-  The branch stays until it is merged or the work is discarded. A cleaned
-  worktree's sessions stay in the log as closed; continuing one makes a new
-  worktree from the kept branch.
-- **Existing worktrees** are adopted on upgrade as ad-hoc worktrees and go
-  through the same rules.
-
-### 2.5 Storage layout
+### 2.5 Lifecycles
 
 ```
-Fleet                      architecture §6: trust, hosts, credentials (signed, secret)
-└── Home                   one git repository, cloned on every host (no secrets)
-    ├── standards/         profiles
-    ├── instructions/      rules for every session in every project
-    └── projects/<project>/
-        ├── project.toml
-        ├── issues/<issue>.md
-        └── work/<issue>/<work>.toml
-
-Host (each machine)        its own store and log
-├── HomeClone, Instances, Checkouts, Worktrees
-└── Sessions with their checkpoints, sub-agents, tasks and requests
+Issue    open ─► ready ─► in-progress ─► review ─► done
+            └─────────────────────────────────► dropped
+Session  starting ─► idle ⇄ running ─► closed ─► removed (with its workspace)
 ```
 
 ## 3. The home repository
 
-The home is the owner's home repository, `JimLundin/home`, which already
-holds `standards/`, the shared `AGENTS.md` and the list of projects
-(`repos.sh` and the table in `AGENTS.md`). Every host keeps a clone in
-`<data>/home-repo` (not `<data>/home`, which holds each instance's private
-CLI home). Adopting it takes a few changes there:
+The home is the owner's home repository, `JimLundin/home`. Every node keeps
+a clone in `<data>/home-repo`.
 
-- `projects/<project>/` holds the tracker: only Conductor's files, never a
-  checkout.
-- `project.toml` becomes the list of projects, and the `AGENTS.md` table and
-  `repos.sh` read it instead of keeping their own. It gives each project's
-  `name`, `remote` (absent when local only), `root`, `branch` and
-  `profiles`. The home never records where a host keeps a checkout; a host
-  finds its checkouts by root commit and remote.
-- `instructions/` holds what the shared `AGENTS.md` says today, split into
-  the rules for every session and those for one profile.
-
-- **One file per thing.** An issue is one Markdown file with TOML front
-  matter; a work record is one TOML file. Two hosts editing different
-  issues never touch the same file.
-- **Append-only where several write.** An issue's progress notes are a list
-  that attempts append to, never rewrite, so concurrent notes merge as a
-  union. Front-matter fields have one writer at a time: the app sets
-  status and assignment, and the running work updates only its own file.
-- **Sync.** A host pulls before it reads (bounded by a short interval) and
+- **`projects/<id>/project.toml`** describes a project: its `name`,
+  `title`, `root` commit, `remote` (absent when local only) and `profiles`.
+  The folder is named by the project's id, so renaming a project changes
+  only its file. The home never records where a node keeps a copy; a node
+  finds its copy by root commit and remote.
+- **`projects/<id>/issues/<issue>.md`**: one file per issue.
+- **`standards/`** holds the profiles' check configs, and the shared
+  `AGENTS.md` the rules for every session.
+- **One file per thing.** Two nodes editing different issues never touch
+  the same file.
+- **Append-only where several write.** An issue's notes are a list that
+  sessions append to, so concurrent notes merge as a union. Front-matter
+  fields have one writer at a time.
+- **Sync.** A node pulls before it reads (bounded by a short interval) and
   commits and pushes after it writes, rebasing on conflict. A rebase that
   still conflicts keeps both versions of the note list and takes the newer
-  status, recording the conflict in the issue. A host that can't reach the
-  remote keeps committing locally and syncs when it can; later this can
-  fall back to a bundle over `conductor-fleet`, as session moves do
-  (architecture §6.8).
+  status. A node that can't reach the remote keeps committing locally and
+  syncs when it can.
 - **No secrets.** Credentials, sign-ins and the fleet's trust stay in the
-  signed fleet config. The home is safe to read on any device.
-- **People and agents can read it directly.** It is plain files in git, so
-  a project's issues are readable in an editor or on GitHub too.
+  signed fleet config.
+- **Readable directly.** It is plain files in git, so a project's issues
+  read in an editor or on GitHub too.
+
+### Project file
+
+```toml
+name = "conductor"
+title = "Conductor"
+root = "a1b2c3…"
+remote = "https://github.com/JimLundin/conductor.git"
+profiles = ["rust"]
+```
 
 ### Issue file
 
@@ -190,126 +147,101 @@ title = "Sign in to a subscription from the app"
 status = "in-progress"        # open, ready, in-progress, review, done, dropped
 priority = "high"
 labels = ["app", "credentials"]
-parent = "01JC…"              # optional: a sub-issue
+branch = "issue/01JD…"
 created = 2026-11-18T10:12:00Z
 +++
 
 What to build and why, as written by whoever opened it.
 
+## Checklist
+- [x] the protocol
+- [ ] the browser scenario
+
 ## Notes
-- 2026-11-18 desktop/codex (work 01JD…): built the protocol; browser
-  scenario left; branch conductor/01JD….
-```
-
-### Work file
-
-```toml
-id = "01JD…"
-issue = "01JD…"
-host = "desktop"
-instance = "codex"
-worktree = "01JD…"            # where it runs; its sessions are the ones in it
-branch = "conductor/01JD…"
-continues = "01JC…"           # the attempt it picked up from, if any
-status = "running"            # running, stopped, finished, abandoned
-started = 2026-11-18T10:20:00Z
-ended = 2026-11-18T11:05:00Z
-outcome = "pushed"            # pushed, merged, nothing, failed
-summary = "…"                 # the agent's own account, written at the end
+- 2026-11-18 laptop · codex · api: built the protocol; browser scenario
+  left; landed on the issue branch.
 ```
 
 ## 4. Flows
 
-**Assign.** In the app: pick an issue, then a host, then one of its
-instances. The host checks it has a checkout of the project (or clones it),
-writes the work record, creates the worktree on a fresh branch (or on the
-continued attempt's branch), and starts a session whose first message is
-built from the issue: its text, its notes, and what to do when done.
+**Start a session on an issue.** In the app: pick an issue, then a node,
+then one of its instances. The node checks it has a copy of the project (or
+clones it), makes the session's workspace on a branch cut from the issue's
+branch, and starts the agent with a first message built from the issue:
+its text, its checklist, its notes, and what to do when done.
 
-**Continue on another instance.** The same flow with *Continue from* an
-earlier attempt: the new work's branch starts from the old one's head, and
-its first message adds that attempt's summary and notes. Across hosts the
-branch travels through the remote, or a bundle when there's none.
+**Continue elsewhere.** The same flow on another instance or node. The
+issue's branch travels through the remote, or a bundle when there is none,
+and the new session starts from it and from the notes.
 
-**Finish.** When the agent ends its work (or the person stops it), the host
-asks it for a summary, appends a note to the issue, sets the work's
-outcome, and moves the issue to `review` when there's a branch to look at.
+**Finish.** When the agent ends its work or the person stops it, the node
+asks it for a summary, appends it to the issue's notes, lands the session's
+branch on the issue's branch, and moves the issue to `review` when there is
+something to look at. Removing the session then removes its workspace.
 
-**Agents updating issues.** Agents don't edit the home checkout. They report
-through Conductor, as data the session already carries: the summary at the
-end and progress notes during. A later step can give them a small tool for
-it (§7).
+**Agents updating issues.** Agents don't edit the home. They report through
+Conductor, as data the session already carries: the summary at the end and
+progress notes during.
 
 ## 5. Standards and instructions
 
-`standards/<profile>/` holds a profile's check configs (as `standards/`
-does today), and `instructions/` holds rules for every session. A project
-names its profiles in `project.toml`. When a session starts in a project,
-the host composes its instructions:
-
-1. `instructions/` (every session),
-2. each of the project's profiles,
-3. the project's own `AGENTS.md`.
-
-The plugin says how its CLI takes them (data in its profile): for example
-an appended system prompt or a generated instructions file in the
-worktree. Checks run the profile's `check.sh`, so a Rust project on any
-host gets the same gate and CI definitions.
+`standards/<profile>/` holds a profile's check configs, and the shared
+`AGENTS.md` the rules for every session. A project names its profiles in
+`project.toml`. When a session starts, the node composes its instructions
+from the shared rules, the project's profiles and the project's own
+`AGENTS.md`. The harness plugin says how its CLI takes them, for example an
+appended system prompt or a generated instructions file in the workspace.
 
 ## 6. Sub-agents
 
-Built (architecture §3). A session's sub-agents are child sessions in the
-model: an id under the parent, the tool call that started them, a
-description, their own transcript and status. Their events are the
-parent's, in its log; the registry has no session for them. The provider's
-core maps them:
+Built (architecture §3). They are part of a session's transcript: the tool
+call that started each, a description, its own transcript and status.
 
 - Claude: `system/task_started` of a `local_agent` starts one, its frames
   carry `parent_tool_use_id` and `agent_id`, and `task_notification` ends
   it (verified in a recording and the pinned binary, Claude `PROTOCOL.md`).
 - Codex: the pinned 0.166's app-server schema has collab agents, each a
   thread of its own, but no run has recorded one, so they are not mapped
-  yet (Codex `PROTOCOL.md`). The model takes them as they are.
-
-The app shows each under the tool call that started it, collapsed to its
-description and status, and opens to its transcript. They are not work
-records: their output belongs to the parent's attempt.
+  yet (Codex `PROTOCOL.md`).
 
 ## 7. The app
 
-- **Several hosts.** The app keeps every paired host and shows each one's
-  sessions, instances and availability (architecture §8). Done.
-- **Projects and issues.** A projects view, each with its issues by status;
-  an issue shows its notes and attempts, with *Assign* and *Continue*.
-- **Sessions** stay as they are, reached from their work or from the host,
-  with sub-agents nested.
+- **Several nodes.** The app keeps every paired node and shows each one's
+  sessions, instances and availability. Done.
+- **Projects and issues.** A projects view with each project's issues by
+  status; an issue shows its checklist, notes and sessions, with *Start a
+  session* and *Continue elsewhere*.
+- **Renaming.** Projects, instances and nodes are renamed in the app; a
+  rename changes only the name, never what refers to it.
 
 ## 8. Build order
 
-1. Sub-agents in the session model (host only; no home needed). Done.
-2. The app with several hosts. Done.
-3. The home repository: clone, sync, and projects with checkouts. Done
+1. Sub-agents in the session model. Done.
+2. The app with several nodes. Done.
+3. The home repository: clone, sync, and projects with their copies. Done
    (architecture §5.4).
-4. Worktrees as their own entity: sessions run in one, one turn at a time,
-   and cleaning after the work ends or seven idle days (§2.4).
-5. Issues: create, edit, status, notes, in the app.
-6. Work: assign an issue to a host and instance, finish, continue.
-7. Standards and instructions composed into sessions.
-8. Agents reporting progress notes during work.
+4. Ids instead of names: projects in `projects/<id>/` with a title,
+   instances keyed by a ULID, and renaming both.
+5. A session's workspace removed with the session, keeping its branch.
+6. Issues: create, edit, status, checklist and notes in the app.
+7. Sessions on issues: start, finish, continue elsewhere.
+8. Standards and instructions composed into sessions.
+9. Agents reporting progress notes during a session.
 
 Each step is usable on its own and keeps the gate green.
 
 ## 9. Decisions
 
-- **Issue ids** are global ULIDs, unique across every project and host. There
-  are no per-project numbers to collide; the app shows an issue by its title
-  and a short prefix of its id.
-- **The home is `JimLundin/home`**, adjusted as §3 says.
+- **Nothing that can be renamed is a key.** Ids never change; names do.
+- **Issue ids** are global ULIDs, unique across every project and node; the
+  app shows an issue by its title.
+- **The home is `JimLundin/home`.**
 - **Conductor is the tracker.** It is the only place issues are written. A
-  one-way mirror to GitHub issues may come later, the way the plugins mirror
-  each CLI's own interface, but nothing is read back from it.
-- **Any paired device assigns work on any host.** Clients and hosts form one
-  small network: every paired client may create issues and assign work to
-  any host and instance, and a host may assign work to another host (for
-  example an agent handing a sub-issue on). Trust is the fleet's device and
-  host certificates (architecture §6.1); there are no per-device roles.
+  one-way mirror to GitHub issues may come later, but nothing is read back
+  from it.
+- **Any paired node works on any node.** Nodes form one small network:
+  every paired node may create issues and start sessions on any node and
+  instance. Trust is the fleet's certificates (architecture §6.1); there
+  are no per-node roles.
+- **One session per instance per issue**, and a session's workspace lives
+  and goes with it; there is no idle cleanup.
