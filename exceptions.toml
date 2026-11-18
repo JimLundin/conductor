@@ -46,4 +46,4 @@ reason = "the link tasks run on the single-threaded UI executor and hold Dioxus 
 [[exception]]
 path = "Cargo.toml"
 rule = "shell"
-reason = "the shell makes about a third of the decisions: the app's 47, and the shells' dispatch of each core's effects plus their branches on I/O results (process exits, file, socket and lock errors, closed channels, which subscription or stream fired), which a core can't take"
+reason = "the shell makes about a quarter of the decisions: the shells' dispatch of each core's effects plus their branches on I/O results (process exits, file, socket and lock errors, closed channels, which subscription or stream fired), which a core can't take"
