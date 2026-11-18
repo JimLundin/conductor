@@ -16,22 +16,26 @@
   header { padding-top: 28px; }
   h1 { margin: 0 0 4px; font-size: 22px; }
   h2 { font-size: 16px; margin: 32px 0 10px; }
-  .lede { color: var(--muted); margin: 0 0 16px; max-width: 82ch; }
+  .lede { color: var(--muted); margin: 0 0 16px; max-width: 84ch; }
   .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12.5px; color: var(--muted); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  #canvas { position: relative; max-width: 1180px; margin: 0 auto; padding: 24px 24px 56px; }
-  #grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 72px 110px; align-items: start; }
+  .assoc-key { width: 16px; height: 12px; border: 1.5px dashed var(--muted); border-radius: 3px; display: inline-block; }
+  #canvas { position: relative; max-width: 1180px; margin: 0 auto; padding: 64px 24px 40px; }
+  #grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 70px 120px; align-items: start; }
   svg#wires { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; overflow: visible; }
   .entity { background: var(--card); border: 1px solid #d8d4cb; border-top: 4px solid var(--c); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .entity.assoc { background: #fbfaf7; border: 1.5px dashed var(--c); border-top-width: 1.5px; box-shadow: none; }
   .entity h3 { margin: 0; padding: 9px 12px 2px; font-size: 16px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .entity.assoc h3 { font-size: 14.5px; }
   .entity .what { padding: 0 12px; font-size: 12.5px; color: var(--muted); }
   .entity .where { font-size: 11px; color: var(--c); font-weight: 600; padding: 4px 12px 0; text-transform: uppercase; letter-spacing: .03em; }
   .entity ul { list-style: none; margin: 8px 0 10px; padding: 0 12px; font-size: 12.5px; }
   .entity li { display: flex; gap: 6px; padding: 1px 0; color: #303849; }
-  .entity li b { font: 600 10px/17px ui-monospace, monospace; color: var(--muted); min-width: 22px; }
+  .entity li b { font: 600 10px/17px ui-monospace, monospace; color: var(--muted); min-width: 44px; }
   .entity li.part b { color: var(--c); }
+  .entity li.derived span { color: var(--muted); font-style: italic; }
   .status { font: 600 10.5px/1 system-ui; padding: 3px 6px; border-radius: 10px; color: #fff; background: var(--s); white-space: nowrap; }
   .card { font: 600 12px/1 ui-monospace, monospace; fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 5px; }
   .name { font: italic 11.5px/1 system-ui; fill: var(--muted); paint-order: stroke; stroke: var(--paper); stroke-width: 5px; }
@@ -46,12 +50,13 @@
 <body>
 <header>
   <h1>Conductor: the application model</h1>
-  <p class="lede">Five entities. Everything else is a part of one of them. Lines connect related entities, with each end's cardinality at that end. Colour says where an entity is stored; the badge says how much of it is built.</p>
+  <p class="lede">Five entities from the domain, and three relations between them that carry data of their own. A relation (dashed) is keyed by the entities it joins and invents no id. Each line's ends show their cardinality; the dotted line is derived, never stored.</p>
   <div class="legend">
     <span><i class="swatch" style="background:var(--fleet)"></i>fleet config (signed)</span>
     <span><i class="swatch" style="background:var(--home)"></i>home repo (git, shared)</span>
     <span><i class="swatch" style="background:var(--host)"></i>a node's store</span>
     <span><i class="swatch" style="background:var(--log)"></i>a node's log</span>
+    <span><i class="assoc-key"></i>relation with data</span>
     <span><i class="dot" style="background:var(--built)"></i>built</span>
     <span><i class="dot" style="background:var(--partly)"></i>partly built</span>
     <span><i class="dot" style="background:var(--planned)"></i>planned</span>
@@ -67,31 +72,41 @@
   <h2>Relationships</h2>
   <table id="relations"><thead><tr><th>From</th><th>To</th><th>Cardinality</th><th>Meaning</th></tr></thead><tbody></tbody></table>
 
-  <h2>What became a part</h2>
-  <table>
-    <thead><tr><th>Was</th><th>Now</th><th>Why it isn't an entity</th></tr></thead>
-    <tbody>
-      <tr><td>Host, Device</td><td>Node</td><td>One machine can run agents and drive others; pairing is between nodes.</td></tr>
-      <tr><td>Work, Worktree</td><td>Issue's branch and checkout</td><td>An issue is the unit of work: its sessions are its attempts, and its branch is where they work.</td></tr>
-      <tr><td>Note</td><td>Issue's notes</td><td>Exists only inside one issue.</td></tr>
-      <tr><td>Checkpoint</td><td>Issue's checkpoints</td><td>Undo points on the issue's branch.</td></tr>
-      <tr><td>SubAgent</td><td>Session with a parent session</td><td>It is a conversation of the same shape, nested.</td></tr>
-      <tr><td>Task, Request</td><td>Session's tasks and requests</td><td>Exist only inside one conversation.</td></tr>
-      <tr><td>Checkout</td><td>Node's lookup: project → paths</td><td>A cache the node rebuilds by root commit and remote; nothing points at it.</td></tr>
-      <tr><td>HomeClone</td><td>Node's home sync state</td><td>One per node, no identity of its own.</td></tr>
-      <tr><td>Profile</td><td>Project's profile names</td><td>The standards are files; the model needs only their names.</td></tr>
-      <tr><td>Provider, Credential</td><td>Instance's type and credential</td><td>A provider is code; a credential belongs to one instance.</td></tr>
-    </tbody>
-  </table>
+  <h2>Why it's shaped this way</h2>
+  <ul class="notes">
+    <li><b>A session stores only its issue and its instance.</b> Its workspace is <code>(issue, instance's node)</code>, so nothing can disagree about where a session works, and an instance on another node simply means another workspace for the same issue.</li>
+    <li><b>Sub-agents are part of a session</b>, like a tool call: something the agent does inside one conversation, so they can't point at another issue.</li>
+    <li><b>There are no sub-issues.</b> Breaking work down is an issue's checklist or several issues; dependencies, if needed, become a relation between issues of one project.</li>
+    <li><b>An issue has one branch</b>, the same on every node. A workspace is that branch checked out on one node; continuing elsewhere makes a workspace there from the branch.</li>
+    <li><b>A node has at most one copy of a project.</b> Other clones on that machine aren't Conductor's.</li>
+    <li><b>Pairing, Copy and Workspace invent no ids:</b> each is keyed by what it relates.</li>
+  </ul>
 
   <h2>Rules the structure doesn't show</h2>
   <ul class="notes">
-    <li>Every session belongs to an issue. A quick, unplanned session gets an issue made for it.</li>
-    <li>A session's instance runs on the node where its issue's branch is checked out.</li>
-    <li>Continuing on another instance or node is another session on the same issue; it works from the branch and the issue's notes, not from an earlier transcript.</li>
-    <li>An issue's checkout runs one turn at a time, and is cleaned when the issue closes or after seven idle days, keeping the branch.</li>
-    <li>The home never records where a node keeps a checkout; a node finds its checkouts by root commit and remote.</li>
+    <li>Every session belongs to an issue; a quick, unplanned session gets an issue made for it.</li>
+    <li>A workspace's node has a copy of the issue's project; the workspace is made from that copy.</li>
+    <li>A workspace runs one turn at a time, and is cleaned when its issue closes or after seven idle days. Uncommitted changes are checkpointed and the branch kept first.</li>
+    <li>The home never records where a node keeps anything; a node finds its copy of a project by root commit and remote.</li>
   </ul>
+
+  <h2>What became a part</h2>
+  <table>
+    <thead><tr><th>Was</th><th>Now</th></tr></thead>
+    <tbody>
+      <tr><td>Host, Device</td><td>Node</td></tr>
+      <tr><td>Work</td><td>Issue (its sessions are its attempts)</td></tr>
+      <tr><td>Worktree</td><td>Workspace: issue × node</td></tr>
+      <tr><td>Checkout</td><td>Copy: node × project</td></tr>
+      <tr><td>SubAgent, Task, Request</td><td>parts of a Session</td></tr>
+      <tr><td>Note, checklist</td><td>parts of an Issue</td></tr>
+      <tr><td>Checkpoint</td><td>part of a Workspace</td></tr>
+      <tr><td>HomeClone</td><td>a Node's home sync state</td></tr>
+      <tr><td>Profile</td><td>a Project's profile names</td></tr>
+      <tr><td>Provider, Credential</td><td>an Instance's type and credential</td></tr>
+      <tr><td>Sub-issue, sub-session</td><td>dropped</td></tr>
+    </tbody>
+  </table>
 </section>
 <footer>Source of truth: <code>docs/home.md</code>. Keep this page in step with it.</footer>
 
@@ -100,44 +115,49 @@ const S = { fleet: "--fleet", home: "--home", host: "--host", log: "--log" };
 const where = { fleet: "fleet config", home: "home repo", host: "a node's store", log: "a node's log" };
 const tint = { built: "var(--built)", "partly built": "var(--partly)", planned: "var(--planned)" };
 
-// id, column, row, store, status, what it is, fields (PK, FK, or "part" for a folded-in part)
-const entities = [
-  ["Node", 2, 1, "fleet", "partly built", "a machine: runs agents, drives others, or both",
-    [["PK","node id"],["","name, relay, ticket"],["part","home sync state"],["part","checkouts: project → paths"]]],
-  ["Instance", 3, 1, "host", "built", "an agent account on a node",
+// id, column, row, store, status, kind, what, fields: [marker, text]; markers: PK, FK, part, derived
+const items = [
+  ["Instance", 1, 1, "host", "built", "entity", "an agent account on a node",
     [["PK","slug"],["FK","node"],["","provider (its type)"],["","label, credential, settings"],["part","private home, sign-in"]]],
-  ["Project", 1, 2, "home", "built", "a repository",
+  ["Node", 2, 1, "fleet", "partly built", "entity", "a machine: runs agents, drives others, or both",
+    [["PK","node id"],["","name, relay, ticket"],["part","home sync state"]]],
+  ["Copy", 3, 1, "host", "built", "assoc", "a node's copy of a project",
+    [["PK","node, project"],["","path on the node"]]],
+  ["Session", 1, 2, "log", "built", "entity", "one agent conversation on an issue",
+    [["PK","ULID"],["FK","issue"],["FK","instance"],["","conversation id, status"],["","model, effort"],
+     ["part","transcript, tasks, requests, sub-agents"],["derived","workspace = (issue, instance's node)"]]],
+  ["Workspace", 2, 2, "host", "partly built", "assoc", "an issue's branch checked out on a node",
+    [["PK","issue, node"],["","path, state"],["","last activity"],["part","checkpoints"]]],
+  ["Project", 3, 2, "home", "built", "entity", "a repository",
     [["PK","slug"],["","remote, root commit"],["","default branch"],["part","profile names"]]],
-  ["Issue", 2, 2, "home", "planned", "a unit of work in a project",
-    [["PK","ULID"],["FK","project, parent issue"],["","title, body, status"],["","priority, labels"],
-     ["","branch"],["FK","checked out on node (while live)"],["part","notes (append-only)"],["part","checkpoints"]]],
-  ["Session", 3, 2, "log", "built", "one agent conversation",
-    [["PK","ULID"],["FK","issue, instance"],["FK","parent session (sub-agent)"],["","conversation id, status"],
-     ["","model, effort"],["part","transcript, tasks, requests"]]],
+  ["Issue", 2, 3, "home", "planned", "entity", "a unit of work in a project",
+    [["PK","ULID"],["FK","project"],["","title, body, status"],["","priority, labels"],["","branch"],["part","notes, checklist"]]],
 ];
 
-// a, b, card at a, card at b, meaning, loop side for a self-relation
+// a, b, card at a, card at b, meaning, style
 const relations = [
-  ["Node", "Node", "*", "*", "paired: any node may drive any other", "left"],
   ["Node", "Instance", "1", "*", "the agent accounts a node runs"],
+  ["Node", "Node", "*", "*", "Pairing: any paired node may drive any other", "loop"],
+  ["Node", "Copy", "1", "*", "the projects a node has a copy of"],
+  ["Copy", "Project", "*", "1", ""],
+  ["Node", "Workspace", "1", "*", "the issues checked out on a node"],
+  ["Workspace", "Issue", "*", "1", "an issue can be checked out on several nodes"],
   ["Project", "Issue", "1", "*", "the work in a project"],
-  ["Issue", "Issue", "0..1", "*", "sub-issues", "bottom"],
-  ["Issue", "Node", "*", "0..1", "where its branch is checked out now"],
   ["Issue", "Session", "1", "*", "its attempts: every conversation on it"],
   ["Instance", "Session", "1", "*", "the account a conversation runs on"],
-  ["Session", "Session", "0..1", "*", "sub-agents", "right"],
+  ["Session", "Workspace", "*", "1", "derived: where the session works", "derived"],
 ];
 
 const grid = document.getElementById("grid");
-for (const [id, col, row, store, status, what, fields] of entities) {
+for (const [id, col, row, store, status, kind, what, fields] of items) {
   const el = document.createElement("article");
-  el.className = "entity"; el.id = id;
+  el.className = kind === "assoc" ? "entity assoc" : "entity"; el.id = id;
   el.style.gridColumn = col; el.style.gridRow = row;
   el.style.setProperty("--c", `var(${S[store]})`);
   el.innerHTML =
     `<h3>${id}<span class="status" style="--s:${tint[status]}">${status}</span></h3>` +
-    `<div class="what">${what}</div><div class="where">${where[store]}</div>` +
-    `<ul>${fields.map(([m, t]) => `<li class="${m === "part" ? "part" : ""}"><b>${m}</b><span>${t}</span></li>`).join("")}</ul>`;
+    `<div class="what">${what}</div><div class="where">${kind === "assoc" ? "relation · " : ""}${where[store]}</div>` +
+    `<ul>${fields.map(([m, t]) => `<li class="${m}"><b>${m}</b><span>${t}</span></li>`).join("")}</ul>`;
   grid.appendChild(el);
 }
 
@@ -171,36 +191,24 @@ function end(p, q, text) {
   const len = Math.hypot(q.x - p.x, q.y - p.y) || 1, ux = (q.x - p.x) / len, uy = (q.y - p.y) / len;
   add("text", { x: p.x + ux * 18 - uy * 11, y: p.y + uy * 18 + ux * 11 + 4, class: "card", "text-anchor": "middle" }, text);
 }
-function loop(b, side, ca, cb, name) {
-  const s = { stroke: "var(--line)", "stroke-width": 1.5, fill: "none" };
-  if (side === "left") {
-    const x = b.x, y = b.y + 30;
-    add("path", { d: `M ${x} ${y} h -34 v 44 h 34`, ...s });
-    add("text", { x: x - 10, y: y - 6, class: "card", "text-anchor": "end" }, ca);
-    add("text", { x: x - 10, y: y + 60, class: "card", "text-anchor": "end" }, cb);
-    add("text", { x: x - 40, y: y + 26, class: "name", "text-anchor": "end" }, name);
-  } else if (side === "right") {
-    const x = b.x + b.w, y = b.y + 30;
-    add("path", { d: `M ${x} ${y} h 34 v 44 h -34`, ...s });
-    add("text", { x: x + 10, y: y - 6, class: "card" }, ca);
-    add("text", { x: x + 10, y: y + 60, class: "card" }, cb);
-    add("text", { x: x + 40, y: y + 26, class: "name" }, name);
-  } else {
-    const x = b.x + 40, y = b.y + b.h;
-    add("path", { d: `M ${x} ${y} v 30 h 60 v -30`, ...s });
-    add("text", { x: x - 6, y: y + 18, class: "card", "text-anchor": "end" }, ca);
-    add("text", { x: x + 66, y: y + 18, class: "card" }, cb);
-    add("text", { x: x + 30, y: y + 46, class: "name", "text-anchor": "middle" }, name);
-  }
-}
 function draw() {
   svg.replaceChildren();
-  for (const [a, b, ca, cb, meaning, side] of relations) {
+  for (const [a, b, ca, cb, meaning, style] of relations) {
     const A = box(a);
-    if (a === b) { loop(A, side, ca, cb, meaning.split(":")[0]); continue; }
+    if (style === "loop") {
+      const x1 = A.x + A.w * 0.35, x2 = A.x + A.w * 0.65, y = A.y;
+      add("path", { d: `M ${x1} ${y} v -34 H ${x2} v 34`, fill: "none", stroke: "var(--line)", "stroke-width": 1.5 });
+      add("text", { x: x1 - 8, y: y - 10, class: "card", "text-anchor": "end" }, ca);
+      add("text", { x: x2 + 8, y: y - 10, class: "card" }, cb);
+      add("text", { x: (x1 + x2) / 2, y: y - 42, class: "name", "text-anchor": "middle" }, "Pairing (node, node)");
+      continue;
+    }
     const B = box(b), p = edge(A, B.cx, B.cy), q = edge(B, A.cx, A.cy);
-    add("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: "var(--line)", "stroke-width": 1.5 });
+    const line = { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: "var(--line)", "stroke-width": 1.5 };
+    if (style === "derived") Object.assign(line, { "stroke-dasharray": "2 5", "stroke-linecap": "round" });
+    add("line", line);
     end(p, q, ca); end(q, p, cb);
+    if (style === "derived") add("text", { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 - 8, class: "name", "text-anchor": "middle" }, "derived");
   }
 }
 draw();
