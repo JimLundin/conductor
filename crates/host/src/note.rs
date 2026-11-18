@@ -1,21 +1,21 @@
 //! What the host's cores decide is worth logging, as data: `daemon` logs
 //! each kind with its fields.
 
-use proto::Provider;
+use proto::{InstanceId, Provider};
 
 use crate::prelude::*;
 use crate::registry::OwnSignIn;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Note {
-    /// A provider's CLI runs, offering `models` models.
+    /// An instance's CLI runs, offering `models` models.
     Ready {
         path: String,
         version: String,
         own: OwnSignIn,
         models: usize,
     },
-    /// A provider's CLI does not run, so the provider is unavailable.
+    /// An instance's CLI does not run, so the instance is unavailable.
     Unavailable {
         reason: String,
     },
@@ -24,11 +24,21 @@ pub enum Note {
         reason: String,
     },
     CredentialStored {
+        instance: InstanceId,
+    },
+    /// The instance stays unavailable until its next refresh.
+    RefreshFailed {
+        instance: InstanceId,
+        reason: String,
+    },
+    InstanceAdded {
+        instance: InstanceId,
         provider: Provider,
     },
-    /// The provider stays unavailable until its next refresh.
-    RefreshFailed {
-        provider: Provider,
-        reason: String,
+    InstanceRenamed {
+        instance: InstanceId,
+    },
+    InstanceRemoved {
+        instance: InstanceId,
     },
 }

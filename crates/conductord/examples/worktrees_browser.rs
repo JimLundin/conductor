@@ -9,8 +9,8 @@ use anyhow::Context;
 use clap::Parser;
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    ClientName, CommandBody, CommandResult, EventKind, HostPath, Provider,
-    SessionId, Ticket,
+    ClientName, CommandBody, CommandResult, EventKind, HostPath, InstanceId,
+    Provider, SessionId, Ticket,
 };
 use tokio::sync::mpsc;
 
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     drive_live(&mut updates).await?;
     let session = match link
         .send(CommandBody::StartSession {
-            provider: Provider::Claude,
+            instance: InstanceId::named(Provider::Claude.name()),
             directory: HostPath(args.directory.display().to_string()),
             model: None,
             effort: None,

@@ -12,8 +12,8 @@ use alloc::format;
 
 use proto::{
     Checkpoint, CheckpointId, CloseReason, Event, EventKind, HistoryAnchor,
-    HostPath, HostSeq, Provider, RequestId, Resolution, SessionId, TurnOutcome,
-    UndoAvailability, Workspace,
+    HostPath, HostSeq, InstanceId, RequestId, Resolution, SessionId,
+    TurnOutcome, UndoAvailability, Workspace,
 };
 
 use crate::checkpoints::Book;
@@ -24,7 +24,7 @@ use crate::session::Choice;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Created {
     pub session: SessionId,
-    pub provider: Provider,
+    pub instance: InstanceId,
     pub directory: HostPath,
     pub choice: Choice,
 }
@@ -36,14 +36,14 @@ pub fn created(history: &[Event]) -> Vec<Created> {
         .iter()
         .filter_map(|event| match &event.kind {
             EventKind::SessionCreated {
-                provider,
+                instance,
                 directory,
                 model,
                 effort,
                 ..
             } => Some(Created {
                 session: event.session,
-                provider: *provider,
+                instance: instance.clone(),
                 directory: directory.clone(),
                 choice: Choice {
                     model: model.clone(),
@@ -286,8 +286,9 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 mod tests {
     use proto::{
         Checkpoint, CheckpointId, ClientName, Event, EventKind, HistoryAnchor,
-        HostPath, HostSeq, Provider, RequestId, Resolution, SessionId,
-        ToolCallId, ToolKind, TurnOutcome, UndoAvailability, Workspace,
+        HostPath, HostSeq, InstanceId, Provider, RequestId, Resolution,
+        SessionId, ToolCallId, ToolKind, TurnOutcome, UndoAvailability,
+        Workspace,
     };
 
     use super::{Created, Interrupted, Recovery, Step, created, events_of};
@@ -316,6 +317,7 @@ mod tests {
 
     fn started() -> EventKind {
         EventKind::SessionCreated {
+            instance: InstanceId::named("codex-api"),
             provider: Provider::Codex,
             directory: HostPath(String::from("/work")),
             by: ClientName(String::from("phone")),
@@ -372,7 +374,7 @@ mod tests {
             created(&history).first(),
             Some(&Created {
                 session: SessionId(1),
-                provider: Provider::Codex,
+                instance: InstanceId::named("codex-api"),
                 directory: HostPath(String::from("/work")),
                 choice: choice.clone(),
             })

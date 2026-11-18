@@ -1,28 +1,36 @@
-//! The registry's decisions about sessions and providers.
+//! The registry's decisions about sessions and instances.
 //!
 //! They are whether a `StartSession` or a `Continue` may go ahead and why
 //! not, the model and effort a session starts with, which session an id
-//! names, whether each provider is available, and how a credential change
-//! is stored and the provider refreshed.
+//! names, whether each instance is available, how an instance is added,
+//! renamed and removed, and how a credential change is stored and the
+//! instance refreshed.
+//!
+//! An instance is a named, configured use of a provider. A host may have
+//! several of one provider, each with its own credential, its own private
+//! home and its own CLI's agents. A fresh host gets one per provider,
+//! named after it ([`defaults`]).
 //!
 //! `daemon` runs it: it owns the store, the sessions' tasks and the
-//! providers' agents. It asks the registry, performs each [`Effect`] in
-//! order, and reports how each went. The registry holds each provider's
+//! instances' agents. It asks the registry, performs each [`Effect`] in
+//! order, and reports how each went. The registry holds each instance's
 //! starter `S`, each session's handle `H` and each answer's reply `R` as
 //! opaque values; it knows no provider by name.
 //!
-//! A credential change refreshes its provider: the provider's agents take
-//! the new credentials and list what they offer with them. Until that ends
-//! the provider is unavailable. One refresh per provider runs at a time;
+//! A credential change refreshes its instance: the instance's agents take
+//! the new credential and list what they offer with it. Until that ends
+//! the instance is unavailable. One refresh per instance runs at a time;
 //! changes made meanwhile coalesce into one more, and every change waiting
-//! gets the answer of the last.
+//! gets the answer of the last. An added instance is unavailable until its
+//! CLI has started.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 
 use proto::{
-    Auth, Availability, Catalog, CommandResult, Credential, Credentials,
-    Effort, ModelId, Models, Provider, Providers, Rejection, SessionId,
+    Auth, Availability, Catalog, CommandResult, Credential, Effort, Event,
+    EventKind, Instance, InstanceId, InstanceStatus, Instances, ModelId,
+    Models, Provider, Rejection, Roster, SessionId,
 };
 
 use crate::Note;
@@ -30,14 +38,15 @@ use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::workspace::GitError;
 
-/// What a CLI signs in with when the host stores no credential for it.
+/// What a CLI signs in with when the host stores no credential for its
+/// instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnSignIn {
-    /// The private home is signed in (`conductord login`).
+    /// The private home is signed in (`conductord login <instance>`).
     SignedIn,
     /// A CLI given on the command line, signed in however it is.
     Unmanaged,
-    /// Nothing: the provider is unavailable until it gets a credential.
+    /// Nothing: the instance is unavailable until it gets a credential.
     Missing,
 }
 
@@ -52,11 +61,15 @@ impl OwnSignIn {
 }
 
 const NO_CREDENTIAL: &str = "no credential configured";
-const REFRESHING: &str = "refreshing provider models";
+const REFRESHING: &str = "refreshing the instance's models";
+const STARTING: &str = "starting the instance's CLI";
 
-/// What a provider offers and the model a session gets when it names none:
-/// the one the credential names, as its gateway serves that one, then
-/// `chosen` (`--model <provider>=<model>`), then the CLI's own.
+/// What an instance offers, and the model a session gets when it names
+/// none.
+///
+/// That is the one the credential names, as its gateway serves that one,
+/// then `chosen` (the instance's, else `--model <provider>=<model>`), then
+/// the CLI's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
     /// What the CLI lists with the current credential.
@@ -80,7 +93,7 @@ impl Offer {
     }
 }
 
-/// How the host runs a provider.
+/// How the host runs an instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launcher<S> {
     /// The CLI runs, `start` starts its agents, and it signs in as `own`
@@ -90,55 +103,121 @@ pub enum Launcher<S> {
         own: OwnSignIn,
         offer: Offer,
     },
-    /// The host can't run this provider's sessions, for this reason.
+    /// The host can't run this instance's sessions, for this reason.
     Unavailable(String),
 }
 
-/// What the credential store holds.
+/// What the store holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stored {
-    Opened(Credentials),
+    Opened(Roster),
+    /// There is no store yet: the host is fresh.
+    Fresh,
     /// The file exists and doesn't open, for this reason. The host runs
-    /// no provider until a Clear moves it aside.
+    /// no instance until a Clear moves it aside.
     Unreadable(String),
 }
 
 impl Stored {
-    /// The credentials a provider's CLI starts with: none from a store
-    /// that doesn't open.
+    /// The instances the host has: the stored ones, else the defaults. A
+    /// store that doesn't open shows the defaults, unavailable, so a
+    /// Clear on one of them can move it aside.
     #[must_use]
-    pub fn credentials(&self) -> Credentials {
+    pub fn roster(&self, catalog: &Catalog) -> Roster {
         match self {
-            Self::Opened(credentials) => credentials.clone(),
-            Self::Unreadable(_) => Credentials::none(),
+            Self::Opened(roster) => roster.clone(),
+            Self::Fresh | Self::Unreadable(_) => defaults(catalog),
         }
     }
 }
 
-/// A provider's refresh: its agents take `credentials`, and, if the
-/// provider then `signs_in`, list what they offer.
+/// What a fresh host has: one instance per provider the catalog
+/// describes, with the provider's name and label and no credential.
+#[must_use]
+pub fn defaults(catalog: &Catalog) -> Roster {
+    Roster(
+        catalog
+            .0
+            .iter()
+            .map(|(&provider, info)| {
+                (
+                    InstanceId::named(provider.name()),
+                    Instance::new(info.label.clone(), provider),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The sessions whose agents run, or start, after `history`: created or
+/// ready, and not closed since.
+#[must_use]
+pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
+    let mut running = BTreeSet::new();
+    for event in history {
+        match event.kind {
+            EventKind::SessionCreated { .. } | EventKind::SessionReady => {
+                running.insert(event.session);
+            }
+            EventKind::SessionClosed { .. } => {
+                running.remove(&event.session);
+            }
+            _ => {}
+        }
+    }
+    running
+}
+
+/// An instance's refresh: its agents take `credential`, and, if the
+/// instance then `signs_in`, list what they offer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job<S> {
     pub id: u64,
-    pub provider: Provider,
+    pub instance: InstanceId,
     pub start: S,
-    pub credentials: Credentials,
+    pub credential: Option<Credential>,
     pub signs_in: Result<(), String>,
 }
 
-/// What a refresh listed: the models, and the one the credentials name.
+/// What a refresh listed: the models, and the one the credential names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub models: Models,
     pub named: Option<ModelId>,
 }
 
-/// How the refresh `id` of `provider` ended.
+/// How the refresh `id` of `instance` ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refreshed {
     pub id: u64,
-    pub provider: Provider,
+    pub instance: InstanceId,
     pub listing: Result<Listing, String>,
+}
+
+/// An added instance to start: its provider's CLI, in its own home, as
+/// `settings` say, with their credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Starting {
+    pub id: u64,
+    pub instance: InstanceId,
+    pub settings: Instance,
+}
+
+/// How starting `id` ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Started<S> {
+    pub id: u64,
+    pub instance: InstanceId,
+    pub launcher: Launcher<S>,
+}
+
+/// What a store save changes, which says what follows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    Credential(InstanceId),
+    Added(InstanceId),
+    Renamed(InstanceId),
+    Removed(InstanceId),
 }
 
 /// What the shell does next, in order.
@@ -148,28 +227,31 @@ pub enum Effect<S, R> {
     /// Move the store that doesn't open aside, and report
     /// [`Registry::moved_aside`].
     MoveAside {
-        provider: Provider,
+        instance: InstanceId,
         reply: R,
     },
-    /// Store `credentials` in place of what the store holds, and report
+    /// Store `roster` in place of what the store holds, and report
     /// [`Registry::saved`].
     Save {
-        provider: Provider,
-        credentials: Credentials,
+        roster: Roster,
+        change: Change,
         reply: R,
     },
     /// Run the refresh, and report [`Registry::refreshed`].
     Refresh(Job<S>),
+    /// Start the instance's CLI, and report [`Registry::started`].
+    Start(Starting),
     Log(Note),
 }
 
-/// A session that may start: its provider's starter, the model and effort
-/// it runs with, and what the provider offers.
+/// A session that may start: its instance's starter, the model and effort
+/// it runs with, and what the instance offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Launch<S> {
     pub start: S,
     pub choice: Choice,
     pub offered: Models,
+    pub provider: Provider,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,35 +262,50 @@ enum Refresh<S, R> {
         latest: Job<S>,
         replies: Vec<R>,
     },
+    /// An added instance's CLI is starting with `credential`, and these
+    /// changes wait for it.
+    Starting {
+        id: u64,
+        credential: Option<Credential>,
+        replies: Vec<R>,
+    },
     Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registry<S, H, R> {
-    launchers: BTreeMap<Provider, Launcher<S>>,
+    roster: Roster,
+    /// Why the store doesn't open, while it doesn't.
+    unreadable: Option<String>,
+    launchers: BTreeMap<InstanceId, Launcher<S>>,
     /// How each provider presents itself, and the credentials it takes.
     catalog: Catalog,
-    /// A provider with none is idle.
-    refreshes: BTreeMap<Provider, Refresh<S, R>>,
-    stored: Stored,
-    sessions: BTreeMap<SessionId, (Provider, H)>,
+    /// An instance with none is idle.
+    refreshes: BTreeMap<InstanceId, Refresh<S, R>>,
+    sessions: BTreeMap<SessionId, (InstanceId, H)>,
     jobs: u64,
 }
 
 impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// A registry with no session yet. `stored` is what the store held
-    /// when it opened.
+    /// when it opened, and `launchers` run the instances
+    /// [`Stored::roster`] gives.
     #[must_use]
-    pub const fn new(
-        launchers: BTreeMap<Provider, Launcher<S>>,
-        stored: Stored,
+    pub fn new(
+        launchers: BTreeMap<InstanceId, Launcher<S>>,
+        stored: &Stored,
         catalog: Catalog,
     ) -> Self {
+        let unreadable = match stored {
+            Stored::Unreadable(reason) => Some(reason.clone()),
+            Stored::Opened(_) | Stored::Fresh => None,
+        };
         Self {
+            roster: stored.roster(&catalog),
+            unreadable,
             launchers,
             catalog,
             refreshes: BTreeMap::new(),
-            stored,
             sessions: BTreeMap::new(),
             jobs: 0,
         }
@@ -222,25 +319,35 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
 
     /// What `Welcome` tells a client the host can run.
     #[must_use]
-    pub fn providers(&self) -> Providers {
-        Providers(
-            self.launchers
-                .keys()
-                .map(|&provider| (provider, self.availability(provider)))
+    pub fn instances(&self) -> Instances {
+        Instances(
+            self.roster
+                .0
+                .iter()
+                .map(|(id, instance)| {
+                    (
+                        id.clone(),
+                        InstanceStatus {
+                            label: instance.label.clone(),
+                            provider: instance.provider,
+                            availability: self.availability(id),
+                        },
+                    )
+                })
                 .collect(),
         )
     }
 
     /// Whether a session may start in a directory that `exists`, on
-    /// `provider` with the model and effort asked for.
+    /// `instance` with the model and effort asked for.
     ///
     /// # Errors
     ///
-    /// Why it may not: no such directory, the provider is unavailable, or
-    /// it doesn't offer the model or effort.
+    /// Why it may not: no such directory, no such instance, the instance
+    /// is unavailable, or it doesn't offer the model or effort.
     pub fn start(
         &self,
-        provider: Provider,
+        instance: &InstanceId,
         exists: bool,
         model: Option<ModelId>,
         effort: Option<Effort>,
@@ -248,38 +355,49 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         if !exists {
             return Err(Rejection::NoSuchDirectory);
         }
-        let (start, _) = self.ready(provider).map_err(unavailable)?;
-        let offered = self.models(provider);
+        let provider = self
+            .roster
+            .of(instance)
+            .ok_or(Rejection::UnknownInstance)?
+            .provider;
+        let (start, _) = self.ready(instance).map_err(unavailable)?;
+        let offered = self.models(instance);
         let choice = choose(&offered, model, effort)
             .map_err(|reason| Rejection::NotOffered { reason })?;
         Ok(Launch {
             start,
             choice,
             offered,
+            provider,
         })
     }
 
     /// Keeps a session that started or was restored.
-    pub fn admit(&mut self, session: SessionId, provider: Provider, handle: H) {
-        self.sessions.insert(session, (provider, handle));
+    pub fn admit(
+        &mut self,
+        session: SessionId,
+        instance: InstanceId,
+        handle: H,
+    ) {
+        self.sessions.insert(session, (instance, handle));
     }
 
-    /// The session and what its provider offers, for an order that may
+    /// The session and what its instance offers, for an order that may
     /// start its agent.
     ///
     /// # Errors
     ///
-    /// No such session, or its provider is unavailable.
+    /// No such session, or its instance is unavailable or gone.
     pub fn relaunch(
         &self,
         session: SessionId,
     ) -> Result<(H, Models), Rejection> {
-        let (provider, handle) = self
+        let (instance, handle) = self
             .sessions
             .get(&session)
             .ok_or(Rejection::UnknownSession)?;
-        self.ready(*provider)
-            .map(|_| (handle.clone(), self.models(*provider)))
+        self.ready(instance)
+            .map(|_| (handle.clone(), self.models(instance)))
             .map_err(unavailable)
     }
 
@@ -291,81 +409,156 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     }
 
     /// What starts a restored session's agents, whether or not the
-    /// provider is available now.
+    /// instance is available now.
     ///
     /// # Errors
     ///
-    /// Why the host can't run the provider at all.
-    pub fn launcher(&self, provider: Provider) -> Result<S, String> {
-        match self.launcher_of(provider)? {
+    /// Why the host can't run the instance at all.
+    pub fn launcher(&self, instance: &InstanceId) -> Result<S, String> {
+        match self.launcher_of(instance)? {
             Launcher::Ready { start, .. } => Ok(start.clone()),
             Launcher::Unavailable(reason) => Err(reason.clone()),
         }
     }
 
-    /// Stores a provider's credential and refreshes the provider. A store
-    /// that doesn't open is left alone, since saving would overwrite the
-    /// other providers' credentials.
+    /// Stores an instance's credential and refreshes the instance. A
+    /// store that doesn't open is left alone, since saving would overwrite
+    /// the other instances.
     pub fn set_credential(
         &mut self,
+        instance: InstanceId,
         credential: Credential,
         reply: R,
     ) -> Vec<Effect<S, R>> {
-        let provider = credential.provider;
+        let Some(known) = self.roster.of(&instance) else {
+            return Vec::from([rejected(reply, Rejection::UnknownInstance)]);
+        };
         let checked = self
             .catalog
-            .of(provider)
-            .ok_or_else(|| format!("this host doesn't run {}", provider.name()))
+            .of(known.provider)
+            .ok_or_else(|| {
+                format!("this host doesn't run {}", known.provider.name())
+            })
             .and_then(|info| info.check(&credential));
-        match (checked, &self.stored) {
-            (Err(reason), _) => Vec::from([Effect::Reply(
+        if let Err(reason) = checked {
+            return Vec::from([rejected(
                 reply,
-                CommandResult::Rejected(Rejection::InvalidCredential {
-                    reason,
-                }),
-            )]),
-            (Ok(()), Stored::Unreadable(reason)) => {
-                Vec::from([not_saved(reply, reason.clone())])
-            }
-            (Ok(()), Stored::Opened(credentials)) => {
-                Vec::from([Effect::Save {
-                    provider,
-                    credentials: credentials.clone().set(credential),
-                    reply,
-                }])
-            }
+                Rejection::InvalidCredential { reason },
+            )]);
         }
+        let mut roster = self.roster.clone();
+        if let Some(changed) = roster.0.get_mut(&instance) {
+            changed.credential = Some(credential);
+        }
+        self.save(roster, Change::Credential(instance), reply)
     }
 
-    /// Clears a provider's credential and refreshes the provider. A store
+    /// Clears an instance's credential and refreshes the instance. A store
     /// that doesn't open is moved aside first, which is how a Clear
     /// recovers it.
     pub fn clear_credential(
         &mut self,
-        provider: Provider,
+        instance: InstanceId,
         reply: R,
     ) -> Vec<Effect<S, R>> {
-        Vec::from([match &self.stored {
-            Stored::Opened(credentials) => Effect::Save {
-                provider,
-                credentials: credentials.clone().clear(provider),
+        if self.roster.of(&instance).is_none() {
+            return Vec::from([rejected(reply, Rejection::UnknownInstance)]);
+        }
+        if self.unreadable.is_some() {
+            return Vec::from([Effect::MoveAside { instance, reply }]);
+        }
+        let mut roster = self.roster.clone();
+        if let Some(changed) = roster.0.get_mut(&instance) {
+            changed.credential = None;
+        }
+        self.save(roster, Change::Credential(instance), reply)
+    }
+
+    /// Adds an instance of `provider` called `label`, with an id of its
+    /// own made from the label, and starts its CLI.
+    pub fn add_instance(
+        &mut self,
+        provider: Provider,
+        label: &str,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        if self.catalog.of(provider).is_none() {
+            let reason = format!("this host doesn't run {}", provider.name());
+            return Vec::from([rejected(
                 reply,
-            },
-            Stored::Unreadable(_) => Effect::MoveAside { provider, reply },
-        }])
+                Rejection::InstanceUnavailable { reason },
+            )]);
+        }
+        let named = match self.label(label, None) {
+            Ok(named) => named,
+            Err(rejection) => return Vec::from([rejected(reply, rejection)]),
+        };
+        let id = self.mint(&named, provider);
+        let mut roster = self.roster.clone();
+        roster.0.insert(id.clone(), Instance::new(named, provider));
+        self.save(roster, Change::Added(id), reply)
+    }
+
+    pub fn rename_instance(
+        &mut self,
+        instance: InstanceId,
+        label: &str,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        if self.roster.of(&instance).is_none() {
+            return Vec::from([rejected(reply, Rejection::UnknownInstance)]);
+        }
+        let named = match self.label(label, Some(&instance)) {
+            Ok(named) => named,
+            Err(rejection) => return Vec::from([rejected(reply, rejection)]),
+        };
+        let mut roster = self.roster.clone();
+        if let Some(changed) = roster.0.get_mut(&instance) {
+            changed.label = named;
+        }
+        self.save(roster, Change::Renamed(instance), reply)
+    }
+
+    /// Removes an instance on which none of the `running` sessions runs.
+    /// Its closed sessions stay, and can't continue.
+    pub fn remove_instance(
+        &mut self,
+        instance: InstanceId,
+        running: &BTreeSet<SessionId>,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        if self.roster.of(&instance).is_none() {
+            return Vec::from([rejected(reply, Rejection::UnknownInstance)]);
+        }
+        let busy = self
+            .sessions
+            .iter()
+            .filter(|(id, (on, _))| on == &instance && running.contains(id))
+            .count();
+        if busy > 0 {
+            return Vec::from([rejected(
+                reply,
+                Rejection::InstanceInUse {
+                    sessions: u64::try_from(busy).unwrap_or(u64::MAX),
+                },
+            )]);
+        }
+        let mut roster = self.roster.clone();
+        roster.0.remove(&instance);
+        self.save(roster, Change::Removed(instance), reply)
     }
 
     /// How the [`Effect::MoveAside`] went.
     pub fn moved_aside(
         &mut self,
-        provider: Provider,
+        instance: InstanceId,
         reply: R,
         moved: Result<(), String>,
     ) -> Vec<Effect<S, R>> {
         match moved {
             Ok(()) => {
-                self.stored = Stored::Opened(Credentials::none());
-                self.clear_credential(provider, reply)
+                self.unreadable = None;
+                self.clear_credential(instance, reply)
             }
             Err(reason) => Vec::from([not_saved(reply, reason)]),
         }
@@ -374,22 +567,53 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// How the [`Effect::Save`] went.
     pub fn saved(
         &mut self,
-        provider: Provider,
-        credentials: Credentials,
+        roster: Roster,
+        change: Change,
         reply: R,
         saved: Result<(), String>,
     ) -> Vec<Effect<S, R>> {
-        match saved {
-            Ok(()) => {
-                self.stored = Stored::Opened(credentials.clone());
-                let mut effects =
-                    Vec::from([Effect::Log(Note::CredentialStored {
-                        provider,
-                    })]);
-                effects.extend(self.schedule(provider, credentials, reply));
-                effects
+        if let Err(reason) = saved {
+            return Vec::from([not_saved(reply, reason)]);
+        }
+        self.roster = roster;
+        match change {
+            Change::Credential(instance) => {
+                let note = Note::CredentialStored {
+                    instance: instance.clone(),
+                };
+                logged(note, self.schedule(instance, Vec::from([reply])))
             }
-            Err(reason) => Vec::from([not_saved(reply, reason)]),
+            Change::Added(instance) => {
+                let note = self.roster.of(&instance).map(|added| {
+                    Note::InstanceAdded {
+                        instance: instance.clone(),
+                        provider: added.provider,
+                    }
+                });
+                note.into_iter()
+                    .map(Effect::Log)
+                    .chain(self.launch(instance, reply))
+                    .collect()
+            }
+            Change::Renamed(instance) => logged(
+                Note::InstanceRenamed { instance },
+                Vec::from([self.answer(reply)]),
+            ),
+            Change::Removed(instance) => {
+                self.launchers.remove(&instance);
+                let mut waiting = match self.refreshes.remove(&instance) {
+                    Some(
+                        Refresh::Pending { replies, .. }
+                        | Refresh::Starting { replies, .. },
+                    ) => replies,
+                    Some(Refresh::Failed(_)) | None => Vec::new(),
+                };
+                waiting.push(reply);
+                logged(
+                    Note::InstanceRemoved { instance },
+                    self.answers(waiting),
+                )
+            }
         }
     }
 
@@ -398,46 +622,155 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     pub fn refreshed(&mut self, refreshed: Refreshed) -> Vec<Effect<S, R>> {
         let Refreshed {
             id,
-            provider,
+            instance,
             listing,
         } = refreshed;
-        match self.refreshes.remove(&provider) {
+        match self.refreshes.remove(&instance) {
             Some(Refresh::Pending { latest, replies }) if latest.id == id => {
-                let logged = self.listed(provider, listing);
-                let result = CommandResult::Providers(self.providers());
-                logged
-                    .into_iter()
-                    .chain(
-                        replies
-                            .into_iter()
-                            .map(|reply| Effect::Reply(reply, result.clone())),
-                    )
-                    .collect()
+                let logged = self.listed(&instance, listing);
+                logged.into_iter().chain(self.answers(replies)).collect()
             }
             Some(Refresh::Pending { latest, replies }) => {
                 let job = latest.clone();
                 self.refreshes
-                    .insert(provider, Refresh::Pending { latest, replies });
+                    .insert(instance, Refresh::Pending { latest, replies });
                 Vec::from([Effect::Refresh(job)])
             }
             settled => {
                 self.refreshes
-                    .extend(settled.map(|refresh| (provider, refresh)));
+                    .extend(settled.map(|refresh| (instance, refresh)));
                 Vec::new()
             }
         }
     }
 
+    /// How an [`Effect::Start`] went. The instance runs as the launcher
+    /// says; if its credential changed while its CLI started, it
+    /// refreshes with the current one. A start for an instance since
+    /// removed is dropped.
+    pub fn started(&mut self, started: Started<S>) -> Vec<Effect<S, R>> {
+        let Started {
+            id,
+            instance,
+            launcher,
+        } = started;
+        match self.refreshes.remove(&instance) {
+            Some(Refresh::Starting {
+                id: current,
+                credential,
+                replies,
+            }) if current == id => {
+                self.launchers.insert(instance.clone(), launcher);
+                if credential == self.credential(&instance) {
+                    self.answers(replies)
+                } else {
+                    self.schedule(instance, replies)
+                }
+            }
+            other => {
+                self.refreshes
+                    .extend(other.map(|refresh| (instance, refresh)));
+                Vec::new()
+            }
+        }
+    }
+
+    /// A Save of `roster`, unless the store doesn't open.
+    fn save(
+        &self,
+        roster: Roster,
+        change: Change,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        Vec::from([match &self.unreadable {
+            Some(reason) => not_saved(reply, reason.clone()),
+            None => Effect::Save {
+                roster,
+                change,
+                reply,
+            },
+        }])
+    }
+
+    /// The label trimmed, if it has text and no other instance has it.
+    fn label(
+        &self,
+        typed: &str,
+        renamed: Option<&InstanceId>,
+    ) -> Result<String, Rejection> {
+        let label = typed.trim();
+        let taken = self.roster.0.iter().any(|(id, instance)| {
+            instance.label == label && Some(id) != renamed
+        });
+        match (label.is_empty(), taken) {
+            (true, _) => Err(Rejection::InvalidLabel {
+                reason: String::from("an instance needs a label"),
+            }),
+            (false, true) => Err(Rejection::InvalidLabel {
+                reason: format!("another instance is called {label}"),
+            }),
+            (false, false) => Ok(String::from(label)),
+        }
+    }
+
+    /// An id for a new instance: its label as a slug, else its provider's
+    /// name, numbered past any id an instance or a session has, so a
+    /// session never continues on another instance than its own.
+    fn mint(&self, label: &str, provider: Provider) -> InstanceId {
+        let slug = slug(label);
+        let base = if slug.is_empty() {
+            String::from(provider.name())
+        } else {
+            slug
+        };
+        // Each instance and session takes at most one id, so one of these
+        // is free.
+        let ids = self.roster.0.len() + self.sessions.len() + 1;
+        (1..=ids)
+            .map(|n| match n {
+                1 => InstanceId(base.clone()),
+                _ => InstanceId(format!("{base}-{n}")),
+            })
+            .find(|id| !self.taken(id))
+            .unwrap_or(InstanceId(base))
+    }
+
+    fn taken(&self, id: &InstanceId) -> bool {
+        self.roster.0.contains_key(id)
+            || self.sessions.values().any(|(on, _)| on == id)
+    }
+
+    /// Starts an added instance's CLI.
+    fn launch(&mut self, instance: InstanceId, reply: R) -> Vec<Effect<S, R>> {
+        let Some(settings) = self.roster.of(&instance).cloned() else {
+            return Vec::from([self.answer(reply)]);
+        };
+        self.jobs = self.jobs.saturating_add(1);
+        self.refreshes.insert(
+            instance.clone(),
+            Refresh::Starting {
+                id: self.jobs,
+                credential: settings.credential.clone(),
+                replies: Vec::from([reply]),
+            },
+        );
+        Vec::from([Effect::Start(Starting {
+            id: self.jobs,
+            instance,
+            settings,
+        })])
+    }
+
     /// Takes what the latest refresh listed, or keeps why it failed.
     fn listed(
         &mut self,
-        provider: Provider,
+        instance: &InstanceId,
         listing: Result<Listing, String>,
     ) -> Option<Effect<S, R>> {
         match listing {
             Ok(Listing { models, named }) => {
                 if let Some(Launcher::Ready { offer, .. }) =
-                    self.launchers.get_mut(&provider)
+                    self.launchers.get_mut(instance)
                 {
                     offer.listed = models;
                     offer.named = named;
@@ -446,115 +779,155 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             }
             Err(reason) => {
                 let note = Note::RefreshFailed {
-                    provider,
+                    instance: instance.clone(),
                     reason: reason.clone(),
                 };
-                self.refreshes.insert(provider, Refresh::Failed(reason));
+                self.refreshes
+                    .insert(instance.clone(), Refresh::Failed(reason));
                 Some(Effect::Log(note))
             }
         }
     }
 
-    /// Refreshes `provider` with `credentials`, or, while a refresh runs,
-    /// makes them the next. A provider the host can't run answers at once.
+    /// Refreshes `instance` with its credential, or, while a refresh
+    /// runs, makes it the next. An instance whose CLI is starting takes
+    /// it once started, and one the host can't run answers at once.
     fn schedule(
         &mut self,
-        provider: Provider,
-        credentials: Credentials,
-        reply: R,
+        instance: InstanceId,
+        asked: Vec<R>,
     ) -> Vec<Effect<S, R>> {
+        if let Some(Refresh::Starting { replies, .. }) =
+            self.refreshes.get_mut(&instance)
+        {
+            replies.extend(asked);
+            return Vec::new();
+        }
         let Some(Launcher::Ready { start, own, .. }) =
-            self.launchers.get(&provider)
+            self.launchers.get(&instance)
         else {
-            return Vec::from([Effect::Reply(
-                reply,
-                CommandResult::Providers(self.providers()),
-            )]);
+            return self.answers(asked);
         };
+        let credential = self.credential(&instance);
         self.jobs = self.jobs.saturating_add(1);
         let latest = Job {
             id: self.jobs,
-            provider,
+            instance: instance.clone(),
             start: start.clone(),
-            signs_in: self.signs_in(&credentials, provider, *own).map(drop),
-            credentials,
+            signs_in: self
+                .signs_in(&instance, credential.as_ref(), *own)
+                .map(drop),
+            credential,
         };
-        let (replies, run) = match self.refreshes.remove(&provider) {
+        let (replies, run) = match self.refreshes.remove(&instance) {
             Some(Refresh::Pending { mut replies, .. }) => {
-                replies.push(reply);
+                replies.extend(asked);
                 (replies, None)
             }
-            Some(Refresh::Failed(_)) | None => {
-                (Vec::from([reply]), Some(Effect::Refresh(latest.clone())))
+            Some(Refresh::Failed(_) | Refresh::Starting { .. }) | None => {
+                (asked, Some(Effect::Refresh(latest.clone())))
             }
         };
         self.refreshes
-            .insert(provider, Refresh::Pending { latest, replies });
+            .insert(instance, Refresh::Pending { latest, replies });
         run.into_iter().collect()
     }
 
-    fn availability(&self, provider: Provider) -> Availability {
-        match self.ready(provider) {
+    fn answer(&self, reply: R) -> Effect<S, R> {
+        Effect::Reply(reply, CommandResult::Instances(self.instances()))
+    }
+
+    /// Each reply gets what the host runs now.
+    fn answers(&self, replies: Vec<R>) -> Vec<Effect<S, R>> {
+        let result = CommandResult::Instances(self.instances());
+        replies
+            .into_iter()
+            .map(|reply| Effect::Reply(reply, result.clone()))
+            .collect()
+    }
+
+    fn credential(&self, instance: &InstanceId) -> Option<Credential> {
+        self.roster
+            .of(instance)
+            .and_then(|known| known.credential.clone())
+    }
+
+    fn availability(&self, instance: &InstanceId) -> Availability {
+        match self.ready(instance) {
             Ok((_, auth)) => Availability::Available {
                 auth,
-                models: self.models(provider),
+                models: self.models(instance),
             },
             Err(reason) => Availability::Unavailable { reason },
         }
     }
 
-    fn models(&self, provider: Provider) -> Models {
-        match self.launchers.get(&provider) {
+    fn models(&self, instance: &InstanceId) -> Models {
+        match self.launchers.get(instance) {
             Some(Launcher::Ready { offer, .. }) => offer.models(),
             Some(Launcher::Unavailable(_)) | None => Models::none(),
         }
     }
 
-    /// How `provider`'s agents start and how it signs in, or why it can't.
-    /// A stored credential comes first, then the CLI's own sign-in. A store
-    /// that doesn't open may hold a credential, so it never falls back to
-    /// the sign-in.
-    fn ready(&self, provider: Provider) -> Result<(S, Auth), String> {
-        match self.refreshes.get(&provider) {
+    /// How `instance`'s agents start and how it signs in, or why it
+    /// can't. A stored credential comes first, then the CLI's own sign-in.
+    /// A store that doesn't open may hold a credential, so it never falls
+    /// back to the sign-in.
+    fn ready(&self, instance: &InstanceId) -> Result<(S, Auth), String> {
+        match self.refreshes.get(instance) {
             None => Ok(()),
             Some(Refresh::Pending { .. }) => Err(String::from(REFRESHING)),
+            Some(Refresh::Starting { .. }) => Err(String::from(STARTING)),
             Some(Refresh::Failed(reason)) => Err(reason.clone()),
         }?;
-        match (self.launcher_of(provider)?, &self.stored) {
+        match (self.launcher_of(instance)?, &self.unreadable) {
             (Launcher::Unavailable(reason), _)
-            | (Launcher::Ready { .. }, Stored::Unreadable(reason)) => {
-                Err(reason.clone())
-            }
-            (
-                Launcher::Ready { start, own, .. },
-                Stored::Opened(credentials),
-            ) => self
-                .signs_in(credentials, provider, *own)
+            | (Launcher::Ready { .. }, Some(reason)) => Err(reason.clone()),
+            (Launcher::Ready { start, own, .. }, None) => self
+                .signs_in(instance, self.credential(instance).as_ref(), *own)
                 .map(|auth| (start.clone(), auth)),
         }
     }
 
-    /// How `provider` signs in with `credentials`, or that it can't.
+    /// How `instance` signs in with `credential`, or that it can't.
     fn signs_in(
         &self,
-        credentials: &Credentials,
-        provider: Provider,
+        instance: &InstanceId,
+        credential: Option<&Credential>,
         own: OwnSignIn,
     ) -> Result<Auth, String> {
-        credentials
-            .of(provider)
-            .zip(self.catalog.of(provider))
-            .map_or_else(
-                || own.auth(),
-                |(credential, info)| Ok(info.auth(credential)),
-            )
+        let info = self
+            .roster
+            .of(instance)
+            .and_then(|known| self.catalog.of(known.provider));
+        credential.zip(info).map_or_else(
+            || own.auth(),
+            |(stored, described)| Ok(described.auth(stored)),
+        )
     }
 
-    fn launcher_of(&self, provider: Provider) -> Result<&Launcher<S>, String> {
+    fn launcher_of(
+        &self,
+        instance: &InstanceId,
+    ) -> Result<&Launcher<S>, String> {
         self.launchers
-            .get(&provider)
-            .ok_or_else(|| format!("this host doesn't run {provider:?}"))
+            .get(instance)
+            .ok_or_else(|| format!("this host has no instance {}", instance.0))
     }
+}
+
+/// `label` as an id: its letters and digits in lower case, each run of
+/// anything else one dash, with none at either end.
+fn slug(label: &str) -> String {
+    let mut slug = String::new();
+    for c in label.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    String::from(slug.trim_end_matches('-'))
 }
 
 /// Why a session's workspace could not be made.
@@ -567,14 +940,19 @@ pub fn unprepared(error: GitError) -> Rejection {
 }
 
 const fn unavailable(reason: String) -> Rejection {
-    Rejection::ProviderUnavailable { reason }
+    Rejection::InstanceUnavailable { reason }
+}
+
+const fn rejected<S, R>(reply: R, rejection: Rejection) -> Effect<S, R> {
+    Effect::Reply(reply, CommandResult::Rejected(rejection))
 }
 
 const fn not_saved<S, R>(reply: R, reason: String) -> Effect<S, R> {
-    Effect::Reply(
-        reply,
-        CommandResult::Rejected(Rejection::CredentialNotSaved { reason }),
-    )
+    rejected(reply, Rejection::CredentialNotSaved { reason })
+}
+
+fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {
+    core::iter::once(Effect::Log(note)).chain(then).collect()
 }
 
 #[cfg(test)]

@@ -14,7 +14,9 @@
 //             approved and one denied.
 //   credentials  The forms the host's catalog describes, and a Claude
 //             gateway entered in its form, shown as configured, and
-//             cleared; <dir> is unused.
+//             cleared; then a second Claude instance added, given a gateway
+//             of its own, and listed in the new-session picker; <dir> is
+//             unused.
 //   questions A Claude question in <dir>/question answered by tapping an
 //             option, and a command in <dir>/for-session allowed for the
 //             session, which then runs again without asking.
@@ -526,6 +528,41 @@ if (scenario === 'turn') {
   await state.filter({ hasText: "The host's own CLI" }).waitFor({ timeout: 10_000 });
   check((await claude.getByRole('status').innerText()) === 'Cleared on conductor.', 'the clear is confirmed');
   check((await page.evaluate(() => document.activeElement?.id)) === 'claude-credential', 'focus moves to the Claude heading');
+
+  // A second instance of Claude, added from the app, has a section and a
+  // credential of its own, and the new-session picker lists it.
+  const add = page.getByRole('form', { name: 'Add instance: Claude Code' });
+  await add.getByLabel('Label').fill('Claude API');
+  await add.getByRole('button', { name: 'Add instance: Claude Code' }).click();
+  const api = page.getByRole('region', { name: 'Claude API', exact: true });
+  await api.waitFor({ timeout: 20_000 });
+  check((await add.getByRole('status').innerText()) === 'Added on conductor.', 'the add is confirmed');
+  check((await api.locator('.credential-provider').innerText()) === 'Claude Code', 'the new instance runs Claude Code');
+  check(
+    (await api.locator('.credential-state').innerText()) === "The host's own CLI, signed in on its own",
+    'the new instance starts on its own CLI'
+  );
+  check(
+    (await api.getByText('conductord login').innerText()) === 'To sign it in on conductor: conductord login claude-api',
+    'the new instance names its id for a sign-in on the host'
+  );
+  await api.getByLabel('Gateway URL').fill(GATEWAY);
+  await api.getByLabel('Token').fill(TOKEN);
+  await api.getByRole('button', { name: 'Save gateway' }).click();
+  await api.locator('.credential-state').filter({ hasText: `Gateway at ${GATEWAY}` }).waitFor({ timeout: 10_000 });
+  check(
+    (await state.innerText()) === "The host's own CLI, signed in on its own",
+    "the new instance's gateway leaves the first Claude instance on its own CLI"
+  );
+  await back();
+  await page.getByRole('button', { name: 'New session' }).click();
+  const agents = (await page.locator('.segment .segment-name').allInnerTexts()).join(', ');
+  check(agents === 'Claude Code, Claude API, Codex', `the new-session picker lists each instance (${agents})`);
+  await page.locator('.segment', { hasText: 'Claude API' }).click();
+  check(
+    await page.locator('.segment', { hasText: 'Claude API' }).locator('input').isChecked(),
+    'the new instance can be picked for a session'
+  );
 } else if (scenario === 'screens') {
   await startSession('Claude Code', `${dir}/notes`);
   await startSession('Claude Code', `${dir}/scratch`);

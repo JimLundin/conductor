@@ -22,9 +22,9 @@ extern crate alloc;
 
 mod credential;
 mod frame;
+mod instance;
 mod ticket;
 
-use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -32,16 +32,16 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 pub use credential::{
-    Catalog, Credential, CredentialForm, Credentials, Field, FieldKind,
-    ProviderInfo,
+    Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
+pub use instance::{Instance, InstanceId, InstanceStatus, Instances, Roster};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/13";
+pub const ALPN: &[u8] = b"conductor/14";
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -135,16 +135,11 @@ pub struct Welcome {
     pub host: String,
     pub epoch: Epoch,
     pub head_seq: HostSeq,
-    pub providers: Providers,
+    pub instances: Instances,
     /// How each provider presents itself and the credentials it takes.
-    /// Unlike `providers` it doesn't change while the host runs.
+    /// Unlike `instances` it doesn't change while the host runs.
     pub catalog: Catalog,
 }
-
-/// Whether the host can run each provider, and how it signs in. A host
-/// lists every provider it knows of.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Providers(pub BTreeMap<Provider, Availability>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Availability {
@@ -152,7 +147,7 @@ pub enum Availability {
         auth: Auth,
         models: Models,
     },
-    /// The host can't run this provider's sessions, for this reason.
+    /// The host can't run this instance's sessions, for this reason.
     Unavailable {
         reason: String,
     },
@@ -234,26 +229,19 @@ impl Models {
     }
 }
 
-/// How the host's CLI for a provider reaches its model. It names the kind
-/// and never carries a secret: credentials are write-only (§6.3).
+/// How an instance's CLI reaches its model. It names the kind and never
+/// carries a secret: credentials are write-only (§6.3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Auth {
     /// A credential the host stores, of this kind, reaching this URL if
     /// its form has one ([`ProviderInfo::auth`]).
     Stored { kind: String, url: Option<String> },
-    /// The CLI's own sign-in in the host's private home (`conductord login`).
+    /// The CLI's own sign-in in the instance's private home
+    /// (`conductord login <instance>`).
     SignedIn,
     /// A CLI the host was started with (`--cli <provider>=<path>`),
     /// which signs in however it does.
     Unmanaged,
-}
-
-impl Providers {
-    /// `None` when the host doesn't know of `provider`.
-    #[must_use]
-    pub fn of(&self, provider: Provider) -> Option<&Availability> {
-        self.0.get(&provider)
-    }
 }
 
 /// Replays every stored event after `after_seq`, then streams live ones,
@@ -339,13 +327,14 @@ pub struct Command {
     pub body: CommandBody,
 }
 
-/// Every command after `StartSession` names the session it acts on.
+/// Every session command after `StartSession` names the session it acts
+/// on, and every instance command the instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandBody {
-    /// `None` takes the provider's default model, or the CLI's default
+    /// `None` takes the instance's default model, or the CLI's default
     /// effort for the model.
     StartSession {
-        provider: Provider,
+        instance: InstanceId,
         directory: HostPath,
         model: Option<ModelId>,
         effort: Option<Effort>,
@@ -375,15 +364,16 @@ pub enum CommandBody {
         request: RequestId,
         answers: Vec<Answer>,
     },
-    /// Stores a provider's credential on the host, replacing any it had.
+    /// Stores an instance's credential on the host, replacing any it had.
     /// The host never sends it back. Like every command it needs a client
     /// admitted by the ticket's token, which device certificates replace
     /// with the fleet (§6.1).
     SetCredential {
+        instance: InstanceId,
         credential: Credential,
     },
     ClearCredential {
-        provider: Provider,
+        instance: InstanceId,
     },
     /// A bounded diff between this checkpoint and its predecessor.
     GetDiff {
@@ -401,6 +391,21 @@ pub enum CommandBody {
     SetEffort {
         session: SessionId,
         effort: Effort,
+    },
+    /// A new instance of `provider`, with no credential. The host names
+    /// it from its label and starts its CLI before it answers.
+    AddInstance {
+        provider: Provider,
+        label: String,
+    },
+    RenameInstance {
+        instance: InstanceId,
+        label: String,
+    },
+    /// Refused while a session runs on the instance. Its closed sessions
+    /// stay, and can't continue.
+    RemoveInstance {
+        instance: InstanceId,
     },
 }
 
@@ -425,9 +430,9 @@ pub enum CommandResult {
     Started {
         session: SessionId,
     },
-    /// The answer to `SetCredential` and `ClearCredential`: what the host
-    /// runs now. Another client learns it from its next `Welcome`.
-    Providers(Providers),
+    /// The answer to every instance command: what the host runs now.
+    /// Another client learns it from its next `Welcome`.
+    Instances(Instances),
     Rejected(Rejection),
     Diff(CheckpointDiff),
 }
@@ -435,7 +440,7 @@ pub enum CommandResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rejection {
     NoSuchDirectory,
-    ProviderUnavailable {
+    InstanceUnavailable {
         reason: String,
     },
     UnknownSession,
@@ -471,6 +476,15 @@ pub enum Rejection {
     WorkspaceFailure {
         reason: String,
     },
+    UnknownInstance,
+    /// The instance can't be removed while sessions run on it.
+    InstanceInUse {
+        sessions: u64,
+    },
+    /// The label won't do, for this reason.
+    InvalidLabel {
+        reason: String,
+    },
 }
 
 impl Rejection {
@@ -481,9 +495,18 @@ impl Rejection {
             Self::NoSuchDirectory => {
                 String::from("no directory at that path on the host")
             }
-            Self::ProviderUnavailable { reason } => {
-                format!("that provider is unavailable: {reason}")
+            Self::InstanceUnavailable { reason } => {
+                format!("that instance is unavailable: {reason}")
             }
+            Self::UnknownInstance => {
+                String::from("the host has no such instance")
+            }
+            Self::InstanceInUse { sessions: 1 } => String::from(
+                "a session is running on it; stop it before removing the instance",
+            ),
+            Self::InstanceInUse { sessions } => format!(
+                "{sessions} sessions are running on it; stop them before removing the instance"
+            ),
             Self::UnknownSession => String::from("no session with that id"),
             Self::SessionClosed => String::from("the session has closed"),
             Self::TurnInProgress => String::from("a turn is already running"),
@@ -493,7 +516,7 @@ impl Rejection {
                 format!("already resolved by {}", by.0)
             }
             Self::CredentialNotSaved { reason } => {
-                format!("the host could not store the credential: {reason}")
+                format!("the host could not store the change: {reason}")
             }
             Self::InvalidCredential { reason } => {
                 format!("the credential is not valid: {reason}")
@@ -510,7 +533,8 @@ impl Rejection {
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }
-            | Self::WorkspaceFailure { reason } => reason.clone(),
+            | Self::WorkspaceFailure { reason }
+            | Self::InvalidLabel { reason } => reason.clone(),
         }
     }
 }
@@ -527,8 +551,10 @@ pub struct Event {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventKind {
     /// `model` and `effort` are what the agent runs with; `None` is the
-    /// CLI's own default.
+    /// CLI's own default. A `Continue` and an undo run on `instance` again;
+    /// `provider` is its provider, which outlives the instance.
     SessionCreated {
+        instance: InstanceId,
         provider: Provider,
         directory: HostPath,
         by: ClientName,

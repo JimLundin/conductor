@@ -4,7 +4,7 @@
 use crate::prelude::*;
 use client::host_view::{HostView, SessionView};
 use client::link::{LinkState, Status, Update, shown_after};
-use proto::{Catalog, CommandResult, Effort, Providers, SessionId, Ticket};
+use proto::{Catalog, CommandResult, Effort, Instances, SessionId, Ticket};
 
 use crate::credentials::{CredentialsPane, Forms};
 use crate::new_session::{Form, NewSessionForm};
@@ -86,7 +86,7 @@ impl Host {
             Intent::Form(change) => {
                 let (form, effects) = self.form.update(
                     change,
-                    providers(self.status.as_ref()),
+                    instances(self.status.as_ref()),
                     self.visit,
                 );
                 (Self { form, ..self }, effects)
@@ -95,7 +95,10 @@ impl Host {
                 let (credentials, effects) = self.credentials.update(
                     change,
                     self.visit,
-                    &catalog(self.status.as_ref()),
+                    (
+                        instances(self.status.as_ref()),
+                        &catalog(self.status.as_ref()),
+                    ),
                 );
                 (
                     Self {
@@ -161,9 +164,9 @@ impl Host {
             ),
             (ReplyTo::Effort(shown), _) => self.effort_refused(shown, answer),
             (ReplyTo::Start, _) => (self.started(answer, current), Vec::new()),
-            (ReplyTo::Credential(provider, done), true) => {
+            (ReplyTo::Instance(subject, done), true) => {
                 let credentials =
-                    self.credentials.replied(provider, done, answer);
+                    self.credentials.replied(subject, done, answer);
                 (
                     Self {
                         credentials,
@@ -182,7 +185,7 @@ impl Host {
                 let pane = self.pane.diffed(checkpoint, request, answer);
                 (Self { pane, ..self }, Vec::new())
             }
-            (ReplyTo::Credential(..) | ReplyTo::Diff { .. }, false) => {
+            (ReplyTo::Instance(..) | ReplyTo::Diff { .. }, false) => {
                 (self, Vec::new())
             }
         }
@@ -249,7 +252,10 @@ impl Host {
             list: sessions::list(
                 &self.view,
                 self.place,
-                &catalog(self.status.as_ref()),
+                (
+                    instances(self.status.as_ref()),
+                    &catalog(self.status.as_ref()),
+                ),
             ),
             detail,
         }
@@ -258,7 +264,7 @@ impl Host {
     /// A session the host no longer reports (after a reset) falls back to
     /// the placeholder, and a phone to the list, its only way out.
     fn detail(&self) -> Detail {
-        let known = providers(self.status.as_ref());
+        let known = instances(self.status.as_ref());
         let catalog = catalog(self.status.as_ref());
         match (self.place, selected(&self.view, self.place)) {
             (Place::NewSession, _) => Detail::NewSession(Box::new(
@@ -278,8 +284,7 @@ impl Host {
                 Detail::Session(Box::new(self.pane.screen(
                     id,
                     session,
-                    known,
-                    &catalog,
+                    (known, &catalog),
                     self.notice.clone(),
                 )))
             }
@@ -293,7 +298,7 @@ impl Host {
         let shown = self.status.clone().unwrap_or_else(|| Status {
             state: LinkState::Disconnected,
             host: None,
-            providers: None,
+            instances: None,
             catalog: Catalog::default(),
             error: None,
         });
@@ -305,8 +310,8 @@ impl Host {
     }
 }
 
-fn providers(status: Option<&Status>) -> Option<&Providers> {
-    status.and_then(|known| known.providers.as_ref())
+fn instances(status: Option<&Status>) -> Option<&Instances> {
+    status.and_then(|known| known.instances.as_ref())
 }
 
 /// How each provider presents itself, once the host has said.
@@ -333,7 +338,7 @@ fn refusal(answer: Result<CommandResult, String>) -> Option<String> {
         Ok(
             CommandResult::Accepted
             | CommandResult::Started { .. }
-            | CommandResult::Providers(_)
+            | CommandResult::Instances(_)
             | CommandResult::Diff(_),
         ) => None,
         Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),

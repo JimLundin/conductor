@@ -7,8 +7,8 @@ use iroh::{Endpoint, RelayMode};
 use net::wire;
 use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
-    AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq, Open,
-    Provider, Providers, Welcome,
+    AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq,
+    InstanceId, InstanceStatus, Instances, Open, Provider, Welcome,
 };
 use tokio::sync::mpsc;
 
@@ -75,8 +75,12 @@ async fn stalled_hello(endpoint: &Endpoint) -> TestResult<()> {
 async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
     let (conn, mut send) = accept_hello(endpoint).await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let unavailable = Availability::Unavailable {
-        reason: String::from("handshake test"),
+    let unavailable = InstanceStatus {
+        label: String::from("Agent"),
+        provider: Provider::Claude,
+        availability: Availability::Unavailable {
+            reason: String::from("handshake test"),
+        },
     };
     wire::write(
         &mut send,
@@ -84,10 +88,8 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
             host: String::from("test-host"),
             epoch: Epoch(11),
             head_seq: HostSeq(0),
-            providers: Providers(
-                Provider::ALL
-                    .map(|provider| (provider, unavailable.clone()))
-                    .into(),
+            instances: Instances(
+                [(InstanceId::named("agent"), unavailable)].into(),
             ),
             catalog: proto::Catalog::default(),
         }),

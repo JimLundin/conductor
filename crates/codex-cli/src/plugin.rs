@@ -14,14 +14,16 @@ pub fn plugin(settings: Settings) -> Plugin {
     }
 }
 
-/// The app-server's own working directory is the data dir; each thread
-/// runs in its session's directory.
+/// Each instance gets a hub of its own, so its own app-server, whose
+/// environment holds the instance's key. The server's working directory
+/// is the instance's work dir; each thread runs in its session's
+/// directory.
 fn launched(launch: Launch) -> Starter {
     starter(Hub::spawn(ServerOptions {
         codex_path: launch.path,
         home: launch.home,
         credential: None,
-        cwd: launch.data_dir,
+        cwd: launch.work,
         stdout_log: None,
     }))
 }

@@ -73,11 +73,11 @@ so one UI and one set of commands work for both agents.
   one is told who decided); questions asked and answered; a turn
   completes, is interrupted or fails; the session's tasks change
   (`TasksChanged`, the whole list); its effort changes (`EffortChanged`).
-- **Model and effort:** `Welcome` lists, for each provider the host can
-  run, the models its CLI offers with the current credential (`Models`:
-  each model's id, name, description and efforts, and the default). The
-  host lists them when it starts and again after each credential change,
-  for both providers.
+- **Model and effort:** `Welcome` lists, for each instance the host can
+  run (§5.2), the models its CLI offers with the instance's current
+  credential (`Models`: each model's id, name, description and efforts,
+  and the default). The host lists them when it starts and again after
+  each credential change, for each instance.
   `StartSession` may name one of them and one of its efforts (`low` to
   `ultra`); a model or an effort the host doesn't list is refused as
   `NotOffered`. With none named, the session gets the default: a Codex provider
@@ -94,8 +94,8 @@ so one UI and one set of commands work for both agents.
   (or, with none named, the default) lists, else `NotOffered`, by the same
   rule as `StartSession`: a model the host doesn't list takes any effort.
   The same effort again is `Accepted` and logs nothing. The host checks it
-  against what the provider offers now, so it needs the provider available
-  (`ProviderUnavailable`). During undo recovery it is refused as
+  against what the session's instance offers now, so it needs the instance
+  available (`InstanceUnavailable`). During undo recovery it is refused as
   `UndoInProgress`, like every order. It is taken while a turn runs and on a closed
   session: `EffortChanged { effort }` is logged at once, and the agent gets
   the effort when the next turn the user sends starts, so a running turn
@@ -198,7 +198,7 @@ client:
 
 | Stream | Purpose |
 |---|---|
-| `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, providers, catalog }`. `catalog` is how each provider presents itself and the credential forms it takes (§6.3). |
+| `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, instances, catalog }`. `instances` is each instance's label, provider and availability; `catalog` is how each provider presents itself and the credential forms it takes (§6.3). |
 | `Open::Command` | One `Command` → one `CommandResult`, then the stream closes. |
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor, then streams live. A cursor from another epoch is refused. |
 
@@ -239,14 +239,16 @@ Every piece of state has one owner task; handles talk to it over channels.
   new subscriber its replay and the live broadcast in one turn, so nothing
   falls between them. A subscriber that falls behind the broadcast is dropped
   and resubscribes from its cursor.
-- **Registry** maps session ids to session handles and starts sessions.
-  Credential saves update its current configuration immediately. Model
-  discovery and Codex reconfiguration run in at most one pending future per
-  provider, polled alongside registry requests. New saves supersede queued
-  work; old results cannot replace current models or failures. Each provider
-  stays unavailable while refreshing, and reports a failure if discovery
-  fails. Per-provider ordering also isolates Claude's shared probe directory
-  and prevents older Codex reconfiguration from running after a newer one.
+- **Registry** maps session ids to session handles and starts sessions,
+  and keeps the host's instances. Credential saves update its current
+  configuration immediately. Model discovery and Codex reconfiguration run
+  in at most one pending future per instance, polled alongside registry
+  requests. New saves supersede queued work; old results cannot replace
+  current models or failures. Each instance stays unavailable while
+  refreshing, and reports a failure if discovery fails. Per-instance
+  ordering also prevents older Codex reconfiguration from running after a
+  newer one. An added instance stays unavailable until its CLI has
+  started, which runs beside registry requests the same way.
 - **Session** owns one agent's runtime (§5.2), its turn and its open
   requests. An interrupt that arrives before the agent began the turn is
   held until it does. An open request is withdrawn when the turn ends. It
@@ -277,17 +279,53 @@ plus one function:
 - `settings: runtime::Settings`: the CLI path and the model the command
   line gave it.
 - `starter: fn(runtime::Launch) -> runtime::Starter`: the provider's
-  runner, started on the CLI that passed its probe, in its private home,
-  with the data dir.
+  runner, started on the CLI that passed its probe, in an instance's
+  private home, with the instance's work dir.
+
+**Instances.** The host doesn't run providers; it runs *instances*, each a
+named, configured use of one provider, such as "Claude (API)" through a
+gateway beside "Claude (subscription)" on its own sign-in. An instance is
+`proto::Instance { label, provider, credential, model, cli }` under a
+stable, host-assigned `InstanceId`: a slug of its label, numbered past any
+id an instance or a session has (`claude-api`, `claude-api-2`), so a
+closed session never continues on another instance. The host keeps them
+as `proto::Roster`, in the credential store (§6.3). A fresh host has one
+instance per plugin, with the provider's name as its id and its label
+(`claude`, `codex`), so it works out of the box. `--cli <provider>=<path>`
+and `--model <provider>=<model>` are the defaults of that provider's
+instances; an instance's own `cli` and `model` come first, though no
+command sets them yet.
+
+Each instance gets its own starter, built from its provider's plugin with
+its own `Launch`: its private home `<data>/home/<instance>` and its work dir
+`<data>/work/<instance>`, where Claude lists its models and Codex's
+app-server runs. So each instance has its own CLI sign-in and config, its
+own agents and credential, and each Codex instance its own app-server
+(below). Whatever is per configured account is keyed by `InstanceId`: the
+registry's launchers, availability, models, refreshes and sessions,
+`Welcome.instances`, `StartSession { instance }`, and `SessionCreated {
+instance, provider }`, so `Continue` and undo run on the session's own
+instance. What the plugin describes stays keyed by `Provider`: the
+catalog's label, note and credential forms. Instance commands change them
+from the app: `AddInstance { provider, label }`, `RenameInstance {
+instance, label }`, `RemoveInstance { instance }`, and `SetCredential {
+instance, credential }` and `ClearCredential { instance }`; each answers
+`CommandResult::Instances`, once a credential change has refreshed the
+instance and once an added instance's CLI has started. A label is
+trimmed, required and unique on the host. `RemoveInstance` is refused with
+`InstanceInUse { sessions }` while a session runs on the instance (created
+or ready, and not closed since): stopping a running agent on someone's
+behalf would lose its turn. The instance's closed sessions stay and can't
+continue, and its home stays, since their transcripts live in it.
 
 The starter's agents start with no credential. The host hands them the
-stored credentials with `Command::Credentials` at start, as it does after
+instance's credential with `Command::Credential` at start, as it does after
 each change, and the `Outcome::Configured` answer names the default model
 the credential implies. So each provider's core reads its own credential
 and decides what it becomes; the daemon only carries the generic values.
-The daemon makes each private home under `<data>/home/<provider>` from the
-profile (§6.2), runs the probes and installs as `host::start` decides, and
-sends the plugins' `ProviderInfo` to clients as `Welcome.catalog`.
+The daemon makes each private home from the profile (§6.2), runs the
+probes and installs as `host::start` decides, and sends the plugins'
+`ProviderInfo` to clients as `Welcome.catalog`.
 `host::session` and the daemon's session actor know no provider, and
 `crates/daemon` depends on no provider crate outside its tests.
 
@@ -314,12 +352,14 @@ sends the plugins' `ProviderInfo` to clients as `Welcome.catalog`.
   parses the command line, builds each provider's plugin with its
   settings and calls into `daemon`. Its flags are generic:
   `conductord host [--cli <provider>=<path>]... [--model
-  <provider>=<model>]...` and `conductord login <provider>`, parsed in
-  `host::start`.
-- The Codex hub, `codex_cli::Hub`, is the one task that owns the host's
-  `codex app-server` and routes each thread's events to its agent's
-  runtime; its decisions are the state machine `codex::hub`. It is
-  internal to the Codex runtime: a session never sees the shared server.
+  <provider>=<model>]...`, parsed in `host::start`, and `conductord login
+  <instance>`.
+- The Codex hub, `codex_cli::Hub`, is the one task that owns a Codex
+  instance's `codex app-server` and routes each thread's events to its
+  agent's runtime; its decisions are the state machine `codex::hub`. Each
+  Codex instance has its own hub, since the key is fixed in its server's
+  environment. It is internal to the Codex runtime: a session never sees
+  the shared server.
 - `install`: what both CLIs share: the pinned installs, each CLI's home and
   process start and stop.
 
@@ -352,7 +392,8 @@ which 2.1.316 gives a 5.x model no checklist tool.
 - The `initialize` response's `claude_code_version` is checked against the
   tested range.
 
-**Codex:** one `codex app-server` per host serves every thread.
+**Codex:** one `codex app-server` per Codex instance serves every thread
+of that instance.
 
 - Newline-delimited JSON-RPC with no `jsonrpc` field; allow very long lines.
   The handshake is `initialize` with `capabilities: {experimentalApi: true}`.
@@ -387,7 +428,10 @@ until someone re-records them by hand (§6.2).
 ### 5.3 Durability, worktrees and checkpoints
 
 - **Store (built):** `<data>/conductor.redb`, with typed redb table constants
-  and postcard values (storage option C). The tables are `events`,
+  and postcard values (storage option C). Its `metadata` records the log
+  format, 2 since `SessionCreated` names its instance; a database of
+  another format doesn't open, and is moved aside to start over. The
+  tables are `events`,
   `command_receipts`, `pending_requests`, `conversations` and `metadata`.
   Sessions, their model choices and resolved requests are reconstructed from
   the event log; the native conversation id has its own table. A cursor is
@@ -411,11 +455,12 @@ until someone re-records them by hand (§6.2).
   crash before the database commit can leave a CLI action sent without a
   receipt. Restart withdraws its requests and interrupts its turn; it does
   not promise exactly-once execution inside a CLI.
-- **Credential receipts:** Set/ClearCredential reserve their command id
-  without holding the global event transaction during provider refresh.
+- **Credential receipts:** the instance commands (Set/ClearCredential,
+  Add, Rename and RemoveInstance) reserve their command id without holding
+  the global event transaction during an instance's refresh or start.
   Other commands and live events can proceed. Duplicate ids wait for the
   original result; superseded saves wait for the newest refresh and return
-  its provider snapshot. The final `Providers` result is committed as the
+  its snapshot. The final `Instances` result is committed as the
   receipt before any reply, after an active ordinary transaction finishes.
   The credential file remains outside redb: a crash after saving it but
   before the final receipt can cause a retry to reapply that change. No
@@ -622,8 +667,13 @@ so Codex is downloaded the same way.
 
 | | Directory | Set by |
 |---|---|---|
-| Claude config, credentials, transcripts | `<data>/home/claude` | `CLAUDE_CONFIG_DIR` |
-| Codex config, `auth.json`, rollouts | `<data>/home/codex` | `CODEX_HOME` |
+| Claude config, credentials, transcripts | `<data>/home/<instance>` | `CLAUDE_CONFIG_DIR` |
+| Codex config, `auth.json`, rollouts | `<data>/home/<instance>` | `CODEX_HOME` |
+
+Each instance (§5.2) has its own home, so each subscription sign-in and
+config is separate. On a fresh host the instances are `claude` and
+`codex`, so their homes are `<data>/home/claude` and `<data>/home/codex`,
+the paths below.
 
 `CLAUDE_CONFIG_DIR` moves "all settings, session history, and plugins",
 `.claude.json` included, and on macOS keys the Keychain entry to the
@@ -665,8 +715,9 @@ false`. Even `--version` runs with the
 private home set, because `codex --version` writes helper binaries into
 `CODEX_HOME/tmp` (observed).
 
-Until the app can sign in (§6.3), `conductord login <provider>` runs the
-sign-in on the host's terminal against the private home: `claude auth login
+Until the app can sign in (§6.3), `conductord login <instance>` runs the
+sign-in on the host's terminal against the instance's private home, its
+provider's: `claude auth login
 --claudeai`, §6.3's per-host mode, which stores its own credential, and
 `codex login --device-auth`. A private home signed in this way counts as
 configured (`Auth::SignedIn`, §6.3). The host checks it once, when it
@@ -707,7 +758,8 @@ plugin describes the kinds it takes in its `ProviderInfo`, which
 each `Field { id, label, kind, placeholder, required }` of kind `Text`,
 `Url` or `Secret`. The app draws each form from that description (`ui`
 builds it, knowing no provider), and a credential travels and is stored as
-`Credential { provider, kind, values }`, its form's values by field id.
+`Credential { kind, values }`, its form's values by field id; the
+instance it belongs to names the provider.
 The host checks it against the form (`ProviderInfo::check`): the kind is
 one the provider takes, every value is a field's, a required field is not
 empty, and a `Url` field is plain `http(s)://host/path`. The provider's
@@ -764,11 +816,12 @@ first one built. The others in the table become more forms.
   command's environment (observed). The app-server reloads
   `config.toml` for each `thread/start` (`thread_processor.rs` in
   [codex-src], verified), but the key is in its environment, which is fixed
-  when it starts. So a change stops the shared app-server, its sessions
+  when it starts. So a change stops the instance's app-server, its sessions
   close with `CloseReason::Stopped { reason: "new Codex credential" }`,
   and the next thread starts a server with the new key.
-- **Protocol:** `SetCredential { credential }` and `ClearCredential {
-  provider }` answer `Providers`, what the host runs now, and the client's
+- **Protocol:** `SetCredential { instance, credential }` and
+  `ClearCredential { instance }` answer `Instances`, what the host runs
+  now, and the client's
   status takes it at once. Another client sees the change at its next
   `Welcome`. Like every command they need a client admitted by the ticket's
   token, which the device certificates of §6.1 replace.
@@ -835,7 +888,8 @@ each host makes its own login and keeps it in that host's `CODEX_HOME`.
 The host runs the CLI's sign-in and the phone does the browser part.
 
 1. In the app, the owner picks *Sign in to Claude* or *Sign in to Codex* on
-   a host. The app sends `StartLogin { provider }`.
+   a host. The app sends `StartLogin { instance }`, and the sign-in runs
+   in that instance's private home.
 2. **Claude, shared token.** The host runs `claude setup-token` with its
    private `CLAUDE_CONFIG_DIR`, on pipes, and reads the URL it prints. The
    app shows *Open Anthropic sign-in*. The owner signs in on Anthropic's
@@ -855,17 +909,28 @@ The host runs the CLI's sign-in and the phone does the browser part.
    "chatgptDeviceCode" }` on its app-server. The app shows the
    `verificationUrl` and the `userCode` with a copy button. The owner opens
    the URL and enters the code, and `account/login/completed` ends the
-   flow. Codex writes `auth.json` in the host's `CODEX_HOME`.
-5. **API keys.** The app has one field per provider. `SetCredential {
-   credential }` goes to the root host, which puts it in the fleet config,
-   so every host gets it.
+   flow. Codex writes `auth.json` in the instance's `CODEX_HOME`, on that
+   instance's own app-server.
+5. **API keys.** The app has a form per kind of credential on each
+   instance. `SetCredential { instance, credential }` goes to the root
+   host, which puts it in the fleet config, so every host gets it.
+
+Whether the app can start a sign-in today: not trivially. Each step above
+needs a live-only exchange the protocol doesn't have yet: `StartLogin`
+must answer with a URL or a device code, and Claude's flow then needs
+`SubmitLoginCode` written to a CLI process the host holds open between two
+commands, with the code kept out of the log and the receipts (the
+credential ledger stores every result). The pieces the instances add are
+in place: the sign-in runs in the instance's home and on its app-server,
+and the host's sign-in check would have to run again after it, since it
+runs only when an instance's CLI starts.
 
 The login URL, the user code and the pasted code are live-only messages.
 They are not events in the log, are never written to the store, and appear
 in no trace output. The Claude token goes from the host that minted it to
 the root host on `conductor-fleet` and never reaches the browser.
 
-`Welcome.providers` says whether the host can run each provider and how it
+`Welcome.instances` says whether the host can run each instance and how it
 signs in: `Availability::Available { auth }`, built with `Stored`,
 `SignedIn` and `Unmanaged`, where an API key or a subscription token is
 one more stored kind, or `Unavailable { reason }`. The sidebar shows a host that needs a sign-in,
@@ -901,21 +966,23 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   platform; the platform keystores are follow-up work. A new key is
   written whole and then linked to its name, so two first starts agree on
   one key.
-- The credentials are one value, `proto::Credentials`, one optional
-  `Credential` per provider, in `<data>/credentials`: a format byte (3,
-  since credentials are form values; an older store reads as one that
-  doesn't open), a fresh
+- The credentials are one value, `proto::Roster`, the host's instances
+  each with its optional `Credential`, in `<data>/credentials`: a format
+  byte (4, since the store holds instances; an older store reads as one
+  that doesn't open), a fresh
   24-byte nonce and the postcard sealed with the format and the file's
   purpose as associated data. A save writes and syncs a new file and
   renames it over the old one, then syncs the directory (Unix). It is the
-  `credentials` field of the fleet config (§6.5), so sharing it is a copy.
+  `instances` field of the fleet config (§6.5), so sharing it is a copy.
 - A store that doesn't open (corrupt, or sealed under a lost key) leaves
-  the host running with both providers `Unavailable` for that reason,
+  the host running with its default instances `Unavailable` for that
+  reason,
   since it may hold a credential that would come before a sign-in.
   `SetCredential` is refused then, so nothing overwrites it. A
-  `ClearCredential` for either provider moves it to
-  `<data>/credentials.unreadable` and starts an empty store, which is the
-  recovery from the phone. Only a `store.key` that can't be read stops the
+  `ClearCredential` for any of them moves it to
+  `<data>/credentials.unreadable` and starts a store of the default
+  instances, which is the recovery from the phone. Adding, renaming and
+  removing an instance are refused too until then. Only a `store.key` that can't be read stops the
   host.
 - A Claude gateway token is kept from Claude's commands only where
   Claude's sandbox runs, which on Linux and WSL2 is the optional
@@ -978,7 +1045,7 @@ FleetConfig {
     revoked: Vec<NodeId>,         // devices and hosts
     pins: Pins,                   // §6.2
     settings: FleetSettings,      // default models, effort, permission modes
-    credentials: Credentials,     // API keys, Claude token; sent only to hosts
+    instances: Roster,            // with their API keys and Claude token; sent only to hosts
 }
 SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root key
 ```

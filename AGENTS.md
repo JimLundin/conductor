@@ -49,9 +49,19 @@ Home Screen. The design is in
   (`proto::Credential`); each provider's core reads its own. Only the
   binary, `crates/conductord`, wires the providers in. Its flags are
   `conductord host --cli <provider>=<path> --model <provider>=<model>`
-  (each repeatable) and `conductord login <provider>`; build it with
-  `cargo build -p conductord`. Keep provider-specific code out of
-  `daemon`, `host`, `proto`, `client`, `ui` and `app`.
+  (each repeatable, the defaults of that provider's instances) and
+  `conductord login <instance>`; build it with `cargo build -p
+  conductord`. Keep provider-specific code out of `daemon`, `host`,
+  `proto`, `client`, `ui` and `app`.
+- **Instances.** A host runs instances, not providers: each a named,
+  configured use of a provider with its own `InstanceId`, credential,
+  private home (`<data>/home/<instance>`), work dir (`<data>/work/<instance>`)
+  and agents, kept in the store as `proto::Roster`. Whatever is per
+  configured account is keyed by `InstanceId` (the registry, `Welcome`,
+  `StartSession`, `SessionCreated`, the store); only what the plugin itself
+  describes (`Catalog`: label, note, credential forms) is keyed by
+  `Provider`. A fresh host gets one instance per provider, with the
+  provider's name as its id.
 - **Commits.** End each commit message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Open no pull
   requests on anyone's repository.

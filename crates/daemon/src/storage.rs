@@ -32,11 +32,18 @@ impl Storage {
         let _ = write.open_table(REQUESTS)?;
         {
             let mut meta = write.open_table(META)?;
-            let stored = meta.get("epoch")?.map(|value| value.value());
-            if stored.is_some() {
-            } else {
-                let encoded = encode(&crate::random_epoch()?)?;
-                let _ = meta.insert("epoch", &encoded)?;
+            let created = meta.get("epoch")?.is_none();
+            let format = meta
+                .get("format")?
+                .map(|value| decode::<u32>(&value.value()))
+                .transpose()?;
+            let fresh = host::log::opens(created, format)
+                .map_err(anyhow::Error::msg)
+                .with_context(|| path.display().to_string())?;
+            if fresh {
+                let _ =
+                    meta.insert("epoch", &encode(&crate::random_epoch()?)?)?;
+                let _ = meta.insert("format", &encode(&host::log::FORMAT)?)?;
             }
         }
         write.commit()?;

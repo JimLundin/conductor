@@ -117,10 +117,10 @@ impl Conductor {
         let started = Instant::now();
         let peer = conn.remote_id();
         let connection = conn.stable_id();
-        let providers = self.registry.providers().await?;
-        tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome providers ready");
+        let instances = self.registry.instances().await?;
+        tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome instances ready");
         let welcome =
-            self.log.welcome(providers, self.registry.catalog()).await?;
+            self.log.welcome(instances, self.registry.catalog()).await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome log ready");
         Ok(welcome)
     }
@@ -201,16 +201,13 @@ impl Conductor {
                 self.relaunch(session, relaunch).await
             }
             Route::Start {
-                provider,
+                instance,
                 directory,
                 choice,
                 by,
-            } => self.registry.start(provider, directory, choice, by).await,
-            Route::SetCredential(credential) => {
-                self.registry.set_credential(credential).await
-            }
-            Route::ClearCredential(provider) => {
-                self.registry.clear_credential(provider).await
+            } => self.registry.start(instance, directory, choice, by).await,
+            Route::Configure(configure) => {
+                self.registry.configure(configure).await
             }
         }
     }

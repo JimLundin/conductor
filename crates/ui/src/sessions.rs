@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use client::host_view::{Attention, HostView, SessionView, UndoState};
-use proto::{Catalog, HostPath, SessionId};
+use proto::{Catalog, HostPath, Instances, SessionId};
 
 use crate::Place;
 
@@ -34,14 +34,18 @@ pub struct SessionRow {
     pub badge: String,
 }
 
-pub fn list(view: &HostView, place: Place, catalog: &Catalog) -> SessionList {
+pub fn list(
+    view: &HostView,
+    place: Place,
+    known: (Option<&Instances>, &Catalog),
+) -> SessionList {
     let rows = view
         .recent()
         .into_iter()
         .filter_map(|id| {
             view.sessions
                 .get(&id)
-                .map(|session| row(id, session, place, catalog))
+                .map(|session| row(id, session, place, known))
         })
         .collect::<Vec<SessionRow>>();
     SessionList {
@@ -59,7 +63,7 @@ fn row(
     id: SessionId,
     session: &SessionView,
     place: Place,
-    catalog: &Catalog,
+    known: (Option<&Instances>, &Catalog),
 ) -> SessionRow {
     let (status, text, badge) = match (&session.undo, session.attention()) {
         (UndoState::Undoing(_), _) => (
@@ -92,13 +96,28 @@ fn row(
         status,
         current: place == Place::Session(id),
         title: short(&session.directory).to_owned(),
-        sub: format!("{}, {text}", catalog.label(session.provider)),
+        sub: format!("{}, {text}", agent(session, known)),
         branch: session
             .workspace
             .as_ref()
             .map(|workspace| workspace.branch.clone()),
         badge,
     }
+}
+
+/// What the app calls the session's agent: its instance's label, or its
+/// provider's once the host no longer has the instance.
+pub fn agent(
+    session: &SessionView,
+    known: (Option<&Instances>, &Catalog),
+) -> String {
+    let (instances, catalog) = known;
+    instances
+        .and_then(|listed| listed.of(&session.instance))
+        .map_or_else(
+            || catalog.label(session.provider),
+            |status| status.label.clone(),
+        )
 }
 
 /// The last segment of a host path, which names the project. The host's OS

@@ -3,7 +3,7 @@
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use agents::{HomeKind, Profile};
+use agents::{Config, HomeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Home {
@@ -15,20 +15,21 @@ pub enum Home {
 }
 
 impl Home {
-    /// The host's private home for the CLI `profile` describes, at
-    /// `<data_dir>/home/<provider>` (§6.2), created with the profile's
-    /// config on first run only, since the CLI edits its own config too.
+    /// The private home of the instance `instance`, at
+    /// `<data_dir>/home/<instance>` (§6.2), created with its provider's
+    /// `config` on first run only, since the CLI edits its own config too.
     ///
     /// # Errors
     ///
     /// Fails if the directory or the config can't be created.
     pub fn private(
         data_dir: &Path,
-        profile: &Profile,
+        instance: &str,
+        config: &Config,
     ) -> std::io::Result<Self> {
-        let dir = data_dir.join("home").join(profile.provider.name());
+        let dir = data_dir.join("home").join(instance);
         std::fs::create_dir_all(&dir)?;
-        write_once(&dir.join(&profile.config.file), &profile.config.contents)?;
+        write_once(&dir.join(&config.file), &config.contents)?;
         Ok(Self::Private(dir))
     }
 
@@ -62,18 +63,26 @@ mod tests {
         let dir = std::env::temp_dir()
             .join(format!("conductor-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let profile = claude::profile();
-        let home = Home::private(&dir, &profile)?;
-        let settings = dir.join("home/claude/settings.json");
+        let config = claude::profile().config;
+        let home = Home::private(&dir, "work", &config)?;
+        let settings = dir.join("home/work/settings.json");
         let written = std::fs::read_to_string(&settings)?;
         std::fs::write(&settings, "{}")?;
-        let again = Home::private(&dir, &profile)?;
+        let again = Home::private(&dir, "work", &config)?;
+        let other = Home::private(&dir, "personal", &config)?;
         assert_eq!(
-            (home, again, written, std::fs::read_to_string(&settings)?),
             (
-                Home::Private(dir.join("home/claude")),
-                Home::Private(dir.join("home/claude")),
-                profile.config.contents,
+                home,
+                again,
+                other,
+                written,
+                std::fs::read_to_string(&settings)?
+            ),
+            (
+                Home::Private(dir.join("home/work")),
+                Home::Private(dir.join("home/work")),
+                Home::Private(dir.join("home/personal")),
+                config.contents,
                 String::from("{}")
             )
         );

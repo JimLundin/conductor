@@ -148,8 +148,8 @@ impl Runtime {
                 Vec::from([Effect::Open(open(start))])
             }
             (Command::Models, _) => Vec::from([Effect::Models]),
-            (Command::Credentials(credentials), _) => {
-                let codex = credential(&credentials);
+            (Command::Credential(given), _) => {
+                let codex = credential(given.as_ref());
                 self.configuring = codex.as_ref().map(default_model);
                 Vec::from([Effect::Credential(codex)])
             }
@@ -285,8 +285,8 @@ mod tests {
     use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClientName, CloseReason, Credential, Credentials, Decision as Chosen,
-        Effort, HistoryAnchor, HostPath, ModelId, Provider, SessionId,
+        ClientName, CloseReason, Credential, Decision as Chosen, Effort,
+        HistoryAnchor, HostPath, ModelId, Provider, SessionId,
     };
     use serde_json::json;
 
@@ -528,8 +528,7 @@ mod tests {
             key: text("secret"),
             model: text("gw-model"),
         };
-        let credentials = Credentials::none().set(Credential {
-            provider: Provider::Codex,
+        let stored = Credential {
             kind: text("provider"),
             values: [
                 ("name", "gateway"),
@@ -539,15 +538,15 @@ mod tests {
             ]
             .map(|(id, value)| (text(id), text(value)))
             .into(),
-        });
+        };
         let mut runtime = Runtime::new();
         assert_eq!(
             walk(
                 &mut runtime,
                 Vec::from([
-                    Input::Command(Command::Credentials(credentials)),
+                    Input::Command(Command::Credential(Some(stored))),
                     Input::Configured(Ok(())),
-                    Input::Command(Command::Credentials(Credentials::none())),
+                    Input::Command(Command::Credential(None)),
                     Input::Configured(Ok(())),
                 ]),
             ),

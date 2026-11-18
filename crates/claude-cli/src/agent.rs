@@ -1,9 +1,9 @@
 //! Claude's runtime: one task per session's agent runs the
 //! [`claude::runtime`] machine on a [`Runtime`]'s far end, starting the CLI
-//! and making the calls it decides on. The agents of one [`starter`] share
-//! the credential the latest [`Command::Credentials`] set.
+//! and making the calls it decides on. The agents of one [`starter`], one
+//! instance's, share the credential the latest [`Command::Credential`] set.
 //!
-//! [`Command::Credentials`]: agents::runtime::Command::Credentials
+//! [`Command::Credential`]: agents::runtime::Command::Credential
 
 use std::convert::Infallible;
 use std::future::pending;

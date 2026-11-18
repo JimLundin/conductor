@@ -1,62 +1,106 @@
-//! The host's credentials: what each provider signs in with, a form for
-//! each kind of credential its plugin describes, and a button to clear the
-//! stored one. A secret only passes through: its field is cleared once it
-//! is sent, and nothing keeps it (§6.3).
+//! The host's instances and their credentials: what each instance signs in
+//! with, a form for each kind of credential its provider's plugin
+//! describes, a button to clear the stored one, its label to rename it, a
+//! button to remove it, and a form per provider to add another instance of
+//! it. A secret only passes through: its field is cleared once it is sent,
+//! and nothing keeps it (§6.3).
 
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
 use proto::{
     Auth, Availability, Catalog, CommandBody, CommandResult, Credential,
-    CredentialForm, Field, FieldKind, Provider, ProviderInfo, Providers,
+    CredentialForm, Field, FieldKind, InstanceId, InstanceStatus, Instances,
+    Provider, ProviderInfo,
 };
 
 use crate::new_session::{Hint, alert};
 use crate::{Effect, Focus, Reply, ReplyTo};
 
+/// The id of the heading of the forms that add instances, where the focus
+/// goes once a removed instance's section has gone.
+pub const ADD_HEADING: &str = "add-instance";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialIntent {
-    /// `text` is typed into the field `field` of `provider`'s form of
+    /// `text` is typed into the field `field` of `instance`'s form of
     /// `kind`.
     Type {
-        provider: Provider,
+        instance: InstanceId,
         kind: String,
         field: String,
         text: String,
     },
     Save {
-        provider: Provider,
+        instance: InstanceId,
         kind: String,
     },
-    Clear(Provider),
+    Clear(InstanceId),
+    /// The label typed for an instance's new name.
+    TypeLabel(InstanceId, String),
+    Rename(InstanceId),
+    Remove(InstanceId),
+    /// The label typed for a new instance of a provider.
+    TypeNewLabel(Provider, String),
+    Add(Provider),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialsPane {
     pub subtitle: String,
-    pub providers: Vec<ProviderCredentials>,
+    pub instances: Vec<InstanceCredentials>,
+    /// A form per provider the host's plugins describe.
+    pub add: Vec<AddForm>,
+    /// What came of the last removal, whose section has gone.
+    pub removed: Option<Hint>,
 }
 
-/// One provider: what it signs in with now, and a form for each kind of
-/// credential it takes.
+/// One instance: what it signs in with now, a form for each kind of
+/// credential its provider takes, and its label and removal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderCredentials {
-    pub provider: Provider,
-    /// The heading's id, which labels the provider's section and takes
+pub struct InstanceCredentials {
+    pub instance: InstanceId,
+    /// The heading's id, which labels the instance's section and takes
     /// the focus when the clear button goes.
     pub heading: String,
     pub name: String,
-    /// What the provider signs in with now.
+    /// Its provider, as the provider's plugin calls it.
+    pub provider: String,
+    /// What the instance signs in with now.
     pub state: String,
+    /// How to sign its CLI in on the host's terminal.
+    pub login: String,
     pub clear: Option<ClearButton>,
+    pub rename: RenameForm,
+    pub remove: ClearButton,
     pub forms: Vec<KindForm>,
+    pub outcome: Option<Hint>,
+}
+
+/// The instance's label, and the button that renames it to the typed one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameForm {
+    pub value: String,
+    /// The field's accessible label.
+    pub label: String,
+    pub disabled: bool,
+}
+
+/// A label for another instance of `provider`, and the button that adds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddForm {
+    pub provider: Provider,
+    pub value: String,
+    pub placeholder: String,
+    pub button: String,
+    pub disabled: bool,
     pub outcome: Option<Hint>,
 }
 
 /// The form of one kind of credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KindForm {
-    pub provider: Provider,
+    pub instance: InstanceId,
     pub kind: String,
     pub label: String,
     pub fields: Vec<FieldView>,
@@ -72,7 +116,7 @@ pub struct ClearButton {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldView {
-    pub provider: Provider,
+    pub instance: InstanceId,
     pub kind: String,
     pub field: String,
     pub label: String,
@@ -85,7 +129,15 @@ pub struct FieldView {
     pub value: String,
 }
 
-/// What came of the last thing a provider's forms sent.
+/// What an instance command is about: an instance, or a new instance of a
+/// provider.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Subject {
+    Instance(InstanceId),
+    Add(Provider),
+}
+
+/// What came of the last thing a subject's forms sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
     Sending,
@@ -93,18 +145,23 @@ enum Sent {
     Failed(String),
 }
 
-/// What a credential command did once the host took it.
+/// What an instance command did once the host took it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Done {
     Stored,
     Cleared,
+    Renamed,
+    Removed,
+    Added,
 }
 
-/// What each form's fields hold, and what each provider's forms sent last.
+/// What each form's fields hold, and what each subject's forms sent last.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Forms {
-    drafts: BTreeMap<(Provider, String), BTreeMap<String, String>>,
-    sent: BTreeMap<Provider, Sent>,
+    drafts: BTreeMap<(InstanceId, String), BTreeMap<String, String>>,
+    labels: BTreeMap<InstanceId, String>,
+    new_labels: BTreeMap<Provider, String>,
+    sent: BTreeMap<Subject, Sent>,
 }
 
 impl Forms {
@@ -112,67 +169,135 @@ impl Forms {
         mut self,
         intent: CredentialIntent,
         visit: u64,
-        catalog: &Catalog,
+        known: (Option<&Instances>, &Catalog),
     ) -> (Self, Vec<Effect>) {
+        let (instances, catalog) = known;
         match intent {
             CredentialIntent::Type {
-                provider,
+                instance,
                 kind,
                 field,
                 text,
             } => {
                 self.drafts
-                    .entry((provider, kind))
+                    .entry((instance, kind))
                     .or_default()
                     .insert(field, text);
                 (self, Vec::new())
             }
-            CredentialIntent::Save { provider, kind } => {
-                let described = catalog
-                    .of(provider)
+            CredentialIntent::Save { instance, kind } => {
+                let described = instances
+                    .and_then(|known| known.of(&instance))
+                    .and_then(|status| catalog.of(status.provider))
                     .and_then(|info| info.form(&kind))
                     .cloned();
                 match described {
-                    Some(form) => self.save(provider, &form, visit),
+                    Some(form) => self.save(instance, &form, visit),
                     None => (self, Vec::new()),
                 }
             }
-            CredentialIntent::Clear(provider) => {
-                self.sent.insert(provider, Sent::Sending);
-                (
-                    self,
-                    Vec::from([
-                        Effect::Send {
-                            body: CommandBody::ClearCredential { provider },
-                            reply: Reply {
-                                visit,
-                                to: ReplyTo::Credential(
-                                    provider,
-                                    Done::Cleared,
-                                ),
-                            },
-                        },
-                        // The button goes once the clear lands, so focus
-                        // goes to the heading instead of the page.
-                        Effect::Focus(Focus::Element(heading(provider))),
-                    ]),
-                )
+            CredentialIntent::Clear(instance) => {
+                let focus = Focus::Element(heading(&instance));
+                let body = CommandBody::ClearCredential {
+                    instance: instance.clone(),
+                };
+                let mut effects = self.send(
+                    Subject::Instance(instance),
+                    Done::Cleared,
+                    body,
+                    visit,
+                );
+                // The button goes once the clear lands, so focus goes to
+                // the heading instead of the page.
+                effects.push(Effect::Focus(focus));
+                (self, effects)
+            }
+            CredentialIntent::TypeLabel(instance, text) => {
+                self.labels.insert(instance, text);
+                (self, Vec::new())
+            }
+            CredentialIntent::Rename(instance) => {
+                let label = self
+                    .labels
+                    .get(&instance)
+                    .map_or_else(String::new, |typed| {
+                        String::from(typed.trim())
+                    });
+                let body = CommandBody::RenameInstance {
+                    instance: instance.clone(),
+                    label,
+                };
+                let effects = self.send(
+                    Subject::Instance(instance),
+                    Done::Renamed,
+                    body,
+                    visit,
+                );
+                (self, effects)
+            }
+            CredentialIntent::Remove(instance) => {
+                let body = CommandBody::RemoveInstance {
+                    instance: instance.clone(),
+                };
+                let mut effects = self.send(
+                    Subject::Instance(instance),
+                    Done::Removed,
+                    body,
+                    visit,
+                );
+                effects.push(Effect::Focus(Focus::Element(String::from(
+                    ADD_HEADING,
+                ))));
+                (self, effects)
+            }
+            CredentialIntent::TypeNewLabel(provider, text) => {
+                self.new_labels.insert(provider, text);
+                (self, Vec::new())
+            }
+            CredentialIntent::Add(provider) => {
+                let label = self
+                    .new_labels
+                    .get(&provider)
+                    .map_or_else(String::new, |typed| {
+                        String::from(typed.trim())
+                    });
+                let body = CommandBody::AddInstance { provider, label };
+                let effects =
+                    self.send(Subject::Add(provider), Done::Added, body, visit);
+                (self, effects)
             }
         }
+    }
+
+    /// Sends `body` for `subject`, which shows it is sending until the
+    /// answer.
+    fn send(
+        &mut self,
+        subject: Subject,
+        done: Done,
+        body: CommandBody,
+        visit: u64,
+    ) -> Vec<Effect> {
+        self.sent.insert(subject.clone(), Sent::Sending);
+        Vec::from([Effect::Send {
+            body,
+            reply: Reply {
+                visit,
+                to: ReplyTo::Instance(subject, done),
+            },
+        }])
     }
 
     /// Sends the form's values, the text ones trimmed, and empties its
     /// secrets.
     fn save(
         mut self,
-        provider: Provider,
+        instance: InstanceId,
         form: &CredentialForm,
         visit: u64,
     ) -> (Self, Vec<Effect>) {
-        let draft = self
-            .drafts
-            .remove(&(provider, form.kind.clone()))
-            .unwrap_or_default();
+        let key = (instance.clone(), form.kind.clone());
+        let draft = self.drafts.remove(&key).unwrap_or_default();
         let values = form
             .fields
             .iter()
@@ -182,33 +307,30 @@ impl Forms {
             .into_iter()
             .filter(|(id, _)| !secret(form, id))
             .collect::<BTreeMap<String, String>>();
-        self.drafts.insert((provider, form.kind.clone()), kept);
-        self.sent.insert(provider, Sent::Sending);
+        self.drafts.insert(key, kept);
         let credential = Credential {
-            provider,
             kind: form.kind.clone(),
             values,
         };
-        (
-            self,
-            Vec::from([Effect::Send {
-                body: CommandBody::SetCredential { credential },
-                reply: Reply {
-                    visit,
-                    to: ReplyTo::Credential(provider, Done::Stored),
-                },
-            }]),
-        )
+        let body = CommandBody::SetCredential {
+            instance: instance.clone(),
+            credential,
+        };
+        let effects =
+            self.send(Subject::Instance(instance), Done::Stored, body, visit);
+        (self, effects)
     }
 
+    /// The host's answer to what `subject`'s forms sent. A rename or an add
+    /// that took empties its field.
     pub fn replied(
         mut self,
-        provider: Provider,
+        subject: Subject,
         done: Done,
         answer: Result<CommandResult, String>,
     ) -> Self {
         let sent = match answer {
-            Ok(CommandResult::Providers(_)) => Sent::Done(done),
+            Ok(CommandResult::Instances(_)) => Sent::Done(done),
             Ok(CommandResult::Rejected(rejection)) => {
                 Sent::Failed(rejection.label())
             }
@@ -221,75 +343,147 @@ impl Forms {
             )),
             Err(error) => Sent::Failed(error),
         };
-        self.sent.insert(provider, sent);
+        match (&subject, &sent) {
+            (Subject::Instance(instance), Sent::Done(Done::Renamed)) => {
+                self.labels.remove(instance);
+            }
+            (Subject::Add(provider), Sent::Done(Done::Added)) => {
+                self.new_labels.remove(provider);
+            }
+            _ => {}
+        }
+        self.sent.insert(subject, sent);
         self
     }
 
-    /// A section for each provider the host's plugins describe.
+    /// A section for each instance the host has, and a form for adding
+    /// one of each provider its plugins describe.
     pub fn screen(
         &self,
         host: &str,
-        providers: Option<&Providers>,
+        instances: Option<&Instances>,
         catalog: &Catalog,
     ) -> CredentialsPane {
-        CredentialsPane {
-            subtitle: format!("How {host} reaches each agent's model."),
-            providers: catalog
+        let listed = instances.map_or_else(Vec::new, |known| {
+            known
                 .0
                 .iter()
-                .map(|(&provider, info)| {
-                    self.provider(
-                        provider,
-                        info,
-                        providers.and_then(|known| known.of(provider)),
-                        host,
-                    )
-                })
+                .map(|(id, status)| self.instance(id, status, catalog, host))
+                .collect()
+        });
+        CredentialsPane {
+            subtitle: format!(
+                "How {host} reaches each agent's model. Each instance has its own credential and its own sign-in."
+            ),
+            instances: listed,
+            add: catalog
+                .0
+                .iter()
+                .map(|(&provider, info)| self.add_form(provider, info, host))
                 .collect(),
+            removed: self.removed(instances, host),
         }
     }
 
-    fn provider(
+    fn instance(
         &self,
-        provider: Provider,
-        info: &ProviderInfo,
-        availability: Option<&Availability>,
+        instance: &InstanceId,
+        status: &InstanceStatus,
+        catalog: &Catalog,
         host: &str,
-    ) -> ProviderCredentials {
-        let sent = self.sent.get(&provider);
-        ProviderCredentials {
-            provider,
-            heading: heading(provider),
-            name: info.label.clone(),
-            state: describe(info, availability),
-            clear: stored(availability).then(|| ClearButton {
-                label: format!("Clear the {} credential", info.label),
-                disabled: sent == Some(&Sent::Sending),
+    ) -> InstanceCredentials {
+        let sent = self.sent.get(&Subject::Instance(instance.clone()));
+        let sending = sent == Some(&Sent::Sending);
+        let info = catalog.of(status.provider);
+        let typed = self.labels.get(instance);
+        let value = typed.cloned().unwrap_or_else(|| status.label.clone());
+        let renamed = value.trim();
+        InstanceCredentials {
+            instance: instance.clone(),
+            heading: heading(instance),
+            name: status.label.clone(),
+            provider: catalog.label(status.provider),
+            state: describe(info, &status.availability),
+            login: format!(
+                "To sign it in on {host}: conductord login {}",
+                instance.0
+            ),
+            clear: stored(&status.availability).then(|| ClearButton {
+                label: format!("Clear the {} credential", status.label),
+                disabled: sending,
             }),
-            forms: info
-                .credentials
-                .iter()
-                .map(|form| self.form(provider, form))
-                .collect(),
+            rename: RenameForm {
+                label: format!("Label of {}", status.label),
+                disabled: sending
+                    || renamed.is_empty()
+                    || renamed == status.label,
+                value,
+            },
+            remove: ClearButton {
+                label: format!("Remove {}", status.label),
+                disabled: sending,
+            },
+            forms: info.map_or_else(Vec::new, |described| {
+                described
+                    .credentials
+                    .iter()
+                    .map(|form| self.form(instance, form))
+                    .collect()
+            }),
             outcome: sent.and_then(|last| outcome(last, host)),
         }
     }
 
-    fn form(&self, provider: Provider, form: &CredentialForm) -> KindForm {
+    fn add_form(
+        &self,
+        provider: Provider,
+        info: &ProviderInfo,
+        host: &str,
+    ) -> AddForm {
+        let sent = self.sent.get(&Subject::Add(provider));
+        let value = self.new_labels.get(&provider).cloned().unwrap_or_default();
+        AddForm {
+            provider,
+            placeholder: format!("{} (API)", info.label),
+            button: format!("Add instance: {}", info.label),
+            disabled: value.trim().is_empty() || sent == Some(&Sent::Sending),
+            value,
+            outcome: sent.and_then(|last| outcome(last, host)),
+        }
+    }
+
+    /// Says a removal took once its instance has gone from the list.
+    fn removed(
+        &self,
+        instances: Option<&Instances>,
+        host: &str,
+    ) -> Option<Hint> {
+        self.sent
+            .iter()
+            .any(|(subject, sent)| match (subject, sent) {
+                (Subject::Instance(id), Sent::Done(Done::Removed)) => {
+                    instances.is_some_and(|known| known.of(id).is_none())
+                }
+                _ => false,
+            })
+            .then(|| status(format!("Removed from {host}.")))
+    }
+
+    fn form(&self, instance: &InstanceId, form: &CredentialForm) -> KindForm {
         let empty = BTreeMap::new();
         let draft = self
             .drafts
-            .get(&(provider, form.kind.clone()))
+            .get(&(instance.clone(), form.kind.clone()))
             .unwrap_or(&empty);
         KindForm {
-            provider,
+            instance: instance.clone(),
             kind: form.kind.clone(),
             label: form.label.clone(),
             fields: form
                 .fields
                 .iter()
                 .map(|field| FieldView {
-                    provider,
+                    instance: instance.clone(),
                     kind: form.kind.clone(),
                     field: field.id.clone(),
                     label: field.label.clone(),
@@ -337,68 +531,75 @@ const fn autocomplete(kind: FieldKind) -> &'static str {
     }
 }
 
-fn heading(provider: Provider) -> String {
-    format!("{}-credential", provider.name())
+fn heading(instance: &InstanceId) -> String {
+    format!("{}-credential", instance.0)
 }
 
-/// Whether the host stores a credential for the provider, which a person
+/// Whether the host stores a credential for the instance, which a person
 /// may clear.
-const fn stored(availability: Option<&Availability>) -> bool {
+const fn stored(availability: &Availability) -> bool {
     matches!(
         availability,
-        Some(Availability::Available {
+        Availability::Available {
             auth: Auth::Stored { .. },
             ..
-        })
+        }
     )
 }
 
+const fn status(text: String) -> Hint {
+    Hint {
+        class: "hint muted",
+        role: Some("status"),
+        text,
+    }
+}
+
 fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
-    let status = |text| {
-        Some(Hint {
-            class: "hint muted",
-            role: Some("status"),
-            text,
-        })
-    };
     match sent {
-        Sent::Sending => status(String::from("Sending…")),
-        Sent::Done(Done::Stored) => status(format!(
+        Sent::Sending => Some(status(String::from("Sending…"))),
+        Sent::Done(Done::Stored) => Some(status(format!(
             "Sent to {host} over the encrypted link. This app doesn't keep it; your browser may offer to save it."
-        )),
-        Sent::Done(Done::Cleared) => status(format!("Cleared on {host}.")),
+        ))),
+        Sent::Done(Done::Cleared) => {
+            Some(status(format!("Cleared on {host}.")))
+        }
+        Sent::Done(Done::Renamed) => {
+            Some(status(format!("Renamed on {host}.")))
+        }
+        Sent::Done(Done::Added) => Some(status(format!("Added on {host}."))),
+        Sent::Done(Done::Removed) => None,
         Sent::Failed(error) => Some(alert(error.clone())),
     }
 }
 
-/// What a provider signs in with, in words. Never more than a stored
+/// What an instance signs in with, in words. Never more than a stored
 /// credential's kind and URL.
 fn describe(
-    info: &ProviderInfo,
-    availability: Option<&Availability>,
+    info: Option<&ProviderInfo>,
+    availability: &Availability,
 ) -> String {
     match availability {
-        Some(Availability::Available {
+        Availability::Available {
             auth: Auth::Stored { kind, url },
             ..
-        }) => {
+        } => {
             let label = info
-                .form(kind)
+                .and_then(|known| known.form(kind))
                 .map_or_else(|| kind.clone(), |form| form.label.clone());
             url.as_ref()
                 .map_or_else(|| label.clone(), |at| format!("{label} at {at}"))
         }
-        Some(Availability::Available {
+        Availability::Available {
             auth: Auth::SignedIn,
             ..
-        }) => String::from("Signed in on the host"),
-        Some(Availability::Available {
+        } => String::from("Signed in on the host"),
+        Availability::Available {
             auth: Auth::Unmanaged,
             ..
-        }) => String::from("The host's own CLI, signed in on its own"),
-        Some(Availability::Unavailable { reason }) => {
+        } => String::from("The host's own CLI, signed in on its own"),
+        Availability::Unavailable { reason } => {
             format!("Not available: {reason}")
         }
-        None => String::from("Waiting for the host"),
     }
 }

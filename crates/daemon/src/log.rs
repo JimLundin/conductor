@@ -14,7 +14,7 @@ use std::path::Path;
 use host::log::{Begun, Effect, Kind, Log as Core, Ticket};
 use proto::{
     Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
-    Providers, SessionId, Subscribe, Welcome,
+    Instances, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -110,7 +110,7 @@ enum LogMsg {
         reply: oneshot::Sender<()>,
     },
     Welcome {
-        providers: Providers,
+        instances: Instances,
         catalog: Catalog,
         reply: oneshot::Sender<Welcome>,
     },
@@ -277,18 +277,18 @@ impl Log {
     }
 
     /// The log's head as of now, for a client the registry says can run
-    /// `providers`.
+    /// `instances`.
     ///
     /// # Errors
     ///
     /// Fails if the log has stopped.
     pub async fn welcome(
         &self,
-        providers: Providers,
+        instances: Instances,
         catalog: Catalog,
     ) -> Result<Welcome, Stopped> {
         self.ask(|reply| LogMsg::Welcome {
-            providers,
+            instances,
             catalog,
             reply,
         })
@@ -400,11 +400,11 @@ impl LogActor {
                 let _ = reply.send(event);
             }
             LogMsg::Welcome {
-                providers,
+                instances,
                 catalog,
                 reply,
             } => {
-                let _ = reply.send(self.core.welcome(providers, catalog));
+                let _ = reply.send(self.core.welcome(instances, catalog));
             }
             LogMsg::Subscribe { after, reply } => {
                 let _ = reply.send(Subscription {
@@ -496,8 +496,8 @@ impl LogActor {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Auth, Availability, Catalog, Epoch, EventKind, HostSeq, Models,
-        Provider, Providers, SessionId, Welcome,
+        Auth, Availability, Catalog, Epoch, EventKind, HostSeq, InstanceId,
+        InstanceStatus, Instances, Models, Provider, SessionId, Welcome,
     };
 
     use super::Log;
@@ -514,8 +514,8 @@ mod tests {
         }
     }
 
-    fn providers() -> Providers {
-        Providers(
+    fn instances() -> Instances {
+        Instances(
             Provider::ALL
                 .into_iter()
                 .zip([
@@ -527,6 +527,16 @@ mod tests {
                         reason: String::from("not in this test"),
                     },
                 ])
+                .map(|(provider, availability)| {
+                    (
+                        InstanceId::named(provider.name()),
+                        InstanceStatus {
+                            label: String::from(provider.name()),
+                            provider,
+                            availability,
+                        },
+                    )
+                })
                 .collect(),
         )
     }
@@ -547,12 +557,12 @@ mod tests {
         .await?;
         log.append(SessionId(1), message("a")).await?;
         assert_eq!(
-            log.welcome(providers(), Catalog::default()).await?,
+            log.welcome(instances(), Catalog::default()).await?,
             Welcome {
                 host: String::from("test"),
                 epoch: Epoch(5),
                 head_seq: HostSeq(2),
-                providers: providers(),
+                instances: instances(),
                 catalog: Catalog::default(),
             }
         );

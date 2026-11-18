@@ -6,7 +6,7 @@ use proto::{
     Rejection,
 };
 
-/// What the form says under the chosen provider.
+/// What the form says under the chosen instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderNote {
     Nothing,
@@ -36,8 +36,8 @@ pub fn note(
     }
 }
 
-/// What the host offers for a provider. Nothing until it has said, or
-/// when it can't run the provider.
+/// What the host offers for an instance. Nothing until it has said, or
+/// when it can't run the instance.
 #[must_use]
 pub fn models(availability: Option<&Availability>) -> Models {
     match availability {
@@ -94,7 +94,7 @@ pub enum Attempt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     Directory,
-    Provider(String),
+    Instance(String),
     Other(String),
 }
 
@@ -106,15 +106,15 @@ impl Attempt {
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
-                | CommandResult::Providers(_)
+                | CommandResult::Instances(_)
                 | CommandResult::Diff(_),
             ) => Self::Editing,
             Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
                 Self::Refused(Refusal::Directory)
             }
-            Ok(CommandResult::Rejected(Rejection::ProviderUnavailable {
+            Ok(CommandResult::Rejected(Rejection::InstanceUnavailable {
                 reason,
-            })) => Self::Refused(Refusal::Provider(reason)),
+            })) => Self::Refused(Refusal::Instance(reason)),
             Ok(CommandResult::Rejected(rejection)) => {
                 Self::Refused(Refusal::Other(rejection.label()))
             }
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(
             [
                 Rejection::NoSuchDirectory,
-                Rejection::ProviderUnavailable {
+                Rejection::InstanceUnavailable {
                     reason: String::from("no codex"),
                 },
                 Rejection::TurnInProgress,
@@ -229,7 +229,7 @@ mod tests {
             ))),
             [
                 Attempt::Refused(Refusal::Directory),
-                Attempt::Refused(Refusal::Provider(String::from("no codex"))),
+                Attempt::Refused(Refusal::Instance(String::from("no codex"))),
                 Attempt::Refused(Refusal::Other(String::from(
                     "a turn is already running"
                 ))),

@@ -8,7 +8,8 @@ use install::Home;
 
 use crate::Starter;
 
-/// What the host's command line sets for one provider.
+/// What the host's command line sets for one provider: the defaults of
+/// each of its instances.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
     /// A CLI to run instead of the pinned one, for tests and development.
@@ -18,16 +19,16 @@ pub struct Settings {
     pub model: Option<String>,
 }
 
-/// Where a provider's agents run.
+/// Where one instance's agents run.
 ///
-/// The data dir is where a provider keeps what its CLI needs beside the
-/// home. The agents start with no credential; the host hands them the
-/// stored ones with `Command::Credentials`, as it does each change.
+/// The work dir is the instance's own, beside its home, for what its CLI
+/// needs there. The agents start with no credential; the host hands them
+/// the instance's with `Command::Credential`, as it does each change.
 #[derive(Debug, Clone)]
 pub struct Launch {
     pub path: PathBuf,
     pub home: Home,
-    pub data_dir: PathBuf,
+    pub work: PathBuf,
 }
 
 /// The profile and settings are data; the starter is the provider's

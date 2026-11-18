@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use daemon::start::{Hosting, Plugins};
-use proto::Provider;
+use proto::{InstanceId, Provider};
 use runtime::Settings;
 
 #[derive(Parser)]
@@ -21,8 +21,8 @@ struct Args {
 enum Cmd {
     /// Serve this host's sessions over iroh and print a join ticket.
     Host(HostArgs),
-    /// Sign a provider's CLI in on this terminal, into the host's private
-    /// home for it: `claude auth login --claudeai` for a Claude
+    /// Sign an instance's CLI in on this terminal, into the instance's
+    /// private home: `claude auth login --claudeai` for a Claude
     /// subscription, `codex login --device-auth` for `ChatGPT` by device
     /// code. Until the app can sign in (docs/roadmap.md).
     Login(LoginArgs),
@@ -30,9 +30,9 @@ enum Cmd {
 
 #[derive(Parser)]
 struct LoginArgs {
-    /// The provider to sign in: `claude` or `codex`.
-    #[arg(value_parser = host::start::provider)]
-    provider: Provider,
+    /// The instance to sign in, by its id: on a fresh host `claude` or
+    /// `codex`, and otherwise as the app's credentials screen shows it.
+    instance: String,
     /// The host's data dir, as given to `conductord host`.
     #[arg(long)]
     data_dir: Option<PathBuf>,
@@ -50,13 +50,13 @@ struct HostArgs {
     #[arg(long, default_value = "http://localhost:8080/conductor/")]
     web_url: String,
     /// A provider's CLI to run instead of the pinned one the host installs,
-    /// for tests and development, such as `codex=/opt/codex`. A host where
-    /// it doesn't run offers none of that provider's sessions. Give it once
-    /// for each provider.
+    /// for tests and development, such as `codex=/opt/codex`: the default
+    /// of each of its instances. An instance where it doesn't run offers no
+    /// sessions. Give it once for each provider.
     #[arg(long = "cli", value_name = "PROVIDER=PATH", value_parser = host::start::setting)]
     clis: Vec<(Provider, String)>,
-    /// The model a provider's sessions get when they name none, such as
-    /// `claude=haiku`. Defaults to the CLI's.
+    /// The model the sessions of a provider's instances get when they name
+    /// none, such as `claude=haiku`. Defaults to the CLI's.
     #[arg(long = "model", value_name = "PROVIDER=MODEL", value_parser = host::start::setting)]
     models: Vec<(Provider, String)>,
 }
@@ -83,7 +83,8 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Login(args) => {
             let plugins = plugins(Vec::new(), Vec::new());
-            daemon::start::login(args.data_dir, plugins, args.provider).await
+            let instance = InstanceId(args.instance);
+            daemon::start::login(args.data_dir, plugins, instance).await
         }
     }
 }

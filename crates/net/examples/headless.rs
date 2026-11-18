@@ -23,8 +23,8 @@ use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     Answer, Auth, Availability, Change, CheckpointId, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Event, EventKind,
-    HostPath, HostSeq, Provider, Question, RequestId, SessionId, Ticket,
-    TurnOutcome,
+    HostPath, HostSeq, InstanceId, Provider, Question, RequestId, SessionId,
+    Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -308,12 +308,16 @@ impl Session {
         Ok(Flow::Next)
     }
 
+    /// A fresh host's instance of the provider, named after it.
+    fn instance(&self) -> InstanceId {
+        InstanceId::named(self.provider.name())
+    }
+
     /// Logs only the kind the host now reports, never a value.
     async fn register(&self) -> anyhow::Result<()> {
         let credential = match (self.register, self.provider) {
             (Register::Keep, _) => None,
             (Register::Env, Provider::Claude) => Some(credential(
-                Provider::Claude,
                 "gateway",
                 [
                     ("base_url", var("ANTHROPIC_BASE_URL")?),
@@ -321,7 +325,6 @@ impl Session {
                 ],
             )),
             (Register::Env, Provider::Codex) => Some(credential(
-                Provider::Codex,
                 "provider",
                 [
                     ("name", var("CONDUCTOR_CODEX_NAME")?),
@@ -336,11 +339,14 @@ impl Session {
             Some(chosen) => {
                 let result = self
                     .link
-                    .send(CommandBody::SetCredential { credential: chosen })
+                    .send(CommandBody::SetCredential {
+                        instance: self.instance(),
+                        credential: chosen,
+                    })
                     .await?;
                 let kind = match &result {
-                    CommandResult::Providers(providers) => {
-                        match providers.of(self.provider) {
+                    CommandResult::Instances(instances) => {
+                        match instances.availability(&self.instance()) {
                             Some(Availability::Available {
                                 auth: Auth::Stored { .. },
                                 ..
@@ -373,7 +379,7 @@ impl Session {
         let result = self
             .link
             .send(CommandBody::StartSession {
-                provider: self.provider,
+                instance: self.instance(),
                 directory: self.directory.clone(),
                 model: None,
                 effort: None,
@@ -383,7 +389,7 @@ impl Session {
         match result {
             CommandResult::Started { session } => Ok(session),
             CommandResult::Accepted
-            | CommandResult::Providers(_)
+            | CommandResult::Instances(_)
             | CommandResult::Rejected(_)
             | CommandResult::Diff(_) => Err(anyhow::Error::msg(format!(
                 "the host did not start a session: {result:?}"
@@ -829,12 +835,10 @@ mod tests {
 
 /// A credential of `kind`, with the values of its form's fields by id.
 fn credential<const N: usize>(
-    provider: Provider,
     kind: &str,
     values: [(&str, String); N],
 ) -> Credential {
     Credential {
-        provider,
         kind: String::from(kind),
         values: values
             .into_iter()

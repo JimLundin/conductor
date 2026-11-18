@@ -7,8 +7,9 @@
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
 # CLI continued and the Thinking disclosure (continue), a checklist shown as the
-# session's tasks and the effort changed between turns (tasks, WebKit), and the
-# screenshots of the
+# session's tasks and the effort changed between turns (tasks, WebKit), the
+# credentials forms and a second Claude instance added from the app
+# (credentials, WebKit), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
 # and docs/p1/screens/phone-light-tasks.png. Every scenario runs even after
@@ -67,9 +68,9 @@ start_host() {
   local name=$1
   shift
   # The host lists Claude's models from the CLI's initialize answer, which
-  # the fake plays in the data dir's probe directory.
-  mkdir -p "$scratch/$name/probe"
-  head -2 "$recordings/claude-killed.jsonl" >"$scratch/$name/probe/stdout.jsonl"
+  # the fake plays in the default Claude instance's work dir.
+  mkdir -p "$scratch/$name/work/claude"
+  head -2 "$recordings/claude-killed.jsonl" >"$scratch/$name/work/claude/stdout.jsonl"
   "$target"/debug/conductord host --data-dir "$scratch/$name" \
     --web-url "http://localhost:$port/conductor/" \
     --cli claude="$claude" --cli codex="${codex:-$scratch/no-codex}" "$@" \
@@ -127,7 +128,9 @@ turn_chromium() { turn_in chromium; }
 turn_webkit() { turn_in webkit; }
 
 codex_scenario() {
-  session "$scratch/codex" codex-two-threads-listed.jsonl
+  # The app-server plays its recording in the Codex instance's work dir.
+  mkdir -p "$scratch/codex/work/codex"
+  cp "$recordings/codex-two-threads-listed.jsonl" "$scratch/codex/work/codex/stdout.jsonl"
   repo "$scratch/codex/first"
   repo "$scratch/codex/second"
   codex=$PWD/crates/codex-cli/tests/fake-codex.sh start_host codex
@@ -192,6 +195,10 @@ tasks() {
 }
 
 credentials() {
+  # The Claude instance the scenario adds lists its models in its own work
+  # dir.
+  mkdir -p "$scratch/credentials/work/claude-api"
+  head -2 "$recordings/claude-killed.jsonl" >"$scratch/credentials/work/claude-api/stdout.jsonl"
   start_host credentials
   echo
   echo "## Credentials, webkit"
@@ -200,7 +207,9 @@ credentials() {
   echo "## Credentials, host log"
   host_log credentials
   echo
-  expect credentials 2 'stored a credential change' 'the gateway was stored, then cleared'
+  expect credentials 3 'stored a credential change' "the gateway was stored and cleared, then the added instance's stored"
+  expect credentials 1 'added an instance instance="claude-api"' 'a second Claude instance was added'
+  expect credentials 1 'instance{id=claude-api}: host: ready' 'the added instance started its CLI'
   expect credentials 0 'conductor-test-browser-token' 'the token is in no log line'
 }
 

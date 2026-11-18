@@ -1,6 +1,8 @@
-//! The host's credentials: what each provider signs in with, a form for
-//! each kind of credential its plugin describes, and a button to clear the
-//! stored one. The forms are drawn from the host's description of them.
+//! The host's instances and their credentials: what each instance signs in
+//! with, a form for each kind of credential its provider's plugin
+//! describes, a button to clear the stored one, its label, a button to
+//! remove it, and a form per provider to add another instance. The forms
+//! are drawn from the host's description of them.
 
 #![expect(
     clippy::disallowed_types,
@@ -16,7 +18,7 @@
 )]
 
 use dioxus::prelude::*;
-use ui::{CredentialIntent, Intent};
+use ui::{ADD_HEADING, CredentialIntent, Intent};
 
 use crate::sessions::Hint;
 use crate::{PaneHeader, Shell};
@@ -27,42 +29,126 @@ pub fn CredentialsPane(pane: ui::CredentialsPane) -> Element {
         section { class: "pane new-pane",
             PaneHeader { title: "Credentials", subtitle: "{pane.subtitle}" }
             div { class: "new-session",
-                for provider in pane.providers {
-                    ProviderCredentials { key: "{provider.heading}", provider }
+                for instance in pane.instances {
+                    InstanceCredentials { key: "{instance.heading}", instance }
+                }
+                section { class: "credential", "aria-labelledby": ADD_HEADING,
+                    h3 { id: ADD_HEADING, tabindex: "-1", "Add an instance" }
+                    if let Some(hint) = pane.removed {
+                        Hint { hint }
+                    }
+                    for form in pane.add {
+                        AddForm { key: "{form.button}", form }
+                    }
                 }
             }
         }
     }
 }
 
-/// The provider's heading, what it signs in with now, a button to clear a
-/// stored credential, and a form for each kind it takes.
+/// The instance's heading, what it signs in with now, its label, buttons
+/// to clear a stored credential and to remove it, and a form for each kind
+/// of credential it takes.
 #[component]
-fn ProviderCredentials(provider: ui::ProviderCredentials) -> Element {
+fn InstanceCredentials(instance: ui::InstanceCredentials) -> Element {
     let shell = use_context::<Shell>();
-    let which = provider.provider;
+    let clear = instance.instance.clone();
+    let remove = instance.instance.clone();
     rsx! {
-        section { class: "credential", "aria-labelledby": "{provider.heading}",
+        section { class: "credential", "aria-labelledby": "{instance.heading}",
             div { class: "credential-head",
                 div {
-                    h3 { id: "{provider.heading}", tabindex: "-1", "{provider.name}" }
-                    p { class: "credential-state", "{provider.state}" }
+                    h3 { id: "{instance.heading}", tabindex: "-1", "{instance.name}" }
+                    p { class: "credential-provider", "{instance.provider}" }
+                    p { class: "credential-state", "{instance.state}" }
                 }
-                if let Some(clear) = provider.clear {
+                if let Some(button) = instance.clear {
                     button {
                         r#type: "button",
                         class: "clear",
-                        "aria-label": "{clear.label}",
-                        disabled: clear.disabled,
-                        onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::Clear(which))),
+                        "aria-label": "{button.label}",
+                        disabled: button.disabled,
+                        onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::Clear(clear.clone()))),
                         "Clear"
                     }
                 }
+                button {
+                    r#type: "button",
+                    class: "clear remove",
+                    "aria-label": "{instance.remove.label}",
+                    disabled: instance.remove.disabled,
+                    onclick: move |_| shell.dispatch(Intent::Credential(CredentialIntent::Remove(remove.clone()))),
+                    "Remove"
+                }
             }
-            for form in provider.forms {
+            Rename { instance: instance.instance.clone(), form: instance.rename }
+            for form in instance.forms {
                 KindForm { key: "{form.kind}", form }
             }
-            if let Some(hint) = provider.outcome {
+            p { class: "hint muted", "{instance.login}" }
+            if let Some(hint) = instance.outcome {
+                Hint { hint }
+            }
+        }
+    }
+}
+
+#[component]
+fn Rename(instance: proto::InstanceId, form: ui::RenameForm) -> Element {
+    let shell = use_context::<Shell>();
+    let typed = instance.clone();
+    rsx! {
+        form {
+            class: "credential-kind rename",
+            "aria-label": "{form.label}",
+            onsubmit: move |event: FormEvent| {
+                event.prevent_default();
+                shell.dispatch(Intent::Credential(CredentialIntent::Rename(instance.clone())));
+            },
+            label { class: "field",
+                span { class: "field-label", "Label" }
+                input {
+                    r#type: "text",
+                    autocomplete: "off",
+                    value: "{form.value}",
+                    oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::TypeLabel(
+                        typed.clone(),
+                        event.value(),
+                    ))),
+                }
+            }
+            button { r#type: "submit", class: "start", disabled: form.disabled, "Rename" }
+        }
+    }
+}
+
+#[component]
+fn AddForm(form: ui::AddForm) -> Element {
+    let shell = use_context::<Shell>();
+    let provider = form.provider;
+    rsx! {
+        form {
+            class: "credential-kind add",
+            "aria-label": "{form.button}",
+            onsubmit: move |event: FormEvent| {
+                event.prevent_default();
+                shell.dispatch(Intent::Credential(CredentialIntent::Add(provider)));
+            },
+            label { class: "field",
+                span { class: "field-label", "Label" }
+                input {
+                    r#type: "text",
+                    autocomplete: "off",
+                    placeholder: "{form.placeholder}",
+                    value: "{form.value}",
+                    oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::TypeNewLabel(
+                        provider,
+                        event.value(),
+                    ))),
+                }
+            }
+            button { r#type: "submit", class: "start", disabled: form.disabled, "{form.button}" }
+            if let Some(hint) = form.outcome {
                 Hint { hint }
             }
         }
@@ -72,7 +158,7 @@ fn ProviderCredentials(provider: ui::ProviderCredentials) -> Element {
 #[component]
 fn KindForm(form: ui::KindForm) -> Element {
     let shell = use_context::<Shell>();
-    let provider = form.provider;
+    let instance = form.instance.clone();
     let kind = form.kind.clone();
     rsx! {
         form {
@@ -81,7 +167,7 @@ fn KindForm(form: ui::KindForm) -> Element {
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
                 shell.dispatch(Intent::Credential(CredentialIntent::Save {
-                    provider,
+                    instance: instance.clone(),
                     kind: kind.clone(),
                 }));
             },
@@ -96,7 +182,7 @@ fn KindForm(form: ui::KindForm) -> Element {
 #[component]
 fn Field(field: ui::FieldView) -> Element {
     let shell = use_context::<Shell>();
-    let provider = field.provider;
+    let instance = field.instance.clone();
     let kind = field.kind.clone();
     let id = field.field.clone();
     rsx! {
@@ -111,7 +197,7 @@ fn Field(field: ui::FieldView) -> Element {
                 spellcheck: "false",
                 value: "{field.value}",
                 oninput: move |event| shell.dispatch(Intent::Credential(CredentialIntent::Type {
-                    provider,
+                    instance: instance.clone(),
                     kind: kind.clone(),
                     field: id.clone(),
                     text: event.value(),

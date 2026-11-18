@@ -153,8 +153,8 @@ impl Runtime {
         match (command, self.running) {
             (Command::Start(start), _) => self.start(start),
             (Command::Models, _) => Vec::from([Effect::Probe]),
-            (Command::Credentials(credentials), _) => {
-                let claude = credential(&credentials);
+            (Command::Credential(given), _) => {
+                let claude = credential(given.as_ref());
                 let note = unprotected(claude.as_ref(), self.sandbox);
                 core::iter::once(Effect::Credential(claude))
                     .chain(note.map(Effect::Log))
@@ -379,8 +379,8 @@ mod tests {
     use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
     use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClientName, CloseReason, Credential, Credentials, Decision, Effort,
-        HistoryAnchor, HostPath, ModelId, Provider, SessionId as Session,
+        ClientName, CloseReason, Credential, Decision, Effort, HistoryAnchor,
+        HostPath, ModelId, Provider, SessionId as Session,
     };
     use serde_json::json;
 
@@ -692,8 +692,7 @@ mod tests {
             base_url: text("https://gateway.example"),
             token: text("secret"),
         };
-        let credentials = Credentials::none().set(Credential {
-            provider: Provider::Claude,
+        let stored = Credential {
             kind: text("gateway"),
             values: [
                 ("base_url", "https://gateway.example"),
@@ -701,10 +700,10 @@ mod tests {
             ]
             .map(|(id, value)| (text(id), text(value)))
             .into(),
-        });
+        };
         let mut runtime = Runtime::new(Sandbox::Missing);
         let seen =
-            runtime.step(Input::Command(Command::Credentials(credentials)));
+            runtime.step(Input::Command(Command::Credential(Some(stored))));
         assert_eq!(
             seen,
             Vec::from([

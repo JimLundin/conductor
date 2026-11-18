@@ -91,20 +91,20 @@ pub fn NewSession(form: ui::NewSessionForm) -> Element {
                 fieldset { class: "providers",
                     legend { "Agent" }
                     div { class: "segments",
-                        for choice in form.providers {
+                        for choice in form.instances {
                             label { class: "segment", "data-available": choice.state,
                                 input {
                                     r#type: "radio",
-                                    name: "provider",
+                                    name: "instance",
                                     checked: choice.checked,
-                                    onchange: move |_| change(FormIntent::PickProvider(choice.provider)),
+                                    onchange: move |_| change(choice.pick.clone()),
                                 }
                                 span { class: "segment-name", "{choice.label}" }
                                 span { class: "segment-state", "{choice.state}" }
                             }
                         }
                     }
-                    if let Some(hint) = form.provider_hint {
+                    if let Some(hint) = form.instance_hint {
                         Hint { hint }
                     }
                 }

@@ -23,18 +23,18 @@ mod tests;
 use crate::prelude::*;
 use client::link::Update;
 use proto::{
-    CheckpointId, CommandBody, CommandResult, Effort, Provider, SessionId,
-    Ticket, TicketError,
+    CheckpointId, CommandBody, CommandResult, Effort, SessionId, Ticket,
+    TicketError,
 };
 
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
 pub use credentials::{
-    ClearButton, CredentialIntent, CredentialsPane, FieldView, KindForm,
-    ProviderCredentials,
+    ADD_HEADING, AddForm, ClearButton, CredentialIntent, CredentialsPane,
+    FieldView, InstanceCredentials, KindForm, RenameForm,
 };
 pub use host::{Detail, HostScreen, StatusLine};
 pub use new_session::{
-    Choice, FormIntent, Hint, NewSessionForm, ProviderChoice, Suggestion,
+    Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,
 };
 pub use session::{
     Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
@@ -47,7 +47,7 @@ pub use transcript::{
     ToolLine,
 };
 
-use credentials::Done;
+use credentials::{Done, Subject};
 use host::Host;
 
 /// Where the app opens: a host it knows, or the pairing form.
@@ -171,7 +171,7 @@ enum ReplyTo {
     /// A refused effort change puts the picker back on this effort.
     Effort(Option<Effort>),
     Start,
-    Credential(Provider, Done),
+    Instance(Subject, Done),
     Diff {
         checkpoint: CheckpointId,
         request: u64,

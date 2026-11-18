@@ -6,13 +6,14 @@ use proto::{
     CheckpointFile, CheckpointId, ClientName, CloseReason, CommandBody,
     CommandResult, Credential, CredentialForm, Decision, DiffExtent, Effort,
     Event, EventKind, Field, FieldKind, FilePatch, HistoryAnchor, HostPath,
-    HostSeq, ModelChoice, ModelId, Models, Provider, ProviderInfo, Providers,
-    Question, QuestionOption, Rejection, RequestId, Resolution, Selection,
-    SessionId, Ticket, TicketError, ToolCallId, ToolKind, ToolOutcome,
-    ToolPhase, TurnOutcome, UndoAvailability,
+    HostSeq, InstanceId, InstanceStatus, Instances, ModelChoice, ModelId,
+    Models, Provider, ProviderInfo, Question, QuestionOption, Rejection,
+    RequestId, Resolution, Selection, SessionId, Ticket, TicketError,
+    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    UndoAvailability,
 };
 
-use crate::credentials::Done;
+use crate::credentials::{Done, Subject};
 use crate::{
     Action, Ask, CredentialIntent, Detail, Diff, DiffFile, DiffPanel, Effect,
     EffortControl, Focus, Footer, FormIntent, Hint, HostScreen, Intent,
@@ -119,6 +120,7 @@ fn event(seq: u64, kind: EventKind) -> Intent {
 
 fn created() -> EventKind {
     EventKind::SessionCreated {
+        instance: id("claude"),
         provider: Provider::Claude,
         directory: HostPath(text("/home/me/conductor")),
         by: ClientName(text("desk")),
@@ -134,18 +136,38 @@ fn said(words: &str) -> EventKind {
     }
 }
 
-fn status(providers: Providers) -> Intent {
+fn status(instances: Instances) -> Intent {
     Intent::Link(Update::Status(Status {
         state: LinkState::Live,
         host: Some(text("desk")),
-        providers: Some(providers),
+        instances: Some(instances),
         catalog: catalog(),
         error: None,
     }))
 }
 
-fn claude(availability: Availability) -> Providers {
-    Providers(BTreeMap::from([(Provider::Claude, availability)]))
+fn id(name: &str) -> InstanceId {
+    InstanceId::named(name)
+}
+
+fn instance(
+    label: &str,
+    provider: Provider,
+    availability: Availability,
+) -> InstanceStatus {
+    InstanceStatus {
+        label: text(label),
+        provider,
+        availability,
+    }
+}
+
+/// A host with only its default Claude instance.
+fn claude(availability: Availability) -> Instances {
+    Instances(BTreeMap::from([(
+        id("claude"),
+        instance("Claude Code", Provider::Claude, availability),
+    )]))
 }
 
 /// A session that is ready, shown in the detail pane.
@@ -880,22 +902,29 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
 
 #[test]
 fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
-    let providers = Providers(BTreeMap::from([
-        (Provider::Claude, signed_in()),
+    let instances = Instances(BTreeMap::from([
         (
-            Provider::Codex,
-            Availability::Unavailable {
-                reason: text("no codex"),
-            },
+            id("claude"),
+            instance("Claude Code", Provider::Claude, signed_in()),
+        ),
+        (
+            id("codex"),
+            instance(
+                "Codex",
+                Provider::Codex,
+                Availability::Unavailable {
+                    reason: text("no codex"),
+                },
+            ),
         ),
     ]));
     let (empty, _) = run(
         paired(),
-        Vec::from([status(providers), Intent::Show(Place::NewSession)]),
+        Vec::from([status(instances), Intent::Show(Place::NewSession)]),
     );
     let (codex, _) = run(
         empty.clone(),
-        Vec::from([Intent::Form(FormIntent::PickProvider(Provider::Codex))]),
+        Vec::from([Intent::Form(FormIntent::PickInstance(id("codex")))]),
     );
     let (starting, started) = run(
         empty.clone(),
@@ -925,7 +954,7 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
                 shown.efforts.len(),
                 shown.suggestions
             )),
-            form(&codex).and_then(|shown| shown.provider_hint),
+            form(&codex).and_then(|shown| shown.instance_hint),
             button(&starting),
             sent(&started),
             form(&refused)
@@ -950,7 +979,7 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
             }),
             Some((true, "Starting…")),
             Vec::from([CommandBody::StartSession {
-                provider: Provider::Claude,
+                instance: id("claude"),
                 directory: HostPath(text("/src/x")),
                 model: Some(ModelId(text("opus"))),
                 effort: Some(Effort::High),
@@ -976,15 +1005,15 @@ type Shown = (String, Option<bool>, bool, Option<String>, Vec<String>);
 fn credentials(state: &State) -> Vec<Shown> {
     screen(state).map_or_else(Vec::new, |host| match host.detail {
         Detail::Credentials(pane) => pane
-            .providers
+            .instances
             .into_iter()
-            .map(|provider| {
+            .map(|shown| {
                 (
-                    provider.state,
-                    provider.clear.map(|clear| clear.disabled),
-                    provider.forms.iter().any(|form| form.save_disabled),
-                    provider.outcome.map(|hint| hint.text),
-                    provider
+                    shown.state,
+                    shown.clear.map(|clear| clear.disabled),
+                    shown.forms.iter().any(|form| form.save_disabled),
+                    shown.outcome.map(|hint| hint.text),
+                    shown
                         .forms
                         .into_iter()
                         .flat_map(|form| form.fields)
@@ -1010,7 +1039,7 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
     };
     let fill = |field: &str, value: &str| {
         Intent::Credential(CredentialIntent::Type {
-            provider: Provider::Claude,
+            instance: id("claude"),
             kind: text("gateway"),
             field: text(field),
             text: text(value),
@@ -1028,24 +1057,24 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
     let (saving, saved) = run(
         filled.clone(),
         Vec::from([Intent::Credential(CredentialIntent::Save {
-            provider: Provider::Claude,
+            instance: id("claude"),
             kind: text("gateway"),
         })]),
     );
     let (stored, _) = run(
         saving.clone(),
         Vec::from([Intent::Replied(
-            reply(ReplyTo::Credential(Provider::Claude, Done::Stored)),
-            Ok(CommandResult::Providers(Providers(BTreeMap::new()))),
+            reply(ReplyTo::Instance(
+                Subject::Instance(id("claude")),
+                Done::Stored,
+            )),
+            Ok(CommandResult::Instances(Instances::default())),
         )]),
     );
     let (_, cleared) = run(
         stored.clone(),
-        Vec::from([Intent::Credential(CredentialIntent::Clear(
-            Provider::Claude,
-        ))]),
+        Vec::from([Intent::Credential(CredentialIntent::Clear(id("claude")))]),
     );
-    let blank = core::iter::repeat_n(String::new(), 4).collect::<Vec<String>>();
     assert_eq!(
         (
             credentials(&filled).first().map(|form| form.2),
@@ -1056,19 +1085,16 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
         ),
         (
             Some(false),
-            Vec::from([
-                (
-                    text("Gateway at https://gw.example"),
-                    Some(true),
-                    true,
-                    Some(text("Sending…")),
-                    Vec::from([text(" https://gw.example "), String::new()]),
-                ),
-                (text("Waiting for the host"), None, true, None, blank),
-            ]),
+            Vec::from([(
+                text("Gateway at https://gw.example"),
+                Some(true),
+                true,
+                Some(text("Sending…")),
+                Vec::from([text(" https://gw.example "), String::new()]),
+            )]),
             Vec::from([CommandBody::SetCredential {
+                instance: id("claude"),
                 credential: Credential {
-                    provider: Provider::Claude,
                     kind: text("gateway"),
                     values: BTreeMap::from([
                         (text("base_url"), text("https://gw.example")),
@@ -1080,6 +1106,214 @@ fn a_secret_is_sent_once_and_only_a_gateway_can_be_cleared() {
                 "Sent to desk over the encrypted link. This app doesn't keep it; your browser may offer to save it."
             ))),
             Some(Effect::Focus(Focus::Element(text("claude-credential")))),
+        )
+    );
+}
+
+/// A host with two Claude instances, one through a gateway.
+fn two_claudes() -> Instances {
+    Instances(BTreeMap::from([
+        (
+            id("claude"),
+            instance("Claude Code", Provider::Claude, signed_in()),
+        ),
+        (
+            id("claude-api"),
+            instance(
+                "Claude (API)",
+                Provider::Claude,
+                Availability::Available {
+                    auth: Auth::Stored {
+                        kind: text("gateway"),
+                        url: Some(text("https://gw.example")),
+                    },
+                    models: Models::none(),
+                },
+            ),
+        ),
+    ]))
+}
+
+fn pane_of(state: &State) -> Option<crate::CredentialsPane> {
+    screen(state).and_then(|host| match host.detail {
+        Detail::Credentials(pane) => Some(*pane),
+        Detail::Placeholder(_) | Detail::NewSession(_) | Detail::Session(_) => {
+            None
+        }
+    })
+}
+
+#[test]
+fn each_instance_has_its_section_and_each_provider_a_form_to_add_one() {
+    let (shown, _) = run(
+        paired(),
+        Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
+    );
+    let sections = pane_of(&shown).map(|pane| {
+        (
+            pane.instances
+                .iter()
+                .map(|it| {
+                    (
+                        it.heading.clone(),
+                        it.name.clone(),
+                        it.provider.clone(),
+                        it.state.clone(),
+                        it.clear.is_some(),
+                        it.login.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            pane.add
+                .iter()
+                .map(|form| (form.button.clone(), form.disabled))
+                .collect::<Vec<_>>(),
+        )
+    });
+    assert_eq!(
+        sections,
+        Some((
+            Vec::from([
+                (
+                    text("claude-credential"),
+                    text("Claude Code"),
+                    text("Claude Code"),
+                    text("Signed in on the host"),
+                    false,
+                    text("To sign it in on desk: conductord login claude"),
+                ),
+                (
+                    text("claude-api-credential"),
+                    text("Claude (API)"),
+                    text("Claude Code"),
+                    text("Gateway at https://gw.example"),
+                    true,
+                    text("To sign it in on desk: conductord login claude-api"),
+                ),
+            ]),
+            Vec::from([
+                (text("Add instance: Claude Code"), true),
+                (text("Add instance: Codex"), true),
+            ]),
+        ))
+    );
+}
+
+#[test]
+fn an_instance_is_added_renamed_and_removed_and_a_refusal_shows_why() {
+    let (shown, _) = run(
+        paired(),
+        Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
+    );
+    let api = || id("claude-api");
+    let (_, added) = run(
+        shown.clone(),
+        Vec::from([
+            Intent::Credential(CredentialIntent::TypeNewLabel(
+                Provider::Codex,
+                text(" Codex (API) "),
+            )),
+            Intent::Credential(CredentialIntent::Add(Provider::Codex)),
+        ]),
+    );
+    let (renaming, renamed) = run(
+        shown.clone(),
+        Vec::from([
+            Intent::Credential(CredentialIntent::TypeLabel(
+                api(),
+                text("Work API"),
+            )),
+            Intent::Credential(CredentialIntent::Rename(api())),
+        ]),
+    );
+    let (_, removed) = run(
+        shown.clone(),
+        Vec::from([Intent::Credential(CredentialIntent::Remove(api()))]),
+    );
+    let (refused, _) = run(
+        shown,
+        Vec::from([
+            Intent::Credential(CredentialIntent::Remove(api())),
+            Intent::Replied(
+                reply(ReplyTo::Instance(
+                    Subject::Instance(api()),
+                    Done::Removed,
+                )),
+                Ok(CommandResult::Rejected(Rejection::InstanceInUse {
+                    sessions: 1,
+                })),
+            ),
+        ]),
+    );
+    let outcome = |state: &State| {
+        pane_of(state).and_then(|pane| {
+            pane.instances
+                .into_iter()
+                .find(|it| it.instance == api())
+                .and_then(|it| it.outcome)
+                .map(|hint| hint.text)
+        })
+    };
+    assert_eq!(
+        (
+            sent(&added),
+            sent(&renamed),
+            outcome(&renaming),
+            removed.last().cloned(),
+            outcome(&refused),
+        ),
+        (
+            Vec::from([CommandBody::AddInstance {
+                provider: Provider::Codex,
+                label: text("Codex (API)"),
+            }]),
+            Vec::from([CommandBody::RenameInstance {
+                instance: api(),
+                label: text("Work API"),
+            }]),
+            Some(text("Sending…")),
+            Some(Effect::Focus(Focus::Element(text("add-instance")))),
+            Some(text(
+                "a session is running on it; stop it before removing the instance"
+            )),
+        )
+    );
+}
+
+#[test]
+fn the_new_session_form_lists_each_instance_and_starts_on_the_one_picked() {
+    let (shown, _) = run(
+        paired(),
+        Vec::from([status(two_claudes()), Intent::Show(Place::NewSession)]),
+    );
+    let (_, started) = run(
+        shown.clone(),
+        Vec::from([
+            Intent::Form(FormIntent::PickInstance(id("claude-api"))),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(
+        (
+            form(&shown).map(|drawn| drawn
+                .instances
+                .into_iter()
+                .map(|choice| (choice.label, choice.checked))
+                .collect::<Vec<_>>()),
+            sent(&started),
+        ),
+        (
+            Some(Vec::from([
+                (text("Claude Code"), true),
+                (text("Claude (API)"), false),
+            ])),
+            Vec::from([CommandBody::StartSession {
+                instance: id("claude-api"),
+                directory: HostPath(text("/src/x")),
+                model: None,
+                effort: None,
+            }]),
         )
     );
 }

@@ -7,8 +7,8 @@ use core::cmp::Reverse;
 
 use proto::{
     CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath,
-    HostSeq, ModelId, Provider, Question, RequestId, Resolution, SessionId,
-    Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    HostSeq, InstanceId, ModelId, Provider, Question, RequestId, Resolution,
+    SessionId, Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability, Workspace,
 };
 
@@ -19,6 +19,8 @@ pub struct HostView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionView {
+    /// The instance it runs on, and that instance's provider.
+    pub instance: InstanceId,
     pub provider: Provider,
     pub directory: HostPath,
     /// What the agent runs with; `None` is the CLI's own default.
@@ -251,6 +253,7 @@ impl HostView {
             (
                 _,
                 EventKind::SessionCreated {
+                    instance,
                     provider,
                     directory,
                     model,
@@ -258,6 +261,7 @@ impl HostView {
                     ..
                 },
             ) => Some(SessionView {
+                instance,
                 provider,
                 directory,
                 model,
@@ -841,9 +845,10 @@ mod tests {
 
     use proto::{
         Answer, ClientName, CloseReason, Decision, Effort, Event, EventKind,
-        HostPath, HostSeq, ModelId, Provider, Question, QuestionOption,
-        RequestId, Resolution, Selection, SessionId, Task, TaskId, TaskStatus,
-        ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+        HostPath, HostSeq, InstanceId, ModelId, Provider, Question,
+        QuestionOption, RequestId, Resolution, Selection, SessionId, Task,
+        TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+        TurnOutcome,
     };
 
     use super::{
@@ -858,6 +863,7 @@ mod tests {
 
     fn created(directory: &str) -> EventKind {
         EventKind::SessionCreated {
+            instance: InstanceId::named("claude"),
             provider: Provider::Claude,
             directory: HostPath(text(directory)),
             by: ClientName(text("desk")),
@@ -1000,6 +1006,7 @@ mod tests {
             (
                 SessionId(1),
                 SessionView {
+                    instance: InstanceId::named("claude"),
                     provider: Provider::Claude,
                     directory: HostPath(text("/a")),
                     model: None,
@@ -1064,6 +1071,7 @@ mod tests {
             (
                 SessionId(2),
                 SessionView {
+                    instance: InstanceId::named("claude"),
                     provider: Provider::Claude,
                     directory: HostPath(text("/b")),
                     model: None,

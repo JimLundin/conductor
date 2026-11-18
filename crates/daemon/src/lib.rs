@@ -1,6 +1,6 @@
 //! The host daemon behind `conductord`. It serves the event log and the
-//! sessions over iroh, and runs each provider through the
-//! [`runtime::Plugin`] it is handed, knowing none by name.
+//! sessions over iroh, and runs each instance through its provider's
+//! [`runtime::Plugin`], knowing no provider by name.
 
 pub mod credentials;
 pub mod log;
@@ -187,11 +187,20 @@ fn log_note(note: &Note) {
         Note::NoModels { reason } => {
             tracing::warn!(target: "host", %reason, "the CLI listed no models");
         }
-        Note::CredentialStored { provider } => {
-            tracing::info!(target: "host", ?provider, "stored a credential change");
+        Note::CredentialStored { instance } => {
+            tracing::info!(target: "host", instance = instance.0, "stored a credential change");
         }
-        Note::RefreshFailed { provider, reason } => {
-            tracing::warn!(target: "host", %reason, ?provider, "provider refresh failed");
+        Note::RefreshFailed { instance, reason } => {
+            tracing::warn!(target: "host", %reason, instance = instance.0, "instance refresh failed");
+        }
+        Note::InstanceAdded { instance, provider } => {
+            tracing::info!(target: "host", instance = instance.0, ?provider, "added an instance");
+        }
+        Note::InstanceRenamed { instance } => {
+            tracing::info!(target: "host", instance = instance.0, "renamed an instance");
+        }
+        Note::InstanceRemoved { instance } => {
+            tracing::info!(target: "host", instance = instance.0, "removed an instance");
         }
     }
 }

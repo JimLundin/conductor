@@ -1,5 +1,5 @@
-//! The form that starts a session: the agent, its model and effort, and
-//! the directory on the host.
+//! The form that starts a session: the instance it runs on, its model and
+//! effort, and the directory on the host.
 
 use crate::prelude::*;
 use client::host_view::HostView;
@@ -9,7 +9,7 @@ use client::new_session::{
 };
 use proto::{
     Availability, Catalog, CommandBody, CommandResult, Effort, HostPath,
-    ModelId, Provider, Providers,
+    InstanceId, Instances, ModelId,
 };
 
 use crate::sessions::short;
@@ -17,9 +17,9 @@ use crate::{Effect, Reply, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormIntent {
-    /// Another provider offers other models, so the model and effort go
+    /// Another instance offers other models, so the model and effort go
     /// back to their defaults.
-    PickProvider(Provider),
+    PickInstance(InstanceId),
     /// A model's id; empty for the default.
     PickModel(String),
     /// An effort's word; empty for the default.
@@ -30,9 +30,9 @@ pub enum FormIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSessionForm {
-    pub providers: Vec<ProviderChoice>,
-    /// What the form says under the agents.
-    pub provider_hint: Option<Hint>,
+    pub instances: Vec<InstanceChoice>,
+    /// What the form says under the instances.
+    pub instance_hint: Option<Hint>,
     pub models: Vec<Choice>,
     pub efforts: Vec<Choice>,
     pub directory: String,
@@ -46,8 +46,9 @@ pub struct NewSessionForm {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderChoice {
-    pub provider: Provider,
+pub struct InstanceChoice {
+    /// What choosing it does.
+    pub pick: FormIntent,
     pub label: String,
     /// Whether the host can run it, in one word, also its `data-available`.
     pub state: &'static str,
@@ -79,7 +80,8 @@ pub struct Suggestion {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Form {
-    provider: Provider,
+    /// `None` until a person picks one: the first available instance.
+    instance: Option<InstanceId>,
     model: Option<ModelId>,
     effort: Option<Effort>,
     directory: String,
@@ -89,7 +91,7 @@ pub struct Form {
 impl Default for Form {
     fn default() -> Self {
         Self {
-            provider: Provider::Claude,
+            instance: None,
             model: None,
             effort: None,
             directory: String::new(),
@@ -102,13 +104,13 @@ impl Form {
     pub fn update(
         self,
         intent: FormIntent,
-        providers: Option<&Providers>,
+        instances: Option<&Instances>,
         visit: u64,
     ) -> (Self, Vec<Effect>) {
         match intent {
-            FormIntent::PickProvider(provider) => (
+            FormIntent::PickInstance(instance) => (
                 Self {
-                    provider,
+                    instance: Some(instance),
                     model: None,
                     effort: None,
                     ..self
@@ -116,7 +118,8 @@ impl Form {
                 Vec::new(),
             ),
             FormIntent::PickModel(id) => {
-                let offered = models(availability(providers, self.provider));
+                let offered =
+                    models(availability(instances, self.chosen(instances)));
                 let picked =
                     offered.find(&ModelId(id)).map(|choice| choice.id.clone());
                 (
@@ -143,8 +146,11 @@ impl Form {
                 (Self { directory, ..self }, Vec::new())
             }
             FormIntent::Start => {
+                let Some(instance) = self.chosen(instances).cloned() else {
+                    return (self, Vec::new());
+                };
                 let body = CommandBody::StartSession {
-                    provider: self.provider,
+                    instance,
                     directory: HostPath(self.directory.trim().to_owned()),
                     model: self.model.clone(),
                     effort: self.effort,
@@ -173,13 +179,38 @@ impl Form {
         }
     }
 
+    /// The instance a person picked, if the host still has it, else the
+    /// first available one, else the first.
+    fn chosen<'a>(
+        &'a self,
+        instances: Option<&'a Instances>,
+    ) -> Option<&'a InstanceId> {
+        let known = instances.map(|listed| &listed.0);
+        let picked = self
+            .instance
+            .as_ref()
+            .filter(|id| known.is_some_and(|listed| listed.contains_key(*id)));
+        picked.or_else(|| {
+            let mut ids = known.into_iter().flatten();
+            ids.clone()
+                .find(|(_, status)| {
+                    matches!(
+                        status.availability,
+                        Availability::Available { .. }
+                    )
+                })
+                .or_else(|| ids.next())
+                .map(|(id, _)| id)
+        })
+    }
+
     pub fn screen(
         &self,
         view: &HostView,
-        providers: Option<&Providers>,
+        instances: Option<&Instances>,
         catalog: &Catalog,
     ) -> NewSessionForm {
-        let (directory_error, provider_error, form_error) = match &self.attempt
+        let (directory_error, instance_error, form_error) = match &self.attempt
         {
             Attempt::Refused(Refusal::Directory) => (
                 Some(String::from(
@@ -188,7 +219,7 @@ impl Form {
                 None,
                 None,
             ),
-            Attempt::Refused(Refusal::Provider(reason)) => {
+            Attempt::Refused(Refusal::Instance(reason)) => {
                 (None, Some(reason.clone()), None)
             }
             Attempt::Refused(Refusal::Other(message)) => {
@@ -196,7 +227,8 @@ impl Form {
             }
             Attempt::Editing | Attempt::Starting => (None, None, None),
         };
-        let chosen = availability(providers, self.provider);
+        let picked = self.chosen(instances);
+        let chosen = availability(instances, picked);
         let offered = models(chosen);
         let suggestions = view
             .directories()
@@ -207,24 +239,29 @@ impl Form {
             })
             .collect::<Vec<Suggestion>>();
         let (start_disabled, start_label) =
-            match (&self.attempt, self.directory.trim()) {
-                (Attempt::Starting, _) => (true, "Starting…"),
-                (_, "") => (true, "Start session"),
-                (_, _) => (false, "Start session"),
+            match (&self.attempt, self.directory.trim(), picked) {
+                (Attempt::Starting, _, _) => (true, "Starting…"),
+                (_, "", _) | (_, _, None) => (true, "Start session"),
+                (_, _, Some(_)) => (false, "Start session"),
             };
+        let status = picked.and_then(|id| instances?.of(id));
         NewSessionForm {
-            providers: Provider::ALL
-                .map(|choice| ProviderChoice {
-                    provider: choice,
-                    label: catalog.label(choice),
-                    state: word(availability(providers, choice)),
-                    checked: choice == self.provider,
-                })
-                .to_vec(),
-            provider_hint: self.provider_hint(
-                provider_error,
-                note(catalog.of(self.provider), chosen),
-                catalog,
+            instances: instances.map_or_else(Vec::new, |listed| {
+                listed
+                    .0
+                    .iter()
+                    .map(|(id, choice)| InstanceChoice {
+                        pick: FormIntent::PickInstance(id.clone()),
+                        label: choice.label.clone(),
+                        state: word(Some(&choice.availability)),
+                        checked: Some(id) == picked,
+                    })
+                    .collect()
+            }),
+            instance_hint: instance_hint(
+                instance_error,
+                note(status.and_then(|it| catalog.of(it.provider)), chosen),
+                status.map_or("That instance", |it| it.label.as_str()),
             ),
             efforts: self
                 .effort_choices(&efforts(&offered, self.model.as_ref())),
@@ -236,30 +273,6 @@ impl Form {
             error: form_error.map(alert),
             start_disabled,
             start_label,
-        }
-    }
-
-    /// A refusal of the provider, else why the host can't run it, else
-    /// what its plugin says of it.
-    fn provider_hint(
-        &self,
-        refused: Option<String>,
-        note: ProviderNote,
-        catalog: &Catalog,
-    ) -> Option<Hint> {
-        match (refused, note) {
-            (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => {
-                Some(alert(format!(
-                    "{} can't run on this host: {reason}",
-                    catalog.label(self.provider)
-                )))
-            }
-            (None, ProviderNote::Says(text)) => Some(Hint {
-                class: "hint muted",
-                role: None,
-                text,
-            }),
-            (None, ProviderNote::Nothing) => None,
         }
     }
 
@@ -298,6 +311,26 @@ impl Form {
     }
 }
 
+/// A refusal of the instance, else why the host can't run it, else what
+/// its provider's plugin says of it.
+fn instance_hint(
+    refused: Option<String>,
+    note: ProviderNote,
+    label: &str,
+) -> Option<Hint> {
+    match (refused, note) {
+        (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => {
+            Some(alert(format!("{label} can't run on this host: {reason}")))
+        }
+        (None, ProviderNote::Says(text)) => Some(Hint {
+            class: "hint muted",
+            role: None,
+            text,
+        }),
+        (None, ProviderNote::Nothing) => None,
+    }
+}
+
 /// A line under a field that says what went wrong.
 pub const fn alert(text: String) -> Hint {
     Hint {
@@ -307,14 +340,16 @@ pub const fn alert(text: String) -> Hint {
     }
 }
 
-fn availability(
-    providers: Option<&Providers>,
-    provider: Provider,
-) -> Option<&Availability> {
-    providers.and_then(|known| known.of(provider))
+fn availability<'a>(
+    instances: Option<&'a Instances>,
+    instance: Option<&InstanceId>,
+) -> Option<&'a Availability> {
+    instances
+        .zip(instance)
+        .and_then(|(known, id)| known.availability(id))
 }
 
-/// The provider's state in one word, for the form's text and
+/// The instance's state in one word, for the form's text and
 /// `data-available`.
 const fn word(availability: Option<&Availability>) -> &'static str {
     match availability {

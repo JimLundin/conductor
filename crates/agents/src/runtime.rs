@@ -7,7 +7,7 @@
 //! `codex`).
 
 use proto::{
-    ClientName, Credentials, Effort, HistoryAnchor, HostPath, ModelId, Models,
+    ClientName, Credential, Effort, HistoryAnchor, HostPath, ModelId, Models,
     SessionId,
 };
 
@@ -50,10 +50,11 @@ pub enum Command {
     Turns,
     /// Discards this turn and every later one from the agent's history.
     Revert(String),
-    /// What the provider offers with its credential now.
+    /// What the instance offers with its credential now.
     Models,
-    /// The credentials the provider's later agents start with.
-    Credentials(Credentials),
+    /// The credential the instance's later agents start with; `None`
+    /// leaves the CLI's own sign-in.
+    Credential(Option<Credential>),
     /// Stops the agent.
     Shutdown,
 }
@@ -117,7 +118,7 @@ impl Command {
             Self::Turns => Outcome::Turns(Err(error)),
             Self::Revert(_) => Outcome::Reverted(Err(error)),
             Self::Models => Outcome::Models(Err(error)),
-            Self::Credentials(_) => Outcome::Configured(Err(error)),
+            Self::Credential(_) => Outcome::Configured(Err(error)),
             Self::Shutdown => Outcome::ShutDown(Err(error)),
         }
     }
@@ -135,8 +136,8 @@ impl Outcome {
         }
     }
 
-    /// Whether a [`Command::Credentials`] took, and the default model they
-    /// name.
+    /// Whether a [`Command::Credential`] took, and the default model it
+    /// names.
     ///
     /// # Errors
     /// Why the provider refused them, or that this answers another command.
@@ -154,7 +155,7 @@ fn unexpected(outcome: &Outcome) -> String {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Credentials, Models};
+    use proto::Models;
 
     use super::{Command, Outcome};
     use crate::NativeTurn;
@@ -168,7 +169,7 @@ mod tests {
             [
                 failed(Command::Turns),
                 failed(Command::Interrupt(NativeTurn(String::from("t")))),
-                failed(Command::Credentials(Credentials::none())),
+                failed(Command::Credential(None)),
                 failed(Command::Shutdown),
             ],
             [

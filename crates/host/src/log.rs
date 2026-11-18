@@ -8,14 +8,36 @@
 //! happened and performs each [`Effect`] in order.
 
 use alloc::collections::{BTreeMap, VecDeque};
+use alloc::format;
 use core::mem;
 
 use proto::{
     Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
-    Providers, SessionId, Subscribe, Welcome,
+    Instances, SessionId, Subscribe, Welcome,
 };
 
 use crate::prelude::*;
+
+/// The format of the events a database holds. Format 2 records each
+/// session's instance; a database of another format doesn't open.
+pub const FORMAT: u32 = 2;
+
+/// Whether a database opens, and whether its format is to be written: a
+/// `created` one takes [`FORMAT`], and one whose `stored` format is another
+/// is refused.
+///
+/// # Errors
+/// Why the database doesn't open.
+pub fn opens(created: bool, stored: Option<u32>) -> Result<bool, String> {
+    match (created, stored) {
+        (true, _) => Ok(true),
+        (false, Some(FORMAT)) => Ok(false),
+        (false, other) => Err(format!(
+            "the log is format {}, and this host reads format {FORMAT}; move the database aside to start over",
+            other.unwrap_or(1)
+        )),
+    }
+}
 
 /// Names a `begin` or a `finish` the shell answers later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -134,12 +156,12 @@ impl Log {
     }
 
     #[must_use]
-    pub fn welcome(&self, providers: Providers, catalog: Catalog) -> Welcome {
+    pub fn welcome(&self, instances: Instances, catalog: Catalog) -> Welcome {
         Welcome {
             host: self.name.clone(),
             epoch: self.epoch,
             head_seq: self.head(),
-            providers,
+            instances,
             catalog,
         }
     }

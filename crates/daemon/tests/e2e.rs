@@ -22,7 +22,9 @@ use codex_cli::{Hub, ServerOptions};
 use daemon::Stopped;
 use daemon::credentials::{Store, Stored};
 use daemon::log::Log;
-use daemon::registry::{Launcher, Launchers, Offer, OwnSignIn, Registry};
+use daemon::registry::{
+    Builder, Launcher, Launchers, Offer, OwnSignIn, Registry, Setup,
+};
 use daemon::serve::Conductor;
 use install::Home;
 use iroh::endpoint::presets;
@@ -34,10 +36,11 @@ use net::{
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
-    EventKind, FileChange, HostPath, HostSeq, ModelChoice, ModelId, Models,
-    Provider, Providers, Question, QuestionOption, Rejection, RequestId,
-    Resolution, Selection, SessionId, Task, TaskId, TaskStatus, ToolCallId,
-    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    EventKind, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
+    Instances, ModelChoice, ModelId, Models, Provider, Question,
+    QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
+    SessionId, Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
+    ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::net::UdpSocket;
@@ -98,7 +101,7 @@ fn fake_codex() -> PathBuf {
 
 /// A host whose Claude is `claude_path` and whose Codex is unavailable.
 async fn host_with(claude_path: PathBuf) -> Fallible<Fixture> {
-    host_of(Launchers::from([
+    host_of(launchers([
         (
             Provider::Claude,
             Launcher::Ready {
@@ -131,7 +134,7 @@ async fn codex_host(recording: &str) -> Fallible<(Fixture, PathBuf)> {
         cwd: server.clone(),
         stdout_log: None,
     });
-    let fixture = host_of(Launchers::from([
+    let fixture = host_of(launchers([
         (
             Provider::Claude,
             Launcher::Unavailable(String::from(UNAVAILABLE)),
@@ -197,9 +200,16 @@ async fn serve_log(
     log: Log,
 ) -> Fallible<Fixture> {
     let (store, stored) = Store::open(data)?;
-    let registry =
-        Registry::spawn(log.clone(), launchers, store, stored, catalog());
-    let _ = tokio::time::timeout(STEP, registry.providers())
+    serve_setup(endpoint, setup(launchers, store, stored), log).await
+}
+
+async fn serve_setup(
+    endpoint: Endpoint,
+    setup: Setup,
+    log: Log,
+) -> Fallible<Fixture> {
+    let registry = Registry::spawn(log.clone(), setup);
+    let _ = tokio::time::timeout(STEP, registry.instances())
         .await
         .map_err(
             |_| "the registry did not restore within the step timeout",
@@ -237,30 +247,31 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
     let (store, stored) = Store::open(data)?;
     let registry = Registry::spawn(
         log.clone(),
-        Launchers::from([
-            (
-                Provider::Claude,
-                Launcher::Ready {
-                    start: claude_cli::starter(ClaudeLaunch {
-                        claude_path: fake_claude(),
-                        home: Home::User,
-                        credential: None,
-                        probe: data.join("probe"),
-                    }),
-                    own: OwnSignIn::Unmanaged,
-                    offer: offer(models()),
-                },
-            ),
-            (
-                Provider::Codex,
-                Launcher::Unavailable(String::from(UNAVAILABLE)),
-            ),
-        ]),
-        store,
-        stored,
-        catalog(),
+        setup(
+            launchers([
+                (
+                    Provider::Claude,
+                    Launcher::Ready {
+                        start: claude_cli::starter(ClaudeLaunch {
+                            claude_path: fake_claude(),
+                            home: Home::User,
+                            credential: None,
+                            probe: data.join("probe"),
+                        }),
+                        own: OwnSignIn::Unmanaged,
+                        offer: offer(models()),
+                    },
+                ),
+                (
+                    Provider::Codex,
+                    Launcher::Unavailable(String::from(UNAVAILABLE)),
+                ),
+            ]),
+            store,
+            stored,
+        ),
     );
-    let _ = tokio::time::timeout(STEP, registry.providers())
+    let _ = tokio::time::timeout(STEP, registry.instances())
         .await
         .map_err(
             |_| "the registry did not restore within the step timeout",
@@ -361,6 +372,7 @@ async fn append(log: &Log, kinds: Vec<EventKind>) -> Result<(), Stopped> {
 
 fn created() -> EventKind {
     EventKind::SessionCreated {
+        instance: instance(Provider::Claude),
         provider: Provider::Claude,
         directory: HostPath(String::from("/work")),
         by: ClientName(String::from("desk")),
@@ -395,7 +407,7 @@ async fn host() -> Fallible<Fixture> {
 
 fn start(provider: Provider, directory: &Path) -> CommandBody {
     CommandBody::StartSession {
-        provider,
+        instance: instance(provider),
         directory: HostPath(directory.display().to_string()),
         model: None,
         effort: None,
@@ -447,8 +459,8 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
     );
     assert_eq!(link.status().host, Some(String::from("test-host")));
     assert_eq!(
-        link.status().providers,
-        Some(Providers(BTreeMap::from([
+        link.status().instances,
+        Some(statuses(BTreeMap::from([
             (
                 Provider::Claude,
                 Availability::Available {
@@ -479,7 +491,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
         },
         Case {
             body: start(Provider::Codex, &std::env::temp_dir()),
-            result: CommandResult::Rejected(Rejection::ProviderUnavailable {
+            result: CommandResult::Rejected(Rejection::InstanceUnavailable {
                 reason: String::from(UNAVAILABLE),
             }),
         },
@@ -848,6 +860,7 @@ fn test_client() -> ClientName {
 fn opening(provider: Provider, directory: &Path) -> Vec<EventKind> {
     Vec::from([
         EventKind::SessionCreated {
+            instance: instance(provider),
             provider,
             directory: HostPath(directory.display().to_string()),
             by: test_client(),
@@ -1739,6 +1752,7 @@ async fn a_missing_claude_binary_closes_the_session() -> Fallible {
         kinds_until(&mut updates, Until::Closed).await?,
         [
             EventKind::SessionCreated {
+                instance: instance(Provider::Claude),
                 provider: Provider::Claude,
                 directory: HostPath(dir.display().to_string()),
                 by: test_client(),
@@ -2241,14 +2255,18 @@ fn count(path: &Path, text: &str) -> Fallible<usize> {
 /// sign-in of its own, and whose Codex is unavailable. Its Claude starts
 /// with the credential the store holds, as `conductord host` does.
 async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
-    let home = Home::private(data, &claude::profile())?;
+    let home = Home::private(data, "claude", &claude::profile().config)?;
     std::fs::create_dir_all(data.join("probe"))?;
     std::fs::write(data.join("probe/stdout.jsonl"), format!("{PROBED}\n"))?;
     let credential = match Store::open(data)?.1 {
-        Stored::Opened(credentials) => claude::credential(&credentials),
-        Stored::Unreadable(_) => None,
+        Stored::Opened(roster) => claude::credential(
+            roster
+                .of(&instance(Provider::Claude))
+                .and_then(|it| it.credential.as_ref()),
+        ),
+        Stored::Fresh | Stored::Unreadable(_) => None,
     };
-    let launchers = Launchers::from([
+    let launchers = launchers([
         (
             Provider::Claude,
             Launcher::Ready {
@@ -2270,8 +2288,8 @@ async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
     serve(endpoint().await?, launchers, data).await
 }
 
-fn with_claude(claude: Availability) -> Providers {
-    Providers(BTreeMap::from([
+fn with_claude(claude: Availability) -> Instances {
+    statuses(BTreeMap::from([
         (Provider::Claude, claude),
         (
             Provider::Codex,
@@ -2315,13 +2333,14 @@ fn no_credential() -> Availability {
 }
 
 fn refused_for_no_credential() -> CommandResult {
-    CommandResult::Rejected(Rejection::ProviderUnavailable {
+    CommandResult::Rejected(Rejection::InstanceUnavailable {
         reason: String::from(NO_CREDENTIAL),
     })
 }
 
 fn claude_gateway() -> CommandBody {
     CommandBody::SetCredential {
+        instance: instance(Provider::Claude),
         credential: claude_credential(CLAUDE_TOKEN),
     }
 }
@@ -2329,11 +2348,11 @@ fn claude_gateway() -> CommandBody {
 /// A fresh link to `fx`, live, and the providers its `Welcome` reported.
 async fn live(
     fx: &Fixture,
-) -> Fallible<(HostLink, mpsc::Receiver<Update>, Option<Providers>)> {
+) -> Fallible<(HostLink, mpsc::Receiver<Update>, Option<Instances>)> {
     let (link, mut updates) = link(fx.target.clone(), None).await?;
     until_live(&mut updates).await?;
-    let providers = link.status().providers;
-    Ok((link, updates, providers))
+    let instances = link.status().instances;
+    Ok((link, updates, instances))
 }
 
 #[tokio::test]
@@ -2351,11 +2370,11 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
     );
     assert_eq!(
         send(&link, claude_gateway()).await?,
-        CommandResult::Providers(with_claude(gateway(probed())))
+        CommandResult::Instances(with_claude(gateway(probed())))
     );
     assert_eq!(
         (
-            link.status().providers,
+            link.status().instances,
             read(&data.join("probe/env.txt"))?.contains(GATEWAY)
         ),
         (Some(with_claude(gateway(probed()))), true),
@@ -2386,11 +2405,11 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
         send(
             &link,
             CommandBody::ClearCredential {
-                provider: Provider::Claude
+                instance: instance(Provider::Claude),
             }
         )
         .await?,
-        CommandResult::Providers(with_claude(no_credential()))
+        CommandResult::Instances(with_claude(no_credential()))
     );
     assert_eq!(
         send(&link, start(Provider::Claude, &dir)).await?,
@@ -2427,8 +2446,8 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_clears()
     Ok(())
 }
 
-fn with_codex(codex: Availability) -> Providers {
-    Providers(BTreeMap::from([
+fn with_codex(codex: Availability) -> Instances {
+    statuses(BTreeMap::from([
         (
             Provider::Claude,
             Availability::Unavailable {
@@ -2445,8 +2464,11 @@ fn codex_offer(
     result: CommandResult,
 ) -> Option<(Auth, Option<String>, Vec<String>)> {
     match result {
-        CommandResult::Providers(Providers(mut providers)) => {
-            match providers.remove(&Provider::Codex) {
+        CommandResult::Instances(Instances(mut instances)) => {
+            match instances
+                .remove(&instance(Provider::Codex))
+                .map(|it| it.availability)
+            {
                 Some(Availability::Available { auth, models }) => Some((
                     auth,
                     models.default.map(|model| model.0),
@@ -2490,8 +2512,8 @@ fn codex_gateway() -> (Auth, Option<String>, Vec<String>) {
 
 fn codex_provider(key: &str) -> CommandBody {
     CommandBody::SetCredential {
+        instance: instance(Provider::Codex),
         credential: credential(
-            Provider::Codex,
             "provider",
             &[
                 ("name", "Conductor test"),
@@ -2511,7 +2533,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
     let data = data_dir("codex-provider")?;
     let (log, logging) = capture_log("codex-provider")?;
     let server = scratch("codex-provider", "codex-two-threads-listed.jsonl")?;
-    let home = Home::private(&data, &codex::profile())?;
+    let home = Home::private(&data, "codex", &codex::profile().config)?;
     let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
         home,
@@ -2519,7 +2541,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         cwd: server.clone(),
         stdout_log: None,
     });
-    let launchers = Launchers::from([
+    let launchers = launchers([
         (
             Provider::Claude,
             Launcher::Unavailable(String::from(UNAVAILABLE)),
@@ -2669,11 +2691,11 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside()
         send(
             &link,
             CommandBody::ClearCredential {
-                provider: Provider::Codex
+                instance: instance(Provider::Codex),
             }
         )
         .await?,
-        CommandResult::Providers(with_claude(no_credential()))
+        CommandResult::Instances(with_claude(no_credential()))
     );
     assert_eq!(
         read(&data.join("credentials.unreadable"))?,
@@ -2681,7 +2703,7 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_clears_aside()
     );
     assert_eq!(
         send(&link, claude_gateway()).await?,
-        CommandResult::Providers(with_claude(gateway(probed())))
+        CommandResult::Instances(with_claude(gateway(probed())))
     );
     link.stop().await?;
     fx.router.shutdown().await?;
@@ -2694,8 +2716,8 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
     let fx = claude_host_in(&data).await?;
     let (link, _updates, _) = live(&fx).await?;
     let body = CommandBody::SetCredential {
+        instance: instance(Provider::Claude),
         credential: credential(
-            Provider::Claude,
             "gateway",
             &[
                 ("base_url", "https://gateway.example/?key=conductor-test"),
@@ -2719,6 +2741,191 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
     Ok(())
 }
 
+/// The plugins `conductord host --cli claude=<the stand-in>` runs, with a
+/// Codex that doesn't.
+fn fake_plugins(data: &Path) -> daemon::start::Plugins {
+    daemon::start::Plugins::from_iter([
+        claude_cli::plugin(Settings {
+            path: Some(fake_claude()),
+            model: None,
+        }),
+        codex_cli::plugin(Settings {
+            path: Some(data.join("no-codex")),
+            model: None,
+        }),
+    ])
+}
+
+/// Makes the Claude stand-in list `PROBED` in the work dir of `name`.
+fn probed_in(data: &Path, name: &str) -> Fallible {
+    let work = data.join("work").join(name);
+    std::fs::create_dir_all(&work)?;
+    std::fs::write(work.join("stdout.jsonl"), format!("{PROBED}\n"))?;
+    Ok(())
+}
+
+/// A host on `data` as `conductord host` starts one: each instance its
+/// store holds runs on its plugin, and an added one starts the same way.
+async fn plugin_host(data: &Path) -> Fallible<Fixture> {
+    let plugins = fake_plugins(data);
+    let (store, stored) = Store::open(data)?;
+    let mut launchers = Launchers::new();
+    for (id, configured) in stored.roster(&catalog()).0 {
+        let started =
+            daemon::start::launcher(&plugins, data, id.clone(), configured);
+        launchers.insert(id, started.await);
+    }
+    let setup = Setup {
+        launchers,
+        store,
+        stored,
+        catalog: catalog(),
+        builder: daemon::start::builder(plugins, data.to_path_buf()),
+    };
+    let log = Log::spawn(String::from("test-host"), Epoch(11));
+    serve_setup(endpoint().await?, setup, log).await
+}
+
+fn status_of(
+    result: &CommandResult,
+    id: &InstanceId,
+) -> Option<InstanceStatus> {
+    match result {
+        CommandResult::Instances(listed) => listed.of(id).cloned(),
+        _ => None,
+    }
+}
+
+/// The session each `SessionCreated` names, with its instance.
+fn created_on(events: &[Event]) -> Vec<(SessionId, InstanceId)> {
+    events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::SessionCreated { instance, .. } => {
+                Some((event.session, instance.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// What the Claude stand-in reads of a gateway `token` in the home `home`.
+fn gateway_env(token: &str, home: &Path) -> String {
+    format!(
+        "ANTHROPIC_AUTH_TOKEN={token}\nANTHROPIC_BASE_URL={GATEWAY}\n{}CLAUDE_CONFIG_DIR={}\n",
+        match claude_cli::sandbox() {
+            Sandbox::Available => "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\n",
+            Sandbox::Missing => "",
+        },
+        home.display()
+    )
+}
+
+/// Two instances of Claude run side by side: each has its own credential,
+/// its own private home and its own agents, and a session runs on the
+/// instance it was started on, which can't be removed while it runs.
+#[tokio::test]
+async fn two_claude_instances_keep_their_own_credentials_and_homes() -> Fallible
+{
+    const API_TOKEN: &str = "conductor-test-api-token";
+    const OWN_TOKEN: &str = "conductor-test-own-token";
+    let data = data_dir("two-claudes")?;
+    let on_api = scratch("two-claudes-api", "claude-approve.jsonl")?;
+    let on_own = scratch("two-claudes-own", "claude-approve.jsonl")?;
+    probed_in(&data, "claude")?;
+    probed_in(&data, "claude-api")?;
+    let fx = plugin_host(&data).await?;
+    let (link, mut updates, _) = live(&fx).await?;
+    let api = InstanceId::named("claude-api");
+    let own = instance(Provider::Claude);
+    let added = send(
+        &link,
+        CommandBody::AddInstance {
+            provider: Provider::Claude,
+            label: String::from("Claude (API)"),
+        },
+    )
+    .await?;
+    let unmanaged = Availability::Available {
+        auth: Auth::Unmanaged,
+        models: probed(),
+    };
+    assert_eq!(
+        status_of(&added, &api),
+        Some(InstanceStatus {
+            label: String::from("Claude (API)"),
+            provider: Provider::Claude,
+            availability: unmanaged.clone(),
+        })
+    );
+    let set = |id: &InstanceId, token: &str| CommandBody::SetCredential {
+        instance: id.clone(),
+        credential: claude_credential(token),
+    };
+    let after_api = send(&link, set(&api, API_TOKEN)).await?;
+    assert_eq!(
+        (
+            status_of(&after_api, &api).map(|it| it.availability),
+            status_of(&after_api, &own).map(|it| it.availability),
+        ),
+        (Some(gateway(probed())), Some(unmanaged))
+    );
+    let _ = send(&link, set(&own, OWN_TOKEN)).await?;
+    let first = started_session(
+        &send(
+            &link,
+            CommandBody::StartSession {
+                instance: api.clone(),
+                directory: HostPath(on_api.display().to_string()),
+                model: None,
+                effort: None,
+            },
+        )
+        .await?,
+    )?;
+    let api_events = events_until(&mut updates, Until::Ready).await?;
+    let second =
+        started_session(&send(&link, start(Provider::Claude, &on_own)).await?)?;
+    let own_events = events_until(&mut updates, Until::Ready).await?;
+    assert_eq!(
+        (
+            created_on(&api_events),
+            created_on(&own_events),
+            read(&on_api.join("env.txt"))?,
+            read(&on_own.join("env.txt"))?,
+        ),
+        (
+            Vec::from([(first, api.clone())]),
+            Vec::from([(second, own.clone())]),
+            gateway_env(API_TOKEN, &data.join("home/claude-api")),
+            gateway_env(OWN_TOKEN, &data.join("home/claude")),
+        )
+    );
+    let renamed = send(
+        &link,
+        CommandBody::RenameInstance {
+            instance: api.clone(),
+            label: String::from("Work API"),
+        },
+    )
+    .await?;
+    assert_eq!(
+        (
+            status_of(&renamed, &api).map(|it| it.label),
+            send(&link, CommandBody::RemoveInstance { instance: api }).await?,
+            data.join("home/claude-api/settings.json").exists(),
+        ),
+        (
+            Some(String::from("Work API")),
+            CommandResult::Rejected(Rejection::InstanceInUse { sessions: 1 }),
+            true,
+        )
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+    Ok(())
+}
+
 fn start_with(
     provider: Provider,
     directory: &Path,
@@ -2726,7 +2933,7 @@ fn start_with(
     effort: Effort,
 ) -> CommandBody {
     CommandBody::StartSession {
-        provider,
+        instance: instance(provider),
         directory: HostPath(directory.display().to_string()),
         model: Some(ModelId(String::from(model))),
         effort: Some(effort),
@@ -2781,6 +2988,7 @@ fn created_with(
     effort: Effort,
 ) -> EventKind {
     EventKind::SessionCreated {
+        instance: instance(provider),
         provider,
         directory: HostPath(directory.display().to_string()),
         by: test_client(),
@@ -3567,7 +3775,7 @@ async fn retry_command(
 
 const RESPONSIVE: Duration = Duration::from_secs(2);
 const REFRESH_SESSION: SessionId = SessionId(2300);
-const REFRESHING: &str = "refreshing provider models";
+const REFRESHING: &str = "refreshing the instance's models";
 
 fn queued_command(
     conn: &iroh::endpoint::Connection,
@@ -3591,26 +3799,70 @@ async fn finished_command(
 }
 
 fn claude_credential(token: &str) -> Credential {
-    credential(
-        Provider::Claude,
-        "gateway",
-        &[("base_url", GATEWAY), ("token", token)],
-    )
+    credential("gateway", &[("base_url", GATEWAY), ("token", token)])
 }
 
 /// A credential of `kind`, with its form's values by field id.
-fn credential(
-    provider: Provider,
-    kind: &str,
-    values: &[(&str, &str)],
-) -> Credential {
+fn credential(kind: &str, values: &[(&str, &str)]) -> Credential {
     Credential {
-        provider,
         kind: String::from(kind),
         values: values
             .iter()
             .map(|(id, value)| (String::from(*id), String::from(*value)))
             .collect(),
+    }
+}
+
+/// A fresh host's instance of `provider`, named after it.
+fn instance(provider: Provider) -> InstanceId {
+    InstanceId::named(provider.name())
+}
+
+/// The default instances of a host whose plugins are `catalog()`'s.
+fn defaults() -> Roster {
+    daemon::credentials::Stored::Fresh.roster(&catalog())
+}
+
+/// Each provider's default instance, as the host runs it.
+fn launchers<const N: usize>(by: [(Provider, Launcher); N]) -> Launchers {
+    by.into_iter()
+        .map(|(provider, launcher)| (instance(provider), launcher))
+        .collect()
+}
+
+/// What `Welcome` says of each provider's default instance.
+fn statuses(by: BTreeMap<Provider, Availability>) -> Instances {
+    let catalog = catalog();
+    Instances(
+        by.into_iter()
+            .map(|(provider, availability)| {
+                (
+                    instance(provider),
+                    InstanceStatus {
+                        label: catalog.label(provider),
+                        provider,
+                        availability,
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+/// A registry over `launchers`, which adds no instance it can run.
+fn setup(
+    launchers: Launchers,
+    store: Store,
+    stored: daemon::credentials::Stored,
+) -> Setup {
+    Setup {
+        launchers,
+        store,
+        stored,
+        catalog: catalog(),
+        builder: Builder::new(|_, _| async {
+            Launcher::Unavailable(String::from(UNAVAILABLE))
+        }),
     }
 }
 
@@ -3638,12 +3890,18 @@ async fn drive_saved(
 }
 
 async fn saved(data: &Path, body: CommandBody) -> Fallible {
-    let CommandBody::SetCredential { credential } = body else {
+    let CommandBody::SetCredential {
+        instance: id,
+        credential,
+    } = body
+    else {
         return Err(format!("expected a credential, not {body:?}").into());
     };
-    let expected = daemon::credentials::Stored::Opened(
-        proto::Credentials::none().set(credential),
-    );
+    let mut roster = defaults();
+    if let Some(changed) = roster.0.get_mut(&id) {
+        changed.credential = Some(credential);
+    }
+    let expected = daemon::credentials::Stored::Opened(roster);
     let _ = tokio::time::timeout(RESPONSIVE, drive_saved(data, expected))
         .await
         .map_err(|_| "the credential was not saved in time")??;
@@ -3667,6 +3925,7 @@ async fn refresh_host(
     log.append(
         REFRESH_SESSION,
         EventKind::SessionCreated {
+            instance: instance(Provider::Claude),
             provider: Provider::Claude,
             directory: HostPath(source.display().to_string()),
             by: test_client(),
@@ -3710,7 +3969,7 @@ async fn assert_refreshing_claude_refuses(
     phone: &HostLink,
     source: &Path,
 ) -> Fallible {
-    let refused = CommandResult::Rejected(Rejection::ProviderUnavailable {
+    let refused = CommandResult::Rejected(Rejection::InstanceUnavailable {
         reason: String::from(REFRESHING),
     });
     assert_eq!(
@@ -3778,13 +4037,17 @@ async fn assert_failed_refresh_then_clear(
     let failed = send(
         phone,
         CommandBody::SetCredential {
+            instance: instance(Provider::Claude),
             credential: claude_credential("conductor-test-failing"),
         },
     )
     .await?;
     let reason = match failed {
-        CommandResult::Providers(Providers(mut providers)) => {
-            match providers.remove(&Provider::Claude) {
+        CommandResult::Instances(Instances(mut instances)) => {
+            match instances
+                .remove(&instance(Provider::Claude))
+                .map(|it| it.availability)
+            {
                 Some(Availability::Unavailable { reason }) => Some(reason),
                 _ => None,
             }
@@ -3799,11 +4062,11 @@ async fn assert_failed_refresh_then_clear(
         send(
             phone,
             CommandBody::ClearCredential {
-                provider: Provider::Claude
+                instance: instance(Provider::Claude),
             }
         )
         .await?,
-        CommandResult::Providers(with_claude(Availability::Available {
+        CommandResult::Instances(with_claude(Availability::Available {
             auth: Auth::Unmanaged,
             models: probed()
         }))
@@ -3817,10 +4080,13 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let data = data_dir("refresh-claude")?;
     let source = scratch("refresh-claude", "claude-approve.jsonl")?;
     let probe = held_claude_probe(&data)?;
-    let launchers = Launchers::from([
+    let launchers = launchers([
         (
             Provider::Claude,
-            refresh_claude(Home::private(&data, &claude::profile())?, &data),
+            refresh_claude(
+                Home::private(&data, "claude", &claude::profile().config)?,
+                &data,
+            ),
         ),
         (
             Provider::Codex,
@@ -3831,6 +4097,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let desktop = endpoint().await?;
     let conn = authenticated(&desktop, &fx.target).await?;
     let first_body = CommandBody::SetCredential {
+        instance: instance(Provider::Claude),
         credential: claude_credential("conductor-test-old"),
     };
     let first = queued_command(&conn, 2301, first_body.clone());
@@ -3847,18 +4114,20 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     assert_refreshing_claude_refuses(&phone, &source).await?;
     assert_log_still_live(&fx.log).await?;
     let middle_body = CommandBody::SetCredential {
+        instance: instance(Provider::Claude),
         credential: claude_credential("conductor-test-middle"),
     };
     let middle = queued_command(&conn, 2302, middle_body.clone());
     saved(&data, middle_body).await?;
     let newest_body = CommandBody::SetCredential {
+        instance: instance(Provider::Claude),
         credential: claude_credential("conductor-test-newest"),
     };
     let newest = queued_command(&conn, 2303, newest_body.clone());
     saved(&data, newest_body).await?;
     assert_eq!(read(&probe.join("runs.txt"))?, "1");
     std::fs::write(probe.join("go"), "")?;
-    let result = CommandResult::Providers(with_claude(gateway(probed())));
+    let result = CommandResult::Instances(with_claude(gateway(probed())));
     assert_eq!(finished_command(first).await?, result);
     assert_eq!(finished_command(duplicate).await?, result);
     assert_eq!(finished_command(middle).await?, result);
@@ -3919,13 +4188,13 @@ async fn assert_clearing_codex_closes_its_session(
     let cleared = send(
         phone,
         CommandBody::ClearCredential {
-            provider: Provider::Codex,
+            instance: instance(Provider::Codex),
         },
     )
     .await?;
     let unavailable = match cleared {
-        CommandResult::Providers(providers) => {
-            providers.of(Provider::Codex).cloned()
+        CommandResult::Instances(instances) => {
+            instances.availability(&instance(Provider::Codex)).cloned()
         }
         _ => None,
     };
@@ -3950,7 +4219,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     hold_codex_listing(&server)?;
     let hub = Hub::spawn(ServerOptions {
         codex_path: fake_codex(),
-        home: Home::private(&data, &codex::profile())?,
+        home: Home::private(&data, "codex", &codex::profile().config)?,
         credential: None,
         cwd: server.clone(),
         stdout_log: None,
@@ -3958,11 +4227,11 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let fx = refresh_host(
         &data,
         &source,
-        Launchers::from([
+        launchers([
             (
                 Provider::Claude,
                 refresh_claude(
-                    Home::private(&data, &claude::profile())?,
+                    Home::private(&data, "claude", &claude::profile().config)?,
                     &data,
                 ),
             ),
@@ -3985,7 +4254,9 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let (phone, mut updates, offered) =
         tokio::time::timeout(RESPONSIVE, live(&fx)).await??;
     assert_eq!(
-        offered.ok_or("expected a value")?.of(Provider::Codex),
+        offered
+            .ok_or("expected a value")?
+            .availability(&instance(Provider::Codex)),
         Some(&Availability::Unavailable {
             reason: String::from(REFRESHING)
         })
@@ -4546,6 +4817,7 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo()
     log.append(
         session,
         EventKind::SessionCreated {
+            instance: instance(Provider::Claude),
             provider: Provider::Claude,
             directory: HostPath(source.display().to_string()),
             by: test_client(),

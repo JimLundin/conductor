@@ -1,10 +1,7 @@
 //! The credentials Claude Code takes, as the forms the app shows, and what
 //! their values become.
 
-use proto::{
-    Credential, CredentialForm, Credentials, Field, FieldKind, Provider,
-    ProviderInfo,
-};
+use proto::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
 
 use crate::prelude::*;
 
@@ -60,10 +57,10 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
     }
 }
 
-/// Claude's credential among the host's, if it is of a kind Claude takes.
+/// An instance's credential as Claude's, if it is of a kind Claude takes.
 #[must_use]
-pub fn credential(credentials: &Credentials) -> Option<ClaudeCredential> {
-    credentials.of(Provider::Claude).and_then(read)
+pub fn credential(credential: Option<&Credential>) -> Option<ClaudeCredential> {
+    credential.and_then(read)
 }
 
 fn read(credential: &Credential) -> Option<ClaudeCredential> {
@@ -75,18 +72,17 @@ fn read(credential: &Credential) -> Option<ClaudeCredential> {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Credential, Credentials, Provider};
+    use proto::Credential;
 
     use super::{ClaudeCredential, credential, info};
 
-    fn gateway(kind: &str) -> Credentials {
-        Credentials::none().set(Credential {
-            provider: Provider::Claude,
+    fn gateway(kind: &str) -> Credential {
+        Credential {
             kind: String::from(kind),
             values: [("base_url", "https://g.example"), ("token", "t")]
                 .map(|(id, value)| (String::from(id), String::from(value)))
                 .into(),
-        })
+        }
     }
 
     #[test]
@@ -94,10 +90,10 @@ mod tests {
         let stored = gateway("gateway");
         assert_eq!(
             (
-                credential(&stored),
-                credential(&gateway("key")),
-                credential(&Credentials::none()),
-                stored.of(Provider::Claude).map(|it| info().check(it)),
+                credential(Some(&stored)),
+                credential(Some(&gateway("key"))),
+                credential(None),
+                info().check(&stored),
             ),
             (
                 Some(ClaudeCredential::Gateway {
@@ -106,7 +102,7 @@ mod tests {
                 }),
                 None,
                 None,
-                Some(Ok(())),
+                Ok(()),
             )
         );
     }

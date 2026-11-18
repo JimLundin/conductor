@@ -1,11 +1,11 @@
-//! The host's credential store (§6.3).
+//! The host's store of its instances and their credentials (§6.3).
 //!
 //! `<data>/credentials` holds the
-//! postcard of [`Credentials`], sealed with XChaCha20-Poly1305 under the
+//! postcard of [`Roster`], sealed with XChaCha20-Poly1305 under the
 //! 32-byte store key in `<data>/store.key`. The key sits beside the store,
 //! readable by the owner only, §6.3's variant for hosts without a platform
-//! keystore. [`Credentials`] is what the fleet config will carry, so
-//! sharing it is a copy of this value.
+//! keystore. [`Roster`] is what the fleet config will carry, so sharing it
+//! is a copy of this value.
 //!
 //! The file is a format byte, the nonce and the ciphertext, sealed with the
 //! format and the file's purpose as associated data, so no other sealed
@@ -17,13 +17,14 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
-use proto::Credentials;
+use proto::Roster;
 
 pub use host::registry::Stored;
 
-/// Format 3 holds each credential as its form's values; an older store
-/// reads as one that doesn't open, which a Clear moves aside.
-const FORMAT: u8 = 3;
+/// Format 4 holds the host's instances, each with its credential as its
+/// form's values; an older store reads as one that doesn't open, which a
+/// Clear moves aside.
+const FORMAT: u8 = 4;
 const PURPOSE: &[u8] = b"conductor credentials 1";
 const NONCE_LEN: usize = 24;
 
@@ -64,7 +65,7 @@ impl Store {
                 Stored::Opened,
             ),
             Err(err) => match err.kind() {
-                ErrorKind::NotFound => Stored::Opened(Credentials::none()),
+                ErrorKind::NotFound => Stored::Fresh,
                 _ => Stored::Unreadable(format!("reading {}: {err}", store.path.display())),
             },
         };
@@ -78,10 +79,10 @@ impl Store {
     ///
     /// Fails if there is no random source, or writing, renaming or syncing
     /// the file fails.
-    pub fn save(&self, credentials: &Credentials) -> anyhow::Result<()> {
+    pub fn save(&self, roster: &Roster) -> anyhow::Result<()> {
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).context("no random source")?;
-        let plain = postcard::to_stdvec(credentials)?;
+        let plain = postcard::to_stdvec(roster)?;
         let payload = Payload {
             msg: &plain,
             aad: PURPOSE,
@@ -117,7 +118,7 @@ impl Store {
         Ok(aside)
     }
 
-    fn unseal(&self, file: &[u8]) -> Option<Credentials> {
+    fn unseal(&self, file: &[u8]) -> Option<Roster> {
         let (nonce, ciphertext) =
             file.strip_prefix(&[FORMAT])?.split_at_checked(NONCE_LEN)?;
         let payload = Payload {

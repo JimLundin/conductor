@@ -17,7 +17,7 @@ use core::time::Duration;
 use crate::host_view::HostView;
 use crate::prelude::*;
 use proto::{
-    Catalog, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Providers,
+    Catalog, Epoch, Event, EventKind, Hello, HelloReply, HostSeq, Instances,
     Subscribe, Welcome,
 };
 
@@ -44,8 +44,9 @@ pub struct Status {
     pub state: LinkState,
     /// The host's name from its last `Welcome`.
     pub host: Option<String>,
-    /// What the host can run, from its last `Welcome`.
-    pub providers: Option<Providers>,
+    /// What the host can run, from its last `Welcome` or a later
+    /// instance command's answer.
+    pub instances: Option<Instances>,
     /// How each provider presents itself, from the last `Welcome`.
     pub catalog: Catalog,
     /// Why the last connection ended, until the next one is live.
@@ -172,7 +173,7 @@ pub enum Input {
     /// network change.
     Reconnect,
     /// What the host runs now, from a command's answer.
-    Providers(Providers),
+    Instances(Instances),
 }
 
 impl From<Option<HelloReply>> for Input {
@@ -333,8 +334,8 @@ impl Link {
 
     fn on(&mut self, input: Input) -> Vec<Effect> {
         match (self.phase, input) {
-            (_, Input::Providers(providers)) => self.publish(Status {
-                providers: Some(providers),
+            (_, Input::Instances(instances)) => self.publish(Status {
+                instances: Some(instances),
                 ..self.status.clone()
             }),
             (Phase::Waiting, Input::Elapsed | Input::Reconnect) => self.dial(),
@@ -486,7 +487,7 @@ impl Link {
         let reset = self.adopt(feed.epoch);
         let shown = self.publish(Status {
             host: Some(welcome.host),
-            providers: Some(welcome.providers),
+            instances: Some(welcome.instances),
             catalog: welcome.catalog,
             state: LinkState::CatchingUp,
             ..self.status.clone()
@@ -640,8 +641,8 @@ mod tests {
 
     use proto::{
         AuthToken, Availability, Catalog, ClientName, Epoch, Event, EventKind,
-        Hello, HelloReply, HostSeq, Provider, Providers, SessionId, Subscribe,
-        Welcome,
+        Hello, HelloReply, HostSeq, InstanceId, InstanceStatus, Instances,
+        Provider, SessionId, Subscribe, Welcome,
     };
 
     use super::{
@@ -656,13 +657,21 @@ mod tests {
         }
     }
 
-    fn providers(reason: &str) -> Providers {
-        let unavailable = Availability::Unavailable {
-            reason: String::from(reason),
-        };
-        Providers(
+    fn instances(reason: &str) -> Instances {
+        Instances(
             Provider::ALL
-                .map(|provider| (provider, unavailable.clone()))
+                .map(|provider| {
+                    (
+                        InstanceId::named(provider.name()),
+                        InstanceStatus {
+                            label: String::from(provider.name()),
+                            provider,
+                            availability: Availability::Unavailable {
+                                reason: String::from(reason),
+                            },
+                        },
+                    )
+                })
                 .into(),
         )
     }
@@ -672,7 +681,7 @@ mod tests {
             host: String::from("host"),
             epoch: Epoch(epoch),
             head_seq: HostSeq(head),
-            providers: providers("test"),
+            instances: instances("test"),
             catalog: Catalog::default(),
         }
     }
@@ -702,7 +711,7 @@ mod tests {
         Status {
             state,
             host: Some(String::from("host")),
-            providers: Some(providers("test")),
+            instances: Some(instances("test")),
             catalog: Catalog::default(),
             error: error.map(String::from),
         }
@@ -1186,16 +1195,16 @@ mod tests {
     }
 
     #[test]
-    fn providers_update_the_status_and_stale_inputs_do_nothing() {
+    fn instances_update_the_status_and_stale_inputs_do_nothing() {
         let (link, adopted) =
-            live().step(Input::Providers(providers("signed out")));
+            live().step(Input::Instances(instances("signed out")));
         let (_, stale) =
             walk(link, Vec::from([Input::Elapsed, Input::Drawn(1)]));
         assert_eq!(
             (adopted, stale),
             (
                 Vec::from([Effect::Show(Status {
-                    providers: Some(providers("signed out")),
+                    instances: Some(instances("signed out")),
                     ..status(LinkState::Live, None)
                 })]),
                 Vec::from([Vec::new(), Vec::new()]),

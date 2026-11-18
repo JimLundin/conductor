@@ -25,14 +25,14 @@ for engine in chromium webkit; do
   scratch=$(mktemp -d "$run/$engine.XXXXXX")
   source="$scratch/source"
   data="$scratch/host"
-  mkdir -p "$source" "$data/probe"
+  mkdir -p "$source" "$data/work/claude"
   git -C "$source" init -q
   echo 'baseline' >"$source/baseline.txt"
   git -C "$source" add baseline.txt
   git -C "$source" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm baseline -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
   cp fixtures/e2e/claude-worktrees.jsonl "$source/stdout.jsonl"
   cp fixtures/e2e/claude-worktrees-fork.jsonl "$source/stdout.2.jsonl"
-  head -2 fixtures/e2e/claude-killed.jsonl >"$data/probe/stdout.jsonl"
+  head -2 fixtures/e2e/claude-killed.jsonl >"$data/work/claude/stdout.jsonl"
   "$target/debug/conductord" host --data-dir "$data" \
     --web-url "http://localhost:$port/conductor/" \
     --cli claude="$PWD/crates/claude-cli/tests/fake-claude.sh" \

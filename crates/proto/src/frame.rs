@@ -71,9 +71,10 @@ mod tests {
     use crate::{
         Auth, AuthToken, Availability, Catalog, ClientName, Command,
         CommandBody, CommandId, CommandResult, Credential, Decision, Effort,
-        Epoch, Event, EventKind, Hello, HelloReply, HostSeq, ModelChoice,
-        ModelId, Models, Open, Provider, Providers, Rejection, RequestId,
-        Resolution, SessionId, Subscribe, TurnOutcome, Welcome,
+        Epoch, Event, EventKind, Hello, HelloReply, HostSeq, InstanceId,
+        InstanceStatus, Instances, ModelChoice, ModelId, Models, Open,
+        Provider, Rejection, RequestId, Resolution, SessionId, Subscribe,
+        TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -113,8 +114,8 @@ mod tests {
         let open = Open::Command(Command {
             id: CommandId(1),
             body: CommandBody::SetCredential {
+                instance: InstanceId::named("work"),
                 credential: Credential {
-                    provider: Provider::Codex,
                     kind: String::from("gateway"),
                     values: BTreeMap::from([(
                         String::from("key"),
@@ -125,11 +126,11 @@ mod tests {
         });
         assert_eq!(
             encode(&open)?,
-            frame(b"\x02\x01\x06\x01\x07gateway\x01\x03key\x01k")
+            frame(b"\x02\x01\x06\x04work\x07gateway\x01\x03key\x01k")
         );
         assert_eq!(
             format!("{open:?}"),
-            r#"Command(Command { id: CommandId(1), body: SetCredential { credential: Credential { provider: Codex, kind: "gateway", .. } } })"#
+            r#"Command(Command { id: CommandId(1), body: SetCredential { instance: InstanceId("work"), credential: Credential { kind: "gateway", .. } } })"#
         );
         Ok(())
     }
@@ -164,31 +165,39 @@ mod tests {
                 host: String::from("desk"),
                 epoch: Epoch(1),
                 head_seq: HostSeq(0),
-                providers: Providers(BTreeMap::from([
-                    (Provider::Claude, Availability::Available {
-                        auth: Auth::Stored {
-                            kind: String::from("g"),
-                            url: Some(String::from("u")),
-                        },
-                        models: Models {
-                            choices: Vec::from([ModelChoice {
-                                id: ModelId(String::from("h")),
-                                name: String::from("H"),
-                                description: String::from("d"),
-                                efforts: Vec::from([Effort::High]),
-                            }]),
-                            default: Some(ModelId(String::from("h"))),
+                instances: Instances(BTreeMap::from([
+                    (InstanceId::named("claude"), InstanceStatus {
+                        label: String::from("C"),
+                        provider: Provider::Claude,
+                        availability: Availability::Available {
+                            auth: Auth::Stored {
+                                kind: String::from("g"),
+                                url: Some(String::from("u")),
+                            },
+                            models: Models {
+                                choices: Vec::from([ModelChoice {
+                                    id: ModelId(String::from("h")),
+                                    name: String::from("H"),
+                                    description: String::from("d"),
+                                    efforts: Vec::from([Effort::High]),
+                                }]),
+                                default: Some(ModelId(String::from("h"))),
+                            },
                         },
                     }),
-                    (Provider::Codex, Availability::Unavailable {
-                        reason: String::from("no"),
+                    (InstanceId::named("codex"), InstanceStatus {
+                        label: String::from("X"),
+                        provider: Provider::Codex,
+                        availability: Availability::Unavailable {
+                            reason: String::from("no"),
+                        },
                     }),
                 ])),
                 catalog: Catalog::default(),
             }))
             ?,
             frame(
-                b"\x00\x04desk\x01\x00\x02\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x02no\x00"
+                b"\x00\x04desk\x01\x00\x02\x06claude\x01C\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x05codex\x01X\x01\x01\x02no\x00"
             )
         );
         assert_eq!(
@@ -218,7 +227,7 @@ mod tests {
             frame(b"\x04\x01\x0c\x02\x04boom")
         );
         assert_eq!(
-            encode(&CommandResult::Rejected(Rejection::ProviderUnavailable {
+            encode(&CommandResult::Rejected(Rejection::InstanceUnavailable {
                 reason: String::from("no codex"),
             }))?,
             frame(b"\x03\x01\x08no codex")

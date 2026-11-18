@@ -1,9 +1,10 @@
 use proto::{
     Availability, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
-    Models, Provider, Providers, SessionId, Subscribe, Welcome,
+    InstanceId, InstanceStatus, Instances, Models, Provider, SessionId,
+    Subscribe, Welcome,
 };
 
-use super::{Begun, Effect, Kind, Log, Ticket, Write};
+use super::{Begun, Effect, FORMAT, Kind, Log, Ticket, Write, opens};
 
 fn log() -> Log {
     Log::new(String::from("test"), Epoch(5), Vec::new())
@@ -72,30 +73,16 @@ fn the_welcome_names_the_head_and_a_subscription_needs_the_epoch() {
     let mut log = log();
     let _ = log.append(SessionId(1), EventKind::SessionReady);
     let _ = log.append(SessionId(1), delta("a"));
-    let providers = Providers(
-        [
-            (
-                Provider::Claude,
-                Availability::Unavailable {
-                    reason: String::from("no claude"),
-                },
-            ),
-            (
-                Provider::Codex,
-                Availability::Unavailable {
-                    reason: String::from("no codex"),
-                },
-            ),
-        ]
-        .into(),
-    );
+    let listed = instances(Availability::Unavailable {
+        reason: String::from("no claude"),
+    });
     assert_eq!(
-        log.welcome(providers.clone(), proto::Catalog::default()),
+        log.welcome(listed.clone(), proto::Catalog::default()),
         Welcome {
             host: String::from("test"),
             epoch: Epoch(5),
             head_seq: HostSeq(1),
-            providers,
+            instances: listed,
             catalog: proto::Catalog::default(),
         }
     );
@@ -288,27 +275,60 @@ fn a_restored_log_continues_from_its_head() {
     );
     assert_eq!(
         log.welcome(
-            Providers(
-                [
-                    (
-                        Provider::Claude,
-                        Availability::Available {
-                            auth: proto::Auth::SignedIn,
-                            models: Models::none(),
-                        },
-                    ),
-                    (
-                        Provider::Codex,
-                        Availability::Unavailable {
-                            reason: String::from("no codex"),
-                        },
-                    ),
-                ]
-                .into(),
-            ),
+            instances(Availability::Available {
+                auth: proto::Auth::SignedIn,
+                models: Models::none(),
+            }),
             proto::Catalog::default()
         )
         .head_seq,
         HostSeq(8)
     );
+}
+
+#[test]
+fn a_new_database_takes_the_format_and_another_format_does_not_open() {
+    let refused = |found: u32| {
+        Err(format!(
+            "the log is format {found}, and this host reads format 2; move the database aside to start over"
+        ))
+    };
+    assert_eq!(
+        [
+            opens(true, None),
+            opens(false, Some(FORMAT)),
+            opens(false, None),
+            opens(false, Some(3)),
+        ],
+        [Ok(true), Ok(false), refused(1), refused(3)]
+    );
+}
+
+/// A Claude instance with `availability`, and one Codex instance that
+/// can't run.
+fn instances(availability: Availability) -> Instances {
+    let status = |label: &str, provider, availability| InstanceStatus {
+        label: String::from(label),
+        provider,
+        availability,
+    };
+    Instances(
+        [
+            (
+                InstanceId::named("claude"),
+                status("Claude Code", Provider::Claude, availability),
+            ),
+            (
+                InstanceId::named("codex"),
+                status(
+                    "Codex",
+                    Provider::Codex,
+                    Availability::Unavailable {
+                        reason: String::from("no codex"),
+                    },
+                ),
+            ),
+        ]
+        .into(),
+    )
 }

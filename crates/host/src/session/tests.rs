@@ -3,9 +3,9 @@ use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
     Answer, Checkpoint, CheckpointId, ClientName, CloseReason, CommandResult,
     Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq,
-    ModelChoice, ModelId, Models, Provider, Question, Rejection, RequestId,
-    Resolution, Selection, SessionId, ToolCallId, ToolKind, ToolOutcome,
-    ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    InstanceId, ModelChoice, ModelId, Models, Provider, Question, Rejection,
+    RequestId, Resolution, Selection, SessionId, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
@@ -786,6 +786,7 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
 #[test]
 fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
     let created = event(EventKind::SessionCreated {
+        instance: InstanceId::named("claude"),
         provider: Provider::Claude,
         directory: HostPath(text("/work")),
         by: phone(),

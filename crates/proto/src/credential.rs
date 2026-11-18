@@ -62,26 +62,19 @@ pub struct ProviderInfo {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Catalog(pub BTreeMap<Provider, ProviderInfo>);
 
-/// One provider's credential: the values of its kind's form, by field id.
-/// As `SetCredential` carries it and as the host stores it.
+/// One instance's credential: the values of its kind's form, by field id.
+/// As `SetCredential` carries it and as the host stores it. The instance
+/// it belongs to names the provider.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credential {
-    pub provider: Provider,
     pub kind: String,
     pub values: BTreeMap<String, String>,
 }
 
-/// The credentials a host stores, at most one per provider.
-///
-/// This is the unit the fleet config (§6.5) carries to every host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Credentials(BTreeMap<Provider, Credential>);
-
-/// Shows only the provider and the kind, so no value reaches a log.
+/// Shows only the kind, so no value reaches a log.
 impl core::fmt::Debug for Credential {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Credential")
-            .field("provider", &self.provider)
             .field("kind", &self.kind)
             .finish_non_exhaustive()
     }
@@ -92,31 +85,6 @@ impl Credential {
     #[must_use]
     pub fn value(&self, id: &str) -> &str {
         self.values.get(id).map_or("", String::as_str)
-    }
-}
-
-impl Credentials {
-    #[must_use]
-    pub const fn none() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    /// These credentials with `credential` in its provider's place.
-    #[must_use]
-    pub fn set(mut self, credential: Credential) -> Self {
-        self.0.insert(credential.provider, credential);
-        self
-    }
-
-    #[must_use]
-    pub fn clear(mut self, provider: Provider) -> Self {
-        self.0.remove(&provider);
-        self
-    }
-
-    #[must_use]
-    pub fn of(&self, provider: Provider) -> Option<&Credential> {
-        self.0.get(&provider)
     }
 }
 
@@ -249,7 +217,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
-    use crate::{Auth, Provider};
+    use crate::Auth;
 
     fn field(id: &str, kind: FieldKind, required: bool) -> Field {
         Field {
@@ -279,7 +247,6 @@ mod tests {
 
     fn credential(kind: &str, values: &[(&str, &str)]) -> Credential {
         Credential {
-            provider: Provider::ALL[0],
             kind: String::from(kind),
             values: values
                 .iter()
@@ -361,7 +328,7 @@ mod tests {
         );
         assert_eq!(
             alloc::format!("{stored:?}"),
-            r#"Credential { provider: Claude, kind: "gateway", .. }"#
+            r#"Credential { kind: "gateway", .. }"#
         );
     }
 }

@@ -2,8 +2,7 @@
 //! values become.
 
 use proto::{
-    Credential, CredentialForm, Credentials, Field, FieldKind, ModelId,
-    Provider, ProviderInfo,
+    Credential, CredentialForm, Field, FieldKind, ModelId, ProviderInfo,
 };
 
 use crate::prelude::*;
@@ -79,10 +78,10 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
     }
 }
 
-/// Codex's credential among the host's, if it is of a kind Codex takes.
+/// An instance's credential as Codex's, if it is of a kind Codex takes.
 #[must_use]
-pub fn credential(credentials: &Credentials) -> Option<CodexCredential> {
-    credentials.of(Provider::Codex).and_then(read)
+pub fn credential(credential: Option<&Credential>) -> Option<CodexCredential> {
+    credential.and_then(read)
 }
 
 fn read(credential: &Credential) -> Option<CodexCredential> {
@@ -105,13 +104,12 @@ pub fn default_model(credential: &CodexCredential) -> ModelId {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Credential, Credentials, Provider};
+    use proto::Credential;
 
     use super::{CodexCredential, credential, info};
 
-    fn provider(kind: &str) -> Credentials {
-        Credentials::none().set(Credential {
-            provider: Provider::Codex,
+    fn provider(kind: &str) -> Credential {
+        Credential {
             kind: String::from(kind),
             values: [
                 ("name", "Gateway"),
@@ -121,7 +119,7 @@ mod tests {
             ]
             .map(|(id, value)| (String::from(id), String::from(value)))
             .into(),
-        })
+        }
     }
 
     #[test]
@@ -129,9 +127,9 @@ mod tests {
         let stored = provider("provider");
         assert_eq!(
             (
-                credential(&stored),
-                credential(&provider("gateway")),
-                stored.of(Provider::Codex).map(|it| info().check(it)),
+                credential(Some(&stored)),
+                credential(Some(&provider("gateway"))),
+                info().check(&stored),
             ),
             (
                 Some(CodexCredential::Provider {
@@ -141,7 +139,7 @@ mod tests {
                     model: String::from("gpt-6"),
                 }),
                 None,
-                Some(Ok(())),
+                Ok(()),
             )
         );
     }

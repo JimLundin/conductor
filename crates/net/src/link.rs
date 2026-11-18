@@ -22,7 +22,7 @@ use client::link::{
 pub use client::link::{Cursor, LinkState, Status, Update, shown_after};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
-    Event, Hello, HelloReply, Open, Providers, Subscribe, Ticket, TicketError,
+    Event, Hello, HelloReply, Instances, Open, Subscribe, Ticket, TicketError,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -109,7 +109,7 @@ enum Request {
     },
     /// What the host runs now, from a command's answer.
     Adopt {
-        providers: Providers,
+        instances: Instances,
         reply: oneshot::Sender<()>,
     },
     Reconnect,
@@ -193,7 +193,7 @@ impl HostLink {
 
     /// Runs one command on its own stream. Fails fast while not connected;
     /// the caller decides whether to retry.
-    /// A `Providers` answer is in the status by the time this returns.
+    /// An `Instances` answer is in the status by the time this returns.
     ///
     /// # Errors
     /// Fails when the link is not connected or has stopped, or the host
@@ -212,9 +212,9 @@ impl HostLink {
             let _ = reply.send(rpc(conn, body).await);
         });
         let result = answer.await.map_err(|_| SendError::Stopped)??;
-        if let CommandResult::Providers(listed) = &result {
-            let providers = listed.clone();
-            self.ask(|reply| Request::Adopt { providers, reply })
+        if let CommandResult::Instances(listed) = &result {
+            let instances = listed.clone();
+            self.ask(|reply| Request::Adopt { instances, reply })
                 .await?;
         }
         Ok(result)
@@ -363,8 +363,8 @@ impl Link {
                 let _ = reply.send(self.conn.clone());
                 Ok(core)
             }
-            Request::Adopt { providers, reply } => self
-                .step(core, Input::Providers(providers))
+            Request::Adopt { instances, reply } => self
+                .step(core, Input::Instances(instances))
                 .await
                 .inspect(|_| {
                     let _ = reply.send(());

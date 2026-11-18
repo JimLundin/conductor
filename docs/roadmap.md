@@ -24,8 +24,23 @@ What is built and what comes next. Update it in the commit that changes it.
   provider's core (ALPN `conductor/13`, credential store format 3). The
   binary moved to `crates/conductord`, the one place that wires the
   providers, with `--cli <provider>=<path>`, `--model <provider>=<model>`
-  and `login <provider>`. Next: the pins in `agents::pin` and `Provider`
+  and `login` (now per instance, below). Next: the pins in `agents::pin` and `Provider`
   itself are the last places a new provider is listed.
+
+- **Instances** (§5.2, §6.2, §6.3). A host runs named instances of each
+  provider, such as "Claude (API)" through a gateway beside "Claude
+  (subscription)" on its own sign-in. Each instance has its own credential,
+  its own private home `<data>/home/<instance>`, its own work dir and its
+  own agents, so a Codex instance gets its own app-server. Sessions start
+  on an instance and record it, so Continue and undo stay on it. The app's
+  credentials screen lists the instances, adds one per provider, renames
+  and removes them (refused while a session runs on one), and the
+  new-session picker lists instances. A fresh host gets one instance per
+  provider, named after it; `--cli` and `--model` are each provider's
+  defaults, and `conductord login <instance>` signs one in on the host
+  (ALPN `conductor/14`, credential store format 4, log format 2). Next:
+  sign-in from the app (item 3), and per-instance model and CLI settings
+  from the app; the store already keeps both.
 
 - **One agent runtime** (§5.2). The daemon asks one interface for agents:
   `agents::runtime`'s commands and events over a `runtime::Runtime`
@@ -41,15 +56,15 @@ What is built and what comes next. Update it in the commit that changes it.
   with private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off. Gateway
   credentials run them (`tools/live-host.sh --register`). Subscription
   sign-in and its check on a host without the CLIs are postponed to #12;
-  `conductord login claude|codex` remains as the host-terminal fallback.
+  `conductord login <instance>` remains as the host-terminal fallback.
 
 - **Responsive provider refresh** (#23). Credential saves, model discovery
   and Codex reconfiguration no longer hold the registry or the global
   command transaction while a CLI responds. Refreshes are serialized per
-  provider, coalesce superseded configurations and discard stale results.
-  Pending and failed providers report unavailability; unrelated sessions
+  instance, coalesce superseded configurations and discard stale results.
+  Pending and failed instances report unavailability; unrelated sessions
   and connections remain usable. Credential retries retain their final
-  durable `Providers` receipt.
+  durable `Instances` receipt.
 
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
@@ -77,7 +92,8 @@ What is built and what comes next. Update it in the commit that changes it.
   `install`.
 - **Host.** `conductord` serves one host over iroh: a durable redb event log
   (streaming deltas are live-only), a session actor per agent, one shared
-  Codex app-server. Clients reach it over iroh through n0's public relays.
+  Codex app-server per Codex instance. Clients reach it over iroh through
+  n0's public relays.
 - **Client.** `HostLink` per host: reconnect with backoff, a hedged dial,
   catch-up from the cursor. `HostView` folds events into what the UI shows.
 - **App.** One Dioxus web app, installed as an app on the desktop and the
@@ -117,8 +133,10 @@ Each item ends in something to try. The fleet design is
    `tools/live-host.sh --register` runs the pinned CLIs on them. Next: API
    keys, the Claude `setup-token` token and the Codex device-code sign-in,
    entered on the phone, and the platform keystores for the host key.
-   `Welcome` reports each provider's sign-in kind. *Try:* on a fresh host, sign in to Claude and
-   Codex from the iPhone without touching the host's keyboard.
+   `Welcome` reports each instance's sign-in kind. A sign-in from the app
+   runs per instance, in the instance's home, as `conductord login
+   <instance>` does on the host today. *Try:* on a fresh host, sign in to
+   Claude and Codex from the iPhone without touching the host's keyboard.
 4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard
    store the event log, command receipts, open requests and conversation ids.
    The host key, ticket token and epoch persist; clients resume their cursors

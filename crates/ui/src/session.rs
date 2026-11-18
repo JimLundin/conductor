@@ -12,12 +12,12 @@ use client::host_view::{
 use client::new_session::{efforts, models};
 use proto::{
     Catalog, CheckpointId, CloseReason, CommandBody, CommandResult, Decision,
-    Effort, Providers, Question, RequestId, SessionId, Task, TaskStatus,
+    Effort, Instances, Question, RequestId, SessionId, Task, TaskStatus,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
 use crate::new_session::Choice;
-use crate::sessions::short;
+use crate::sessions::{agent, short};
 use crate::transcript::{self, Row, card_id};
 use crate::{Effect, Focus, Reply, ReplyTo};
 
@@ -419,19 +419,22 @@ impl Pane {
         &self,
         id: SessionId,
         session: &SessionView,
-        providers: Option<&Providers>,
-        catalog: &Catalog,
+        known: (Option<&Instances>, &Catalog),
         notice: Option<String>,
     ) -> SessionPane {
         let controls = session.controls();
-        let provider = catalog.label(session.provider);
+        let provider = agent(session, known);
         let status = match session.undo {
             UndoState::Undoing(_) => String::from("undoing"),
             UndoState::Failed { .. } => String::from("recovery needed"),
             UndoState::Ready | UndoState::Undone => session.status.word(),
         };
         let offered = efforts(
-            &models(providers.and_then(|known| known.of(session.provider))),
+            &models(
+                known
+                    .0
+                    .and_then(|listed| listed.availability(&session.instance)),
+            ),
             session.model.as_ref(),
         );
         SessionPane {

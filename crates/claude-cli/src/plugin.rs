@@ -14,12 +14,12 @@ pub fn plugin(settings: Settings) -> Plugin {
     }
 }
 
-/// Claude lists its models in `<data>/probe`.
+/// Claude lists its models in the instance's work dir.
 fn launched(launch: Launch) -> Starter {
     starter(ClaudeLaunch {
         claude_path: launch.path,
         home: launch.home,
         credential: None,
-        probe: launch.data_dir.join("probe"),
+        probe: launch.work,
     })
 }

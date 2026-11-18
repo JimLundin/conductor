@@ -1,11 +1,12 @@
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandId,
-    CommandResult, Effort, Epoch, Hello, HostSeq, Models, Open, Provider,
-    Rejection, SessionId, Subscribe,
+    CommandResult, Effort, Epoch, Hello, HostSeq, InstanceId, Models, Open,
+    Provider, Rejection, SessionId, Subscribe,
 };
 
 use super::{
-    Admission, Ledger, Order, Relaunch, Route, Stream, admit, route, stream,
+    Admission, Configure, Ledger, Order, Relaunch, Route, Stream, admit, route,
+    stream,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -105,15 +106,38 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
         Route::Order(SessionId(1), Order::Diff(CheckpointId(2)))
     );
     assert_eq!(diff.ledger(), Ledger::Unrecorded);
+    let work = || InstanceId::named("work");
+    let configured = [
+        CommandBody::ClearCredential { instance: work() },
+        CommandBody::AddInstance {
+            provider: Provider::Codex,
+            label: String::from("Codex (API)"),
+        },
+        CommandBody::RenameInstance {
+            instance: work(),
+            label: String::from("Work"),
+        },
+        CommandBody::RemoveInstance { instance: work() },
+    ]
+    .map(|body| route(body, phone()));
     assert_eq!(
-        route(
-            CommandBody::ClearCredential {
+        configured.each_ref().map(Route::ledger),
+        [Ledger::Credential; 4]
+    );
+    assert_eq!(
+        configured,
+        [
+            Route::Configure(Configure::ClearCredential(work())),
+            Route::Configure(Configure::Add {
                 provider: Provider::Codex,
-            },
-            phone(),
-        )
-        .ledger(),
-        Ledger::Credential
+                label: String::from("Codex (API)"),
+            }),
+            Route::Configure(Configure::Rename {
+                instance: work(),
+                label: String::from("Work"),
+            }),
+            Route::Configure(Configure::Remove(work())),
+        ]
     );
     let send = route(
         CommandBody::SendMessage {

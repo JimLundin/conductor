@@ -1,21 +1,27 @@
 //! The registry's actor: the one place a `StartSession` and a `Continue`
-//! are checked and a session is found by its id.
+//! are checked, a session is found by its id, and the host's instances
+//! change.
 //!
 //! Its decisions are `host::registry`'s; the actor keeps the store, the
-//! sessions' tasks and the providers' refreshes, and performs what the
-//! registry decides.
+//! sessions' tasks and the instances' refreshes and starts, and performs
+//! what the registry decides.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::fmt;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use agents::runtime::Command;
-use host::registry::{Job, Launch, Listing, Refreshed};
+use host::registry::{Job, Launch, Listing, Refreshed, Started, Starting};
 use host::restore::{Created, Recovery, Step, events_of};
+use host::serve::Configure;
 use proto::{
     Catalog, Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
-    Credentials, Effort, Event, EventKind, HistoryAnchor, HostPath, ModelId,
-    Models, Provider, Providers, Rejection, SessionId, UndoAvailability,
+    Effort, Event, EventKind, HistoryAnchor, HostPath, Instance, InstanceId,
+    Instances, ModelId, Models, Rejection, SessionId, UndoAvailability,
     Workspace,
 };
 use runtime::{Runtime, Starter};
@@ -29,15 +35,51 @@ use crate::session::Session;
 
 pub use host::registry::{Offer, OwnSignIn};
 
-/// How the host runs a provider.
+/// How the host runs an instance.
 pub type Launcher = host::registry::Launcher<Starter>;
 
-/// How the host runs each provider it knows of. Built once in `main`.
-pub type Launchers = BTreeMap<Provider, Launcher>;
+/// How the host runs each of its instances.
+pub type Launchers = BTreeMap<InstanceId, Launcher>;
 
 type Reply = oneshot::Sender<CommandResult>;
 type Core = host::registry::Registry<Starter, Session, Reply>;
 type Effect = host::registry::Effect<Starter, Reply>;
+
+/// How an added instance comes to run.
+type Building = Pin<Box<dyn Future<Output = Launcher> + Send>>;
+
+/// Starts the CLI of an instance added while the host runs, in the
+/// instance's own home, and says how the host then runs it.
+#[derive(Clone)]
+pub struct Builder(Arc<dyn Fn(InstanceId, Instance) -> Building + Send + Sync>);
+
+impl Builder {
+    pub fn new<F>(
+        build: impl Fn(InstanceId, Instance) -> F + Send + Sync + 'static,
+    ) -> Self
+    where
+        F: Future<Output = Launcher> + Send + 'static,
+    {
+        Self(Arc::new(move |id, instance| Box::pin(build(id, instance))))
+    }
+}
+
+impl fmt::Debug for Builder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Builder")
+    }
+}
+
+/// What the registry starts with: how it runs the instances the store
+/// held when it opened (`stored`), how it starts the ones added later, and
+/// how each provider presents itself and the credentials it takes.
+pub struct Setup {
+    pub launchers: Launchers,
+    pub store: Store,
+    pub stored: Stored,
+    pub catalog: Catalog,
+    pub builder: Builder,
+}
 
 #[derive(Debug, Clone)]
 pub struct Registry {
@@ -48,8 +90,9 @@ pub struct Registry {
 enum RegistryMsg {
     Restore,
     Refreshed(Refreshed),
+    Started(Started<Starter>),
     Start {
-        provider: Provider,
+        instance: InstanceId,
         directory: HostPath,
         model: Option<ModelId>,
         effort: Option<Effort>,
@@ -64,15 +107,11 @@ enum RegistryMsg {
         session: SessionId,
         reply: oneshot::Sender<Option<Session>>,
     },
-    Providers {
-        reply: oneshot::Sender<Providers>,
+    Instances {
+        reply: oneshot::Sender<Instances>,
     },
-    SetCredential {
-        credential: Credential,
-        reply: Reply,
-    },
-    ClearCredential {
-        provider: Provider,
+    Configure {
+        configure: Configure,
         reply: Reply,
     },
 }
@@ -81,26 +120,29 @@ struct RegistryActor {
     log: Log,
     store: Store,
     core: Core,
+    builder: Builder,
     refreshes: JoinSet<Refreshed>,
+    starts: JoinSet<Started<Starter>>,
 }
 
 impl Registry {
-    /// `stored` is what `store` held when it opened, and `catalog` how
-    /// each provider presents itself and the credentials it takes.
     #[must_use]
-    pub fn spawn(
-        log: Log,
-        launchers: Launchers,
-        store: Store,
-        stored: Stored,
-        catalog: Catalog,
-    ) -> Self {
+    pub fn spawn(log: Log, setup: Setup) -> Self {
+        let Setup {
+            launchers,
+            store,
+            stored,
+            catalog,
+            builder,
+        } = setup;
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
             log,
             store,
-            core: Core::new(launchers, stored, catalog.clone()),
+            core: Core::new(launchers, &stored, catalog.clone()),
+            builder,
             refreshes: JoinSet::new(),
+            starts: JoinSet::new(),
         };
         let _ = inbox.try_send(RegistryMsg::Restore);
         tokio::spawn(actor.run(messages));
@@ -113,7 +155,7 @@ impl Registry {
         self.catalog.clone()
     }
 
-    /// Checks the directory and the provider, logs `SessionCreated` and
+    /// Checks the directory and the instance, logs `SessionCreated` and
     /// answers `Started` at once. The agent starts inside the session's own
     /// task, so a slow start never blocks the registry.
     ///
@@ -122,14 +164,14 @@ impl Registry {
     /// Fails if the registry has stopped.
     pub async fn start(
         &self,
-        provider: Provider,
+        instance: InstanceId,
         directory: HostPath,
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         let (model, effort) = choice;
         self.ask(|reply| RegistryMsg::Start {
-            provider,
+            instance,
             directory,
             model,
             effort,
@@ -139,9 +181,9 @@ impl Registry {
         .await
     }
 
-    /// The session, how its provider runs now and what it offers, for an
+    /// The session, how its instance runs now and what it offers, for an
     /// order that may start the agent or is checked against what the
-    /// provider offers: `Continue`, `UndoTurn` and `SetEffort`. The
+    /// instance offers: `Continue`, `UndoTurn` and `SetEffort`. The
     /// session starts its agent itself, so a slow start never blocks the
     /// registry.
     ///
@@ -173,35 +215,22 @@ impl Registry {
     /// # Errors
     ///
     /// Fails if the registry has stopped.
-    pub async fn providers(&self) -> Result<Providers, Stopped> {
-        self.ask(|reply| RegistryMsg::Providers { reply }).await
+    pub async fn instances(&self) -> Result<Instances, Stopped> {
+        self.ask(|reply| RegistryMsg::Instances { reply }).await
     }
 
-    /// Stores the credential and answers with the providers it changes,
-    /// once the provider has refreshed.
+    /// Changes the host's instances and answers with what it runs then:
+    /// once a changed credential has refreshed its instance, and once an
+    /// added instance's CLI has started.
     ///
     /// # Errors
     ///
     /// Fails if the registry has stopped.
-    pub async fn set_credential(
+    pub async fn configure(
         &self,
-        credential: Credential,
+        configure: Configure,
     ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| RegistryMsg::SetCredential { credential, reply })
-            .await
-    }
-
-    /// Clears the provider's stored credential and answers with the
-    /// providers it changes.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
-    pub async fn clear_credential(
-        &self,
-        provider: Provider,
-    ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| RegistryMsg::ClearCredential { provider, reply })
+        self.ask(|reply| RegistryMsg::Configure { configure, reply })
             .await
     }
 
@@ -227,6 +256,7 @@ impl RegistryActor {
             let msg = tokio::select! {
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
                 Some(Ok(result)) = self.refreshes.join_next() => RegistryMsg::Refreshed(result),
+                Some(Ok(result)) = self.starts.join_next() => RegistryMsg::Started(result),
             };
             self.on(msg).await?;
         }
@@ -239,8 +269,12 @@ impl RegistryActor {
                 let effects = self.core.refreshed(result);
                 self.perform(effects);
             }
+            RegistryMsg::Started(result) => {
+                let effects = self.core.started(result);
+                self.perform(effects);
+            }
             RegistryMsg::Start {
-                provider,
+                instance,
                 directory,
                 model,
                 effort,
@@ -248,7 +282,7 @@ impl RegistryActor {
                 reply,
             } => {
                 let result = self
-                    .start(provider, directory, (model, effort), by)
+                    .start(instance, directory, (model, effort), by)
                     .await?;
                 let _ = reply.send(result);
             }
@@ -258,19 +292,42 @@ impl RegistryActor {
             RegistryMsg::Find { session, reply } => {
                 let _ = reply.send(self.core.find(session));
             }
-            RegistryMsg::Providers { reply } => {
-                let _ = reply.send(self.core.providers());
+            RegistryMsg::Instances { reply } => {
+                let _ = reply.send(self.core.instances());
             }
-            RegistryMsg::SetCredential { credential, reply } => {
-                let effects = self.core.set_credential(credential, reply);
-                self.perform(effects);
-            }
-            RegistryMsg::ClearCredential { provider, reply } => {
-                let effects = self.core.clear_credential(provider, reply);
+            RegistryMsg::Configure { configure, reply } => {
+                let effects = self.configure(configure, reply).await?;
                 self.perform(effects);
             }
         }
         Ok(())
+    }
+
+    async fn configure(
+        &mut self,
+        configure: Configure,
+        reply: Reply,
+    ) -> Result<Vec<Effect>, Stopped> {
+        Ok(match configure {
+            Configure::SetCredential {
+                instance,
+                credential,
+            } => self.core.set_credential(instance, credential, reply),
+            Configure::ClearCredential(instance) => {
+                self.core.clear_credential(instance, reply)
+            }
+            Configure::Add { provider, label } => {
+                self.core.add_instance(provider, &label, reply)
+            }
+            Configure::Rename { instance, label } => {
+                self.core.rename_instance(instance, &label, reply)
+            }
+            Configure::Remove(instance) => {
+                let history = self.log.history().await?;
+                let running = host::registry::running(&history);
+                self.core.remove_instance(instance, &running, reply)
+            }
+        })
     }
 
     /// Performs the effects in order, each effect's own effects before the
@@ -289,7 +346,7 @@ impl RegistryActor {
                 let _ = reply.send(result);
                 Vec::new()
             }
-            Effect::MoveAside { provider, reply } => {
+            Effect::MoveAside { instance, reply } => {
                 let moved = self
                     .store
                     .move_aside()
@@ -297,21 +354,23 @@ impl RegistryActor {
                         tracing::warn!(aside = %aside.display(), "moved the unreadable credential store aside");
                     })
                     .map_err(|err| format!("{err:#}"));
-                self.core.moved_aside(provider, reply, moved)
+                self.core.moved_aside(instance, reply, moved)
             }
             Effect::Save {
-                provider,
-                credentials,
+                roster,
+                change,
                 reply,
             } => {
-                let saved = self
-                    .store
-                    .save(&credentials)
-                    .map_err(|err| format!("{err:#}"));
-                self.core.saved(provider, credentials, reply, saved)
+                let saved =
+                    self.store.save(&roster).map_err(|err| format!("{err:#}"));
+                self.core.saved(roster, change, reply, saved)
             }
             Effect::Refresh(job) => {
                 self.refreshes.spawn(refresh(job));
+                Vec::new()
+            }
+            Effect::Start(starting) => {
+                self.starts.spawn(start(self.builder.clone(), starting));
                 Vec::new()
             }
             Effect::Log(note) => {
@@ -338,7 +397,7 @@ impl RegistryActor {
     ) -> Result<(), Stopped> {
         let Created {
             session: id,
-            provider,
+            instance,
             directory,
             choice,
         } = created;
@@ -348,7 +407,7 @@ impl RegistryActor {
         let recovered = events_of(id, &self.log.history().await?);
         let runtime = self
             .core
-            .launcher(provider)
+            .launcher(&instance)
             .map_or_else(Runtime::refusing, |start| start.start());
         let session = Session::restore(
             id,
@@ -358,7 +417,7 @@ impl RegistryActor {
             &recovered,
             self.log.clone(),
         );
-        self.core.admit(id, provider, session);
+        self.core.admit(id, instance, session);
         Ok(())
     }
 
@@ -377,7 +436,7 @@ impl RegistryActor {
 
     async fn start(
         &mut self,
-        provider: Provider,
+        instance: InstanceId,
         directory: HostPath,
         asked: (Option<ModelId>, Option<Effort>),
         by: ClientName,
@@ -385,9 +444,9 @@ impl RegistryActor {
         // `read_dir` fails for a missing path and for a file alike.
         let exists = std::fs::read_dir(&directory.0).is_ok();
         let (model, effort) = asked;
-        match self.core.start(provider, exists, model, effort) {
+        match self.core.start(&instance, exists, model, effort) {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok(launch) => self.create(provider, directory, launch, by).await,
+            Ok(launch) => self.create(instance, directory, launch, by).await,
         }
     }
 
@@ -395,7 +454,7 @@ impl RegistryActor {
     /// starts the session.
     async fn create(
         &mut self,
-        provider: Provider,
+        instance: InstanceId,
         directory: HostPath,
         launch: Launch<Starter>,
         by: ClientName,
@@ -408,8 +467,10 @@ impl RegistryActor {
                     start,
                     choice,
                     offered,
+                    provider,
                 } = launch;
                 let created = EventKind::SessionCreated {
+                    instance: instance.clone(),
                     provider,
                     directory: directory.clone(),
                     by,
@@ -434,31 +495,46 @@ impl RegistryActor {
                     self.log.clone(),
                     &[workspace_event, checkpoint_event],
                 );
-                self.core.admit(id, provider, session);
+                self.core.admit(id, instance, session);
                 Ok(CommandResult::Started { session: id })
             }
         }
     }
 }
 
-/// The provider's agents take the credentials, and then it lists what it
-/// offers with them, if it then signs in.
+/// The instance's agents take the credential, and then it lists what it
+/// offers with it, if it then signs in.
 async fn refresh(job: Job<Starter>) -> Refreshed {
     Refreshed {
         id: job.id,
-        provider: job.provider,
-        listing: listing(job.start, job.credentials, job.signs_in).await,
+        instance: job.instance,
+        listing: listing(job.start, job.credential, job.signs_in).await,
+    }
+}
+
+/// Starts an added instance's CLI with the builder.
+async fn start(builder: Builder, starting: Starting) -> Started<Starter> {
+    let Starting {
+        id,
+        instance,
+        settings,
+    } = starting;
+    let launcher = (builder.0)(instance.clone(), settings).await;
+    Started {
+        id,
+        instance,
+        launcher,
     }
 }
 
 async fn listing(
     start: Starter,
-    credentials: Credentials,
+    credential: Option<Credential>,
     signs_in: Result<(), String>,
 ) -> Result<Listing, String> {
     let mut runtime = start.start();
     let named = runtime
-        .ask(Command::Credentials(credentials))
+        .ask(Command::Credential(credential))
         .await
         .configured()?;
     signs_in?;
@@ -532,19 +608,25 @@ mod tests {
     };
     use proto::{
         ClientName, CloseReason, CommandResult, Event, EventKind, HostPath,
-        HostSeq, Models, Provider, RequestId, Resolution, SessionId,
-        ToolCallId, TurnOutcome,
+        HostSeq, InstanceId, Models, Provider, RequestId, Resolution,
+        SessionId, ToolCallId, TurnOutcome,
     };
     use runtime::{Plug, Runtime, Starter};
     use tokio::sync::mpsc;
 
-    use super::{Launcher, Launchers, Offer, OwnSignIn, Registry};
+    use super::{
+        Builder, Launcher, Launchers, Offer, OwnSignIn, Registry, Setup,
+    };
     use crate::credentials::Store;
     use crate::log::Log;
     use crate::session::Order;
 
     /// Any provider: the fake agent stands in for it.
     const PROVIDER: Provider = Provider::ALL[0];
+
+    fn instance() -> InstanceId {
+        InstanceId::named("agent")
+    }
 
     /// A provider whose agents send each start they are asked for to
     /// `started`, and start.
@@ -618,14 +700,19 @@ mod tests {
         let (started, mut starts) = mpsc::unbounded_channel();
         let registry = Registry::spawn(
             second.clone(),
-            Launchers::from([(PROVIDER, launcher(started))]),
-            store,
-            stored,
-            proto::Catalog::default(),
+            Setup {
+                launchers: Launchers::from([(instance(), launcher(started))]),
+                store,
+                stored,
+                catalog: proto::Catalog::default(),
+                builder: Builder::new(|_, _| async {
+                    Launcher::Unavailable(String::from("no instance is added"))
+                }),
+            },
         );
-        let providers = registry.providers().await?;
+        let instances = registry.instances().await?;
         assert_eq!(
-            second.welcome(providers, registry.catalog()).await?.epoch,
+            second.welcome(instances, registry.catalog()).await?.epoch,
             epoch
         );
         assert_recovered(&second.subscribe(HostSeq(4)).await?.replay);
@@ -664,6 +751,7 @@ mod tests {
             id,
             Vec::from([
                 EventKind::SessionCreated {
+                    instance: instance(),
                     provider: PROVIDER,
                     directory: HostPath(directory.display().to_string()),
                     by: ClientName(String::from("phone")),
@@ -692,21 +780,7 @@ mod tests {
             .conversation(id, String::from("restored-native-conversation"))
             .await?;
         first
-            .welcome(
-                proto::Providers(
-                    Provider::ALL
-                        .map(|provider| {
-                            (
-                                provider,
-                                proto::Availability::Unavailable {
-                                    reason: String::from("test"),
-                                },
-                            )
-                        })
-                        .into(),
-                ),
-                proto::Catalog::default(),
-            )
+            .welcome(proto::Instances::default(), proto::Catalog::default())
             .await
             .map(|welcome| welcome.epoch)
     }

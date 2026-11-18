@@ -5,8 +5,8 @@
 use agents::Reply;
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
-    Credential, Effort, HostPath, ModelId, Models, Open, Provider, Rejection,
-    RequestId, SessionId, Subscribe,
+    Credential, Effort, HostPath, InstanceId, ModelId, Models, Open, Provider,
+    Rejection, RequestId, SessionId, Subscribe,
 };
 
 use crate::prelude::*;
@@ -149,13 +149,32 @@ pub enum Route {
     Order(SessionId, Order),
     Relaunch(SessionId, Relaunch),
     Start {
-        provider: Provider,
+        instance: InstanceId,
         directory: HostPath,
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     },
-    SetCredential(Credential),
-    ClearCredential(Provider),
+    Configure(Configure),
+}
+
+/// A command that changes the host's instances, and answers what it runs
+/// now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Configure {
+    SetCredential {
+        instance: InstanceId,
+        credential: Credential,
+    },
+    ClearCredential(InstanceId),
+    Add {
+        provider: Provider,
+        label: String,
+    },
+    Rename {
+        instance: InstanceId,
+        label: String,
+    },
+    Remove(InstanceId),
 }
 
 /// How the command log keeps a command's receipt, so a retry with the same
@@ -166,7 +185,8 @@ pub enum Ledger {
     Unrecorded,
     /// Runs alone, with its events in one transaction with its receipt.
     Session,
-    /// Runs beside session commands; a retry waits for the first.
+    /// An instance command: runs beside session commands; a retry waits
+    /// for the first.
     Credential,
 }
 
@@ -175,9 +195,7 @@ impl Route {
     pub const fn ledger(&self) -> Ledger {
         match self {
             Self::Order(_, Order::Diff(_)) => Ledger::Unrecorded,
-            Self::SetCredential(_) | Self::ClearCredential(_) => {
-                Ledger::Credential
-            }
+            Self::Configure(_) => Ledger::Credential,
             Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
                 Ledger::Session
             }
@@ -197,12 +215,12 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             checkpoint,
         } => Route::Relaunch(session, Relaunch::Undo(checkpoint)),
         CommandBody::StartSession {
-            provider,
+            instance,
             directory,
             model,
             effort,
         } => Route::Start {
-            provider,
+            instance,
             directory,
             choice: (model, effort),
             by,
@@ -243,11 +261,24 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
                 by,
             },
         ),
-        CommandBody::SetCredential { credential } => {
-            Route::SetCredential(credential)
+        CommandBody::SetCredential {
+            instance,
+            credential,
+        } => Route::Configure(Configure::SetCredential {
+            instance,
+            credential,
+        }),
+        CommandBody::ClearCredential { instance } => {
+            Route::Configure(Configure::ClearCredential(instance))
         }
-        CommandBody::ClearCredential { provider } => {
-            Route::ClearCredential(provider)
+        CommandBody::AddInstance { provider, label } => {
+            Route::Configure(Configure::Add { provider, label })
+        }
+        CommandBody::RenameInstance { instance, label } => {
+            Route::Configure(Configure::Rename { instance, label })
+        }
+        CommandBody::RemoveInstance { instance } => {
+            Route::Configure(Configure::Remove(instance))
         }
     }
 }
