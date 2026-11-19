@@ -451,6 +451,7 @@ if (scenario === 'turn') {
   const closed = pane.locator('.closed-note');
   await closed.waitFor({ timeout: PATIENCE });
   check((await closed.locator('p').innerText()) === 'The session has ended (signal: 9 (SIGKILL)).', 'the killed CLI closes the session');
+  check((await closed.getByRole('button', { name: 'Remove' }).count()) === 1, 'a closed session offers Remove beside Continue');
   await settled();
   await page.screenshot({ path: out.replace(/\.png$/, '-closed.png') });
   await closed.getByRole('button', { name: 'Continue' }).tap();

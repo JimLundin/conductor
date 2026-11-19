@@ -4061,7 +4061,9 @@ async fn retry_command(
         .ok_or("the host closed the stream before answering")?)
 }
 
-const RESPONSIVE: Duration = Duration::from_secs(2);
+// The refresh tests hold a provider's listing until they write its `go`
+// file, so whatever answers before then did not wait on the refresh: each
+// wait is on the answer itself, bounded only by `STEP` against a hang.
 const REFRESH_SESSION: SessionId = SessionId(2300);
 const REFRESHING: &str = "refreshing the instance's models";
 
@@ -4220,14 +4222,14 @@ async fn saved(data: &Path, seeded: &Roster, body: CommandBody) -> Fallible {
         changed.credential = Some(credential);
     }
     let expected = daemon::credentials::Stored::Opened(roster);
-    let _ = tokio::time::timeout(RESPONSIVE, drive_saved(data, expected))
+    let _ = tokio::time::timeout(STEP, drive_saved(data, expected))
         .await
         .map_err(|_| "the credential was not saved in time")??;
     Ok(())
 }
 
 async fn marker(path: &Path) -> Fallible {
-    tokio::time::timeout(RESPONSIVE, drive_materialization(path))
+    tokio::time::timeout(STEP, drive_materialization(path))
         .await
         .map_err(|_| "the marker did not appear in time")??;
     Ok(())
@@ -4291,36 +4293,25 @@ async fn assert_refreshing_claude_refuses(
         reason: String::from(REFRESHING),
     });
     assert_eq!(
-        tokio::time::timeout(
-            RESPONSIVE,
-            send(phone, start_on(api(Provider::Claude), source))
-        )
-        .await??,
+        send(phone, start_on(api(Provider::Claude), source)).await?,
         refused
     );
     assert_eq!(continue_refresh_session(phone).await?, refused);
     assert_eq!(
-        tokio::time::timeout(
-            RESPONSIVE,
-            send(phone, message(SessionId(999), "lookup"))
-        )
-        .await??,
+        send(phone, message(SessionId(999), "lookup")).await?,
         CommandResult::Rejected(Rejection::UnknownSession)
     );
     Ok(())
 }
 
 async fn continue_refresh_session(phone: &HostLink) -> Fallible<CommandResult> {
-    tokio::time::timeout(
-        RESPONSIVE,
-        send(
-            phone,
-            CommandBody::Continue {
-                session: REFRESH_SESSION,
-            },
-        ),
+    send(
+        phone,
+        CommandBody::Continue {
+            session: REFRESH_SESSION,
+        },
     )
-    .await?
+    .await
 }
 
 /// An event appended now reaches a live subscriber.
@@ -4334,7 +4325,7 @@ async fn assert_log_still_live(log: &Log) -> Fallible {
     )
     .await?;
     assert_eq!(
-        tokio::time::timeout(RESPONSIVE, live.recv()).await??.kind,
+        tokio::time::timeout(STEP, live.recv()).await??.kind,
         EventKind::Error {
             message: String::from("still live")
         }
@@ -4444,8 +4435,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     };
     let first = queued_command(&conn, 2301, first_body.clone());
     marker(&probe.join("held")).await?;
-    let (phone, _updates, offered) =
-        tokio::time::timeout(RESPONSIVE, live(&fx)).await??;
+    let (phone, _updates, offered) = live(&fx).await?;
     assert_eq!(
         offered,
         Some(with_api_claude(Availability::Unavailable {
@@ -4583,8 +4573,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     let first =
         queued_command(&conn, 2311, codex_provider("conductor-test-old"));
     marker(&server.join("held")).await?;
-    let (phone, mut updates, offered) =
-        tokio::time::timeout(RESPONSIVE, live(&fx)).await??;
+    let (phone, mut updates, offered) = live(&fx).await?;
     assert_eq!(
         offered.ok_or("expected a value")?.availability(&codex_api),
         Some(&Availability::Unavailable {
@@ -4596,11 +4585,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
         CommandResult::Accepted
     );
     events_until(&mut updates, Until::Ready).await?;
-    let started = tokio::time::timeout(
-        RESPONSIVE,
-        send(&phone, start_on(claude_api, &source)),
-    )
-    .await??;
+    let started = send(&phone, start_on(claude_api, &source)).await?;
     let _ = started_session(&started)?;
     events_until(&mut updates, Until::Ready).await?;
     let middle_body = codex_provider("conductor-test-middle");
