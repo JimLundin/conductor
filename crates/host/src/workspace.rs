@@ -402,15 +402,19 @@ pub fn budget(
 pub const KEPT: &str =
     "Conductor: the workspace's uncommitted changes when it was removed";
 
+/// The workspace's branch as a full ref.
+#[must_use]
+pub fn head(workspace: &Workspace) -> String {
+    format!("refs/heads/{}", workspace.branch)
+}
+
 /// What the shell knows of a workspace before removing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Facts {
-    /// The tree of the branch's head.
     pub head_tree: String,
     /// The tree of everything in the worktree that Git doesn't ignore;
-    /// `None` when its directory is gone.
+    /// `None` when its directory is gone. Ignored files are not kept.
     pub tree: Option<String>,
-    /// The checkout's `origin`, if it has one.
     pub origin: Option<String>,
 }
 
@@ -420,10 +424,14 @@ pub struct Facts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// Commit `tree` on the branch, after its head, with [`KEPT`].
-    Commit { tree: String },
+    Commit {
+        tree: String,
+    },
     /// Run `git` with these arguments in the checkout.
-    Push { remote: String, args: Vec<String> },
-    /// Remove the worktree's directory.
+    Push {
+        remote: String,
+        args: Vec<String>,
+    },
     Remove,
     /// Forget the worktree whose directory is gone already.
     Prune,
@@ -442,7 +450,7 @@ pub fn plan(
     facts: &Facts,
 ) -> Result<Vec<Step>, GitError> {
     let _ = owner(workspace)?;
-    let branch = &workspace.branch;
+    let branch = head(workspace);
     let commit = facts
         .tree
         .clone()
@@ -454,7 +462,7 @@ pub fn plan(
             String::from("push"),
             String::from("--quiet"),
             String::from("origin"),
-            format!("refs/heads/{branch}:refs/heads/{branch}"),
+            format!("{branch}:{branch}"),
         ]),
     });
     let remove = match facts.tree {

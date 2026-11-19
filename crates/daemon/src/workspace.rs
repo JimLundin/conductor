@@ -172,11 +172,7 @@ async fn validate(workspace: &Workspace) -> Result<PathBuf, GitError> {
             failure("reading workspace ownership", &error.to_string())
         })?;
     same(&top, &workspace.worktree.0, "worktree root")?;
-    same(
-        &branch,
-        &format!("refs/heads/{}", workspace.branch),
-        "owned branch",
-    )?;
+    same(&branch, &host::workspace::head(workspace), "owned branch")?;
     same(
         &host(&common)?.0,
         &host(&source_common)?.0,
@@ -378,14 +374,14 @@ async fn snapshot_index(
             text(path, &["rev-parse", &format!("{commit}^")]).await?;
         host::workspace::reuse(
             (&recorded_tree, &recorded_parent),
-            tree.trim(),
+            &tree,
             &parent,
         )?;
         Ok(commit)
     } else {
         let commit = text_commit(
             path,
-            tree.trim(),
+            &tree,
             &parent,
             &host::workspace::message(checkpoint),
         )
@@ -623,7 +619,7 @@ async fn run(
 /// `origin`.
 async fn facts(workspace: &Workspace) -> Result<Facts, GitError> {
     let repository = Path::new(&workspace.repository.0);
-    let branch = format!("refs/heads/{}^{{tree}}", workspace.branch);
+    let branch = format!("{}^{{tree}}", host::workspace::head(workspace));
     let head_tree = text(repository, &["rev-parse", &branch]).await?;
     let tree = if Path::new(&workspace.worktree.0).is_dir() {
         let dir = validate(workspace).await?;
@@ -649,7 +645,7 @@ async fn keep(workspace: &Workspace, tree: &str) -> Result<(), GitError> {
     let path = Path::new(&workspace.worktree.0);
     let head = text(path, &["rev-parse", "HEAD"]).await?;
     let commit = text_commit(path, tree, &head, host::workspace::KEPT).await?;
-    let branch = format!("refs/heads/{}", workspace.branch);
+    let branch = host::workspace::head(workspace);
     text(path, &["update-ref", &branch, &commit, &head])
         .await
         .map(drop)
@@ -736,7 +732,7 @@ mod tests {
         std::fs::write(root.join("new.txt"), "left uncommitted\n")?;
         assert_eq!(remove(&workspace).await?, Kept::Pushed { remote: url });
         assert!(!root.exists());
-        let branch = format!("refs/heads/{}", workspace.branch);
+        let branch = host::workspace::head(&workspace);
         let pushed = text(&remote, &["rev-parse", &branch]).await?;
         assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, pushed);
         assert_eq!(
@@ -762,7 +758,7 @@ mod tests {
         let workspace = create(&repo.data, &original, id).await?;
         let head = text(&repo.source, &["rev-parse", "HEAD"]).await?;
         assert_eq!(remove(&workspace).await?, Kept::Local);
-        let branch = format!("refs/heads/{}", workspace.branch);
+        let branch = host::workspace::head(&workspace);
         assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, head);
         assert!(!Path::new(&workspace.worktree.0).exists());
         Ok(())

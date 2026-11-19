@@ -520,9 +520,14 @@ impl Session {
                 self.clean(),
             ),
             (Flow::Removing, Input::Removed(Ok(kept))) => self.gone(Some(kept)),
-            (Flow::Removing, Input::Removed(Err(reason))) => {
-                rejected(Rejection::WorkspaceFailure { reason })
-            }
+            (Flow::Removing, Input::Removed(Err(reason))) => Vec::from([
+                Effect::Emit(EventKind::Error {
+                    message: format!("the session was not removed: {reason}"),
+                }),
+                Effect::Reply(CommandResult::Rejected(
+                    Rejection::WorkspaceFailure { reason },
+                )),
+            ]),
             (waiting, _) => {
                 self.flow = waiting;
                 Vec::new()

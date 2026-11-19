@@ -1048,9 +1048,16 @@ fn a_removal_that_fails_keeps_the_session_to_try_again() {
             (remove(), removing()),
             (
                 Input::Removed(Err(text("worktree locked"))),
-                Vec::from([rejected(Rejection::WorkspaceFailure {
-                    reason: text("worktree locked"),
-                })]),
+                Vec::from([
+                    Effect::Emit(EventKind::Error {
+                        message: text(
+                            "the session was not removed: worktree locked",
+                        ),
+                    }),
+                    rejected(Rejection::WorkspaceFailure {
+                        reason: text("worktree locked"),
+                    }),
+                ]),
             ),
             (remove(), removing()),
         ]),

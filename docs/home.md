@@ -227,9 +227,12 @@ call that started each, a description, its own transcript and status.
    and a title, and instances keyed by their provider's account. Done
    (architecture §5.2, §5.4).
 5. A session's workspace removed with the session, keeping its branch.
-   Done (architecture §5.3).
+   Done (architecture §5.3). Turns are still checkpoint refs beside the
+   branch, so the branch a removal keeps holds the work in one commit.
 6. Issues: create, edit, status, checklist and notes in the app.
-7. Sessions on issues: start, finish, continue elsewhere.
+7. Sessions on issues: start, finish, continue elsewhere, with the
+   session's branch cut from the issue's and each turn a commit on it
+   (§2.3) in place of the checkpoint refs.
 8. Standards and instructions composed into sessions.
 9. Agents reporting progress notes during a session.
 

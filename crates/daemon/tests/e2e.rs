@@ -4062,8 +4062,7 @@ async fn retry_command(
 }
 
 // The refresh tests hold a provider's listing until they write its `go`
-// file, so whatever answers before then did not wait on the refresh: each
-// wait is on the answer itself, bounded only by `STEP` against a hang.
+// file, so what answers before then did not wait on the refresh.
 const REFRESH_SESSION: SessionId = SessionId(2300);
 const REFRESHING: &str = "refreshing the instance's models";
 
