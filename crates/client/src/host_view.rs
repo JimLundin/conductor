@@ -6,11 +6,11 @@ use alloc::collections::BTreeMap;
 use core::cmp::Reverse;
 
 use proto::{
-    CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath,
-    HostSeq, InstanceId, IssueId, ModelId, Provider, Question, RequestId,
-    Resolution, SessionId, SubagentActivity, SubagentEvent, SubagentId,
-    SubagentOutcome, Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome, UndoAvailability, Workspace,
+    CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, Finished,
+    HostPath, HostSeq, InstanceId, IssueId, ModelId, Provider, Question,
+    RequestId, Resolution, SessionId, SubagentActivity, SubagentEvent,
+    SubagentId, SubagentOutcome, Task, ToolCallId, ToolKind, ToolOutcome,
+    ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +141,8 @@ pub enum Item {
     Continued(CloseReason),
     /// The model changed, for this reason.
     ModelChanged(String),
+    /// The session was finished on its issue.
+    Finished(Finished),
     Error(String),
 }
 
@@ -530,10 +532,8 @@ impl SessionView {
                 ..self
             },
             EventKind::TasksChanged { tasks } => Self { tasks, ..self },
-            EventKind::OnIssue { issue } => Self {
-                issue: Some(issue),
-                ..self
-            },
+            on_issue @ (EventKind::OnIssue { .. }
+            | EventKind::SessionFinished { .. }) => self.on_issue(on_issue),
             EventKind::EffortChanged { effort } => Self {
                 effort: Some(effort),
                 ..self
@@ -577,6 +577,20 @@ impl SessionView {
             ..self
         }
         .push(Item::ModelChanged(reason))
+    }
+
+    /// The issue the session works on, and finishing it.
+    fn on_issue(self, kind: EventKind) -> Self {
+        match kind {
+            EventKind::OnIssue { issue } => Self {
+                issue: Some(issue),
+                ..self
+            },
+            EventKind::SessionFinished { finished } => {
+                self.push(Item::Finished(finished))
+            }
+            _ => self,
+        }
     }
 
     /// A sub-agent's finished call also finishes the card its request got
@@ -960,6 +974,7 @@ impl Item {
             | Self::TurnCompleted(_)
             | Self::Continued(_)
             | Self::ModelChanged(_)
+            | Self::Finished(_)
             | Self::Error(_) => None,
         }
     }
@@ -2093,6 +2108,7 @@ mod tests {
                         | Item::TurnCompleted(_)
                         | Item::Continued(_)
                         | Item::ModelChanged(_)
+                        | Item::Finished(_)
                         | Item::Error(_) => None,
                     })
                     .collect()

@@ -693,8 +693,25 @@ standards and issues, cloned on every host. Built so far are home steps
   as the issue is then (`home::issue::started`). The fetch runs in the
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
-  Another host continues the issue from its branch once finishing pushes
-  it (next).
+- **Finishing** (home step 7). `FinishSession { session }`, for a session
+  on an issue between turns (`NotOnIssue`, `TurnInProgress`), keeps a
+  receipt and answers `Accepted` at once; the rest runs in a task. A
+  running agent is asked for a summary in one more turn
+  (`host::finish::SUMMARY`) and then stopped (`Order::Stop`,
+  `SessionClosed` for `host::finish::FINISHED`); a stopped one's last
+  reply stands in. The host commits what the worktree holds onto the
+  session's branch, then lands it on the issue's in the checkout
+  (`host::finish::Branches`): nothing when the issue's has it all, a
+  fast-forward, or a merge commit made with `git merge-tree` without a
+  worktree; a conflict lands nothing, and neither does an issue branch
+  checked out somewhere, which can't move under its worktree. It pushes
+  the issue's branch to `origin`, never forced, which lets another host
+  continue the issue. The summary becomes the issue's note, signed
+  `<host> · <instance>`, and an `open`, `ready` or `in-progress` issue
+  whose branch gained commits moves to `review`
+  (`home::issue::finished`). `SessionFinished { finished }` ends it: the
+  commits that landed and where the branch went (`Kept`), or why nothing
+  landed. The session stays, closed; *Remove* removes its workspace.
 
 ## 6. Planned: the fleet
 

@@ -397,10 +397,9 @@ pub fn budget(
     (kept, extent)
 }
 
-/// The message of the commit that keeps what a removed workspace had not
-/// committed.
-pub const KEPT: &str =
-    "Conductor: the workspace's uncommitted changes when it was removed";
+/// The message of the commit that keeps what a workspace had not
+/// committed, when its session is finished or removed.
+pub const KEPT: &str = "Conductor: the session's uncommitted changes";
 
 /// The workspace's branch as a full ref.
 #[must_use]

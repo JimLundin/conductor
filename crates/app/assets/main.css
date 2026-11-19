@@ -184,6 +184,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .issue-sessions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
 .on-issue { margin: 0; color: var(--muted); }
 .on-issue strong { color: var(--ink); }
+.finished { color: var(--muted); font-size: 0.8125rem; text-align: center; }
+.finished[data-outcome="failed"] { color: var(--red); }
 .host-credentials + .host-credentials { margin-top: 2rem; }
 .host-credentials > .credential-head h2 { font-size: 1.2rem; }
 

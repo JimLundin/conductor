@@ -44,6 +44,13 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                         "Interrupt"
                     }
                 }
+                if pane.finish {
+                    button {
+                        class: "finish",
+                        onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::Finish)),
+                        "Finish"
+                    }
+                }
             }
             Workspace { context: pane.workspace }
             Undo { note: pane.undo }
@@ -224,6 +231,9 @@ fn TranscriptRow(row: Row) -> Element {
             }
         },
         Row::Continued(text) => rsx! { p { class: "continued", "{text}" } },
+        Row::Finished { outcome, text } => {
+            rsx! { p { class: "finished", "data-outcome": outcome, "{text}" } }
+        }
         Row::Tool(line) => rsx! { ToolLine { line } },
         Row::Approval(card) => rsx! { ApprovalCard { card } },
         Row::Question(card) => rsx! { QuestionCard { card } },

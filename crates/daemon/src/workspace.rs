@@ -400,7 +400,7 @@ async fn snapshot_index(
         let commit = text_commit(
             path,
             &tree,
-            &parent,
+            &[&parent],
             &host::workspace::message(checkpoint),
         )
         .await?;
@@ -412,11 +412,16 @@ async fn snapshot_index(
 async fn text_commit(
     path: &Path,
     tree: &str,
-    parent: &str,
+    parents: &[&str],
     message: &str,
 ) -> Result<String, GitError> {
+    let mut args = Vec::from(["commit-tree", tree]);
+    for parent in parents {
+        args.extend(["-p", parent]);
+    }
+    args.extend(["-m", message]);
     let output = execute(
-        git(path, &["commit-tree", tree, "-p", parent, "-m", message])
+        git(path, &args)
             .env("GIT_AUTHOR_NAME", "Conductor")
             .env("GIT_AUTHOR_EMAIL", "conductor@localhost")
             .env("GIT_COMMITTER_NAME", "Conductor")
@@ -662,7 +667,8 @@ async fn facts(workspace: &Workspace) -> Result<Facts, GitError> {
 async fn keep(workspace: &Workspace, tree: &str) -> Result<(), GitError> {
     let path = Path::new(&workspace.worktree.0);
     let head = text(path, &["rev-parse", "HEAD"]).await?;
-    let commit = text_commit(path, tree, &head, host::workspace::KEPT).await?;
+    let commit =
+        text_commit(path, tree, &[&head], host::workspace::KEPT).await?;
     let branch = host::workspace::head(workspace);
     text(path, &["update-ref", &branch, &commit, &head])
         .await
@@ -688,6 +694,119 @@ async fn refs(repository: &Path, prefix: &str) -> Result<String, GitError> {
         &["for-each-ref", "--count=500", "--format=%(refname)", prefix],
     )
     .await
+}
+
+/// Lands the session's branch on the issue's, `issue`, a full ref, in the
+/// checkout: commits what its worktree holds first, then moves the issue's
+/// branch on as `host::finish::Branches` says. The commits it landed.
+///
+/// # Errors
+///
+/// Why nothing landed.
+pub async fn land(workspace: &Workspace, issue: &str) -> Result<u64, String> {
+    keep_uncommitted(workspace)
+        .await
+        .map_err(|err| err.to_string())?;
+    let repository = Path::new(&workspace.repository.0);
+    let session = host::workspace::head(workspace);
+    let branches = branches(repository, issue, &session)
+        .await
+        .map_err(|err| err.to_string())?;
+    let ahead = branches.ahead;
+    let moved = match branches.landing() {
+        host::finish::Landing::Nothing => return Ok(0),
+        host::finish::Landing::Refuse(reason) => return Err(reason),
+        host::finish::Landing::FastForward => {
+            fast_forward(repository, issue, &session).await
+        }
+        host::finish::Landing::Merge => {
+            merge(repository, issue, &session).await
+        }
+    };
+    moved.map(|()| ahead).map_err(|err| err.to_string())
+}
+
+/// Commits the worktree's changes onto its branch, if it has any.
+async fn keep_uncommitted(workspace: &Workspace) -> Result<(), GitError> {
+    let found = facts(workspace).await?;
+    match found.tree.filter(|tree| *tree != found.head_tree) {
+        Some(tree) => keep(workspace, &tree).await,
+        None => Ok(()),
+    }
+}
+
+async fn branches(
+    repository: &Path,
+    issue: &str,
+    session: &str,
+) -> Result<host::finish::Branches, GitError> {
+    let range = format!("{issue}..{session}");
+    let counted = text(repository, &["rev-list", "--count", &range]).await?;
+    let fast_forward =
+        text(repository, &["merge-base", "--is-ancestor", issue, session])
+            .await
+            .is_ok();
+    let listed = text(repository, &["worktree", "list", "--porcelain"]).await?;
+    Ok(host::finish::Branches {
+        ahead: counted.trim().parse().unwrap_or(0),
+        fast_forward,
+        checked_out: host::finish::checked_out(&listed, issue),
+    })
+}
+
+async fn fast_forward(
+    repository: &Path,
+    issue: &str,
+    session: &str,
+) -> Result<(), GitError> {
+    let old = text(repository, &["rev-parse", issue]).await?;
+    let new = text(repository, &["rev-parse", session]).await?;
+    text(repository, &["update-ref", issue, &new, &old])
+        .await
+        .map(drop)
+}
+
+/// A merge commit of both branches on the issue's, made without a
+/// worktree.
+async fn merge(
+    repository: &Path,
+    issue: &str,
+    session: &str,
+) -> Result<(), GitError> {
+    let tree = text(repository, &["merge-tree", "--write-tree", issue, session])
+        .await
+        .map_err(|_| {
+            failure(
+                "landing",
+                "the session's branch conflicts with the issue's; merge them by hand",
+            )
+        })?;
+    let old = text(repository, &["rev-parse", issue]).await?;
+    let new = text(repository, &["rev-parse", session]).await?;
+    let message = host::finish::merge_message(issue, session);
+    let commit =
+        text_commit(repository, tree.trim(), &[&old, &new], &message).await?;
+    text(repository, &["update-ref", issue, &commit, &old])
+        .await
+        .map(drop)
+}
+
+/// Pushes `branch`, a full ref, to the checkout's `origin`, never forced:
+/// the remote and how it went, or `None` without an `origin`.
+pub async fn push_branch(
+    workspace: &Workspace,
+    branch: &str,
+) -> Option<(String, Result<(), String>)> {
+    let repository = Path::new(&workspace.repository.0);
+    let origin = text(repository, &["remote", "get-url", "origin"])
+        .await
+        .ok()?;
+    let refspec = format!("{branch}:{branch}");
+    let pushed = text(repository, &["push", "--quiet", "origin", &refspec])
+        .await
+        .map(drop)
+        .map_err(|err| err.to_string());
+    Some((origin, pushed))
 }
 
 #[cfg(test)]
@@ -779,6 +898,93 @@ mod tests {
         let branch = host::workspace::head(&workspace);
         assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, head);
         assert!(!Path::new(&workspace.worktree.0).exists());
+        Ok(())
+    }
+
+    /// A session's workspace on `issue`, a branch at the source's HEAD,
+    /// and a commit on the issue's branch that touches `file`.
+    async fn diverged(
+        repo: &Repository,
+        file: &str,
+    ) -> Result<(Workspace, String), Box<dyn std::error::Error>> {
+        let issue = String::from("refs/heads/issue/x");
+        let head = text(&repo.source, &["rev-parse", "HEAD"]).await?;
+        let _ = text(&repo.source, &["update-ref", &issue, &head]).await?;
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        let original = super::host(&repo.source)?;
+        let workspace = create(&repo.data, &original, id, Some(&issue)).await?;
+        let other = repo.root.join("other");
+        let _ = text(
+            &repo.source,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                &other.display().to_string(),
+                "issue/x",
+            ],
+        )
+        .await?;
+        std::fs::write(other.join(file), "on the issue\n")?;
+        let _ = text(&other, &["add", "-A"]).await?;
+        let _ = text(&other, &["commit", "-qm", "on the issue"]).await?;
+        let _ = text(
+            &repo.source,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                &other.display().to_string(),
+            ],
+        )
+        .await?;
+        Ok((workspace, issue))
+    }
+
+    #[tokio::test]
+    async fn landing_merges_diverged_branches_and_refuses_a_conflict()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let (workspace, issue) = diverged(&repo, "issue-only.txt").await?;
+        let root = PathBuf::from(&workspace.worktree.0);
+        std::fs::write(root.join("session-only.txt"), "in the session\n")?;
+        assert_eq!(super::land(&workspace, &issue).await, Ok(1));
+        let merged =
+            text(&repo.source, &["rev-parse", &format!("{issue}^2")]).await?;
+        assert_eq!(
+            merged,
+            text(&repo.source, &["rev-parse", &workspace.branch]).await?,
+            "the issue's branch is a merge with the session's"
+        );
+        for file in ["issue-only.txt", "session-only.txt"] {
+            assert!(
+                text(
+                    &repo.source,
+                    &["cat-file", "-e", &format!("{issue}:{file}")]
+                )
+                .await
+                .is_ok()
+            );
+        }
+
+        let conflicted = repository().await?;
+        let (clashing, base) = diverged(&conflicted, "deleted.txt").await?;
+        let at = text(&conflicted.source, &["rev-parse", &base]).await?;
+        std::fs::write(
+            PathBuf::from(&clashing.worktree.0).join("deleted.txt"),
+            "in the session\n",
+        )?;
+        assert!(
+            super::land(&clashing, &base)
+                .await
+                .is_err_and(|reason| reason.contains("conflicts")),
+            "a conflict lands nothing"
+        );
+        assert_eq!(
+            text(&conflicted.source, &["rev-parse", &base]).await?,
+            at,
+            "the issue's branch stays where it was"
+        );
         Ok(())
     }
 

@@ -10,9 +10,9 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandResult, Effort, Event,
-    Feed as Frame, HelloReply, Home, InstanceId, ModelId, Open, Rejection,
-    SessionId, SignIn, StartAt, Subscribe, Welcome,
+    AuthToken, ClientName, Command, CommandResult, Effort, Event, EventKind,
+    Feed as Frame, HelloReply, Home, HostSeq, InstanceId, ModelId, Open,
+    Rejection, SessionId, SignIn, StartAt, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -222,6 +222,7 @@ impl Conductor {
             }
             Route::SignIn(order) => self.registry.sign_in(order).await,
             Route::Home(order) => self.home.order(order).await,
+            Route::Finish(session, by) => self.finish(session, by).await,
         }
     }
 
@@ -282,6 +283,100 @@ impl Conductor {
             return Ok(Some(Rejection::IssueTaken { session }));
         }
         Ok(self.home.ready(start.clone()).await?.err())
+    }
+
+    /// Finishes the session in a task of its own, once it can: the
+    /// command answers before the agent's summary turn ends.
+    async fn finish(
+        &self,
+        session: SessionId,
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        let history = self.log.history().await?;
+        let finishing = match host::finish::finishing(&history, session) {
+            Err(rejection) => return Ok(CommandResult::Rejected(rejection)),
+            Ok(finishing) => finishing,
+        };
+        let Some(handle) = self.registry.find(session).await? else {
+            return Ok(CommandResult::Rejected(Rejection::UnknownSession));
+        };
+        self.spawn_finish(session, finishing, handle, by);
+        Ok(CommandResult::Accepted)
+    }
+
+    fn spawn_finish(
+        &self,
+        session: SessionId,
+        finishing: host::finish::Finishing,
+        handle: crate::session::Session,
+        by: ClientName,
+    ) {
+        let finisher = self.clone();
+        tokio::spawn(async move {
+            let ended = finisher.finished(session, finishing, handle, by).await;
+            if ended.is_err() {
+                tracing::warn!(?session, "finishing stopped with the host");
+            }
+        });
+    }
+
+    /// Summarizes, stops, lands and pushes the session, notes the issue
+    /// and moves it on, then logs what it did.
+    async fn finished(
+        &self,
+        session: SessionId,
+        finishing: host::finish::Finishing,
+        handle: crate::session::Session,
+        by: ClientName,
+    ) -> Result<(), Stopped> {
+        let summary = self.summary(session, &finishing, &handle, by).await?;
+        let branch =
+            home::issue::branch(self.home.shown().as_ref(), finishing.issue);
+        let landed =
+            crate::workspace::land(&finishing.workspace, &branch).await;
+        let pushed = match &landed {
+            Ok(_) => {
+                crate::workspace::push_branch(&finishing.workspace, &branch)
+                    .await
+            }
+            Err(_) => None,
+        };
+        let finished = host::finish::finished(landed, pushed);
+        let signer = ClientName(host::finish::signer(&finishing.instance));
+        let commits = host::finish::landed(&finished);
+        self.home
+            .finished(finishing.issue, summary, signer, commits)
+            .await?;
+        self.log
+            .append(session, EventKind::SessionFinished { finished })
+            .await
+    }
+
+    /// The agent's summary: asked for in one more turn, then the agent is
+    /// stopped; the last reply when it had stopped already.
+    async fn summary(
+        &self,
+        session: SessionId,
+        finishing: &host::finish::Finishing,
+        handle: &crate::session::Session,
+        by: ClientName,
+    ) -> Result<Option<String>, Stopped> {
+        let history = self.log.history().await?;
+        if !finishing.running {
+            return Ok(host::finish::summary(&history, session, HostSeq(0)));
+        }
+        let after = history.last().map_or(HostSeq(0), |event| event.seq);
+        let mut watched = self.log.subscribe(after).await?;
+        let text = String::from(host::finish::SUMMARY);
+        let asked = handle.order(Order::Send { text, by }).await.ok();
+        let mut seen = watched.replay;
+        if host::finish::waits(asked.as_ref(), &seen, session) {
+            seen.extend(turn(&mut watched.live, session).await);
+        }
+        let _ = handle
+            .order(Order::Stop(String::from(host::finish::FINISHED)))
+            .await;
+        Ok(host::finish::summary(&seen, session, after))
     }
 
     async fn order(
@@ -382,6 +477,22 @@ impl Feed {
             }
         }
     }
+}
+
+/// The events the log stores until the session's turn ends.
+async fn turn(
+    live: &mut broadcast::Receiver<Event>,
+    session: SessionId,
+) -> Vec<Event> {
+    let mut events = Vec::new();
+    while let Ok(event) = live.recv().await {
+        let ended = host::finish::turn_ended(&event, session);
+        events.push(event);
+        if ended {
+            break;
+        }
+    }
+    events
 }
 
 /// A live frame, or a resubscribe if the subscriber fell behind or the

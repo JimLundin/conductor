@@ -297,3 +297,15 @@ fn an_undo_order_forks_its_conversation_with_the_given_id() {
         }
     );
 }
+
+#[test]
+fn finishing_keeps_a_receipt_so_a_retry_doesnt_finish_twice() {
+    let routed = route(
+        CommandBody::FinishSession {
+            session: SessionId(3),
+        },
+        phone(),
+    );
+    assert_eq!(routed, Route::Finish(SessionId(3), phone()));
+    assert_eq!(routed.ledger(), Ledger::Receipt);
+}

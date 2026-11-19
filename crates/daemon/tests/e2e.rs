@@ -845,6 +845,7 @@ enum Until {
     Undone,
     UndoFailure,
     Removed,
+    Finished,
 }
 
 enum Reached {
@@ -863,7 +864,8 @@ const fn reached(until: &Until, kind: &EventKind) -> Reached {
         | (Until::Closed, EventKind::SessionClosed { .. })
         | (Until::Undone, EventKind::TurnsUndone { .. })
         | (Until::UndoFailure, EventKind::UndoFailed { .. })
-        | (Until::Removed, EventKind::SessionRemoved { .. }) => Reached::Yes,
+        | (Until::Removed, EventKind::SessionRemoved { .. })
+        | (Until::Finished, EventKind::SessionFinished { .. }) => Reached::Yes,
         _ => Reached::No,
     }
 }
@@ -1810,6 +1812,7 @@ async fn an_interrupt_withdraws_an_open_question() -> Fallible {
             | Item::TurnCompleted(_)
             | Item::Continued(_)
             | Item::ModelChanged(_)
+            | Item::Finished(_)
             | Item::Error(_) => None,
         })
         .collect::<Vec<RequestState>>();
@@ -6665,6 +6668,92 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
     assert_eq!(
         send(&link, on_issue(issue)).await?,
         CommandResult::Rejected(Rejection::IssueTaken { session })
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+#[tokio::test]
+async fn finishing_lands_the_sessions_work_on_the_issue_notes_it_and_asks_review()
+-> Fallible {
+    let land = homeland("finish")?;
+    let alpha = land.roots.join("apps").join("alpha");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/e2e/claude-worktrees.jsonl"),
+        alpha.join("stdout.jsonl"),
+    )?;
+    let (fx, _) =
+        host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
+            .await?;
+    let (link, mut updates) = link(fx.target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let _ = home_until(&link, &mut updates, |home| {
+        !checkouts_of(home, "alpha").is_empty()
+    })
+    .await?;
+    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let session = started_session(&send(&link, on_issue(issue)).await?)?;
+    let _ = events_until(&mut updates, Until::TurnEnd).await?;
+    assert_eq!(
+        send(&link, CommandBody::FinishSession { session }).await?,
+        CommandResult::Accepted
+    );
+    let finishing =
+        of(session, &events_until(&mut updates, Until::Finished).await?);
+    let remote = git(&alpha, &["remote", "get-url", "origin"])?;
+    assert_eq!(
+        finishing.last(),
+        Some(&EventKind::SessionFinished {
+            finished: proto::Finished::Landed {
+                commits: 1,
+                kept: Kept::Pushed {
+                    remote: String::from(remote.trim())
+                },
+            }
+        })
+    );
+    assert!(finishing.contains(&EventKind::SessionClosed {
+        reason: CloseReason::Stopped {
+            reason: String::from(host::finish::FINISHED)
+        }
+    }));
+    let branch = format!("issue/{}", home::issue::name(issue));
+    let pushed = git(
+        Path::new(remote.trim().trim_start_matches("file://")),
+        &["show", &format!("{branch}:changed.txt")],
+    )?;
+    assert!(
+        pushed.starts_with("turn two\n"),
+        "what the worktree held when it finished landed and was pushed: {pushed}"
+    );
+    let reviewed = home_until(&link, &mut updates, |home| {
+        alpha_issues(home)
+            .iter()
+            .any(|shown| shown.status == IssueStatus::Review)
+    })
+    .await?;
+    let notes = alpha_issues(&reviewed)
+        .into_iter()
+        .flat_map(|shown| shown.notes)
+        .collect::<Vec<String>>();
+    assert!(
+        notes.last().is_some_and(
+            |note| note.ends_with("test-host · claude: Completed turn 2.")
+        ),
+        "the summary is the issue's last note: {notes:?}"
+    );
+    assert_eq!(
+        send(
+            &link,
+            CommandBody::FinishSession {
+                session: SessionId(1)
+            }
+        )
+        .await?,
+        CommandResult::Rejected(Rejection::UnknownSession)
     );
     link.stop().await?;
     fx.shutdown().await?;

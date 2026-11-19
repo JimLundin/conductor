@@ -56,7 +56,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/21";
+pub const ALPN: &[u8] = b"conductor/22";
 
 /// One frame of a subscription: a logged event, where a sign-in stands, or
 /// the host's home as it is now, which replaces the one before.
@@ -470,6 +470,14 @@ pub enum CommandBody {
         issue: IssueId,
         change: IssueChange,
     },
+    /// Finishes a session on an issue between turns. `Accepted` at once;
+    /// the host then asks a running agent for a summary and stops it, adds
+    /// the summary to the issue's notes, lands the session's branch on the
+    /// issue's, pushes that, and moves the issue to `review` when it
+    /// gained commits. `SessionFinished` says how it went.
+    FinishSession {
+        session: SessionId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -568,6 +576,8 @@ pub enum Rejection {
     IssueTaken {
         session: SessionId,
     },
+    /// The session works on no issue, so there is nothing to finish it on.
+    NotOnIssue,
 }
 
 impl Rejection {
@@ -640,6 +650,7 @@ impl Rejection {
             Self::IssueNotSaved { reason } => {
                 format!("the issue was not saved: {reason}")
             }
+            Self::NotOnIssue => String::from("the session works on no issue"),
             Self::IssueTaken { .. } => String::from(
                 "that instance has a session on the issue already; continue it, or remove it first",
             ),
@@ -812,6 +823,20 @@ pub enum EventKind {
     OnIssue {
         issue: IssueId,
     },
+    /// What finishing the session did.
+    SessionFinished {
+        finished: Finished,
+    },
+}
+
+/// How finishing a session on an issue went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Finished {
+    /// The session's branch landed on the issue's with this many commits
+    /// the issue's lacked, and the issue's branch was kept as `kept` says.
+    Landed { commits: u64, kept: Kept },
+    /// Nothing landed, for this reason; the session's branch stays.
+    Failed { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

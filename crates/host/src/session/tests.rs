@@ -1084,3 +1084,30 @@ fn a_session_without_a_workspace_is_removed_at_once_and_stays_removed() {
         )]),
     );
 }
+
+#[test]
+fn a_stop_closes_the_session_between_turns() {
+    let stop = || Input::Order(Order::Stop(text("finished")));
+    let _ = expect(
+        ready(),
+        Vec::from([
+            (stop(), Vec::from([agent(Command::Shutdown)])),
+            (
+                Input::Agent(Outcome::ShutDown(Ok(()))),
+                Vec::from([
+                    Effect::Emit(EventKind::SessionClosed {
+                        reason: CloseReason::Stopped {
+                            reason: text("finished"),
+                        },
+                    }),
+                    accepted(),
+                ]),
+            ),
+            (stop(), Vec::from([accepted()])),
+        ]),
+    );
+    let _ = expect(
+        running(),
+        Vec::from([(stop(), Vec::from([rejected(Rejection::TurnInProgress)]))]),
+    );
+}

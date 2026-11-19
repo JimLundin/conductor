@@ -511,6 +511,7 @@ impl Session {
             EventKind::SessionCreated { .. }
             | EventKind::SessionRemoved { .. }
             | EventKind::OnIssue { .. }
+            | EventKind::SessionFinished { .. }
             | EventKind::ReasoningDelta { .. }
             | EventKind::Reasoning { .. }
             | EventKind::ToolCall { .. }

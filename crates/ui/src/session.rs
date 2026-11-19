@@ -30,6 +30,8 @@ pub enum SessionIntent {
     Continue,
     /// Remove a closed session and its workspace, keeping its branch.
     Remove,
+    /// Finish a session on an issue: summary, note, branch landed.
+    Finish,
     /// An effort's word, from the next turn on.
     PickEffort(String),
     Decide(RequestId, Decision),
@@ -71,6 +73,8 @@ pub struct SessionPane {
     pub model: String,
     pub effort: EffortControl,
     pub interrupt: bool,
+    /// The session works on an issue and runs no turn, so it can finish.
+    pub finish: bool,
     pub workspace: WorkspaceContext,
     pub undo: UndoNote,
     pub tasks: Option<Tasks>,
@@ -196,6 +200,13 @@ impl Pane {
                 self,
                 Vec::from([notify(
                     CommandBody::RemoveSession { session: id },
+                    at,
+                )]),
+            ),
+            SessionIntent::Finish => (
+                self,
+                Vec::from([notify(
+                    CommandBody::FinishSession { session: id },
                     at,
                 )]),
             ),
@@ -455,6 +466,12 @@ impl Pane {
             ),
             effort: effort_control(session.effort, &offered),
             interrupt: controls.interrupt == Interrupt::Offered,
+            finish: session.issue.is_some()
+                && matches!(
+                    session.status,
+                    SessionStatus::Idle | SessionStatus::Closed(_)
+                )
+                && session.undo == UndoState::Ready,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
                     "This session has no worktree checkpoints.",
