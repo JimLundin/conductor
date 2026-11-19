@@ -95,32 +95,32 @@ pub fn screen(
     notice: Option<String>,
 ) -> ProjectsScreen {
     let listed = by_name(hosts);
-    let mut groups = BTreeMap::<ProjectId, ProjectGroup>::new();
+    let mut rows = BTreeMap::<ProjectId, Vec<CheckoutRow>>::new();
+    let mut read =
+        BTreeMap::<ProjectId, (HostId, &Host, &proto::Project)>::new();
     for (id, host) in &listed {
-        let projects = host
-            .home()
-            .map_or_else(Vec::new, |home| home.projects.clone());
-        for project in projects {
-            let row = row(*id, host, &project);
-            let group = groups.entry(project.id.clone()).or_insert_with(|| {
-                ProjectGroup {
-                    key: project.id.0.clone(),
-                    title: project.title.clone(),
-                    detail: detail(&project),
-                    hosts: Vec::new(),
-                    issues: issues::list(&project, None, drafts),
-                }
-            });
-            if group.hosts.is_empty()
-                || (host.live() && group.issues.host.is_none())
-            {
-                group.issues =
-                    issues::list(&project, Some((*id, host)), drafts);
+        for project in host.home().map_or(&[][..], |home| &home.projects) {
+            rows.entry(project.id.clone())
+                .or_default()
+                .push(row(*id, host, project));
+            let better = read
+                .get(&project.id)
+                .is_none_or(|(_, first, _)| host.live() && !first.live());
+            if better {
+                read.insert(project.id.clone(), (*id, host, project));
             }
-            group.hosts.push(row);
         }
     }
-    let projects = groups.into_values().collect::<Vec<ProjectGroup>>();
+    let projects = read
+        .into_iter()
+        .map(|(key, (id, host, project))| ProjectGroup {
+            key: key.0.clone(),
+            title: project.title.clone(),
+            detail: detail(project),
+            hosts: rows.remove(&key).unwrap_or_default(),
+            issues: issues::list(project, Some((id, host)), drafts),
+        })
+        .collect::<Vec<ProjectGroup>>();
     ProjectsScreen {
         subtitle: "The projects each host's home lists, and where each is checked out there.",
         homes: listed.iter().map(|(id, host)| home_line(*id, host)).collect(),

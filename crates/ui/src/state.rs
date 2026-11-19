@@ -190,6 +190,11 @@ impl State {
                 (self, change.send(at))
             }
             Intent::Session(change) => self.session(change),
+            Intent::NewIssue(change) => {
+                let (issues, effects) =
+                    self.issues.clone().new_issue(change, self.visit);
+                (Self { issues, ..self }, effects)
+            }
             Intent::Issue(change) => self.issue(change),
             Intent::Replied(reply, answer) => self.replied(reply, answer),
         }
@@ -322,22 +327,24 @@ impl State {
     }
 
     fn issue(self, intent: IssueIntent) -> (Self, Vec<Effect>) {
-        let shown = match self.place {
-            Place::Issue(host, id) => self
-                .hosts
-                .get(&host)
-                .and_then(|known| issues::find(known, id))
-                .map(|(_, issue)| Shown {
-                    at: At {
-                        host,
-                        visit: self.visit,
-                    },
-                    issue,
-                }),
-            _ => None,
+        let Place::Issue(host, id) = self.place else {
+            return (self, Vec::new());
         };
-        let (drafts, effects) =
-            self.issues.clone().update(intent, self.visit, shown);
+        let Some((_, issue)) = self
+            .hosts
+            .get(&host)
+            .and_then(|known| issues::find(known, id))
+        else {
+            return (self, Vec::new());
+        };
+        let shown = Shown {
+            at: At {
+                host,
+                visit: self.visit,
+            },
+            issue,
+        };
+        let (drafts, effects) = self.issues.clone().update(intent, &shown);
         (
             Self {
                 issues: drafts,

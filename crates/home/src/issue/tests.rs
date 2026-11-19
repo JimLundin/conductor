@@ -6,8 +6,8 @@ use proto::{
 };
 
 use super::{
-    Applied, Change, Edit, apply, changing, fields, file, listed, message,
-    name, opening, parse, render,
+    Applied, Change, Edit, Mode, apply, changing, fields, file, listed,
+    message, name, opening, parse, render, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -74,24 +74,150 @@ fn written() -> String {
     )
 }
 
-#[test]
-fn an_issue_file_reads_and_writes_back_the_same() {
-    let parsed = parse(&name(ID), &written());
-    assert_eq!(parsed.as_ref().map(|read| read.issue.clone()), Ok(issue()));
-    assert_eq!(parsed.map(|read| render(&read)), Ok(written()));
+/// The file as a person left it: a comment on the status, a key and a
+/// table Conductor doesn't read, a section of their own, Windows line
+/// ends.
+fn hand_edited() -> String {
+    format!(
+        "+++\n\
+         id = \"{id}\"\n\
+         # set by hand\n\
+         title = \"Sign in\"\n\
+         status = \"open\"   # open, ready, in-progress, review, done, dropped\n\
+         estimate = 3\n\
+         [links]\n\
+         pr = \"https://example.com/1\"\n\
+         +++\n\
+         \n\
+         Why.\n\
+         \n\
+         ## Checklist\n\
+         - [X] the protocol\n\
+         \n\
+         ## Notes\n\
+         - first\n\
+         \n\
+         ## Design\n\
+         Kept as written.\n",
+        id = name(ID)
+    )
+    .replace('\n', "\r\n")
+}
+
+fn edit(change: Change) -> Edit {
+    Edit {
+        project: project(),
+        issue: ID,
+        at: OPENED,
+        by: text("laptop · iPhone"),
+        change,
+        was: None,
+    }
+}
+
+fn changing_to(change: IssueChange) -> Edit {
+    edit(Change::Issue(change))
+}
+
+/// The file an edit writes, or what it did instead.
+fn file_of(applied: Applied) -> Result<String, String> {
+    match applied {
+        Applied::Write(text) => Ok(text),
+        other => Err(format!("expected a file, not {other:?}")),
+    }
 }
 
 #[test]
-fn front_matter_a_person_added_is_kept() {
-    let added = written().replacen(
-        "created = 2026-11-18T10:12:00Z\n",
-        "created = 2026-11-18T10:12:00Z\nestimate = 3\n",
-        1,
+fn an_issue_file_reads_and_a_new_one_writes_in_the_same_form() {
+    assert_eq!(parse(&name(ID), &written()), Ok(issue()));
+    assert_eq!(render(&issue()), written());
+}
+
+#[test]
+fn a_change_rewrites_only_its_own_line_of_a_hand_edited_file()
+-> Result<(), String> {
+    let unix = hand_edited().replace("\r\n", "\n");
+    let moved = file_of(apply(
+        Some(&hand_edited()),
+        &changing_to(IssueChange::Status(IssueStatus::Review)),
+        Mode::Record,
+    ))?;
+    assert_eq!(
+        moved,
+        unix.replace("status = \"open\"   #", "status = \"review\"   #")
+    );
+    let added = file_of(apply(
+        Some(&moved),
+        &changing_to(IssueChange::AddItem(text("docs"))),
+        Mode::Record,
+    ))?;
+    let noted = file_of(apply(
+        Some(&added),
+        &changing_to(IssueChange::Note(text("second"))),
+        Mode::Record,
+    ))?;
+    let labelled = file_of(apply(
+        Some(&noted),
+        &changing_to(IssueChange::Labels(Vec::from([text("app")]))),
+        Mode::Record,
+    ))?;
+    assert_eq!(
+        labelled,
+        unix.replace("status = \"open\"   #", "status = \"review\"   #")
+            .replace("estimate = 3\n", "estimate = 3\nlabels = [\"app\"]\n")
+            .replace("- [X] the protocol\n", "- [X] the protocol\n- [ ] docs\n")
+            .replace(
+                "- first\n",
+                "- first\n- 2026-11-18 laptop · iPhone: second\n"
+            ),
+        "the comment, the key, the table, the [X] and the section stay"
+    );
+    let read = parse(&name(ID), &hand_edited()).map(|issue| {
+        (issue.status, issue.body, issue.checklist.len(), issue.notes)
+    });
+    assert_eq!(
+        read,
+        Ok((
+            IssueStatus::Open,
+            text("Why."),
+            1,
+            Vec::from([text("first")])
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn an_item_is_checked_added_and_removed_by_its_text() -> Result<(), String> {
+    let checked = file_of(apply(
+        Some(&written()),
+        &changing_to(IssueChange::Check {
+            item: text("the browser scenario"),
+            done: true,
+        }),
+        Mode::Record,
+    ))?;
+    let removed = file_of(apply(
+        Some(&checked),
+        &changing_to(IssueChange::RemoveItem(text("the protocol"))),
+        Mode::Record,
+    ))?;
+    assert_eq!(
+        parse(&name(ID), &removed).map(|read| read.checklist),
+        Ok(Vec::from([ChecklistItem {
+            done: true,
+            text: text("the browser scenario"),
+        }]))
     );
     assert_eq!(
-        parse(&name(ID), &added).map(|read| render(&read)),
-        Ok(added)
+        apply(
+            Some(&removed),
+            &changing_to(IssueChange::RemoveItem(text("gone"))),
+            Mode::Record
+        ),
+        Applied::Unchanged
     );
+    Ok(())
 }
 
 #[test]
@@ -132,16 +258,6 @@ fn a_project_lists_its_issues_by_id_and_says_why_one_is_skipped() {
     assert_eq!(problems.len(), 2);
 }
 
-fn edit(change: Change) -> Edit {
-    Edit {
-        project: project(),
-        issue: ID,
-        at: OPENED,
-        by: text("laptop · iPhone"),
-        change,
-    }
-}
-
 fn wanted() -> IssueFields {
     IssueFields {
         title: text("  Sign in  "),
@@ -151,20 +267,13 @@ fn wanted() -> IssueFields {
     }
 }
 
-/// The file an edit writes, or what it did instead.
-fn file_of(applied: Applied) -> Result<String, String> {
-    match applied {
-        Applied::Write(text) => Ok(text),
-        other => Err(format!("expected a file, not {other:?}")),
-    }
-}
-
 #[test]
 fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
 -> Result<(), String> {
-    let opened = file_of(apply(None, &edit(Change::Create(wanted()))))?;
+    let create = edit(Change::Create(wanted()));
+    let opened = file_of(apply(None, &create, Mode::Record))?;
     assert_eq!(
-        parse(&name(ID), &opened).map(|read| read.issue),
+        parse(&name(ID), &opened),
         Ok(Issue {
             title: text("Sign in"),
             body: text("Why."),
@@ -177,38 +286,86 @@ fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
         })
     );
     assert_eq!(
-        apply(Some(&opened), &edit(Change::Create(wanted()))),
+        apply(Some(&opened), &create, Mode::Replay { changed: 0 }),
         Applied::Unchanged
     );
     Ok(())
 }
 
 #[test]
-fn a_change_sets_its_fields_and_a_note_is_signed_and_added_once()
+fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
 -> Result<(), String> {
-    let note = edit(Change::Issue(IssueChange::Note(text("looked at it"))));
-    let with_note = file_of(apply(Some(&written()), &note))?;
+    let note = changing_to(IssueChange::Note(text("done")));
+    let once = file_of(apply(Some(&written()), &note, Mode::Record))?;
+    let twice = file_of(apply(Some(&once), &note, Mode::Record))?;
+    let notes = |file: &str| parse(&name(ID), file).map(|read| read.notes);
     assert_eq!(
-        parse(&name(ID), &with_note).map(|read| read
-            .issue
-            .notes
-            .last()
-            .cloned()),
-        Ok(Some(text("2026-11-18 laptop · iPhone: looked at it")))
-    );
-    assert_eq!(apply(Some(&with_note), &note), Applied::Unchanged);
-    let done = edit(Change::Issue(IssueChange::Status(IssueStatus::Done)));
-    let closed = file_of(apply(Some(&written()), &done))?;
-    assert_eq!(
-        parse(&name(ID), &closed).map(|read| read.issue.status),
-        Ok(IssueStatus::Done)
+        notes(&twice).map(|all| all.into_iter().skip(1).collect::<Vec<_>>()),
+        Ok(Vec::from([
+            text("2026-11-18 laptop · iPhone: done"),
+            text("2026-11-18 laptop · iPhone: done"),
+        ]))
     );
     assert_eq!(
-        apply(None, &done),
+        apply(
+            Some(&once),
+            &note,
+            Mode::Replay {
+                changed: OPENED + 9
+            }
+        ),
+        Applied::Unchanged,
+        "a replay finds the note it made already"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
+    let done = Edit {
+        was: was(
+            Some(&written()),
+            ID,
+            &Change::Issue(IssueChange::Status(IssueStatus::Done)),
+        ),
+        ..changing_to(IssueChange::Status(IssueStatus::Done))
+    };
+    assert_eq!(done.was, Some(text("in-progress")));
+    let reviewed = written().replace("in-progress", "review");
+    let after = Mode::Replay {
+        changed: OPENED + 60,
+    };
+    let before = Mode::Replay {
+        changed: OPENED - 60,
+    };
+    assert_eq!(
+        apply(Some(&reviewed), &done, after),
+        Applied::Unchanged,
+        "someone moved it to review after the edit was made"
+    );
+    let closed = |file: &str, mode| {
+        file_of(apply(Some(file), &done, mode))
+            .and_then(|next| parse(&name(ID), &next))
+            .map(|read| read.status)
+    };
+    assert_eq!(closed(&reviewed, before), Ok(IssueStatus::Done));
+    assert_eq!(
+        closed(&written(), after),
+        Ok(IssueStatus::Done),
+        "a later change to another field leaves the status to the edit"
+    );
+    assert_eq!(
+        apply(None, &done, after),
         Applied::Gone,
         "a change to an issue the home no longer has is dropped"
     );
-    Ok(())
+    assert!(
+        matches!(
+            apply(Some("not an issue"), &done, after),
+            Applied::Unreadable(_)
+        ),
+        "a file that no longer reads keeps the edit waiting"
+    );
 }
 
 #[test]
@@ -238,30 +395,42 @@ fn an_issue_opens_only_in_a_listed_project_on_a_host_with_a_home() {
     );
     assert_eq!(
         opening(Some("remote"), &listed, &project(), &wanted())
-            .map(|fields| fields.title),
+            .map(|made| made.title),
         Ok(text("Sign in"))
     );
 }
 
 #[test]
-fn a_change_finds_its_issues_project() {
+fn a_change_finds_its_issues_project_and_is_kept_as_the_issue_keeps_it() {
     let issues = BTreeMap::from([(project(), Vec::from([issue()]))]);
-    let note = IssueChange::Note(text("hi"));
+    let check = |change| changing(Some("remote"), &issues, ID, change);
     assert_eq!(
-        changing(Some("remote"), &issues, ID, note.clone()),
-        Ok((project(), note.clone()))
+        check(IssueChange::Note(text(" hi "))),
+        Ok((project(), IssueChange::Note(text("hi"))))
     );
     assert_eq!(
-        changing(Some("remote"), &issues, IssueId(7), note.clone()),
+        check(IssueChange::Labels(Vec::from([text(" a "), text("a")]))),
+        Ok((project(), IssueChange::Labels(Vec::from([text("a")]))))
+    );
+    assert_eq!(
+        changing(
+            Some("remote"),
+            &issues,
+            IssueId(7),
+            IssueChange::Note(text("x"))
+        ),
         Err(Rejection::UnknownIssue)
     );
     assert_eq!(
-        changing(Some("remote"), &issues, ID, IssueChange::Note(text(" "))),
+        check(IssueChange::Title(text(" "))),
         Err(Rejection::IssueNotSaved {
-            reason: text("a note needs text")
+            reason: text("a title needs text")
         })
     );
-    assert_eq!(changing(None, &issues, ID, note), Err(Rejection::NoHome));
+    assert_eq!(
+        changing(None, &issues, ID, IssueChange::Note(text("x"))),
+        Err(Rejection::NoHome)
+    );
 }
 
 #[test]
@@ -269,10 +438,8 @@ fn each_change_is_its_own_commit() {
     assert_eq!(
         [
             message(&edit(Change::Create(wanted()))),
-            message(&edit(Change::Issue(IssueChange::Status(
-                IssueStatus::Review
-            )))),
-            message(&edit(Change::Issue(IssueChange::Note(text("x"))))),
+            message(&changing_to(IssueChange::Status(IssueStatus::Review))),
+            message(&changing_to(IssueChange::Note(text("x")))),
         ],
         [
             format!("Open issue {}: Sign in", name(ID)),

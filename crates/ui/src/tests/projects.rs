@@ -16,8 +16,8 @@ use super::{
 };
 use crate::{
     CheckoutRow, Detail, Effect, FormIntent, HomeLine, Intent, IssueIntent,
-    IssueList, IssueRow, IssueScreen, Listing, Place, ProjectGroup,
-    ProjectIntent, ProjectsScreen, StatusGroup, when,
+    IssueList, IssueRow, IssueScreen, Listing, NewIssueIntent, Place,
+    ProjectGroup, ProjectIntent, ProjectsScreen, StatusGroup, when,
 };
 
 const OTHER: crate::HostId = crate::HostId([7; 32]);
@@ -128,8 +128,7 @@ fn no_issues(name: &str) -> IssueList {
         groups: Vec::new(),
         new_title: String::new(),
         project: ProjectId(text(name)),
-        host: Some(HOST),
-        create_disabled: true,
+        create: None,
     }
 }
 
@@ -768,8 +767,11 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
     let (typed, effects) = run(
         with_issues(),
         Vec::from([
-            Intent::Issue(IssueIntent::TypeNewTitle(alpha(), text(" Remove "))),
-            Intent::Issue(IssueIntent::Create(HOST, alpha())),
+            Intent::NewIssue(NewIssueIntent::TypeTitle(
+                alpha(),
+                text(" Remove "),
+            )),
+            Intent::NewIssue(NewIssueIntent::Create(HOST, alpha())),
         ]),
     );
     assert_eq!(
@@ -855,10 +857,6 @@ fn an_issue_shows_its_fields_and_sends_each_change() {
             Intent::Issue(IssueIntent::AddNote),
         ]),
     );
-    let item = |done, words: &str| ChecklistItem {
-        done,
-        text: text(words),
-    };
     let change = |change| CommandBody::ChangeIssue {
         issue: OPENED,
         change,
@@ -867,15 +865,11 @@ fn an_issue_shows_its_fields_and_sends_each_change() {
         sent(&effects),
         [
             change(IssueChange::Status(IssueStatus::InProgress)),
-            change(IssueChange::Checklist(Vec::from([
-                item(true, "protocol"),
-                item(true, "browser"),
-            ]))),
-            change(IssueChange::Checklist(Vec::from([
-                item(true, "protocol"),
-                item(false, "browser"),
-                item(false, "docs"),
-            ]))),
+            change(IssueChange::Check {
+                item: text("browser"),
+                done: true,
+            }),
+            change(IssueChange::AddItem(text("docs"))),
             change(IssueChange::Note(text("halfway"))),
         ]
     );
@@ -892,17 +886,20 @@ fn editing_an_issue_sends_its_fields_once_saved() {
             Intent::Issue(IssueIntent::Save),
         ]),
     );
+    let change = |change| CommandBody::ChangeIssue {
+        issue: OPENED,
+        change,
+    };
     assert_eq!(
         sent(&effects),
-        [CommandBody::ChangeIssue {
-            issue: OPENED,
-            change: IssueChange::Edit(IssueFields {
-                title: text("Sign in from the app"),
-                body: text("Why it matters."),
-                priority: Priority::High,
-                labels: Vec::from([text("app"), text("credentials")]),
-            }),
-        }]
+        [
+            change(IssueChange::Title(text("Sign in from the app"))),
+            change(IssueChange::Labels(Vec::from([
+                text("app"),
+                text("credentials"),
+            ]))),
+        ],
+        "the body didn't change, so it isn't sent"
     );
     assert_eq!(issue_screen(&edited).map(|issue| issue.editing), Some(None));
 }

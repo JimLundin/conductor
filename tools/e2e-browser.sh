@@ -380,7 +380,7 @@ projects_scenario() {
   echo "ok: host projects-host: the person's checkout is untouched"
   local pushed
   pushed=$(git -C "$at/home-remote.git" log --format=%s)
-  for subject in '^Open issue .*: Remove sessions$' '^Move issue .* to in-progress$' "^Check off issue .*'s list$" '^Note on issue '; do
+  for subject in '^Open issue .*: Remove sessions$' '^Move issue .* to in-progress$' '^Add an item to issue ' '^Note on issue '; do
     grep -q "$subject" <<<"$pushed" ||
       { echo "FAILED: host projects-host: the home's remote has no commit matching $subject"; return 1; }
   done

@@ -180,7 +180,7 @@ fn a_command_waits_for_the_active_one_then_answers_its_receipt() {
 }
 
 #[test]
-fn a_credential_finish_waits_for_the_active_command_to_commit() {
+fn a_receipt_finish_waits_for_the_active_command_to_commit() {
     let mut log = log();
     let _ = execute(&mut log, 23, Kind::Receipt);
     let _ = execute(&mut log, 24, Kind::Session);
@@ -216,7 +216,7 @@ fn a_credential_finish_waits_for_the_active_command_to_commit() {
 }
 
 #[test]
-fn a_credential_retry_waits_for_the_first_run_and_takes_its_result() {
+fn a_receipt_retry_waits_for_the_first_run_and_takes_its_result() {
     let mut log = log();
     let _ = execute(&mut log, 23, Kind::Receipt);
     let (retry, effects) = log.begin(CommandId(23), Kind::Receipt);

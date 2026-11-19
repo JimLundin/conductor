@@ -121,7 +121,7 @@ pub struct ChecklistItem {
     pub text: String,
 }
 
-/// What an issue's fields become; `labels` replace the ones it had.
+/// What a new issue opens with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueFields {
     pub title: String,
@@ -130,14 +130,24 @@ pub struct IssueFields {
     pub labels: Vec<String>,
 }
 
-/// One change to an existing issue. A front-matter field has one writer
-/// at a time, so the last change wins; notes only grow.
+/// One change to an existing issue, as small as a person makes it, so
+/// changes made on two hosts at once touch different lines of its file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IssueChange {
-    Edit(IssueFields),
+    Title(String),
+    Body(String),
+    /// The labels it has from now on.
+    Labels(Vec<String>),
+    Priority(Priority),
     Status(IssueStatus),
-    /// The whole checklist, as it is now.
-    Checklist(Vec<ChecklistItem>),
+    /// Checks or unchecks the checklist's first item with this text.
+    Check {
+        item: String,
+        done: bool,
+    },
+    AddItem(String),
+    /// Removes the checklist's first item with this text.
+    RemoveItem(String),
     /// A note, which the host signs and dates.
     Note(String),
 }

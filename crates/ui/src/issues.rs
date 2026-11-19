@@ -7,24 +7,30 @@ use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
 use proto::{
-    ChecklistItem, CommandBody, Issue, IssueChange, IssueFields, IssueId,
-    IssueStatus, Priority, Project, ProjectId,
+    CommandBody, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
+    Priority, Project, ProjectId,
 };
 
 use crate::host::{Host, HostId};
 use crate::{At, Effect, Intent, Place, ReplyTo};
 
+/// Opening an issue from the projects view.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IssueIntent {
+pub enum NewIssueIntent {
     /// The title of a new issue in this project.
-    TypeNewTitle(ProjectId, String),
+    TypeTitle(ProjectId, String),
     /// Opens the issue the project's title draft names, on this host.
     Create(HostId, ProjectId),
-    /// A status's word, for the issue shown.
+}
+
+/// Acting on the issue shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueIntent {
+    /// A status's word, as the picker gives it.
     SetStatus(String),
-    /// A priority's word, for the issue shown.
+    /// A priority's word, as the picker gives it.
     SetPriority(String),
-    /// Checks or unchecks the checklist's item at this index.
+    /// The checklist's item at this index, checked or unchecked.
     Toggle(usize),
     RemoveItem(usize),
     TypeItem(String),
@@ -64,24 +70,21 @@ pub struct Shown<'issue> {
 }
 
 impl Drafts {
-    pub fn update(
+    pub fn new_issue(
         self,
-        intent: IssueIntent,
+        intent: NewIssueIntent,
         visit: u64,
-        shown: Option<Shown<'_>>,
     ) -> (Self, Vec<Effect>) {
-        match (intent, shown) {
-            (IssueIntent::TypeNewTitle(project, title), _) => {
+        match intent {
+            NewIssueIntent::TypeTitle(project, title) => {
                 let mut titles = self.titles;
                 titles.insert(project, title);
                 (Self { titles, ..self }, Vec::new())
             }
-            (IssueIntent::Create(host, project), _) => {
+            NewIssueIntent::Create(host, project) => {
                 let effects = self.create(At { host, visit }, project);
                 (self, effects)
             }
-            (on_issue, Some(issue)) => self.on_issue(on_issue, &issue),
-            (_, None) => (self, Vec::new()),
         }
     }
 
@@ -108,7 +111,7 @@ impl Drafts {
         self
     }
 
-    fn on_issue(
+    pub fn update(
         self,
         intent: IssueIntent,
         shown: &Shown<'_>,
@@ -129,30 +132,26 @@ impl Drafts {
                 Priority::named(&word)
                     .filter(|priority| *priority != issue.priority)
                     .map_or_else(Vec::new, |priority| {
-                        change(IssueChange::Edit(IssueFields {
-                            priority,
-                            ..fields(issue)
-                        }))
+                        change(IssueChange::Priority(priority))
                     }),
             ),
             IssueIntent::Toggle(index) => (
                 self,
-                change(checklist(issue, |items| {
-                    if let Some(item) = items.get_mut(index) {
-                        item.done = !item.done;
-                    }
-                })),
+                issue.checklist.get(index).map_or_else(Vec::new, |item| {
+                    change(IssueChange::Check {
+                        item: item.text.clone(),
+                        done: !item.done,
+                    })
+                }),
             ),
             IssueIntent::RemoveItem(index) => (
                 self,
-                change(checklist(issue, |items| {
-                    if index < items.len() {
-                        items.remove(index);
-                    }
-                })),
+                issue.checklist.get(index).map_or_else(Vec::new, |item| {
+                    change(IssueChange::RemoveItem(item.text.clone()))
+                }),
             ),
             IssueIntent::TypeItem(item) => (Self { item, ..self }, Vec::new()),
-            IssueIntent::AddItem => self.add_item(issue, shown),
+            IssueIntent::AddItem => self.add_item(shown),
             IssueIntent::TypeNote(note) => (Self { note, ..self }, Vec::new()),
             IssueIntent::AddNote => self.add_note(shown),
             IssueIntent::Edit => (
@@ -175,7 +174,7 @@ impl Drafts {
             IssueIntent::TypeLabels(labels) => {
                 (self.edited(|editing| editing.labels = labels), Vec::new())
             }
-            IssueIntent::Save => self.save(issue, shown),
+            IssueIntent::Save => self.save(shown),
             IssueIntent::Cancel => (
                 Self {
                     editing: None,
@@ -183,29 +182,20 @@ impl Drafts {
                 },
                 Vec::new(),
             ),
-            IssueIntent::TypeNewTitle(..) | IssueIntent::Create(..) => {
-                (self, Vec::new())
-            }
         }
     }
 
-    fn add_item(self, issue: &Issue, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
+    fn add_item(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
         let text = String::from(self.item.trim());
         if text.is_empty() {
             return (self, Vec::new());
         }
-        let effects = send(
-            shown,
-            checklist(issue, |items| {
-                items.push(ChecklistItem { done: false, text });
-            }),
-        );
         (
             Self {
                 item: String::new(),
                 ..self
             },
-            effects,
+            send(shown, IssueChange::AddItem(text)),
         )
     }
 
@@ -231,31 +221,43 @@ impl Drafts {
         Self { editing, ..self }
     }
 
-    fn save(self, issue: &Issue, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let Some(editing) = self.editing.clone() else {
+    /// Sends each field the form changed, its own change.
+    fn save(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
+        let Some(editing) = self.editing.clone().filter(Editing::saves) else {
             return (self, Vec::new());
         };
-        if editing.title.trim().is_empty() {
-            return (self, Vec::new());
-        }
-        let wanted = IssueFields {
-            title: editing.title,
-            body: editing.body,
-            labels: editing
-                .labels
-                .split(',')
-                .map(|label| String::from(label.trim()))
-                .filter(|label| !label.is_empty())
-                .collect(),
-            priority: issue.priority,
-        };
+        let issue = shown.issue;
+        let labels = editing
+            .labels
+            .split(',')
+            .map(|label| String::from(label.trim()))
+            .filter(|label| !label.is_empty())
+            .collect::<Vec<String>>();
+        let changes = [
+            (editing.title.trim() != issue.title)
+                .then(|| IssueChange::Title(editing.title.clone())),
+            (editing.body.trim() != issue.body)
+                .then(|| IssueChange::Body(editing.body.clone())),
+            (labels != issue.labels).then_some(IssueChange::Labels(labels)),
+        ];
         (
             Self {
                 editing: None,
                 ..self
             },
-            send(shown, IssueChange::Edit(wanted)),
+            changes
+                .into_iter()
+                .flatten()
+                .flat_map(|change| send(shown, change))
+                .collect(),
         )
+    }
+}
+
+impl Editing {
+    /// An issue keeps a title.
+    fn saves(&self) -> bool {
+        !self.title.trim().is_empty()
     }
 }
 
@@ -269,24 +271,6 @@ fn send(shown: &Shown<'_>, change: IssueChange) -> Vec<Effect> {
     )])
 }
 
-fn fields(issue: &Issue) -> IssueFields {
-    IssueFields {
-        title: issue.title.clone(),
-        body: issue.body.clone(),
-        priority: issue.priority,
-        labels: issue.labels.clone(),
-    }
-}
-
-fn checklist(
-    issue: &Issue,
-    change: impl FnOnce(&mut Vec<ChecklistItem>),
-) -> IssueChange {
-    let mut items = issue.checklist.clone();
-    change(&mut items);
-    IssueChange::Checklist(items)
-}
-
 /// A project's issues, as the projects view lists them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueList {
@@ -294,11 +278,11 @@ pub struct IssueList {
     pub groups: Vec<StatusGroup>,
     /// The new issue's title so far.
     pub new_title: String,
+    /// What typing the title does.
     pub project: ProjectId,
-    /// Where the new issue opens; `None` while no host listing the project
-    /// is live.
-    pub host: Option<HostId>,
-    pub create_disabled: bool,
+    /// Opens it, once there is a title and a live host whose home lists
+    /// the project.
+    pub create: Option<Intent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,13 +310,16 @@ pub fn list(
     drafts: &Drafts,
 ) -> IssueList {
     let new_title = drafts.titles.get(&project.id).cloned().unwrap_or_default();
-    let live = host.filter(|(_, known)| known.live()).map(|(id, _)| id);
+    let create = host
+        .filter(|(_, known)| known.live() && !new_title.trim().is_empty())
+        .map(|(id, _)| {
+            Intent::NewIssue(NewIssueIntent::Create(id, project.id.clone()))
+        });
     IssueList {
         groups: host.map_or_else(Vec::new, |(id, _)| groups(id, project)),
-        create_disabled: live.is_none() || new_title.trim().is_empty(),
         new_title,
         project: project.id.clone(),
-        host: live,
+        create,
     }
 }
 
@@ -387,7 +374,6 @@ fn key_of(id: IssueId) -> String {
     format!("{:032x}", id.0)
 }
 
-/// The issue pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueScreen {
     pub key: String,
@@ -492,7 +478,7 @@ pub fn screen(
             title: editing.title.clone(),
             body: editing.body.clone(),
             labels: editing.labels.clone(),
-            save_disabled: editing.title.trim().is_empty(),
+            save_disabled: !editing.saves(),
         }),
         enabled: host.live(),
         notice,

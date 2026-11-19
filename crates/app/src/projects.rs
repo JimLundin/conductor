@@ -19,7 +19,7 @@
 )]
 
 use dioxus::prelude::*;
-use ui::{Intent, IssueIntent};
+use ui::{Intent, NewIssueIntent};
 
 use crate::{PaneHeader, Shell};
 
@@ -94,7 +94,7 @@ fn Project(project: ui::ProjectGroup) -> Element {
 fn Issues(list: ui::IssueList) -> Element {
     let shell = use_context::<Shell>();
     let project = list.project.clone();
-    let typed = list.project.clone();
+    let create = list.create.clone();
     rsx! {
         div { class: "issues",
             for group in list.groups {
@@ -118,8 +118,8 @@ fn Issues(list: ui::IssueList) -> Element {
             form { class: "new-issue",
                 onsubmit: move |event: FormEvent| {
                     event.prevent_default();
-                    if let Some(host) = list.host {
-                        shell.dispatch(Intent::Issue(IssueIntent::Create(host, project.clone())));
+                    if let Some(intent) = create.clone() {
+                        shell.dispatch(intent);
                     }
                 },
                 input {
@@ -127,9 +127,9 @@ fn Issues(list: ui::IssueList) -> Element {
                     placeholder: "New issue",
                     "aria-label": "New issue's title",
                     value: "{list.new_title}",
-                    oninput: move |event| shell.dispatch(Intent::Issue(IssueIntent::TypeNewTitle(typed.clone(), event.value()))),
+                    oninput: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::TypeTitle(project.clone(), event.value()))),
                 }
-                button { r#type: "submit", class: "clear", disabled: list.create_disabled, "Open" }
+                button { r#type: "submit", class: "clear", disabled: list.create.is_none(), "Open" }
             }
         }
     }

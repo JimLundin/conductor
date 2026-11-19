@@ -618,16 +618,16 @@ mod durability_tests {
     }
 
     #[tokio::test]
-    async fn credential_receipts_wait_for_commit_without_holding_the_event_transaction()
+    async fn receipts_wait_for_commit_without_holding_the_event_transaction()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/tmp");
         std::fs::create_dir_all(&directory)?;
-        let path = directory
-            .join(format!("credential-receipts-{}.redb", std::process::id()));
+        let path =
+            directory.join(format!("receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path)?;
-        let credential = match log.begin_receipt(CommandId(23)).await? {
+        let receipt = match log.begin_receipt(CommandId(23)).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -661,7 +661,7 @@ mod durability_tests {
         );
         ordinary.finish(CommandResult::Accepted).await?;
         finished.await?;
-        drop(credential);
+        drop(receipt);
         let retried = match retry.await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
@@ -679,15 +679,15 @@ mod durability_tests {
     }
 
     #[tokio::test]
-    async fn credential_lease_drop_fails_closed()
+    async fn receipt_lease_drop_fails_closed()
     -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), proto::Epoch(1));
-        let credential = match log.begin_receipt(CommandId(23)).await? {
+        let receipt = match log.begin_receipt(CommandId(23)).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
         .ok_or("expected a value")?;
-        drop(credential);
+        drop(receipt);
         tokio::time::timeout(Duration::from_secs(2), log.stopped()).await?;
         Ok(())
     }
