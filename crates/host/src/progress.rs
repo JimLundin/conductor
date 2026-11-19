@@ -10,17 +10,16 @@
 use alloc::format;
 
 use proto::{
-    Event, EventKind, FinishState, HostSeq, InstanceId, IssueId, Task,
-    TaskStatus, TurnOutcome,
+    Event, EventKind, FinishState, HostSeq, Task, TaskStatus, TurnOutcome,
 };
 
+use crate::assignment::{Assigned, Assignment};
 use crate::prelude::*;
 
 /// A note on the issue a session works on, signed by its instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Progress {
-    pub issue: IssueId,
-    pub instance: InstanceId,
+    pub assignment: Assignment,
     pub text: String,
 }
 
@@ -54,8 +53,7 @@ pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
         .filter(|event| event.session == ended.session)
         .collect::<Vec<&Event>>();
     let Session {
-        issue,
-        instance,
+        assigned,
         before,
         now,
         finish,
@@ -74,8 +72,7 @@ pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
         return None;
     }
     Some(Progress {
-        issue: issue?,
-        instance: instance?,
+        assignment: assigned.assignment()?,
         text: format!("Done: {}.", finished.join("; ")),
     })
 }
@@ -84,13 +81,12 @@ fn done(task: &Task) -> bool {
     task.status == TaskStatus::Completed
 }
 
-/// A session as its log has it up to a turn's end: its issue, its
+/// A session as its log has it up to a turn's end: its issue and its
 /// instance, its checklist when its previous completed turn ended and now,
 /// and where it stands with finishing.
 #[derive(Default)]
 struct Session {
-    issue: Option<IssueId>,
-    instance: Option<InstanceId>,
+    assigned: Assigned,
     before: Vec<Task>,
     now: Vec<Task>,
     finish: FinishState,
@@ -110,24 +106,14 @@ impl Session {
     }
 
     fn with(self, kind: &EventKind) -> Self {
+        let assigned = self.assigned.after(kind);
+        let next = Self { assigned, ..self };
         match kind {
-            EventKind::SessionCreated { instance, .. } => Self {
-                instance: Some(instance.clone()),
-                ..self
-            },
-            EventKind::OnIssue { issue } => Self {
-                issue: Some(*issue),
-                ..self
-            },
-            EventKind::SessionRemoved { .. } => Self {
-                issue: None,
-                ..self
-            },
             EventKind::TasksChanged { tasks } => Self {
                 now: tasks.clone(),
-                ..self
+                ..next
             },
-            _ => self,
+            _ => next,
         }
     }
 }

@@ -40,6 +40,7 @@ use proto::{
 use sha2::{Digest, Sha256};
 
 use crate::Note;
+use crate::assignment::assigned;
 use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::workspace::GitError;
@@ -268,26 +269,10 @@ pub fn on_issue(
     issue: IssueId,
     instance: &InstanceId,
 ) -> Option<SessionId> {
-    let mut issues = BTreeMap::new();
-    let mut of = BTreeMap::new();
-    for event in history {
-        match &event.kind {
-            EventKind::SessionCreated { instance, .. } => {
-                of.insert(event.session, instance);
-            }
-            EventKind::OnIssue { issue } => {
-                issues.insert(event.session, *issue);
-            }
-            EventKind::SessionRemoved { .. } => {
-                issues.remove(&event.session);
-            }
-            _ => {}
-        }
-    }
-    issues
+    assigned(history)
         .into_iter()
-        .find(|(session, on)| {
-            *on == issue && of.get(session).is_some_and(|it| *it == instance)
+        .find(|(_, on)| {
+            on.issue == Some(issue) && on.instance.as_ref() == Some(instance)
         })
         .map(|(session, _)| session)
 }

@@ -10,6 +10,7 @@
 
 extern crate alloc;
 
+pub mod assignment;
 pub mod checkpoints;
 pub mod finish;
 pub mod log;
