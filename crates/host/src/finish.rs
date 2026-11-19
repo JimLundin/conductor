@@ -198,7 +198,7 @@ pub fn merge_message(issue: &str, session: &str) -> String {
     format!("Land {session} on {issue}")
 }
 
-/// Who signs the summary note: the session's instance.
+/// Who signs the notes a session writes on its issue: its instance.
 #[must_use]
 pub fn signer(instance: &InstanceId) -> String {
     match &instance.account {

@@ -185,6 +185,17 @@ something to look at. Removing the session then removes its workspace.
 Conductor, as data the session already carries: the summary at the end and
 progress notes during.
 
+Built (`host::progress`). A progress note is the agent's checklist
+(Claude's `TodoWrite`, Codex's plan): when a turn of a session on an issue
+completes, the items its agent finished since the last completed turn
+become one note, `Done: <item>; <item>.`, signed by the session's instance
+like the summary; an interrupted or failed turn's items go with the next.
+A turn that finished no item notes nothing, and neither does the summary
+turn of a session that is finishing, so the summary is the last note. An
+agent that keeps no checklist reports no progress. The node follows its
+log from when it starts, so a turn that completed just before it stopped,
+and wasn't noted yet, is not noted.
+
 ## 5. Standards and instructions
 
 `standards/<profile>/` holds a profile's check configs, and the shared
@@ -255,7 +266,7 @@ call that started each, a description, its own transcript and status.
    with no remote keeps its issues' branches on one host until bundles
    are built.
 8. Standards and instructions composed into sessions. Done (§5).
-9. Agents reporting progress notes during a session.
+9. Agents reporting progress notes during a session. Done (§4).
 
 Each step is usable on its own and keeps the gate green.
 

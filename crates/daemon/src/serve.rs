@@ -23,12 +23,12 @@ use crate::registry::Registry;
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
-    pub log: Log,
-    pub registry: Registry,
-    pub home: HomeClone,
+    log: Log,
+    registry: Registry,
+    home: HomeClone,
     /// A placeholder for architecture §4's device certificates: every client
     /// must present the token from the ticket.
-    pub token: AuthToken,
+    token: AuthToken,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +88,24 @@ impl ProtocolHandler for Conductor {
 }
 
 impl Conductor {
+    /// The host's protocol handler, which also notes the progress of its
+    /// sessions on issues from now on.
+    #[must_use]
+    pub fn new(
+        log: Log,
+        registry: Registry,
+        home: HomeClone,
+        token: AuthToken,
+    ) -> Self {
+        crate::progress::spawn(log.clone(), home.clone());
+        Self {
+            log,
+            registry,
+            home,
+            token,
+        }
+    }
+
     /// Answers the connection's first stream. Returns the client's name, or
     /// `None` if it was refused.
     async fn authenticate(

@@ -175,9 +175,14 @@ What is built and what comes next. Update it in the commit that changes it.
   session's agent is told the home's shared rules, where its project's
   profiles keep their checks on the host, and the project's `AGENTS.md`
   when its CLI wouldn't read it: an appended system prompt for Claude,
-  developer instructions for Codex. No protocol change. Next: progress
-  notes (home step 9). *Try:* start a Claude session in a project with only
-  an `AGENTS.md` and ask it what its standards are.
+  developer instructions for Codex. No protocol change. *Try:* start a
+  Claude session in a project with only an `AGENTS.md` and ask it what its
+  standards are.
+- **Progress notes** (home step 9, §4). When a turn of a session on an
+  issue ends, the checklist items its agent finished in it become a note
+  on the issue, signed by its instance. No protocol change. The home's
+  build order (home §8) is done. *Try:* start a session on an issue, let
+  its agent tick off a step, and watch the issue's notes.
 
 ## Next
 

@@ -342,12 +342,12 @@ async fn serve_home(
         addr: endpoint.addr(),
         token: AuthToken::from_bytes(TOKEN),
     };
-    let conductor = Conductor {
-        log: log.clone(),
+    let conductor = Conductor::new(
+        log.clone(),
         registry,
         home,
-        token: AuthToken::from_bytes(TOKEN),
-    };
+        AuthToken::from_bytes(TOKEN),
+    );
     let router = Router::builder(endpoint)
         .accept(proto::ALPN, conductor)
         .spawn();
@@ -408,12 +408,7 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
     let router = Router::builder(endpoint)
         .accept(
             proto::ALPN,
-            Conductor {
-                log: log.clone(),
-                registry,
-                home: homeless(data),
-                token,
-            },
+            Conductor::new(log.clone(), registry, homeless(data), token),
         )
         .spawn();
     Ok(Fixture {
@@ -6679,7 +6674,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
 }
 
 #[tokio::test]
-async fn finishing_lands_the_sessions_work_on_the_issue_notes_it_and_asks_review()
+async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_asks_review()
 -> Fallible {
     let land = homeland("finish")?;
     let alpha = land.roots.join("apps").join("alpha");
@@ -6742,6 +6737,12 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_it_and_asks_review
         .into_iter()
         .flat_map(|shown| shown.notes)
         .collect::<Vec<String>>();
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.ends_with("test-host · claude: Done: turn one.")),
+        "the brief's turn noted the checklist item it finished: {notes:?}"
+    );
     assert!(
         notes.last().is_some_and(
             |note| note.ends_with("test-host · claude: Completed turn 2.")

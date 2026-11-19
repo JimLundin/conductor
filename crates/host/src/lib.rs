@@ -15,6 +15,7 @@ pub mod finish;
 pub mod log;
 mod note;
 mod prelude;
+pub mod progress;
 pub mod registry;
 pub mod restore;
 pub mod secret;

@@ -478,12 +478,12 @@ async fn listen(
         .context("online, but no home relay")?;
     let token = crate::load_or_create_token(&data_dir)?;
     let log = Log::open(name, &data_dir.join("conductor.redb"))?;
-    let conductor = Conductor {
-        log: log.clone(),
-        registry: Registry::spawn(log.clone(), setup),
+    let conductor = Conductor::new(
+        log.clone(),
+        Registry::spawn(log.clone(), setup),
         home,
         token,
-    };
+    );
     let ticket = Ticket {
         host: *endpoint.id().as_bytes(),
         relay: relay.to_string(),
