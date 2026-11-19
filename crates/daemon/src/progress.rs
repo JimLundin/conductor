@@ -6,7 +6,7 @@ use std::convert::Infallible;
 
 use host::progress::Progress;
 use host::serve::HomeOrder;
-use proto::{ClientName, Event, HostSeq, IssueChange};
+use proto::{Event, HostSeq, IssueChange};
 use tokio::sync::broadcast;
 
 use crate::Stopped;
@@ -65,7 +65,7 @@ async fn note(
 
 async fn write(home: &HomeClone, progress: Progress) -> Result<(), Stopped> {
     let Progress { assignment, text } = progress;
-    let signer = ClientName(assignment.signer());
+    let signer = assignment.signer();
     let issue = assignment.issue;
     let answer = home
         .order(HomeOrder::Change(issue, IssueChange::Note(text), signer))

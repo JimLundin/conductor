@@ -4,7 +4,9 @@
 use alloc::collections::BTreeMap;
 use alloc::format;
 
-use proto::{Account, Event, EventKind, InstanceId, IssueId, SessionId};
+use proto::{
+    Account, ClientName, Event, EventKind, InstanceId, IssueId, SessionId,
+};
 
 use crate::prelude::*;
 
@@ -17,13 +19,14 @@ pub struct Assignment {
 }
 
 impl Assignment {
+    /// Who signs the session's notes on its issue: its instance.
     #[must_use]
-    pub fn signer(&self) -> String {
+    pub fn signer(&self) -> ClientName {
         let provider = self.instance.provider.name();
-        match &self.instance.account {
+        ClientName(match &self.instance.account {
             Account::Own => String::from(provider),
             Account::Named(account) => format!("{provider} · {account}"),
-        }
+        })
     }
 }
 
@@ -36,6 +39,7 @@ pub struct Assigned {
 }
 
 impl Assigned {
+    /// The issue and instance after `kind`.
     #[must_use]
     pub fn after(self, kind: &EventKind) -> Self {
         match kind {
@@ -55,6 +59,13 @@ impl Assigned {
         }
     }
 
+    /// Whether the session is on `issue` in `instance`.
+    #[must_use]
+    pub fn is(&self, issue: IssueId, instance: &InstanceId) -> bool {
+        self.issue == Some(issue) && self.instance.as_ref() == Some(instance)
+    }
+
+    /// The assignment, once both the issue and the instance are known.
     #[must_use]
     pub fn assignment(self) -> Option<Assignment> {
         Some(Assignment {

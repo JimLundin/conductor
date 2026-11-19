@@ -78,6 +78,17 @@ fn removing_a_session_takes_it_off_its_issue() {
 }
 
 #[test]
+fn a_session_is_on_an_issue_in_its_instance_only() {
+    let on = fold(&[
+        created(1, own()),
+        event(1, EventKind::OnIssue { issue: ISSUE }),
+    ]);
+    assert!(on.is(ISSUE, &own()));
+    assert!(!on.is(IssueId(4), &own()));
+    assert!(!on.is(ISSUE, &InstanceId::named(Provider::Claude, "https://gw")));
+}
+
+#[test]
 fn each_session_folds_only_its_own_events() {
     let other = InstanceId::named(Provider::Codex, "https://gw");
     let sessions = assigned(&[
@@ -101,9 +112,11 @@ fn an_assignment_is_signed_by_its_instance() {
         issue: ISSUE,
         instance,
     };
-    assert_eq!(signed(own()).signer(), "claude");
+    assert_eq!(signed(own()).signer().0, "claude");
     assert_eq!(
-        signed(InstanceId::named(Provider::Codex, "https://gw")).signer(),
+        signed(InstanceId::named(Provider::Codex, "https://gw"))
+            .signer()
+            .0,
         "codex · https://gw"
     );
 }

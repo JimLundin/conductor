@@ -352,23 +352,16 @@ impl Conductor {
         by: ClientName,
     ) -> Result<(), Stopped> {
         let summary = self.summary(session, &finishing, &handle, by).await?;
-        let branch = home::issue::branch(
-            self.home.shown().as_ref(),
-            finishing.assignment.issue,
-        );
+        let issue = finishing.assignment.issue;
+        let branch = home::issue::branch(self.home.shown().as_ref(), issue);
         let finished = match &summary {
             Err(reason) => host::finish::finished(Err(reason.clone()), None),
             Ok(_) => land(&finishing.workspace, &branch).await,
         };
-        let signer = ClientName(finishing.assignment.signer());
+        let signer = finishing.assignment.signer();
         let commits = host::finish::landed(&finished);
         self.home
-            .finished(
-                finishing.assignment.issue,
-                summary.ok().flatten(),
-                signer,
-                commits,
-            )
+            .finished(issue, summary.ok().flatten(), signer, commits)
             .await?;
         self.log
             .append(session, EventKind::SessionFinished { finished })

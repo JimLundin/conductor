@@ -271,9 +271,7 @@ pub fn on_issue(
 ) -> Option<SessionId> {
     assigned(history)
         .into_iter()
-        .find(|(_, on)| {
-            on.issue == Some(issue) && on.instance.as_ref() == Some(instance)
-        })
+        .find(|(_, assigned)| assigned.is(issue, instance))
         .map(|(session, _)| session)
 }
 
