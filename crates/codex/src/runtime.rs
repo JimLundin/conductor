@@ -241,6 +241,7 @@ fn open(start: Start) -> Open {
             effort: start.effort,
             approval_policy: ApprovalPolicy::OnRequest,
             sandbox: Sandbox::WorkspaceWrite,
+            instructions: start.instructions,
         },
     }
 }
@@ -325,6 +326,7 @@ mod tests {
             &mut runtime,
             Vec::from([
                 Input::Command(Command::Start(Start {
+                    instructions: None,
                     session: SessionId(1),
                     directory: HostPath(text("/work")),
                     model: Some(ModelId(text("gpt"))),
@@ -343,6 +345,7 @@ mod tests {
             [
                 Vec::from([Effect::Open(Open {
                     options: ThreadOptions {
+                        instructions: None,
                         cwd: text("/work"),
                         model: Some(text("gpt")),
                         effort: Some(Effort::High),

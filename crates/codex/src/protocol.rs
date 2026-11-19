@@ -80,6 +80,8 @@ pub struct ThreadOptions {
     pub effort: Option<Effort>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox: Sandbox,
+    /// Given as the thread's developer instructions.
+    pub instructions: Option<String>,
 }
 
 /// The two item notification methods on the provider wire.
@@ -1084,6 +1086,8 @@ struct ThreadParams {
     cwd: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    developer_instructions: Option<String>,
     config: ThreadConfig,
 }
 
@@ -1262,6 +1266,7 @@ fn thread_params(
         sandbox: opts.sandbox,
         cwd: opts.cwd.clone(),
         model: opts.model.clone(),
+        developer_instructions: opts.instructions.clone(),
         config: ThreadConfig {
             features: Features {
                 default_mode_request_user_input: true,
@@ -1619,6 +1624,7 @@ mod tests {
 
     fn opts() -> ThreadOptions {
         ThreadOptions {
+            instructions: Some(String::from("Be brief.")),
             cwd: "/tmp/s2-scratch".into(),
             model: Some(String::from("gpt-6-luna")),
             effort: Some(Effort::Low),
@@ -1729,10 +1735,12 @@ mod tests {
     }
 
     #[test]
-    fn thread_start_omits_absent_model_thread_and_effort() -> TestResult<()> {
+    fn thread_start_omits_absent_model_thread_effort_and_instructions()
+    -> TestResult<()> {
         let options = ThreadOptions {
             model: None,
             effort: None,
+            instructions: None,
             ..opts()
         };
         assert_eq!(
@@ -1774,7 +1782,8 @@ mod tests {
             json(
                 r#"{"id": 7, "method": "thread/start", "params": {"historyMode":"paginated",
                 "approvalPolicy": "on-request", "sandbox": "read-only", "cwd": "/tmp/s2-scratch",
-                "model": "gpt-6-luna", "config": {"model_reasoning_effort": "low",
+                "model": "gpt-6-luna", "developerInstructions": "Be brief.",
+                "config": {"model_reasoning_effort": "low",
                 "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true},
                 "tools": {"update_plan": {"enabled": true}}}}}"#
             )?
@@ -1788,6 +1797,7 @@ mod tests {
                 r#"{"id": 7, "method": "thread/resume", "params": {
                 "threadId": "th_1", "approvalPolicy": "on-request", "sandbox": "read-only",
                 "cwd": "/tmp/s2-scratch", "model": "gpt-6-luna",
+                "developerInstructions": "Be brief.",
                 "config": {"model_reasoning_effort": "low",
                 "model_reasoning_summary": "auto", "features": {"default_mode_request_user_input": true},
                 "tools": {"update_plan": {"enabled": true}}}}}"#

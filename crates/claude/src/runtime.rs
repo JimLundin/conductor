@@ -38,6 +38,7 @@ pub struct Spawn {
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub resume: Resume,
+    pub instructions: Option<String>,
 }
 
 /// A call on the running CLI.
@@ -199,6 +200,7 @@ impl Runtime {
             effort,
             history,
             conversation,
+            instructions,
         } = start;
         let (resume, rest) = attempts(history, conversation);
         let spawn = Spawn {
@@ -207,6 +209,7 @@ impl Runtime {
             model: model.map(|chosen| chosen.0),
             effort,
             resume,
+            instructions,
         };
         self.starting = Some(Starting {
             spawn: spawn.clone(),
@@ -411,6 +414,7 @@ mod tests {
 
     fn start(history: Option<HistoryAnchor>) -> Input {
         Input::Command(Command::Start(Start {
+            instructions: None,
             session: Session(1),
             directory: HostPath(text("/work")),
             model: Some(ModelId(text("haiku"))),
@@ -422,6 +426,7 @@ mod tests {
 
     fn spawn(resume: Resume) -> Effect {
         Effect::Spawn(Spawn {
+            instructions: None,
             session: Session(1),
             directory: HostPath(text("/work")),
             model: Some(text("haiku")),

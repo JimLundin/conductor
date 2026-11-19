@@ -187,6 +187,7 @@ pub fn profile() -> Profile {
         provider: Provider::Claude,
         info: crate::info(),
         pin: Cli::Claude,
+        instructions_file: String::from("CLAUDE.md"),
         config: Config {
             file: String::from("settings.json"),
             contents: String::from("{\n  \"cleanupPeriodDays\": 36500\n}\n"),
@@ -216,6 +217,8 @@ pub struct Launch {
     /// `None` leaves the CLI default, which loads user, project and local
     /// settings.
     pub setting_sources: Option<Vec<SettingSource>>,
+    /// Appended to the CLI's system prompt.
+    pub instructions: Option<String>,
     pub sandbox: Sandbox,
 }
 
@@ -291,6 +294,10 @@ fn session_args(launch: &Launch) -> Vec<String> {
             .join(",");
         [String::from("--setting-sources"), names]
     });
+    let instructions = launch
+        .instructions
+        .iter()
+        .map(|text| format!("--append-system-prompt={text}"));
     [
         strings(&[
             "--print",
@@ -303,7 +310,11 @@ fn session_args(launch: &Launch) -> Vec<String> {
             launch.permission_mode.wire(),
         ]),
         resume_args(&launch.resume, &launch.id),
-        model.chain(effort).chain(sources).collect(),
+        model
+            .chain(effort)
+            .chain(sources)
+            .chain(instructions)
+            .collect(),
         // A hidden flag. The text arrives only where the CLI also sends
         // experimental betas, which `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`
         // turns off (PROTOCOL.md).
@@ -438,8 +449,26 @@ mod tests {
         SessionId(String::from(text))
     }
 
+    #[test]
+    fn instructions_are_appended_to_the_system_prompt() {
+        let told = Launch {
+            instructions: Some(String::from("-- Be brief.")),
+            ..launch(Resume::Fresh)
+        };
+        assert!(
+            super::session_args(&told)
+                .contains(&String::from("--append-system-prompt=-- Be brief."))
+        );
+        assert!(
+            !super::session_args(&launch(Resume::Fresh))
+                .iter()
+                .any(|arg| arg.starts_with("--append-system-prompt"))
+        );
+    }
+
     fn launch(resume: Resume) -> Launch {
         Launch {
+            instructions: None,
             home: HomeKind::User,
             credential: None,
             project_name: None,

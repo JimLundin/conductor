@@ -53,6 +53,7 @@ fn fake_codex_dir(fixture: &Path) -> TestResult<PathBuf> {
 
 fn opts() -> ThreadOptions {
     ThreadOptions {
+        instructions: None,
         cwd: "/tmp/s2-scratch".into(),
         model: Some(String::from("gpt-6-luna")),
         effort: Some(Effort::Low),

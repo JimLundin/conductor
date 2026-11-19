@@ -200,6 +200,7 @@ How each agent carries these, from the recordings of the real CLIs:
 | Models | The `initialize` response's `models`, with `supportedEffortLevels`; a `default` row | `model/list`, with `supportedReasoningEfforts` and `isDefault` |
 | Effort | `--effort`; `get_settings` reports it back | `model_reasoning_effort` in the thread's `config`; `thread/start` reports it back |
 | Effort change | `apply_flag_settings` with `{effortLevel}` in the running process; `get_settings` reports it back | `effort` on `turn/start`, for that turn and later ones; `thread/settings/updated` reports it back |
+| Instructions | `--append-system-prompt=<text>` at each launch (`--help` of the pinned CLI); it reads `CLAUDE.md` itself | `developerInstructions` on `thread/start` and `thread/resume` (the pinned app-server's schema); it reads `AGENTS.md` itself |
 | Plan | A `TodoWrite` call, `input.todos: [{content, status, activeForm}]`, offered with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and `CLAUDE_CODE_ENABLE_TASKS=0`; asks no permission | `turn/plan/updated`: `explanation` and `plan: [{step, status}]`, with `tools.update_plan.enabled` in the thread's `config` |
 | Reasoning | `thinking_delta`s and a `thinking` block; text only with `--thinking-display summarized` and experimental betas on | `item/reasoning/summaryTextDelta` and the item's `summary`, with `model_reasoning_summary` set |
 | Resume | `--resume <session_id>` in a new process | `thread/resume { threadId }` on a new app-server |

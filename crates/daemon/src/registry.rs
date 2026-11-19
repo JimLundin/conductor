@@ -24,8 +24,8 @@ use host::sign_in::{Effect as SignInEffect, Key, SignIns};
 use proto::{
     Catalog, Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
     Effort, Event, EventKind, HistoryAnchor, HostPath, Instance, InstanceId,
-    Instances, ModelId, Models, Rejection, SessionId, SignIn, UndoAvailability,
-    Workspace,
+    Instances, ModelId, Models, Provider, Rejection, SessionId, SignIn,
+    UndoAvailability, Workspace,
 };
 use runtime::{Runtime, Starter};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -35,7 +35,7 @@ use crate::Stopped;
 use crate::credentials::{Store, Stored};
 use crate::home::Placement;
 use crate::log::Log;
-use crate::session::{Order, Session};
+use crate::session::{Order, Session, Told};
 use crate::sign_in::{Report, Runs, Signer};
 
 /// A subscriber this far behind the sign-ins is dropped and resubscribes.
@@ -45,6 +45,8 @@ const SIGN_IN_BUFFER: usize = 64;
 pub type Watch = (Vec<SignIn>, broadcast::Receiver<SignIn>);
 
 pub use host::registry::{Offer, OwnSignIn};
+
+pub use crate::session::Instructor;
 
 /// How the host runs an instance.
 pub type Launcher = host::registry::Launcher<Starter>;
@@ -94,6 +96,7 @@ pub struct Setup {
     pub catalog: Catalog,
     pub builder: Builder,
     pub signer: Signer,
+    pub instructor: Instructor,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +147,7 @@ struct RegistryActor {
     store: Store,
     core: Core,
     builder: Builder,
+    instructor: Instructor,
     refreshes: JoinSet<Refreshed>,
     starts: JoinSet<Started<Starter>>,
     signer: Signer,
@@ -162,6 +166,7 @@ impl Registry {
             catalog,
             builder,
             signer,
+            instructor,
         } = setup;
         let (inbox, messages) = mpsc::channel(16);
         let actor = RegistryActor {
@@ -169,6 +174,7 @@ impl Registry {
             store,
             core: Core::new(launchers, &stored, catalog.clone()),
             builder,
+            instructor,
             refreshes: JoinSet::new(),
             starts: JoinSet::new(),
             signer,
@@ -533,6 +539,7 @@ impl RegistryActor {
         let Created {
             session: id,
             instance,
+            provider,
             directory,
             choice,
         } = created;
@@ -544,16 +551,25 @@ impl RegistryActor {
             .core
             .launcher(&instance)
             .map_or_else(Runtime::refusing, |start| start.start());
+        let told = self.told(provider);
         let session = Session::restore(
             id,
             directory,
             recovery.choice,
+            told,
             (runtime, conversation),
             &recovered,
             self.log.clone(),
         );
         self.core.admit(id, instance, session);
         Ok(())
+    }
+
+    fn told(&self, provider: Provider) -> Told {
+        Told {
+            instructor: self.instructor.clone(),
+            provider,
+        }
     }
 
     /// The conversation the host saved for a session a turn started in.
@@ -658,10 +674,12 @@ impl RegistryActor {
                     .log
                     .record(id, EventKind::CheckpointCreated { checkpoint })
                     .await?;
+                let told = self.told(provider);
                 let session = Session::spawn(
                     id,
                     directory,
                     choice,
+                    told,
                     (start.start(), offered),
                     self.log.clone(),
                     &[workspace_event, checkpoint_event],
@@ -883,7 +901,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes()
+    async fn restart_replays_the_cursor_withdraws_requests_and_continue_resumes_as_instructed()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = directory()?;
         let path = directory.join("conductor.redb");
@@ -907,6 +925,11 @@ mod tests {
                 signer: crate::sign_in::Signer::new(|_, _| async {
                     Err(String::from("no instance signs in"))
                 }),
+                instructor: crate::session::Instructor::new(
+                    |created, _, provider| {
+                        Some(format!("{} in {}", provider.name(), created.0))
+                    },
+                ),
             },
         );
         let instances = registry.instances().await?;
@@ -926,9 +949,14 @@ mod tests {
             session.order(Order::Start(models)).await?,
             CommandResult::Accepted
         );
+        let start = starts.recv().await.ok_or("the agent never started")?;
         assert_eq!(
-            starts.recv().await.and_then(|start| start.conversation),
+            start.conversation,
             Some(String::from("restored-native-conversation"))
+        );
+        assert_eq!(
+            start.instructions,
+            Some(format!("{} in {}", PROVIDER.name(), directory.display()))
         );
         let ready = second.subscribe(HostSeq(7)).await?.replay;
         assert_eq!(

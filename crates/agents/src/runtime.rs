@@ -28,6 +28,8 @@ pub struct Start {
     pub history: Option<HistoryAnchor>,
     /// The conversation the session saved once a turn started in it.
     pub conversation: Option<String>,
+    /// What the session is told beside its CLI's own instructions.
+    pub instructions: Option<String>,
 }
 
 /// What the session asks of its agent. Each command has one [`Outcome`].

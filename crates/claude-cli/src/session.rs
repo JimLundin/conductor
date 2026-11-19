@@ -47,6 +47,8 @@ pub struct ClaudeOptions {
     pub project_name: Option<String>,
     /// `None` leaves the CLI default, which loads user, project and local settings.
     pub setting_sources: Option<Vec<SettingSource>>,
+    /// Appended to the CLI's system prompt.
+    pub instructions: Option<String>,
     /// Append every raw stdout line to this file.
     pub stdout_log: Option<PathBuf>,
     pub versions: VersionPolicy,
@@ -419,6 +421,7 @@ fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
         model: opts.model.clone(),
         effort: opts.effort,
         setting_sources: opts.setting_sources.clone(),
+        instructions: opts.instructions.clone(),
         sandbox: sandbox(),
     };
     let mut cmd = install::process::command(
@@ -621,6 +624,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
             &ClaudeOptions {
+                instructions: None,
                 claude_path: "/opt/claude".into(),
                 home: Home::User,
                 credential: None,
@@ -710,6 +714,7 @@ mod tests {
     fn resumed_session_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
             &ClaudeOptions {
+                instructions: None,
                 claude_path: "/opt/claude".into(),
                 home: Home::Private(PathBuf::from(
                     "/srv/conductor/home/claude",

@@ -24,14 +24,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use home::checkout::{Probe, Root};
+use home::instructions::{Own, Sources};
 use home::issue::{Applied, Change, Edit, Mode};
 use home::project::Project;
 use home::sync::{Git, Sync};
 use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
-    Checkout, ClientName, Cloning, CommandResult, Home, Issue, IssueChange,
-    IssueFields, IssueId, IssueStatus, ProjectId, Rejection, StartAt,
+    Checkout, ClientName, Cloning, CommandResult, Home, HostPath, Issue,
+    IssueChange, IssueFields, IssueId, IssueStatus, ProjectId, Rejection,
+    StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -62,6 +64,8 @@ pub struct Homing {
 pub struct HomeClone {
     inbox: mpsc::Sender<Msg>,
     shown: watch::Receiver<Option<Home>>,
+    /// The clone, which a session's instructions are read from.
+    clone: PathBuf,
 }
 
 pub use home::Placement;
@@ -104,11 +108,42 @@ impl HomeClone {
     pub fn spawn(homing: Homing) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let (shown, watched) = watch::channel(None);
+        let clone = clone_of(&homing.data_dir);
         tokio::spawn(Actor::new(homing, shown).run(messages));
         Self {
             inbox,
             shown: watched,
+            clone,
         }
+    }
+
+    /// What a session created in `created`, whose agent runs in
+    /// `runs_in`, is told by a CLI that reads `file` by itself: the files
+    /// as the clone and the directory it runs in have them now, read
+    /// without waiting on the task. Before the task first shows the home,
+    /// that is the shared rules alone.
+    #[must_use]
+    pub fn instructions(
+        &self,
+        created: &HostPath,
+        runs_in: &HostPath,
+        file: &str,
+    ) -> Option<String> {
+        let projects = self.shown().map_or_default(|home| home.projects);
+        let directory = Path::new(&runs_in.0);
+        let own =
+            home::instructions::project_of(&projects, &canonical(created)).map(
+                |(project, _)| Own {
+                    project,
+                    rules: read(&directory.join(home::instructions::RULES)),
+                    cli_reads_rules: directory.join(file).is_file(),
+                },
+            );
+        home::instructions::compose(&Sources {
+            home: self.clone.display().to_string(),
+            shared: read(&self.clone.join(home::instructions::RULES)),
+            own,
+        })
     }
 
     /// The home as it is now: what `Welcome` carries.
@@ -273,7 +308,7 @@ impl Actor {
         let clones = data_dir.join("projects");
         let _ = std::fs::create_dir_all(&clones);
         Self {
-            clone: data_dir.join("home-repo"),
+            clone: clone_of(&data_dir),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
                 .to_string_lossy()
@@ -1050,6 +1085,23 @@ async fn probe(path: &str) -> Option<Probe> {
         roots.as_deref(),
         remote.as_deref(),
     )
+}
+
+/// The host's clone of the home, `<data>/home-repo`.
+fn clone_of(data_dir: &Path) -> PathBuf {
+    data_dir.join("home-repo")
+}
+
+/// `path` as checkouts are found, through any symlink.
+fn canonical(path: &HostPath) -> String {
+    std::fs::canonicalize(&path.0)
+        .ok()
+        .and_then(|resolved| resolved.to_str().map(str::to_owned))
+        .unwrap_or_else(|| path.0.clone())
+}
+
+fn read(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
 }
 
 /// The unpushed issue changes the host kept. A store that no longer reads
