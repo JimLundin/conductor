@@ -773,14 +773,27 @@ async fn pull(clone: &Path) -> Result<(), String> {
 /// Makes the checkout's issue branch what `home::issue::Branch` says. The
 /// remote is `origin`, which is how the home matched the checkout.
 async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
-    let checkout = Path::new(&start.checkout.0);
-    let facts = branch_facts(checkout, &start.branch).await?;
+    ready_issue_branch(Path::new(&start.checkout.0), &start.branch).await
+}
+
+/// Makes the checkout's issue branch `branch`, a full ref, what
+/// `home::issue::Branch` says: the remote's, when the checkout's has
+/// nothing the remote's lacks.
+///
+/// # Errors
+///
+/// When the remote can't be read for a new branch, or both have moved on.
+pub(crate) async fn ready_issue_branch(
+    checkout: &Path,
+    branch: &str,
+) -> Result<(), String> {
+    let facts = branch_facts(checkout, branch).await?;
     match facts.next() {
         home::issue::Move::Keep => Ok(()),
         home::issue::Move::Refuse(reason) => Err(reason),
         home::issue::Move::Set { commit, old } => {
             let was = old.unwrap_or_default();
-            run(checkout, &["update-ref", &start.branch, &commit, &was]).await
+            run(checkout, &["update-ref", branch, &commit, &was]).await
         }
     }
 }

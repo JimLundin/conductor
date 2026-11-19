@@ -12,7 +12,8 @@ use client::host_view::{
 use client::new_session::{efforts, models};
 use proto::{
     Catalog, CheckpointId, CloseReason, CommandBody, CommandResult, Decision,
-    Effort, Instances, Question, RequestId, SessionId, Task, TaskStatus,
+    Effort, FinishState, Instances, Question, RequestId, SessionId, Task,
+    TaskStatus,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
@@ -73,7 +74,8 @@ pub struct SessionPane {
     pub model: String,
     pub effort: EffortControl,
     pub interrupt: bool,
-    /// The session works on an issue and runs no turn, so it can finish.
+    /// The session works on an issue, runs no turn and has done something
+    /// since it last finished, so it can finish.
     pub finish: bool,
     pub workspace: WorkspaceContext,
     pub undo: UndoNote,
@@ -471,7 +473,8 @@ impl Pane {
                     session.status,
                     SessionStatus::Idle | SessionStatus::Closed(_)
                 )
-                && session.undo == UndoState::Ready,
+                && session.undo == UndoState::Ready
+                && session.finish == FinishState::Ready,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
                     "This session has no worktree checkpoints.",

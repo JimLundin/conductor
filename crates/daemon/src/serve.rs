@@ -286,7 +286,8 @@ impl Conductor {
     }
 
     /// Finishes the session in a task of its own, once it can: the
-    /// command answers before the agent's summary turn ends.
+    /// command answers before the agent's summary turn ends, and
+    /// `FinishStarted` in the log shows it has begun.
     async fn finish(
         &self,
         session: SessionId,
@@ -300,6 +301,7 @@ impl Conductor {
         let Some(handle) = self.registry.find(session).await? else {
             return Ok(CommandResult::Rejected(Rejection::UnknownSession));
         };
+        self.log.append(session, EventKind::FinishStarted).await?;
         self.spawn_finish(session, finishing, handle, by);
         Ok(CommandResult::Accepted)
     }
@@ -320,8 +322,10 @@ impl Conductor {
         });
     }
 
-    /// Summarizes, stops, lands and pushes the session, notes the issue
-    /// and moves it on, then logs what it did.
+    /// Summarizes and stops the session, readies the issue's branch from
+    /// the remote's, lands and pushes it, notes the issue and moves it on,
+    /// then logs what it did. A summary that didn't come, or an agent
+    /// that didn't stop, lands nothing.
     async fn finished(
         &self,
         session: SessionId,
@@ -332,20 +336,14 @@ impl Conductor {
         let summary = self.summary(session, &finishing, &handle, by).await?;
         let branch =
             home::issue::branch(self.home.shown().as_ref(), finishing.issue);
-        let landed =
-            crate::workspace::land(&finishing.workspace, &branch).await;
-        let pushed = match &landed {
-            Ok(_) => {
-                crate::workspace::push_branch(&finishing.workspace, &branch)
-                    .await
-            }
-            Err(_) => None,
+        let finished = match &summary {
+            Err(reason) => host::finish::finished(Err(reason.clone()), None),
+            Ok(_) => land(&finishing.workspace, &branch).await,
         };
-        let finished = host::finish::finished(landed, pushed);
         let signer = ClientName(host::finish::signer(&finishing.instance));
         let commits = host::finish::landed(&finished);
         self.home
-            .finished(finishing.issue, summary, signer, commits)
+            .finished(finishing.issue, summary.ok().flatten(), signer, commits)
             .await?;
         self.log
             .append(session, EventKind::SessionFinished { finished })
@@ -353,30 +351,103 @@ impl Conductor {
     }
 
     /// The agent's summary: asked for in one more turn, then the agent is
-    /// stopped; the last reply when it had stopped already.
+    /// stopped; the last reply when it had stopped already. Why finishing
+    /// can't go on, when the agent wasn't asked, didn't answer in time, or
+    /// didn't stop.
     async fn summary(
         &self,
         session: SessionId,
         finishing: &host::finish::Finishing,
         handle: &crate::session::Session,
         by: ClientName,
-    ) -> Result<Option<String>, Stopped> {
+    ) -> Result<Result<Option<String>, String>, Stopped> {
         let history = self.log.history().await?;
         if !finishing.running {
-            return Ok(host::finish::summary(&history, session, HostSeq(0)));
+            return Ok(Ok(host::finish::summary(
+                &history,
+                session,
+                HostSeq(0),
+            )));
         }
         let after = history.last().map_or(HostSeq(0), |event| event.seq);
-        let mut watched = self.log.subscribe(after).await?;
+        self.asked_summary(session, handle, by, after).await
+    }
+
+    /// Asks the running agent for its summary after `after`, waits for the
+    /// turn to end, and stops the agent.
+    async fn asked_summary(
+        &self,
+        session: SessionId,
+        handle: &crate::session::Session,
+        by: ClientName,
+        after: HostSeq,
+    ) -> Result<Result<Option<String>, String>, Stopped> {
+        let watched = self.log.subscribe(after).await?;
         let text = String::from(host::finish::SUMMARY);
         let asked = handle.order(Order::Send { text, by }).await.ok();
-        let mut seen = watched.replay;
-        if host::finish::waits(asked.as_ref(), &seen, session) {
-            seen.extend(turn(&mut watched.live, session).await);
+        if let Some(reason) =
+            host::finish::interrupted("asking for a summary", asked.as_ref())
+        {
+            return Ok(Err(reason));
         }
-        let _ = handle
-            .order(Order::Stop(String::from(host::finish::FINISHED)))
-            .await;
-        Ok(host::finish::summary(&seen, session, after))
+        let Some(seen) = self.turn(session, watched, after).await? else {
+            let _ = handle.order(Order::Interrupt).await;
+            return Ok(Err(String::from(host::finish::IMPATIENT)));
+        };
+        let reason = String::from(host::finish::FINISHED);
+        let stopped = handle.order(Order::Stop(reason)).await.ok();
+        Ok(
+            host::finish::interrupted("stopping the agent", stopped.as_ref())
+                .map_or_else(
+                    || Ok(host::finish::summary(&seen, session, after)),
+                    Err,
+                ),
+        )
+    }
+
+    /// The events from `after` until the session's turn ends, or `None`
+    /// when it doesn't end within `host::finish::PATIENCE`.
+    async fn turn(
+        &self,
+        session: SessionId,
+        watched: crate::log::Subscription,
+        after: HostSeq,
+    ) -> Result<Option<Vec<Event>>, Stopped> {
+        let patience = std::time::Duration::from_secs(host::finish::PATIENCE);
+        tokio::time::timeout(
+            patience,
+            self.until_ended(session, watched, after),
+        )
+        .await
+        .map_or(Ok(None), |seen| seen.map(Some))
+    }
+
+    /// Reads the log until the session's turn ends; a subscription that
+    /// falls behind reads the log again rather than miss the end.
+    async fn until_ended(
+        &self,
+        session: SessionId,
+        watched: crate::log::Subscription,
+        after: HostSeq,
+    ) -> Result<Vec<Event>, Stopped> {
+        let mut seen = watched.replay;
+        let mut live = watched.live;
+        while !seen
+            .iter()
+            .any(|event| host::finish::turn_ended(event, session))
+        {
+            match live.recv().await {
+                Ok(event) => seen.push(event),
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let again = self.log.subscribe(after).await?;
+                    (seen, live) = (again.replay, again.live);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(Stopped {});
+                }
+            }
+        }
+        Ok(seen)
     }
 
     async fn order(
@@ -479,20 +550,19 @@ impl Feed {
     }
 }
 
-/// The events the log stores until the session's turn ends.
-async fn turn(
-    live: &mut broadcast::Receiver<Event>,
-    session: SessionId,
-) -> Vec<Event> {
-    let mut events = Vec::new();
-    while let Ok(event) = live.recv().await {
-        let ended = host::finish::turn_ended(&event, session);
-        events.push(event);
-        if ended {
-            break;
-        }
-    }
-    events
+/// Brings the issue's branch up to the remote's, lands the session's on
+/// it and pushes it.
+async fn land(workspace: &proto::Workspace, branch: &str) -> proto::Finished {
+    let checkout = std::path::Path::new(&workspace.repository.0);
+    let landed = match crate::home::ready_issue_branch(checkout, branch).await {
+        Err(reason) => Err(reason),
+        Ok(()) => crate::workspace::land(workspace, branch).await,
+    };
+    let pushed = match &landed {
+        Ok(_) => crate::workspace::push_branch(workspace, branch).await,
+        Err(_) => None,
+    };
+    host::finish::finished(landed, pushed)
 }
 
 /// A live frame, or a resubscribe if the subscriber fell behind or the

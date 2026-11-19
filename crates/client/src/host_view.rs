@@ -6,11 +6,11 @@ use alloc::collections::BTreeMap;
 use core::cmp::Reverse;
 
 use proto::{
-    CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, Finished,
-    HostPath, HostSeq, InstanceId, IssueId, ModelId, Provider, Question,
-    RequestId, Resolution, SessionId, SubagentActivity, SubagentEvent,
-    SubagentId, SubagentOutcome, Task, ToolCallId, ToolKind, ToolOutcome,
-    ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    CheckpointId, ClientName, CloseReason, Effort, Event, EventKind,
+    FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId, ModelId,
+    Provider, Question, RequestId, Resolution, SessionId, SubagentActivity,
+    SubagentEvent, SubagentId, SubagentOutcome, Task, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,8 +28,8 @@ pub struct SessionView {
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
-    /// The issue it works on, if any.
     pub issue: Option<IssueId>,
+    pub finish: FinishState,
     /// The tasks the session holds, in its agent's order.
     pub tasks: Vec<Task>,
     pub workspace: Option<Workspace>,
@@ -141,6 +141,8 @@ pub enum Item {
     Continued(CloseReason),
     /// The model changed, for this reason.
     ModelChanged(String),
+    /// Finishing the session on its issue began.
+    Finishing,
     /// The session was finished on its issue.
     Finished(Finished),
     Error(String),
@@ -311,6 +313,7 @@ impl HostView {
                 effort,
                 status: SessionStatus::Starting,
                 issue: None,
+                finish: FinishState::Ready,
                 tasks: Vec::new(),
                 workspace: None,
                 checkpoints: Vec::new(),
@@ -532,8 +535,11 @@ impl SessionView {
                 ..self
             },
             EventKind::TasksChanged { tasks } => Self { tasks, ..self },
-            on_issue @ (EventKind::OnIssue { .. }
-            | EventKind::SessionFinished { .. }) => self.on_issue(on_issue),
+            issue_event @ (EventKind::OnIssue { .. }
+            | EventKind::FinishStarted
+            | EventKind::SessionFinished { .. }) => {
+                self.issue_event(issue_event)
+            }
             EventKind::EffortChanged { effort } => Self {
                 effort: Some(effort),
                 ..self
@@ -547,17 +553,9 @@ impl SessionView {
             | EventKind::CheckpointReserved { .. }
             | EventKind::HistoryMaterialized { .. }
             | EventKind::NativeTurnStarted { .. } => self,
-            EventKind::UndoStarted { checkpoint, .. } => Self {
-                undo: UndoState::Undoing(checkpoint),
-                ..self
-            },
-            EventKind::UndoFailed { checkpoint, reason } => Self {
-                undo: UndoState::Failed { checkpoint, reason },
-                ..self
-            },
-            EventKind::TurnsUndone { checkpoint, .. } => {
-                self.turns_undone(checkpoint)
-            }
+            undo @ (EventKind::UndoStarted { .. }
+            | EventKind::UndoFailed { .. }
+            | EventKind::TurnsUndone { .. }) => self.undo_event(undo),
             EventKind::Error { message } => self.push(Item::Error(message)),
             EventKind::Subagent { agent, event } => {
                 self.subagent_event(agent, event)
@@ -579,16 +577,41 @@ impl SessionView {
         .push(Item::ModelChanged(reason))
     }
 
-    /// The issue the session works on, and finishing it.
-    fn on_issue(self, kind: EventKind) -> Self {
+    /// An undo's phases.
+    fn undo_event(self, kind: EventKind) -> Self {
+        match kind {
+            EventKind::UndoStarted { checkpoint, .. } => Self {
+                undo: UndoState::Undoing(checkpoint),
+                ..self
+            },
+            EventKind::UndoFailed { checkpoint, reason } => Self {
+                undo: UndoState::Failed { checkpoint, reason },
+                ..self
+            },
+            EventKind::TurnsUndone { checkpoint, .. } => {
+                self.turns_undone(checkpoint)
+            }
+            _ => self,
+        }
+    }
+
+    /// The issue the session works on, and finishing the session on it.
+    fn issue_event(self, kind: EventKind) -> Self {
         match kind {
             EventKind::OnIssue { issue } => Self {
                 issue: Some(issue),
                 ..self
             },
-            EventKind::SessionFinished { finished } => {
-                self.push(Item::Finished(finished))
+            EventKind::FinishStarted => Self {
+                finish: self.finish.after(&EventKind::FinishStarted),
+                ..self
             }
+            .push(Item::Finishing),
+            EventKind::SessionFinished { finished } => Self {
+                finish: FinishState::Done,
+                ..self
+            }
+            .push(Item::Finished(finished)),
             _ => self,
         }
     }
@@ -706,6 +729,10 @@ impl SessionView {
         Self {
             turn_starts,
             undo: UndoState::Ready,
+            finish: self.finish.after(&EventKind::UserMessage {
+                text: String::new(),
+                by: ClientName(String::new()),
+            }),
             ..self
         }
         .status(SessionStatus::Running)
@@ -974,6 +1001,7 @@ impl Item {
             | Self::TurnCompleted(_)
             | Self::Continued(_)
             | Self::ModelChanged(_)
+            | Self::Finishing
             | Self::Finished(_)
             | Self::Error(_) => None,
         }
@@ -1085,8 +1113,8 @@ mod tests {
 
     use proto::{
         Answer, ClientName, CloseReason, Decision, Effort, Event, EventKind,
-        HostPath, HostSeq, InstanceId, ModelId, Provider, Question,
-        QuestionOption, RequestId, Resolution, Selection, SessionId,
+        FinishState, HostPath, HostSeq, InstanceId, ModelId, Provider,
+        Question, QuestionOption, RequestId, Resolution, Selection, SessionId,
         SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Task,
         TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
         TurnOutcome,
@@ -1254,6 +1282,7 @@ mod tests {
                     effort: None,
                     status: SessionStatus::Idle,
                     issue: None,
+                    finish: FinishState::Ready,
                     tasks: Vec::new(),
                     subagents: Vec::new(),
                     items: Vec::from([
@@ -1323,6 +1352,7 @@ mod tests {
                         status: text("1"),
                     }),
                     issue: None,
+                    finish: FinishState::Ready,
                     tasks: Vec::new(),
                     subagents: Vec::new(),
                     items: Vec::from([Item::Error(text("odd"))]),
@@ -2108,6 +2138,7 @@ mod tests {
                         | Item::TurnCompleted(_)
                         | Item::Continued(_)
                         | Item::ModelChanged(_)
+                        | Item::Finishing
                         | Item::Finished(_)
                         | Item::Error(_) => None,
                     })

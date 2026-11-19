@@ -747,8 +747,12 @@ async fn branches(
             .await
             .is_ok();
     let listed = text(repository, &["worktree", "list", "--porcelain"]).await?;
+    let ahead = counted
+        .trim()
+        .parse()
+        .map_err(|_| failure("landing", "Git counted no commits"))?;
     Ok(host::finish::Branches {
-        ahead: counted.trim().parse().unwrap_or(0),
+        ahead,
         fast_forward,
         checked_out: host::finish::checked_out(&listed, issue),
     })
@@ -773,14 +777,24 @@ async fn merge(
     issue: &str,
     session: &str,
 ) -> Result<(), GitError> {
-    let tree = text(repository, &["merge-tree", "--write-tree", issue, session])
-        .await
-        .map_err(|_| {
-            failure(
-                "landing",
-                "the session's branch conflicts with the issue's; merge them by hand",
-            )
-        })?;
+    let output = execute(&mut git(
+        repository,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            issue,
+            session,
+        ],
+    ))
+    .await?;
+    let tree = host::finish::merged(
+        output.success,
+        &String::from_utf8_lossy(&output.bytes),
+        &output.error,
+    )
+    .map_err(|reason| failure("landing", &reason))?;
     let old = text(repository, &["rev-parse", issue]).await?;
     let new = text(repository, &["rev-parse", session]).await?;
     let message = host::finish::merge_message(issue, session);

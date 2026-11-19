@@ -7,8 +7,8 @@
 use alloc::format;
 
 use proto::{
-    CommandResult, Event, EventKind, Finished, HostSeq, InstanceId, IssueId,
-    Rejection, SessionId, Workspace,
+    CommandResult, Event, EventKind, FinishState, Finished, HostSeq,
+    InstanceId, IssueId, Rejection, SessionId, Workspace,
 };
 
 use crate::prelude::*;
@@ -31,7 +31,8 @@ pub struct Finishing {
 }
 
 /// Whether `session` can finish after `history`: it is on an issue, has a
-/// workspace, isn't removed, and runs no turn.
+/// workspace, isn't removed, runs no turn, and has done something since
+/// it last finished. A session still starting counts as running.
 ///
 /// # Errors
 ///
@@ -46,10 +47,12 @@ pub fn finishing(
     let mut removed = false;
     let mut running = false;
     let mut turning = false;
+    let mut finish = FinishState::Ready;
     for event in history.iter().filter(|event| event.session == session) {
         match &event.kind {
             EventKind::SessionCreated { instance, .. } => {
                 created = Some(instance.clone());
+                running = true;
             }
             EventKind::OnIssue { issue: on } => issue = Some(*on),
             EventKind::WorkspaceCreated { workspace: made } => {
@@ -64,13 +67,16 @@ pub fn finishing(
             }
             _ => {}
         }
+        finish = finish.after(&event.kind);
     }
     let instance = created.ok_or(Rejection::UnknownSession)?;
-    if removed {
-        return Err(Rejection::SessionRemoved);
-    }
-    if turning {
-        return Err(Rejection::TurnInProgress);
+    let refused = [
+        (removed, Rejection::SessionRemoved),
+        (turning, Rejection::TurnInProgress),
+        (finish != FinishState::Ready, Rejection::AlreadyFinished),
+    ];
+    if let Some((_, rejection)) = refused.into_iter().find(|(is, _)| *is) {
+        return Err(rejection);
     }
     Ok(Finishing {
         issue: issue.ok_or(Rejection::NotOnIssue)?,
@@ -110,6 +116,31 @@ pub fn turn_ended(event: &Event, session: SessionId) -> bool {
             event.kind,
             EventKind::TurnCompleted { .. } | EventKind::SessionClosed { .. }
         )
+}
+
+/// What `git merge-tree --write-tree --name-only --no-messages` gave: the
+/// merged tree, or why there is none.
+///
+/// # Errors
+///
+/// The files that conflict, or what Git said when it failed otherwise.
+pub fn merged(
+    success: bool,
+    output: &str,
+    error: &str,
+) -> Result<String, String> {
+    let mut lines = output.lines();
+    let tree = lines.next().unwrap_or_default();
+    match (success, error.trim()) {
+        (true, _) => Ok(String::from(tree)),
+        (false, "") => Err(format!(
+            "the session's branch conflicts with the issue's in {}; merge them by hand",
+            lines.collect::<Vec<&str>>().join(", ")
+        )),
+        (false, said) => {
+            Err(format!("the branches couldn't be merged: {said}"))
+        }
+    }
 }
 
 /// What the shell found of the session's and the issue's branches in the
@@ -200,6 +231,31 @@ pub const fn landed(finished: &Finished) -> u64 {
     match finished {
         Finished::Landed { commits, .. } => *commits,
         Finished::Failed { .. } => 0,
+    }
+}
+
+/// How long the agent has to sum up before finishing gives up, in
+/// seconds.
+pub const PATIENCE: u64 = 600;
+
+/// Why finishing landed nothing when the summary turn didn't end in time.
+pub const IMPATIENT: &str =
+    "the agent didn't sum up within 10 minutes, so it was interrupted";
+
+/// Why finishing landed nothing when the agent wasn't asked or stopped:
+/// a turn got in first.
+#[must_use]
+pub fn interrupted(
+    what: &str,
+    answer: Option<&CommandResult>,
+) -> Option<String> {
+    match answer {
+        Some(CommandResult::Accepted) => None,
+        Some(CommandResult::Rejected(rejection)) => {
+            Some(format!("{what}: {}", rejection.label()))
+        }
+        Some(other) => Some(format!("{what}: the session answered {other:?}")),
+        None => Some(format!("{what}: the session stopped")),
     }
 }
 

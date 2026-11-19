@@ -229,3 +229,75 @@ fn a_branch_is_checked_out_where_a_worktree_has_it() {
     );
     assert_eq!(checked_out(listed, "refs/heads/issue/y"), None);
 }
+
+#[test]
+fn a_session_finishes_once_until_it_does_more() {
+    let finishing_now =
+        and(started(), Vec::from([event(5, EventKind::FinishStarted)]));
+    assert_eq!(
+        finishing(&finishing_now, SESSION).map(|_| ()),
+        Err(Rejection::AlreadyFinished)
+    );
+    let summed_up = and(
+        finishing_now,
+        Vec::from([
+            user(6),
+            reply(7, "summary"),
+            done(8),
+            event(
+                9,
+                EventKind::SessionFinished {
+                    finished: Finished::Failed { reason: text("x") },
+                },
+            ),
+        ]),
+    );
+    assert_eq!(
+        finishing(&summed_up, SESSION).map(|_| ()),
+        Err(Rejection::AlreadyFinished),
+        "its own summary turn doesn't count as more work"
+    );
+    let more = and(
+        summed_up,
+        Vec::from([user(10), reply(11, "more"), done(12)]),
+    );
+    assert!(finishing(&more, SESSION).is_ok());
+    let starting = started()
+        .into_iter()
+        .filter(|event| event.kind != EventKind::SessionReady)
+        .collect::<Vec<Event>>();
+    assert_eq!(
+        finishing(&starting, SESSION).map(|it| it.running),
+        Ok(true),
+        "a session still starting counts as running"
+    );
+}
+
+#[test]
+fn a_merge_gives_its_tree_or_names_the_conflicts() {
+    assert_eq!(super::merged(true, "abc\n", ""), Ok(text("abc")));
+    assert_eq!(
+        super::merged(false, "abc\na.txt\nb.txt\n", ""),
+        Err(text(
+            "the session's branch conflicts with the issue's in a.txt, b.txt; merge them by hand"
+        ))
+    );
+    assert_eq!(
+        super::merged(false, "", "fatal: bad revision"),
+        Err(text("the branches couldn't be merged: fatal: bad revision"))
+    );
+    assert_eq!(
+        super::interrupted(
+            "asking for a summary",
+            Some(&proto::CommandResult::Accepted)
+        ),
+        None
+    );
+    assert!(
+        super::interrupted(
+            "asking for a summary",
+            Some(&proto::CommandResult::Rejected(Rejection::TurnInProgress))
+        )
+        .is_some_and(|reason| reason.starts_with("asking for a summary: "))
+    );
+}

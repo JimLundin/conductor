@@ -694,16 +694,24 @@ standards and issues, cloned on every host. Built so far are home steps
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
 - **Finishing** (home step 7). `FinishSession { session }`, for a session
-  on an issue between turns (`NotOnIssue`, `TurnInProgress`), keeps a
-  receipt and answers `Accepted` at once; the rest runs in a task. A
-  running agent is asked for a summary in one more turn
+  on an issue between turns (`NotOnIssue`, `TurnInProgress`) that has done
+  something since it last finished (`AlreadyFinished`; its own summary
+  turn doesn't count, `proto::FinishState`), keeps a receipt, logs
+  `FinishStarted` and answers `Accepted`; the rest runs in a task. A
+  running or starting agent is asked for a summary in one more turn
   (`host::finish::SUMMARY`) and then stopped (`Order::Stop`,
   `SessionClosed` for `host::finish::FINISHED`); a stopped one's last
-  reply stands in. The host commits what the worktree holds onto the
-  session's branch, then lands it on the issue's in the checkout
+  reply stands in. A summary that isn't asked (a turn got in first),
+  takes over ten minutes (the agent is interrupted) or an agent that
+  doesn't stop lands nothing. The log is followed for the turn's end and
+  read again if the follower falls behind. The host brings the issue's
+  branch up to `origin`'s first, as a start does, refusing when both have
+  moved on; commits what the worktree holds onto the session's branch;
+  then lands it on the issue's in the checkout
   (`host::finish::Branches`): nothing when the issue's has it all, a
   fast-forward, or a merge commit made with `git merge-tree` without a
-  worktree; a conflict lands nothing, and neither does an issue branch
+  worktree, whose answer `host::finish::merged` reads; a conflict, named
+  by its files, lands nothing, and neither does an issue branch
   checked out somewhere, which can't move under its worktree. It pushes
   the issue's branch to `origin`, never forced, which lets another host
   continue the issue. The summary becomes the issue's note, signed

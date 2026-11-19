@@ -578,6 +578,8 @@ pub enum Rejection {
     },
     /// The session works on no issue, so there is nothing to finish it on.
     NotOnIssue,
+    /// The session is finishing, or has done nothing since it finished.
+    AlreadyFinished,
 }
 
 impl Rejection {
@@ -651,6 +653,9 @@ impl Rejection {
                 format!("the issue was not saved: {reason}")
             }
             Self::NotOnIssue => String::from("the session works on no issue"),
+            Self::AlreadyFinished => String::from(
+                "the session is finishing, or has done nothing since it finished",
+            ),
             Self::IssueTaken { .. } => String::from(
                 "that instance has a session on the issue already; continue it, or remove it first",
             ),
@@ -827,6 +832,32 @@ pub enum EventKind {
     SessionFinished {
         finished: Finished,
     },
+    /// Finishing the session has begun; `SessionFinished` ends it.
+    FinishStarted,
+}
+
+/// Where a session on an issue stands with finishing, as its events say:
+/// a message after a finish makes it ready again, while its own summary
+/// turn doesn't.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FinishState {
+    #[default]
+    Ready,
+    Finishing,
+    Done,
+}
+
+impl FinishState {
+    /// The state after `kind`.
+    #[must_use]
+    pub const fn after(self, kind: &EventKind) -> Self {
+        match (self, kind) {
+            (_, EventKind::FinishStarted) => Self::Finishing,
+            (_, EventKind::SessionFinished { .. }) => Self::Done,
+            (Self::Done, EventKind::UserMessage { .. }) => Self::Ready,
+            (state, _) => state,
+        }
+    }
 }
 
 /// How finishing a session on an issue went.

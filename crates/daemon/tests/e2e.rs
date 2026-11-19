@@ -1812,6 +1812,7 @@ async fn an_interrupt_withdraws_an_open_question() -> Fallible {
             | Item::TurnCompleted(_)
             | Item::Continued(_)
             | Item::ModelChanged(_)
+            | Item::Finishing
             | Item::Finished(_)
             | Item::Error(_) => None,
         })
@@ -6744,6 +6745,11 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_it_and_asks_review
             |note| note.ends_with("test-host · claude: Completed turn 2.")
         ),
         "the summary is the issue's last note: {notes:?}"
+    );
+    assert_eq!(
+        send(&link, CommandBody::FinishSession { session }).await?,
+        CommandResult::Rejected(Rejection::AlreadyFinished),
+        "a finished session that did nothing since doesn't finish again"
     );
     assert_eq!(
         send(

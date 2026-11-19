@@ -40,7 +40,7 @@ pub enum Row {
     },
     ModelChanged(String),
     /// The session was finished on its issue; `outcome` is also its
-    /// `data-outcome`, `landed` or `failed`.
+    /// `data-outcome`: `finishing`, `landed` or `failed`.
     Finished {
         outcome: &'static str,
         text: String,
@@ -243,6 +243,12 @@ pub fn row(item: &Item, drafts: &BTreeMap<RequestId, Draft>) -> Row {
         Item::Continued(reason) => {
             Row::Continued(format!("Continued after: {}", closed(reason)))
         }
+        Item::Finishing => Row::Finished {
+            outcome: "finishing",
+            text: String::from(
+                "Finishing: the agent sums up, then the session's branch lands on the issue's.",
+            ),
+        },
         Item::Finished(finished) => finished_row(finished),
         Item::Tool {
             tool,
