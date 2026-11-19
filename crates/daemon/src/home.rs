@@ -24,14 +24,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use home::checkout::{Probe, Root};
+use home::instructions::{Own, Sources};
 use home::issue::{Applied, Change, Edit, Mode};
 use home::project::Project;
 use home::sync::{Git, Sync};
 use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
-    Checkout, ClientName, Cloning, CommandResult, Home, Issue, IssueChange,
-    IssueFields, IssueId, IssueStatus, ProjectId, Rejection, StartAt,
+    Checkout, ClientName, Cloning, CommandResult, Home, HostPath, Issue,
+    IssueChange, IssueFields, IssueId, IssueStatus, ProjectId, Rejection,
+    StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -62,6 +64,8 @@ pub struct Homing {
 pub struct HomeClone {
     inbox: mpsc::Sender<Msg>,
     shown: watch::Receiver<Option<Home>>,
+    /// The clone, which a session's instructions are read from.
+    clone: PathBuf,
 }
 
 pub use home::Placement;
@@ -104,11 +108,40 @@ impl HomeClone {
     pub fn spawn(homing: Homing) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let (shown, watched) = watch::channel(None);
+        let clone = homing.data_dir.join("home-repo");
         tokio::spawn(Actor::new(homing, shown).run(messages));
         Self {
             inbox,
             shown: watched,
+            clone,
         }
+    }
+
+    /// What a session created in `directory` is told, by a CLI that reads
+    /// `reads` by itself: the files as the clone and the project's checkout
+    /// have them now, read without waiting on the task.
+    #[must_use]
+    pub fn instructions(
+        &self,
+        directory: &HostPath,
+        reads: &str,
+    ) -> Option<String> {
+        let projects = self.shown().map_or_default(|home| home.projects);
+        let own = home::instructions::project_of(&projects, &directory.0).map(
+            |(project, checkout)| {
+                let top = Path::new(&checkout.path.0);
+                Own {
+                    project,
+                    rules: read(&top.join("AGENTS.md")),
+                    native: top.join(reads).is_file(),
+                }
+            },
+        );
+        home::instructions::compose(&Sources {
+            home: self.clone.display().to_string(),
+            shared: read(&self.clone.join("AGENTS.md")),
+            own,
+        })
     }
 
     /// The home as it is now: what `Welcome` carries.
@@ -1050,6 +1083,10 @@ async fn probe(path: &str) -> Option<Probe> {
         roots.as_deref(),
         remote.as_deref(),
     )
+}
+
+fn read(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
 }
 
 /// The unpushed issue changes the host kept. A store that no longer reads

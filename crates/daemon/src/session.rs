@@ -8,14 +8,16 @@
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::fmt::Display;
+use std::fmt::{self, Display};
+use std::sync::Arc;
 
 use agents::Step;
-use agents::runtime::{Command, Event, Outcome};
+use agents::runtime::{Command, Event, Outcome, Start};
 pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    CheckpointId, CommandResult, HostPath, Models, SessionId, TaskId, Workspace,
+    CheckpointId, CommandResult, HostPath, Models, Provider, SessionId, TaskId,
+    Workspace,
 };
 use runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
@@ -26,6 +28,41 @@ use crate::workspace;
 
 /// What a performed effect hands back: the next input, after a call.
 type Performed = Result<Option<Input>, Stopped>;
+
+type Compose = dyn Fn(&HostPath, Provider) -> Option<String> + Send + Sync;
+
+/// What the host tells a session's agent beside its CLI's own
+/// instructions, for a session created in a directory with a provider's
+/// CLI (docs/home.md §5).
+#[derive(Clone)]
+pub struct Instructor(Arc<Compose>);
+
+impl Instructor {
+    pub fn new(
+        compose: impl Fn(&HostPath, Provider) -> Option<String>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self(Arc::new(compose))
+    }
+}
+
+impl fmt::Debug for Instructor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Instructor")
+    }
+}
+
+/// Where a session was created and which provider runs it, and how the
+/// host composes its instructions from those each time its agent starts,
+/// so they follow the home as it is then.
+#[derive(Debug, Clone)]
+pub struct Told {
+    pub instructor: Instructor,
+    pub directory: HostPath,
+    pub provider: Provider,
+}
 
 /// A handle to one session's task. Clone it freely.
 #[derive(Debug, Clone)]
@@ -51,6 +88,7 @@ struct Actor {
     id: SessionId,
     inbox: mpsc::Receiver<SessionMsg>,
     runtime: Runtime,
+    told: Told,
     /// The agent's steps that arrived while the actor waited on a call;
     /// it takes them once it has taken the call's outcome.
     held: VecDeque<Step>,
@@ -67,6 +105,7 @@ impl Session {
         id: SessionId,
         directory: HostPath,
         choice: Choice,
+        told: Told,
         agent: (Runtime, Models),
         log: Log,
         history: &[proto::Event],
@@ -74,7 +113,7 @@ impl Session {
         let (runtime, offered) = agent;
         let restored = (runtime, None);
         let session =
-            Self::restore(id, directory, choice, restored, history, log);
+            Self::restore(id, directory, choice, told, restored, history, log);
         let (reply, _) = oneshot::channel();
         let _ = session.inbox.try_send(SessionMsg {
             order: Order::Start(offered),
@@ -89,6 +128,7 @@ impl Session {
         id: SessionId,
         directory: HostPath,
         choice: Choice,
+        told: Told,
         agent: (Runtime, Option<String>),
         history: &[proto::Event],
         log: Log,
@@ -100,6 +140,7 @@ impl Session {
             id,
             inbox: messages,
             runtime,
+            told,
             held: VecDeque::new(),
             log,
             reply: None,
@@ -243,11 +284,26 @@ impl Actor {
         Ok(Some(input))
     }
 
-    /// Sends the agent `command` and waits for its outcome.
+    /// Sends the agent `command` and waits for its outcome. A start takes
+    /// the session's instructions as the home has them now.
     async fn ask(&mut self, command: Command) -> Outcome {
-        let unanswered = command.failed("the agent's runtime has stopped");
-        let _ = self.runtime.commands.send(command).await;
+        let told = self.told(command);
+        let unanswered = told.failed("the agent's runtime has stopped");
+        let _ = self.runtime.commands.send(told).await;
         self.outcome().await.unwrap_or(unanswered)
+    }
+
+    fn told(&self, command: Command) -> Command {
+        match command {
+            Command::Start(start) => Command::Start(Start {
+                instructions: (self.told.instructor.0)(
+                    &self.told.directory,
+                    self.told.provider,
+                ),
+                ..start
+            }),
+            other => other,
+        }
     }
 
     /// The outcome the agent reports next. The steps it reports before it

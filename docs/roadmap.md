@@ -169,9 +169,15 @@ What is built and what comes next. Update it in the commit that changes it.
   session is a commit on its branch, on top of any the agent made, and
   undoing a turn resets the branch to the turn before; a turn that
   changed nothing makes none. A finished issue's branch has a commit per
-  turn. No protocol change. Next: standards and instructions composed
-  into sessions (home step 8). *Try:* run two turns, then `git log` the
+  turn. No protocol change. *Try:* run two turns, then `git log` the
   session's `conductor/<ulid>` branch.
+- **Instructions from the home** (home step 8, §5). Each start of a
+  session's agent is told the home's shared rules, where its project's
+  profiles keep their checks on the host, and the project's `AGENTS.md`
+  when its CLI wouldn't read it: an appended system prompt for Claude,
+  developer instructions for Codex. No protocol change. Next: progress
+  notes (home step 9). *Try:* start a Claude session in a project with only
+  an `AGENTS.md` and ask it what its standards are.
 
 ## Next
 

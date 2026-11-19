@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use crate::credentials::{Store, Stored};
 use crate::home::{HomeClone, Homing};
 use crate::log::Log;
-use crate::registry::{Builder, Launcher, Launchers, Registry, Setup};
+use crate::registry::{
+    Builder, Instructor, Launcher, Launchers, Registry, Setup,
+};
 use crate::serve::Conductor;
 use crate::sign_in::{Signer, Signing};
 use agents::runtime::Command;
@@ -111,6 +113,21 @@ pub async fn signing(
     })
 }
 
+/// A session's instructions from the home, leaving out the file its
+/// provider's CLI reads by itself, as its plugin says.
+fn instructor(plugins: &Plugins, home: HomeClone) -> Instructor {
+    let reads = plugins
+        .0
+        .iter()
+        .map(|(provider, plugin)| (*provider, plugin.profile.reads.clone()))
+        .collect::<BTreeMap<Provider, String>>();
+    Instructor::new(move |directory, provider| {
+        reads
+            .get(&provider)
+            .and_then(|file| home.instructions(directory, file))
+    })
+}
+
 /// How `conductord host` serves.
 #[derive(Debug, Clone)]
 pub struct Hosting {
@@ -150,20 +167,21 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         let started = launcher(&plugins, &data_dir, id.clone(), instance);
         launchers.insert(id, started.await);
     }
-    let setup = Setup {
-        launchers,
-        store,
-        stored,
-        catalog,
-        builder: builder(plugins.clone(), data_dir.clone()),
-        signer: signer(plugins, data_dir.clone()),
-    };
     let home = HomeClone::spawn(Homing {
         host: name.clone(),
         data_dir: data_dir.clone(),
         remote,
         roots: projects,
     });
+    let setup = Setup {
+        launchers,
+        store,
+        stored,
+        catalog,
+        builder: builder(plugins.clone(), data_dir.clone()),
+        instructor: instructor(&plugins, home.clone()),
+        signer: signer(plugins, data_dir.clone()),
+    };
     let Hosted { router, log } =
         listen(data_dir, web_url, (name, home), setup).await?;
     let ended = tokio::select! {

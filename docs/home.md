@@ -194,6 +194,19 @@ from the shared rules, the project's profiles and the project's own
 `AGENTS.md`. The harness plugin says how its CLI takes them, for example an
 appended system prompt or a generated instructions file in the workspace.
 
+Built (`home::instructions`). The shared rules are the home's root
+`AGENTS.md`, and the composed text says where the node's clone is, so the
+rules' paths into the home resolve. Each profile is named with the path of
+its `standards/<profile>/` and its `check.sh`. The session's project is the
+one with a checkout at or around the directory it was created in; a
+session elsewhere gets the shared rules only. The project's `AGENTS.md` is
+left out when the checkout holds the file the CLI reads by itself, which
+its plugin names (`CLAUDE.md` for Claude, `AGENTS.md` for Codex). The
+session's actor composes them each time its agent starts, from the files
+as they are then, so an edit to the standards reaches the next start;
+Claude takes them as an appended system prompt, Codex as the thread's
+developer instructions (architecture §3).
+
 ## 6. Sub-agents
 
 Built (architecture §3). They are part of a session's transcript: the tool
@@ -238,7 +251,7 @@ call that started each, a description, its own transcript and status.
    A project with no checkout on the host is cloned first by hand; one
    with no remote keeps its issues' branches on one host until bundles
    are built.
-8. Standards and instructions composed into sessions.
+8. Standards and instructions composed into sessions. Done (§5).
 9. Agents reporting progress notes during a session.
 
 Each step is usable on its own and keeps the gate green.

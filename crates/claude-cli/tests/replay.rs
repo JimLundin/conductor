@@ -73,6 +73,7 @@ fn options(claude: &FakeClaude) -> ClaudeOptions {
         resume: claude::Resume::Fresh,
         project_name: None,
         setting_sources: Some(Vec::from([SettingSource::Project])),
+        instructions: None,
         stdout_log: None,
         versions: VersionPolicy::SupportedOnly,
     }

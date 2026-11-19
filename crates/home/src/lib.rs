@@ -11,6 +11,7 @@
 extern crate alloc;
 
 pub mod checkout;
+pub mod instructions;
 pub mod issue;
 mod prelude;
 pub mod project;

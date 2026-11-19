@@ -1192,6 +1192,7 @@ impl Session {
             effort: self.choice.effort,
             history,
             conversation,
+            instructions: None,
         })))])
     }
 

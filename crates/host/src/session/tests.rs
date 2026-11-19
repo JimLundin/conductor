@@ -64,6 +64,7 @@ fn launching(
     conversation: Option<&str>,
 ) -> Effect {
     agent(Command::Start(Start {
+        instructions: None,
         session: SessionId(1),
         directory: HostPath(text(directory)),
         model: None,

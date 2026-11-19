@@ -193,6 +193,7 @@ fn options(shared: &Shared, spawn: Spawn) -> ClaudeOptions {
         effort: spawn.effort,
         permission_mode: PermissionMode::Default,
         resume: spawn.resume,
+        instructions: spawn.instructions,
         project_name: Some(ulid::Ulid::from(spawn.session.0).to_string()),
         setting_sources: Some(Vec::from([
             SettingSource::User,
@@ -242,6 +243,7 @@ async fn probe(shared: &Shared) -> Result<Models, String> {
         effort: None,
         permission_mode: PermissionMode::Default,
         resume: Resume::Fresh,
+        instructions: None,
         project_name: None,
         setting_sources: None,
         stdout_log: None,

@@ -52,6 +52,7 @@ pub fn profile() -> Profile {
         provider: Provider::Codex,
         info: crate::info(),
         pin: Cli::Codex,
+        reads: String::from("AGENTS.md"),
         config: Config {
             file: String::from("config.toml"),
             contents: String::from("check_for_update_on_startup = false\n"),
