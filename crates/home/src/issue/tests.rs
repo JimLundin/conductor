@@ -7,8 +7,8 @@ use proto::{
 };
 
 use super::{
-    Applied, Branch, Change, Edit, Mode, Move, apply, changing, fields, file,
-    listed, message, name, opening, parse, render, start, was,
+    Applied, Branch, Change, Edit, Mode, Move, Remote, apply, changing, fields,
+    file, listed, message, name, opening, parse, render, start, started, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -478,22 +478,17 @@ fn checkout() -> Checkout {
 
 #[test]
 fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
-    let open = Issue {
-        status: IssueStatus::Open,
-        ..issue()
-    };
-    let started =
-        start(Some(&home(Vec::from([checkout()]), Vec::from([open]))), ID);
+    let started = start(
+        Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
+        ID,
+    );
     assert_eq!(
-        started.as_ref().map(|at| (
-            at.checkout.clone(),
-            at.branch.clone(),
-            at.moved
-        )),
+        started
+            .as_ref()
+            .map(|at| (at.checkout.clone(), at.branch.clone())),
         Ok((
             HostPath(text("/src/conductor")),
             format!("refs/heads/issue/{}", name(ID)),
-            Some(IssueStatus::InProgress)
         ))
     );
     let brief = started.map_or_else(|_| String::new(), |at| at.brief);
@@ -509,15 +504,6 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
         assert!(brief.contains(part), "the brief has {part:?}: {brief}");
     }
     assert_eq!(
-        start(
-            Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
-            ID
-        )
-        .map(|at| at.moved),
-        Ok(None),
-        "an issue in progress stays so"
-    );
-    assert_eq!(
         start(Some(&home(Vec::new(), Vec::from([issue()]))), ID).map(|_| ()),
         Err(Rejection::NotCheckedOut)
     );
@@ -529,37 +515,64 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
 }
 
 #[test]
-fn the_issue_branch_follows_the_remote_unless_it_has_work_of_its_own() {
-    let facts =
-        |local: Option<&str>, remote: Option<&str>, behind: bool| Branch {
-            local: local.map(text),
-            remote: remote.map(text),
-            head: text("head"),
-            behind,
-        };
+fn work_on_an_open_or_ready_issue_puts_it_in_progress() {
+    assert_eq!(
+        IssueStatus::ALL.map(started),
+        [
+            Some(IssueStatus::InProgress),
+            Some(IssueStatus::InProgress),
+            None,
+            None,
+            None,
+            None,
+        ]
+    );
+}
+
+#[test]
+fn the_issue_branch_follows_the_remote_and_never_leaves_its_work_out() {
+    let facts = |local: Option<&str>, remote: Remote, (behind, ahead)| Branch {
+        local: local.map(text),
+        remote,
+        base: text("base"),
+        behind,
+        ahead,
+    };
+    let at = |commit: &str| Remote::At(text(commit));
     let set = |commit: &str, old: Option<&str>| Move::Set {
         commit: text(commit),
         old: old.map(text),
     };
+    let away = || Remote::Unreachable(text("offline"));
     assert_eq!(
         [
-            facts(None, None, false),
-            facts(None, Some("r"), false),
-            facts(Some("l"), None, false),
-            facts(Some("r"), Some("r"), true),
-            facts(Some("l"), Some("r"), true),
-            facts(Some("l"), Some("r"), false),
+            facts(None, Remote::Absent, (false, false)),
+            facts(None, at("r"), (false, false)),
+            facts(Some("l"), Remote::Absent, (false, false)),
+            facts(Some("l"), away(), (false, false)),
+            facts(Some("r"), at("r"), (true, true)),
+            facts(Some("l"), at("r"), (true, false)),
+            facts(Some("l"), at("r"), (false, true)),
         ]
         .map(Branch::next),
         [
-            set("head", None),
+            set("base", None),
             set("r", None),
+            Move::Keep,
             Move::Keep,
             Move::Keep,
             set("r", Some("l")),
             Move::Keep,
         ]
     );
+    assert!(matches!(
+        facts(None, away(), (false, false)).next(),
+        Move::Refuse(reason) if reason.ends_with("offline")
+    ));
+    assert!(matches!(
+        facts(Some("l"), at("r"), (false, false)).next(),
+        Move::Refuse(reason) if reason.contains("both moved on")
+    ));
 }
 
 #[test]

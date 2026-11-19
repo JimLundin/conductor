@@ -30,8 +30,8 @@ use home::sync::{Git, Sync};
 use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
-    Checkout, ClientName, Cloning, CommandResult, Home, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, ProjectId, Rejection, StartAt,
+    Checkout, ClientName, Cloning, CommandResult, Home, Issue, IssueChange,
+    IssueFields, IssueId, ProjectId, Rejection, StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -64,14 +64,9 @@ pub struct HomeClone {
     shown: watch::Receiver<Option<Home>>,
 }
 
-type Placed = Result<Placement, Rejection>;
+pub use home::Placement;
 
-/// Where a session starts, and the issue it works on, if any.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Placement {
-    pub directory: HostPath,
-    pub on: Option<home::issue::Start>,
-}
+type Placed = Result<Placement, Rejection>;
 
 #[derive(Debug)]
 enum Msg {
@@ -83,6 +78,15 @@ enum Msg {
     Place {
         at: StartAt,
         reply: oneshot::Sender<Placed>,
+    },
+    Ready {
+        start: home::issue::Start,
+        reply: oneshot::Sender<Result<(), Rejection>>,
+    },
+    Started {
+        issue: IssueId,
+        client: ClientName,
+        reply: oneshot::Sender<()>,
     },
 }
 
@@ -125,8 +129,7 @@ impl HomeClone {
     }
 
     /// Where a session starts: a directory as it is, or a project's or an
-    /// issue's checkout once the home is fresh, with the issue's branch
-    /// ready there.
+    /// issue's checkout once the home is fresh.
     ///
     /// # Errors
     ///
@@ -139,6 +142,38 @@ impl HomeClone {
             })),
             home => self.ask(|reply| Msg::Place { at: home, reply }).await,
         }
+    }
+
+    /// Readies the issue's branch in its checkout for a session to start
+    /// from: the remote's, when it has one.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the task has stopped.
+    pub async fn ready(
+        &self,
+        start: home::issue::Start,
+    ) -> Result<Result<(), Rejection>, Stopped> {
+        self.ask(|reply| Msg::Ready { start, reply }).await
+    }
+
+    /// A session on the issue started: work on it is in progress, if it
+    /// wasn't already.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the task has stopped.
+    pub async fn started(
+        &self,
+        issue: IssueId,
+        client: ClientName,
+    ) -> Result<(), Stopped> {
+        self.ask(|reply| Msg::Started {
+            issue,
+            client,
+            reply,
+        })
+        .await
     }
 
     async fn ask<T>(
@@ -272,29 +307,42 @@ impl Actor {
             }
             Msg::Place { at, reply } => {
                 self.fresh().await;
-                let _ = reply.send(self.placed(at).await);
+                let shown = self.shown.borrow().clone();
+                let _ = reply.send(home::place(at, shown.as_ref()));
+            }
+            Msg::Ready { start, reply } => {
+                let readied = ready_branch(&start)
+                    .await
+                    .map_err(|reason| Rejection::WorkspaceFailure { reason });
+                let _ = reply.send(readied);
+            }
+            Msg::Started {
+                issue,
+                client,
+                reply,
+            } => {
+                self.move_on(issue, &client).await;
+                let _ = reply.send(());
             }
         }
     }
 
-    async fn placed(&self, at: StartAt) -> Placed {
-        let shown = self.shown.borrow().clone();
-        let StartAt::Issue(id) = at else {
-            return home::place(at, shown.as_ref()).map(|directory| {
-                Placement {
-                    directory,
-                    on: None,
-                }
-            });
+    /// Moves the issue to what work on it starting makes it, as the home
+    /// has it now.
+    async fn move_on(&mut self, issue: IssueId, client: &ClientName) {
+        let status = self
+            .issues
+            .values()
+            .flatten()
+            .find(|known| known.id == issue)
+            .and_then(|known| home::issue::started(known.status));
+        let Some(next) = status else {
+            return;
         };
-        let start = home::issue::start(shown.as_ref(), id)?;
-        ready_branch(&start)
-            .await
-            .map_err(|reason| Rejection::WorkspaceFailure { reason })?;
-        Ok(Placement {
-            directory: start.checkout.clone(),
-            on: Some(start),
-        })
+        let moved = self.change(issue, IssueChange::Status(next), client).await;
+        if moved != CommandResult::Accepted {
+            tracing::warn!(target: "home", ?moved, "an issue whose session started did not move on");
+        }
     }
 
     async fn pull_now(&mut self) -> CommandResult {
@@ -652,13 +700,14 @@ async fn pull(clone: &Path) -> Result<(), String> {
     pulled
 }
 
-/// Makes the checkout's issue branch what `home::issue::Branch` says: the
-/// remote's, when it has it and the checkout's has nothing of its own.
+/// Makes the checkout's issue branch what `home::issue::Branch` says. The
+/// remote is `origin`, which is how the home matched the checkout.
 async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
     let checkout = Path::new(&start.checkout.0);
     let facts = branch_facts(checkout, &start.branch).await?;
     match facts.next() {
         home::issue::Move::Keep => Ok(()),
+        home::issue::Move::Refuse(reason) => Err(reason),
         home::issue::Move::Set { commit, old } => {
             let was = old.unwrap_or_default();
             run(checkout, &["update-ref", &start.branch, &commit, &was]).await
@@ -670,21 +719,64 @@ async fn branch_facts(
     checkout: &Path,
     branch: &str,
 ) -> Result<home::issue::Branch, String> {
-    let tracking = branch.replacen("refs/heads/", "refs/remotes/origin/", 1);
-    let wanted = format!("+{branch}:{tracking}");
-    let fetched = run(checkout, &["fetch", "--quiet", "origin", &wanted]).await;
     let local = commit_of(checkout, branch).await;
-    let remote = fetched.ok().and(commit_of(checkout, &tracking).await);
-    let head = text(checkout, &["rev-parse", "--verify", "HEAD^{commit}"])
-        .await
-        .map_err(|err| err.to_string())?;
-    let behind = ancestor(checkout, local.as_deref(), remote.as_deref()).await;
+    let remote = remote_branch(checkout, branch).await;
+    let at = match &remote {
+        home::issue::Remote::At(commit) => Some(commit.as_str()),
+        home::issue::Remote::Absent | home::issue::Remote::Unreachable(_) => {
+            None
+        }
+    };
+    let behind = ancestor(checkout, local.as_deref(), at).await;
+    let ahead = ancestor(checkout, at, local.as_deref()).await;
     Ok(home::issue::Branch {
+        base: base(checkout).await?,
         local,
         remote,
-        head,
         behind,
+        ahead,
     })
+}
+
+/// The remote's copy of `branch`, fetched into the checkout's
+/// remote-tracking refs: absent when the checkout has no `origin` or
+/// `origin` has no such branch, unreachable when `origin` can't be read.
+async fn remote_branch(checkout: &Path, branch: &str) -> home::issue::Remote {
+    if run(checkout, &["remote", "get-url", "origin"])
+        .await
+        .is_err()
+    {
+        return home::issue::Remote::Absent;
+    }
+    let tracking = branch.replacen("refs/heads/", "refs/remotes/origin/", 1);
+    let wanted = format!("+{branch}:{tracking}");
+    if run(checkout, &["fetch", "--quiet", "origin", &wanted])
+        .await
+        .is_err()
+    {
+        return unfetched(checkout).await;
+    }
+    commit_of(checkout, &tracking)
+        .await
+        .map_or(home::issue::Remote::Absent, home::issue::Remote::At)
+}
+
+/// Why `origin` gave no branch: it has none, or it can't be read.
+async fn unfetched(checkout: &Path) -> home::issue::Remote {
+    match run(checkout, &["ls-remote", "--quiet", "origin"]).await {
+        Ok(()) => home::issue::Remote::Absent,
+        Err(reason) => home::issue::Remote::Unreachable(reason),
+    }
+}
+
+/// Where a new issue branch starts: the remote's default branch as the
+/// checkout knows it, else its `HEAD`.
+async fn base(checkout: &Path) -> Result<String, String> {
+    let remote = commit_of(checkout, "refs/remotes/origin/HEAD").await;
+    let head = commit_of(checkout, "HEAD").await;
+    remote
+        .or(head)
+        .ok_or_else(|| String::from("the checkout has no commit"))
 }
 
 async fn commit_of(repository: &Path, reference: &str) -> Option<String> {

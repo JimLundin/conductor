@@ -128,9 +128,12 @@ pub fn view(
 ///
 /// The host has no home, its home lists no such project, or the project
 /// has no checkout on the host.
-pub fn place(at: StartAt, home: Option<&Home>) -> Result<HostPath, Rejection> {
+pub fn place(at: StartAt, home: Option<&Home>) -> Result<Placement, Rejection> {
     match at {
-        StartAt::Directory(directory) => Ok(directory),
+        StartAt::Directory(directory) => Ok(Placement {
+            directory,
+            on: None,
+        }),
         StartAt::Project(id) => {
             let known = home.ok_or(Rejection::NoHome)?;
             let project = known
@@ -140,10 +143,23 @@ pub fn place(at: StartAt, home: Option<&Home>) -> Result<HostPath, Rejection> {
                 .ok_or(Rejection::UnknownProject)?;
             let checkout =
                 project.checkouts.first().ok_or(Rejection::NotCheckedOut)?;
-            Ok(checkout.path.clone())
+            Ok(Placement {
+                directory: checkout.path.clone(),
+                on: None,
+            })
         }
-        StartAt::Issue(id) => issue::start(home, id).map(|at| at.checkout),
+        StartAt::Issue(id) => issue::start(home, id).map(|on| Placement {
+            directory: on.checkout.clone(),
+            on: Some(on),
+        }),
     }
+}
+
+/// Where a session starts, and the issue it works on, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub directory: HostPath,
+    pub on: Option<issue::Start>,
 }
 
 /// The remote to clone a project from.

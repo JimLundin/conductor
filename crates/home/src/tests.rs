@@ -469,7 +469,8 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
             place(StartAt::Project(id("conductor")), None),
             place(StartAt::Project(id("nope")), Some(&shown)),
             place(StartAt::Project(id("conductor")), Some(&unchecked)),
-        ],
+        ]
+        .map(|placed| placed.map(|at| at.directory)),
         [
             Ok(directory),
             Ok(HostPath(String::from("/a"))),

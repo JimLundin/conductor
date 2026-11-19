@@ -153,11 +153,12 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Sessions on issues** (home step 7a, architecture §5.4). *Start a
   session* on an issue's pane opens the new-session form on it: the
   session works on a branch cut from the issue's `issue/<id>`, which the
-  host fetches from the project's remote, so another host continues it;
-  its first message is the issue's brief, and the issue moves to
-  `in-progress`. One session per instance and issue (ALPN `conductor/21`).
-  Next: finishing a session onto the issue's branch, then turns as commits.
-  *Try:* start a session on an issue, then another on a second host.
+  host takes from the project's remote when it has it; its first message
+  is the issue's brief, and the issue moves to `in-progress`. One session
+  per instance and issue (ALPN `conductor/21`). Next: finishing a session
+  onto the issue's branch and pushing it, which lets another host
+  continue, then turns as commits. *Try:* start a session on an issue and
+  read its first message.
 
 ## Next
 

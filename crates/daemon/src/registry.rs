@@ -666,7 +666,7 @@ impl RegistryActor {
                     self.log.clone(),
                     &[workspace_event, checkpoint_event],
                 );
-                brief(&session, on, by);
+                brief((&session, &self.log, id), on, by);
                 self.core.admit(id, instance, session);
                 Ok(CommandResult::Started { session: id })
             }
@@ -717,16 +717,21 @@ async fn listing(
 /// Sends a session on an issue the issue's brief, once its agent has
 /// started, in a task of its own so the registry doesn't wait for the
 /// agent.
-fn brief(session: &Session, on: Option<home::issue::Start>, by: ClientName) {
+fn brief(
+    (session, log, id): (&Session, &Log, SessionId),
+    on: Option<home::issue::Start>,
+    by: ClientName,
+) {
     let Some(start) = on else {
         return;
     };
-    let briefed = session.clone();
+    let (briefed, logged) = (session.clone(), log.clone());
     let text = start.brief;
     tokio::spawn(async move {
         let sent = briefed.order(Order::Send { text, by }).await;
-        if !matches!(sent, Ok(CommandResult::Accepted)) {
-            tracing::warn!(?sent, "the issue's brief was not sent");
+        if let Some(message) = host::registry::unbriefed(sent.ok().as_ref()) {
+            tracing::warn!(%message, "an issue's brief was not sent");
+            let _ = logged.append(id, EventKind::Error { message }).await;
         }
     });
 }

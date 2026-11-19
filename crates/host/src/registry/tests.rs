@@ -1095,3 +1095,20 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
     .concat();
     assert_eq!(super::on_issue(&removed, issue, &own), None);
 }
+
+#[test]
+fn a_brief_that_did_not_reach_the_agent_says_why() {
+    assert_eq!(super::unbriefed(Some(&CommandResult::Accepted)), None);
+    assert_eq!(
+        super::unbriefed(Some(&CommandResult::Rejected(
+            Rejection::SessionClosed
+        ))),
+        Some(String::from(
+            "The issue's brief was not sent: the session has closed. Send it again from the issue."
+        ))
+    );
+    assert!(
+        super::unbriefed(None)
+            .is_some_and(|message| message.contains("stopped"))
+    );
+}

@@ -834,8 +834,6 @@ pub struct Start {
     pub branch: String,
     /// The agent's first message.
     pub brief: String,
-    /// The status the issue moves to now that work on it starts.
-    pub moved: Option<IssueStatus>,
 }
 
 /// How a session on issue `id` starts, in its project's first checkout.
@@ -863,9 +861,20 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
         checkout: checkout.path.clone(),
         branch: format!("refs/heads/{}", issue.branch),
         brief: brief(&project.title, issue),
-        moved: matches!(issue.status, IssueStatus::Open | IssueStatus::Ready)
-            .then_some(IssueStatus::InProgress),
     })
+}
+
+/// The status an issue moves to once a session on it has started: work
+/// on an `open` or `ready` one is in progress.
+#[must_use]
+pub const fn started(status: IssueStatus) -> Option<IssueStatus> {
+    match status {
+        IssueStatus::Open | IssueStatus::Ready => Some(IssueStatus::InProgress),
+        IssueStatus::InProgress
+        | IssueStatus::Review
+        | IssueStatus::Done
+        | IssueStatus::Dropped => None,
+    }
 }
 
 /// The agent's first message: the issue as its file has it, and what to
@@ -902,18 +911,29 @@ fn brief(project: &str, issue: &Issue) -> String {
     )
 }
 
+/// The remote's copy of an issue's branch, as the checkout found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Remote {
+    /// The project has no remote, or its remote has no such branch.
+    Absent,
+    At(String),
+    /// The remote couldn't be read, for this reason.
+    Unreachable(String),
+}
+
 /// Where an issue's branch stands in a checkout, before a session on it
 /// starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
-    /// The checkout's branch, if it has one.
     pub local: Option<String>,
-    /// The remote's, if the checkout could fetch it.
-    pub remote: Option<String>,
-    /// The checkout's `HEAD`, which a new issue's branch starts from.
-    pub head: String,
+    pub remote: Remote,
+    /// Where a new issue's branch starts: the remote's default branch,
+    /// else the checkout's `HEAD`.
+    pub base: String,
     /// The local branch is an ancestor of the remote's.
     pub behind: bool,
+    /// The remote's branch is an ancestor of the local one.
+    pub ahead: bool,
 }
 
 /// What becomes of the checkout's issue branch.
@@ -925,28 +945,44 @@ pub enum Move {
         commit: String,
         old: Option<String>,
     },
+    /// The session can't start from it, for this reason.
+    Refuse(String),
 }
 
 impl Branch {
     /// The branch follows the remote's, which carries the issue from host
-    /// to host, unless it has commits of its own: then it stays, and the
-    /// session works on top of them.
+    /// to host. One with commits of its own the remote lacks stays as it
+    /// is; one whose remote moved on too, or a new one while the remote
+    /// can't be read, would leave the remote's work out, so the session
+    /// doesn't start.
     #[must_use]
     pub fn next(self) -> Move {
         match (self.local, self.remote) {
-            (None, None) => Move::Set {
-                commit: self.head,
+            (None, Remote::Absent) => Move::Set {
+                commit: self.base,
                 old: None,
             },
-            (None, Some(remote)) => Move::Set {
+            (None, Remote::At(remote)) => Move::Set {
                 commit: remote,
                 old: None,
             },
-            (Some(local), Some(remote)) if local != remote && self.behind => {
+            (None, Remote::Unreachable(reason)) => Move::Refuse(format!(
+                "the project's remote can't be read, and the issue's branch may be there: {reason}"
+            )),
+            (Some(local), Remote::At(remote))
+                if local != remote && self.behind =>
+            {
                 Move::Set {
                     commit: remote,
                     old: Some(local),
                 }
+            }
+            (Some(local), Remote::At(remote))
+                if local != remote && !self.ahead =>
+            {
+                Move::Refuse(String::from(
+                    "the issue's branch here and on the remote have both moved on; merge them first",
+                ))
             }
             (Some(_), _) => Move::Keep,
         }

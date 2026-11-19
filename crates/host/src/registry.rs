@@ -292,6 +292,21 @@ pub fn on_issue(
         .map(|(session, _)| session)
 }
 
+/// What the session's log says when the issue's brief, its first
+/// message, didn't reach the agent: `None` when it did.
+#[must_use]
+pub fn unbriefed(answer: Option<&CommandResult>) -> Option<String> {
+    let why = match answer {
+        Some(CommandResult::Accepted) => return None,
+        Some(CommandResult::Rejected(rejection)) => rejection.label(),
+        None => String::from("the session stopped"),
+        Some(other) => format!("the session answered {other:?}"),
+    };
+    Some(format!(
+        "The issue's brief was not sent: {why}. Send it again from the issue."
+    ))
+}
+
 /// An instance's refresh: its agents take `credential`, and, if the
 /// instance then `signs_in`, list what they offer.
 #[derive(Debug, Clone, PartialEq, Eq)]
