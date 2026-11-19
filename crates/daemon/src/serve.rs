@@ -23,12 +23,12 @@ use crate::registry::Registry;
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
-    pub log: Log,
-    pub registry: Registry,
-    pub home: HomeClone,
+    log: Log,
+    registry: Registry,
+    home: HomeClone,
     /// A placeholder for architecture §4's device certificates: every client
     /// must present the token from the ticket.
-    pub token: AuthToken,
+    token: AuthToken,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,13 +1,18 @@
 //! The progress an agent reports on its issue while it works (docs/home.md
 //! §4), from data its session already carries.
 //!
-//! When a turn of a session on an issue ends, the checklist items its agent
-//! finished in the turn become a note on the issue. The shell watches the
-//! log and writes the note.
+//! When a turn of a session on an issue completes, the checklist items its
+//! agent finished since the last one that did become a note on the issue;
+//! an interrupted or failed turn's carry on to the next. Its summary turn,
+//! once it is finishing, notes nothing, so the summary stays the last note.
+//! The shell watches the log and writes the note.
 
 use alloc::format;
 
-use proto::{Event, EventKind, HostSeq, InstanceId, IssueId, Task, TaskStatus};
+use proto::{
+    Event, EventKind, FinishState, HostSeq, InstanceId, IssueId, Task,
+    TaskStatus, TurnOutcome,
+};
 
 use crate::prelude::*;
 
@@ -19,21 +24,25 @@ pub struct Progress {
     pub text: String,
 }
 
-/// The last event `history` holds, after which the watch looks.
+/// Where the watch starts: after the last event `history` holds.
 #[must_use]
 pub fn latest(history: &[Event]) -> HostSeq {
     history.last().map_or(HostSeq(0), |event| event.seq)
 }
 
-/// Whether `event` ends a turn, which may then note progress.
 #[must_use]
 pub const fn ends_turn(event: &Event) -> bool {
-    matches!(event.kind, EventKind::TurnCompleted { .. })
+    matches!(
+        event.kind,
+        EventKind::TurnCompleted {
+            outcome: TurnOutcome::Completed
+        }
+    )
 }
 
 /// What the turn `ended` ended did on its session's issue, from `history`,
-/// which holds it: `None` when the session is on no issue or its agent
-/// finished no checklist item in the turn.
+/// which holds it: `None` when the session is on no issue, is finishing,
+/// or its agent finished no checklist item.
 #[must_use]
 pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
     if !ends_turn(ended) {
@@ -49,8 +58,9 @@ pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
         instance,
         before,
         now,
+        finish,
     } = mine.iter().fold(Session::default(), |session, event| {
-        session.then(event, ended.seq)
+        session.after(event, ended.seq)
     });
     let finished = now
         .iter()
@@ -60,7 +70,7 @@ pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
         })
         .map(|task| task.text.as_str())
         .collect::<Vec<&str>>();
-    if finished.is_empty() {
+    if finished.is_empty() || finish == FinishState::Finishing {
         return None;
     }
     Some(Progress {
@@ -75,18 +85,32 @@ fn done(task: &Task) -> bool {
 }
 
 /// A session as its log has it up to a turn's end: its issue, its
-/// instance, and its checklist when its previous turn ended and now.
+/// instance, its checklist when its previous completed turn ended and now,
+/// and where it stands with finishing.
 #[derive(Default)]
 struct Session {
     issue: Option<IssueId>,
     instance: Option<InstanceId>,
     before: Vec<Task>,
     now: Vec<Task>,
+    finish: FinishState,
 }
 
 impl Session {
-    fn then(self, event: &Event, ended: HostSeq) -> Self {
-        match &event.kind {
+    fn after(self, event: &Event, ended: HostSeq) -> Self {
+        let finish = self.finish.after(&event.kind);
+        let next = Self { finish, ..self };
+        if ends_turn(event) && event.seq < ended {
+            return Self {
+                before: next.now.clone(),
+                ..next
+            };
+        }
+        next.with(&event.kind)
+    }
+
+    fn with(self, kind: &EventKind) -> Self {
+        match kind {
             EventKind::SessionCreated { instance, .. } => Self {
                 instance: Some(instance.clone()),
                 ..self
@@ -101,10 +125,6 @@ impl Session {
             },
             EventKind::TasksChanged { tasks } => Self {
                 now: tasks.clone(),
-                ..self
-            },
-            EventKind::TurnCompleted { .. } if event.seq < ended => Self {
-                before: self.now.clone(),
                 ..self
             },
             _ => self,

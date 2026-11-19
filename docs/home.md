@@ -187,11 +187,14 @@ progress notes during.
 
 Built (`host::progress`). A progress note is the agent's checklist
 (Claude's `TodoWrite`, Codex's plan): when a turn of a session on an issue
-ends, the items its agent finished in that turn become one note,
-`Done: <item>; <item>.`, signed by the session's instance like the
-summary. A turn that finished no item notes nothing. The node follows its
-log from when it starts, so a turn that ended while it was down is not
-noted.
+completes, the items its agent finished since the last completed turn
+become one note, `Done: <item>; <item>.`, signed by the session's instance
+like the summary; an interrupted or failed turn's items go with the next.
+A turn that finished no item notes nothing, and neither does the summary
+turn of a session that is finishing, so the summary is the last note. An
+agent that keeps no checklist reports no progress. The node follows its
+log from when it starts, so a turn that completed just before it stopped,
+and wasn't noted yet, is not noted.
 
 ## 5. Standards and instructions
 

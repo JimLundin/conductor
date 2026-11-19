@@ -134,3 +134,33 @@ fn the_watch_starts_after_the_log_and_looks_only_at_turn_ends() {
     assert!(ends_turn(&log[1]));
     assert!(!ends_turn(&log[0]));
 }
+
+#[test]
+fn an_unfinished_turn_carries_its_items_on_and_a_summary_turn_notes_none() {
+    let done = TaskStatus::Completed;
+    let log = history(Vec::from([
+        created(SESSION),
+        (SESSION, EventKind::OnIssue { issue: ISSUE }),
+        tasks(SESSION, &[(1, "plan", done)]),
+        (
+            SESSION,
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Interrupted,
+            },
+        ),
+        ended(SESSION),
+        (SESSION, EventKind::FinishStarted),
+        tasks(SESSION, &[(1, "plan", done), (2, "wrap up", done)]),
+        ended(SESSION),
+    ]));
+    assert_eq!(at(&log, 4), None, "an interrupted turn notes nothing");
+    assert_eq!(
+        at(&log, 5),
+        Some(Progress {
+            issue: ISSUE,
+            instance: instance(),
+            text: String::from("Done: plan."),
+        })
+    );
+    assert_eq!(at(&log, 8), None, "the summary stays the last note");
+}

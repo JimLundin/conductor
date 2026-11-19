@@ -13,11 +13,10 @@ use crate::Stopped;
 use crate::home::HomeClone;
 use crate::log::Log;
 
-/// Starts the task, which notes the turns that end from now on.
 pub fn spawn(log: Log, home: HomeClone) {
     tokio::spawn(async move {
         let stopped = watch(&log, &home).await;
-        tracing::debug!(?stopped, "progress notes stopped");
+        tracing::warn!(?stopped, "progress notes stopped");
     });
 }
 
