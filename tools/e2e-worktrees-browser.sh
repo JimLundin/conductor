@@ -45,6 +45,6 @@ for engine in chromium webkit; do
   ticket=$(awk '/^ticket:/ {print $2}' "$scratch/host.txt")
   join=$(awk '/^join:/ {print $2}' "$scratch/host.txt")
   "$target/debug/examples/worktrees_browser" "$ticket" "$source" >"$scratch/seed.txt" 2>&1
-  ENGINE="$engine" node crates/app/tests-e2e/browser.mjs "$join" "$run/$engine.png" worktrees unused >"$run/$engine.txt" 2>&1
+  ENGINE="$engine" node crates/app/tests-e2e/browser.ts "$join" "$run/$engine.png" worktrees unused >"$run/$engine.txt" 2>&1
   echo "$engine checkpoint/undo browser checks passed: $run/$engine.txt"
 done

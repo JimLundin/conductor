@@ -24,7 +24,7 @@
 # one fails; the script exits non-zero if any did. A failed scenario's record
 # carries its host logs, and its page is shot to target/e2e-failures. Each
 # browser wait is on what the page shows, bounded by E2E_PATIENCE ms per wait
-# and E2E_DEADLINE ms per scenario (crates/app/tests-e2e/browser.mjs). The
+# and E2E_DEADLINE ms per scenario (crates/app/tests-e2e/browser.ts). The
 # web build is reused while the files it is built from are unchanged.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -165,7 +165,7 @@ expect() {
 
 # run <engine> <scenario> <output> <session dir>
 run() {
-  ENGINE=$1 node crates/app/tests-e2e/browser.mjs "$join" "$3" "$2" "$4"
+  ENGINE=$1 node crates/app/tests-e2e/browser.ts "$join" "$3" "$2" "$4"
 }
 
 # turn_run <engine> <scenario> <output>: a scenario's Claude turn, in a
@@ -322,7 +322,7 @@ two_hosts() {
   start_host laptop --name laptop
   echo
   echo "## Two hosts in one app, chromium"
-  SECOND_JOIN=$join ENGINE=chromium node crates/app/tests-e2e/browser.mjs "$first" "$scratch/hosts.png" hosts "$scratch/hosts"
+  SECOND_JOIN=$join ENGINE=chromium node crates/app/tests-e2e/browser.ts "$first" "$scratch/hosts.png" hosts "$scratch/hosts"
   echo
   echo "## Two hosts, host logs"
   host_log desk

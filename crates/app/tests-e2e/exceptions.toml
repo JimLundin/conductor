@@ -1,0 +1,71 @@
+# Where the browser suite departs from the shared TypeScript standard, and why.
+
+[[exception]]
+path = "browser.ts"
+rule = "lint/style/noRestrictedGlobals"
+reason = "the boundary: it alone reads the arguments and environment from process, exits, and arms the scenario's deadline with setTimeout"
+
+[[exception]]
+path = "browser.ts"
+rule = "lint/style/noProcessEnv"
+reason = "the boundary reads the suite's settings from the environment, once, and passes them in"
+
+[[exception]]
+path = "browser.ts"
+rule = "lint/nursery/noProcessExit"
+reason = "the boundary exits on a usage error and once a failure is recorded, which the uncaught-exception handler can't do by throwing"
+
+[[exception]]
+path = "browser.ts"
+rule = "lint/suspicious/noConsole"
+reason = "the boundary writes the run's record to stdout, which tools/e2e-browser.sh keeps"
+
+[[exception]]
+path = "browser.ts"
+rule = "lint/plugin/noNondeterminism"
+reason = "the boundary reads the clock for the log's timestamps and the timings the run records, and passes it in"
+
+[[exception]]
+path = "**/*.ts"
+rule = "lint/correctness/noUndeclaredDependencies"
+reason = "under the shared config Biome looks for package.json beside the config, not here, so it can't see playwright; knip's unlisted-dependency check covers it"
+
+[[exception]]
+path = "**/*.ts"
+rule = "lint/performance/useDomNodeTextContent"
+reason = "the checks compare the rendered text, which Playwright's innerText() and the page's innerText give; textContent adds hidden text and source whitespace"
+
+[[exception]]
+path = "**/*.ts"
+rule = "lint/security/noSecrets"
+reason = "what it flags are CSS selectors, and the fake credentials the scenarios check never leak"
+
+[[exception]]
+path = "**/*.ts"
+rule = "lint/performance/noAwaitInLoops"
+reason = "each step drives the one page in order; run at once they would race it"
+
+[[exception]]
+path = "scenarios/*.ts"
+rule = "lint/nursery/noExcessiveStatementsPerFunction"
+reason = "a scenario's step is one script of page actions and checks in the order a person takes them; cut at ten statements it would scatter that order across functions with no seam between them"
+
+[[exception]]
+path = "scenarios/*.ts"
+rule = "lint/complexity/noExcessiveLinesPerFunction"
+reason = "a scenario's step is one script of page actions and checks in the order a person takes them; its long expected texts make it run past fifty lines"
+
+[[exception]]
+path = "profiles"
+rule = "drift:fast-check.fast"
+reason = "the suite drives a browser and has no property tests, so it has no fast-check profiles"
+
+[[exception]]
+path = "profiles"
+rule = "drift:fast-check.full"
+reason = "the suite drives a browser and has no property tests, so it has no fast-check profiles"
+
+[[exception]]
+path = "profiles"
+rule = "drift:fast-check.mutation"
+reason = "the suite drives a browser and has no property tests, so it has no fast-check profiles"
