@@ -400,7 +400,7 @@ fn OptionButton(
     }
 }
 
-/// A closed session's note and its Continue, or the composer.
+/// A closed session's note, its Continue and its Remove, or the composer.
 #[component]
 fn Ending(footer: Footer) -> Element {
     let shell = use_context::<Shell>();
@@ -413,6 +413,11 @@ fn Ending(footer: Footer) -> Element {
                         class: "continue",
                         onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::Continue)),
                         "Continue"
+                    }
+                    button {
+                        class: "remove",
+                        onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::Remove)),
+                        "Remove"
                     }
                 }
             }

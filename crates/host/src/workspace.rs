@@ -1,7 +1,8 @@
 //! The rules of a session's Git worktree and its checkpoints.
 //!
-//! The names, branches and refs Conductor owns, what Git's output says, and
-//! how a checkpoint's diff is bounded. The shell runs `git` and touches the
+//! The names, branches and refs Conductor owns, what Git's output says, how
+//! a checkpoint's diff is bounded, and the steps that remove a workspace
+//! while keeping its branch. The shell runs `git` and touches the
 //! filesystem.
 
 use alloc::format;
@@ -9,7 +10,7 @@ use alloc::string::ToString;
 
 use proto::{
     Change, CheckpointFile, CheckpointId, DiffExtent, FilePatch, HostPath,
-    SessionId, Workspace,
+    Kept, SessionId, Workspace,
 };
 
 use crate::prelude::*;
@@ -394,6 +395,95 @@ pub fn budget(
         },
     );
     (kept, extent)
+}
+
+/// The message of the commit that keeps what a removed workspace had not
+/// committed.
+pub const KEPT: &str =
+    "Conductor: the workspace's uncommitted changes when it was removed";
+
+/// The workspace's branch as a full ref.
+#[must_use]
+pub fn head(workspace: &Workspace) -> String {
+    format!("refs/heads/{}", workspace.branch)
+}
+
+/// What the shell knows of a workspace before removing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Facts {
+    pub head_tree: String,
+    /// The tree of everything in the worktree that Git doesn't ignore;
+    /// `None` when its directory is gone. Ignored files are not kept.
+    pub tree: Option<String>,
+    pub origin: Option<String>,
+}
+
+/// One step of removing a workspace, in order. A failed `Commit` or
+/// `Remove` stops the removal, so nothing is lost; a failed `Push` keeps
+/// the branch locally and goes on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// Commit `tree` on the branch, after its head, with [`KEPT`].
+    Commit {
+        tree: String,
+    },
+    /// Run `git` with these arguments in the checkout.
+    Push {
+        remote: String,
+        args: Vec<String>,
+    },
+    Remove,
+    /// Forget the worktree whose directory is gone already.
+    Prune,
+    /// Delete every ref under this prefix: the session's checkpoints.
+    Forget(String),
+}
+
+/// The steps that remove `workspace` and keep its branch. Only a branch of
+/// Conductor's own is pushed, only to `origin`, and never forced.
+///
+/// # Errors
+///
+/// When Conductor doesn't own the workspace's branch.
+pub fn plan(
+    workspace: &Workspace,
+    facts: &Facts,
+) -> Result<Vec<Step>, GitError> {
+    let _ = owner(workspace)?;
+    let branch = head(workspace);
+    let commit = facts
+        .tree
+        .clone()
+        .filter(|tree| *tree != facts.head_tree)
+        .map(|tree| Step::Commit { tree });
+    let push = facts.origin.clone().map(|remote| Step::Push {
+        remote,
+        args: Vec::from([
+            String::from("push"),
+            String::from("--quiet"),
+            String::from("origin"),
+            format!("{branch}:{branch}"),
+        ]),
+    });
+    let remove = match facts.tree {
+        Some(_) => Step::Remove,
+        None => Step::Prune,
+    };
+    Ok(commit
+        .into_iter()
+        .chain(push)
+        .chain([remove, Step::Forget(checkpoints(workspace)?)])
+        .collect())
+}
+
+/// Where the branch was kept, from the push the plan ran, if it had one.
+#[must_use]
+pub fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
+    match pushed {
+        None => Kept::Local,
+        Some((remote, Ok(()))) => Kept::Pushed { remote },
+        Some((_, Err(reason))) => Kept::PushFailed { reason },
+    }
 }
 
 #[cfg(test)]

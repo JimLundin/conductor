@@ -283,7 +283,8 @@ impl HostView {
         }
     }
 
-    /// An event for a session this view never saw created is dropped.
+    /// An event for a session this view never saw created is dropped, and
+    /// a removed session is gone.
     #[must_use]
     pub fn apply(self, event: Event) -> Self {
         let mut sessions = self.sessions;
@@ -314,6 +315,7 @@ impl HostView {
                 subagents: Vec::new(),
                 activity: event.seq,
             }),
+            (_, EventKind::SessionRemoved { .. }) | (None, _) => None,
             // A delta repeats the seq of the event before it, which may be
             // another session's, so it is not this session's activity.
             (Some(view), EventKind::AssistantDelta { text }) => {
@@ -326,7 +328,6 @@ impl HostView {
                 activity: event.seq,
                 ..view.apply(kind, event.seq)
             }),
-            (None, _) => None,
         };
         sessions.extend(session.map(|view| (event.session, view)));
         Self { sessions }
@@ -465,12 +466,7 @@ impl SessionView {
                 model,
                 effort,
                 reason,
-            } => Self {
-                model,
-                effort,
-                ..self
-            }
-            .push(Item::ModelChanged(reason)),
+            } => self.model_changed(model, effort, reason),
             EventKind::SessionClosed { reason } => self.closed(reason),
             EventKind::UserMessage { text, by } => {
                 self.user_message(Item::User { text, by }, seq)
@@ -539,6 +535,7 @@ impl SessionView {
                 self.checkpoint_created(checkpoint)
             }
             EventKind::SessionCreated { .. }
+            | EventKind::SessionRemoved { .. }
             | EventKind::UndoHistoryRestored { .. }
             | EventKind::CheckpointReserved { .. }
             | EventKind::HistoryMaterialized { .. }
@@ -559,6 +556,20 @@ impl SessionView {
                 self.subagent_event(agent, event)
             }
         }
+    }
+
+    fn model_changed(
+        self,
+        model: Option<ModelId>,
+        effort: Option<Effort>,
+        reason: String,
+    ) -> Self {
+        Self {
+            model,
+            effort,
+            ..self
+        }
+        .push(Item::ModelChanged(reason))
     }
 
     /// A sub-agent's finished call also finishes the card its request got
@@ -1462,6 +1473,17 @@ mod tests {
             view.directories(),
             Vec::from([HostPath(text("/b")), HostPath(text("/a"))])
         );
+    }
+
+    #[test]
+    fn a_removed_session_leaves_the_view_with_its_later_events() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (2, created("/b")),
+            (1, EventKind::SessionRemoved { kept: None }),
+            (1, EventKind::SessionReady),
+        ]));
+        assert_eq!(view.recent(), Vec::from([SessionId(2)]));
     }
 
     #[test]

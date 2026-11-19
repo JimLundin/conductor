@@ -545,6 +545,18 @@ until someone re-records them by hand (§6.2).
   retains its native turn boundary and retries before Send or a closed
   session's Continue; an unsuccessful retry rejects that command before
   another turn can change the files. This preserves per-turn diff parents.
+- **Removal (built):** `RemoveSession` is refused while a turn runs. It
+  stops a running agent (`SessionClosed`), then follows
+  `host::workspace::plan`: commit the worktree's untracked and changed
+  files onto `conductor/<ulid>` with `commit-tree` and `update-ref` (files
+  Git ignores, such as build output, go with the worktree), push
+  only that branch to `origin` (never forced; a failed push keeps it
+  locally and goes on), `git worktree remove` (or `prune` when the
+  directory is gone already), and delete `refs/conductor/<ulid>/`. A
+  failed commit or remove stops the removal, logs an `Error` and keeps the
+  session. The
+  branch stays in the checkout. `SessionRemoved { kept }` ends the log of
+  the session, which then refuses every command with `SessionRemoved`.
 - **Diff and undo (built):** immutable checkpoint diffs have bounded file
   counts and patch sizes; binary and oversized files get markers. `GetDiff`
   bypasses durable receipts so patches are never copied into the event log

@@ -8,11 +8,11 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use host::workspace::{
-    Entry, Output, checked, failure, oversized, owned, probed, same,
+    Entry, Facts, Output, checked, failure, oversized, owned, probed, same,
 };
 use n0_future::StreamExt;
 use proto::{
-    Checkpoint, CheckpointDiff, CheckpointFile, CheckpointId, HostPath,
+    Checkpoint, CheckpointDiff, CheckpointFile, CheckpointId, HostPath, Kept,
     SessionId, Workspace,
 };
 use tokio::io::AsyncReadExt;
@@ -172,11 +172,7 @@ async fn validate(workspace: &Workspace) -> Result<PathBuf, GitError> {
             failure("reading workspace ownership", &error.to_string())
         })?;
     same(&top, &workspace.worktree.0, "worktree root")?;
-    same(
-        &branch,
-        &format!("refs/heads/{}", workspace.branch),
-        "owned branch",
-    )?;
+    same(&branch, &host::workspace::head(workspace), "owned branch")?;
     same(
         &host(&common)?.0,
         &host(&source_common)?.0,
@@ -323,6 +319,36 @@ async fn owned_commit(
     owned(&refs, commit)
 }
 
+/// The tree of everything in the worktree at `path` that Git doesn't
+/// ignore, staged on top of `base` in the scratch `index`.
+async fn tree(
+    path: &Path,
+    base: &str,
+    index: &Path,
+) -> Result<String, GitError> {
+    let _ = checked(
+        execute(git(path, &["read-tree", base]).env("GIT_INDEX_FILE", index))
+            .await?,
+        "initializing checkpoint index",
+    )?;
+    let _ = checked(
+        execute(
+            git(path, &["add", "-A", "--", "."]).env("GIT_INDEX_FILE", index),
+        )
+        .await?,
+        "staging checkpoint",
+    )?;
+    host::workspace::utf8(
+        checked(
+            execute(git(path, &["write-tree"]).env("GIT_INDEX_FILE", index))
+                .await?,
+            "checkpoint tree",
+        )?,
+        "checkpoint tree",
+    )
+    .map(|tree| tree.trim().to_owned())
+}
+
 async fn snapshot_index(
     workspace: &Workspace,
     checkpoint: CheckpointId,
@@ -337,28 +363,7 @@ async fn snapshot_index(
         }
         None => text(path, &["rev-parse", "HEAD"]).await?,
     };
-    let _ = checked(
-        execute(
-            git(path, &["read-tree", &parent]).env("GIT_INDEX_FILE", index),
-        )
-        .await?,
-        "initializing checkpoint index",
-    )?;
-    let _ = checked(
-        execute(
-            git(path, &["add", "-A", "--", "."]).env("GIT_INDEX_FILE", index),
-        )
-        .await?,
-        "staging checkpoint",
-    )?;
-    let tree = host::workspace::utf8(
-        checked(
-            execute(git(path, &["write-tree"]).env("GIT_INDEX_FILE", index))
-                .await?,
-            "checkpoint tree",
-        )?,
-        "checkpoint tree",
-    )?;
+    let tree = tree(path, &parent, index).await?;
     let reference = host::workspace::reference(workspace, checkpoint)?;
     let existing =
         execute(&mut git(path, &["rev-parse", "--verify", &reference])).await?;
@@ -369,13 +374,18 @@ async fn snapshot_index(
             text(path, &["rev-parse", &format!("{commit}^")]).await?;
         host::workspace::reuse(
             (&recorded_tree, &recorded_parent),
-            tree.trim(),
+            &tree,
             &parent,
         )?;
         Ok(commit)
     } else {
-        let commit =
-            text_commit(path, tree.trim(), &parent, checkpoint).await?;
+        let commit = text_commit(
+            path,
+            &tree,
+            &parent,
+            &host::workspace::message(checkpoint),
+        )
+        .await?;
         let _ = text(path, &["update-ref", &reference, &commit, ""]).await?;
         Ok(commit)
     }
@@ -385,24 +395,14 @@ async fn text_commit(
     path: &Path,
     tree: &str,
     parent: &str,
-    checkpoint: CheckpointId,
+    message: &str,
 ) -> Result<String, GitError> {
     let output = execute(
-        git(
-            path,
-            &[
-                "commit-tree",
-                tree,
-                "-p",
-                parent,
-                "-m",
-                &host::workspace::message(checkpoint),
-            ],
-        )
-        .env("GIT_AUTHOR_NAME", "Conductor")
-        .env("GIT_AUTHOR_EMAIL", "conductor@localhost")
-        .env("GIT_COMMITTER_NAME", "Conductor")
-        .env("GIT_COMMITTER_EMAIL", "conductor@localhost"),
+        git(path, &["commit-tree", tree, "-p", parent, "-m", message])
+            .env("GIT_AUTHOR_NAME", "Conductor")
+            .env("GIT_AUTHOR_EMAIL", "conductor@localhost")
+            .env("GIT_COMMITTER_NAME", "Conductor")
+            .env("GIT_COMMITTER_EMAIL", "conductor@localhost"),
     )
     .await?;
     host::workspace::utf8(
@@ -559,11 +559,126 @@ pub async fn diff(
     })
 }
 
+/// Removes the workspace by [`host::workspace::plan`]: commits what it
+/// holds onto its branch, pushes that to `origin`, and removes the worktree
+/// and its checkpoint refs. The branch stays, and the answer says where.
+///
+/// # Errors
+///
+/// When a step other than the push fails, which stops the removal.
+pub async fn remove(workspace: &Workspace) -> Result<Kept, GitError> {
+    let facts = facts(workspace).await?;
+    let mut pushed = None;
+    for step in host::workspace::plan(workspace, &facts)? {
+        pushed = run(workspace, step).await?.or(pushed);
+    }
+    let kept = host::workspace::kept(pushed);
+    tracing::info!(branch = workspace.branch, ?kept, "removed a workspace");
+    Ok(kept)
+}
+
+/// The push a step ran, and how it went.
+type Pushed = Option<(String, Result<(), String>)>;
+
+async fn run(
+    workspace: &Workspace,
+    step: host::workspace::Step,
+) -> Result<Pushed, GitError> {
+    use host::workspace::Step;
+    let repository = Path::new(&workspace.repository.0);
+    match step {
+        Step::Commit { tree } => keep(workspace, &tree).await.map(|()| None),
+        Step::Push { remote, args } => {
+            let words = args.iter().map(String::as_str).collect::<Vec<&str>>();
+            let pushed = text(repository, &words)
+                .await
+                .map(drop)
+                .map_err(|error| error.to_string());
+            Ok(Some((remote, pushed)))
+        }
+        Step::Remove => {
+            let _ = validate(workspace).await?;
+            text(
+                repository,
+                &["worktree", "remove", "--force", &workspace.worktree.0],
+            )
+            .await
+            .map(|_| None)
+        }
+        Step::Prune => {
+            text(repository, &["worktree", "prune"]).await.map(|_| None)
+        }
+        Step::Forget(prefix) => {
+            forget(repository, &prefix).await.map(|()| None)
+        }
+    }
+}
+
+/// What removing the workspace needs to know: the tree of its branch, the
+/// tree of what it holds now if it is still on disk, and its checkout's
+/// `origin`.
+async fn facts(workspace: &Workspace) -> Result<Facts, GitError> {
+    let repository = Path::new(&workspace.repository.0);
+    let branch = format!("{}^{{tree}}", host::workspace::head(workspace));
+    let head_tree = text(repository, &["rev-parse", &branch]).await?;
+    let tree = if Path::new(&workspace.worktree.0).is_dir() {
+        let dir = validate(workspace).await?;
+        let scratch = Scratch::create(&dir)?;
+        let path = Path::new(&workspace.worktree.0);
+        Some(tree(path, "HEAD", &scratch.path.join("index")).await?)
+    } else {
+        None
+    };
+    let origin = text(repository, &["remote", "get-url", "origin"])
+        .await
+        .ok();
+    Ok(Facts {
+        head_tree,
+        tree,
+        origin,
+    })
+}
+
+/// Commits `tree` on the worktree's branch, after its head, so the branch
+/// holds what the worktree had not committed.
+async fn keep(workspace: &Workspace, tree: &str) -> Result<(), GitError> {
+    let path = Path::new(&workspace.worktree.0);
+    let head = text(path, &["rev-parse", "HEAD"]).await?;
+    let commit = text_commit(path, tree, &head, host::workspace::KEPT).await?;
+    let branch = host::workspace::head(workspace);
+    text(path, &["update-ref", &branch, &commit, &head])
+        .await
+        .map(drop)
+}
+
+/// Deletes every ref under `prefix`, as many at a time as one capture
+/// lists.
+async fn forget(repository: &Path, prefix: &str) -> Result<(), GitError> {
+    let mut names = refs(repository, prefix).await?;
+    while !names.is_empty() {
+        for name in names.lines() {
+            let _ = text(repository, &["update-ref", "-d", name]).await?;
+        }
+        names = refs(repository, prefix).await?;
+    }
+    Ok(())
+}
+
+async fn refs(repository: &Path, prefix: &str) -> Result<String, GitError> {
+    text(
+        repository,
+        &["for-each-ref", "--count=500", "--format=%(refname)", prefix],
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{GitError, create, diff, host, restore, snapshot, text};
+    use super::{
+        GitError, create, diff, host, remove, restore, snapshot, text,
+    };
     use proto::{
-        Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor,
+        Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor, Kept,
         SessionId, UndoAvailability, Workspace,
     };
     use std::path::{Path, PathBuf};
@@ -597,6 +712,56 @@ mod tests {
         let _ = text(&source, &["add", "-A"]).await?;
         let _ = text(&source, &["commit", "-qm", "Initial source"]).await?;
         Ok(Repository { root, source, data })
+    }
+
+    #[tokio::test]
+    async fn removing_keeps_the_dirty_workspace_on_its_pushed_branch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let remote = repo.root.join("remote.git");
+        let _ =
+            text(&repo.root, &["init", "-q", "--bare", "remote.git"]).await?;
+        let url = remote.display().to_string();
+        let _ = text(&repo.source, &["remote", "add", "origin", &url]).await?;
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        let original = super::host(&repo.source)?;
+        let workspace = create(&repo.data, &original, id).await?;
+        let checkpointed =
+            snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let root = PathBuf::from(&workspace.worktree.0);
+        std::fs::write(root.join("new.txt"), "left uncommitted\n")?;
+        assert_eq!(remove(&workspace).await?, Kept::Pushed { remote: url });
+        assert!(!root.exists());
+        let branch = host::workspace::head(&workspace);
+        let pushed = text(&remote, &["rev-parse", &branch]).await?;
+        assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, pushed);
+        assert_eq!(
+            text(&remote, &["show", &format!("{pushed}:new.txt")]).await?,
+            "left uncommitted"
+        );
+        let refs = host::workspace::checkpoints(&workspace)?;
+        assert_eq!(text(&repo.source, &["for-each-ref", &refs]).await?, "");
+        assert!(
+            text(&repo.source, &["cat-file", "-e", &checkpointed])
+                .await
+                .is_ok()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn removing_a_workspace_without_a_remote_keeps_its_branch_locally()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        let original = super::host(&repo.source)?;
+        let workspace = create(&repo.data, &original, id).await?;
+        let head = text(&repo.source, &["rev-parse", "HEAD"]).await?;
+        assert_eq!(remove(&workspace).await?, Kept::Local);
+        let branch = host::workspace::head(&workspace);
+        assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, head);
+        assert!(!Path::new(&workspace.worktree.0).exists());
+        Ok(())
     }
 
     fn checkpoint(id: u64, commit: String) -> Checkpoint {

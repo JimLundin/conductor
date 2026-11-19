@@ -505,6 +505,7 @@ impl Session {
             }
             EventKind::SessionReady => self.ready(event.session).await,
             EventKind::SessionCreated { .. }
+            | EventKind::SessionRemoved { .. }
             | EventKind::ReasoningDelta { .. }
             | EventKind::Reasoning { .. }
             | EventKind::ToolCall { .. }
