@@ -1,0 +1,15 @@
+language js(typescript)
+
+or {
+    `Date.now()`,
+    `new Date()`,
+    `Math.random()`,
+    `performance.now()`,
+    `crypto.randomUUID()`,
+    `crypto.getRandomValues($_)`
+} as $call where {
+    register_diagnostic(
+        span = $call,
+        message = "Nondeterministic: pass the value in from the boundary."
+    )
+}

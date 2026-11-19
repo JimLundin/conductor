@@ -1,0 +1,15 @@
+language js(typescript)
+
+or {
+    TsArrayType() as $type where {
+        not $type <: within TsTypeOperatorType()
+    },
+    TsReferenceType(name = $name) as $type where {
+        $name <: or { `Array`, `Map`, `Set`, `WeakMap`, `WeakSet` }
+    }
+} as $type where {
+    register_diagnostic(
+        span = $type,
+        message = "Mutable collection type: use readonly T[], ReadonlyArray, ReadonlyMap or ReadonlySet."
+    )
+}
