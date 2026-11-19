@@ -545,7 +545,12 @@ until someone re-records them by hand (§6.2).
   following (`reset`), so the files stay. A commit the agent makes in a
   turn becomes the checkpoint's parent. Each checkpoint's commit is also
   pinned by `refs/conductor/<ulid>/<checkpoint>`, which diffs and undo
-  check it against; a checkpoint taken again must record the same tree. Durable reservations prevent
+  check it against; a checkpoint taken again must record the same tree,
+  and moves the branch only from the checkpoint's parent, so a retry after
+  a crash never drops a commit made since (`host::workspace::settle`). The
+  tip is read from the branch, which the workspace's checks hold `HEAD`
+  to. The index follows the branch, so what the agent staged apart from
+  its files, such as a file `.gitignore` names but it added, isn't kept. Durable reservations prevent
   checkpoint id reuse after undo or a failed snapshot. A failed snapshot
   retains its native turn boundary and retries before Send or a closed
   session's Continue; an unsuccessful retry rejects that command before

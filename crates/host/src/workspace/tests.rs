@@ -371,3 +371,15 @@ fn only_a_branch_of_conductors_own_is_ever_pushed_and_never_forced() {
             && arg != "-f")
     );
 }
+
+#[test]
+fn a_checkpoint_moves_the_branch_on_from_its_parent_and_never_drops_commits() {
+    assert_eq!(super::settle("c", "c", Some("p")), Ok(false));
+    assert_eq!(super::settle("p", "c", Some("p")), Ok(true));
+    assert_eq!(
+        super::settle("x", "c", Some("p")),
+        Err(GitError::Failed(String::from(
+            "checkpoint: the session's branch moved on since the checkpoint was taken"
+        )))
+    );
+}

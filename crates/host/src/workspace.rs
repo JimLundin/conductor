@@ -290,6 +290,31 @@ pub fn turn(tip_tree: &str, tree: &str) -> Turn {
     }
 }
 
+/// What becomes of the session's branch, at `tip`, once checkpoint
+/// `commit`, made on `parent`, is taken: it moves on from the parent, or
+/// is there already after a retry.
+///
+/// # Errors
+///
+/// When the branch moved elsewhere since, so moving it would drop
+/// commits.
+pub fn settle(
+    tip: &str,
+    commit: &str,
+    parent: Option<&str>,
+) -> Result<bool, GitError> {
+    if tip == commit {
+        Ok(false)
+    } else if parent == Some(tip) {
+        Ok(true)
+    } else {
+        Err(failure(
+            "checkpoint",
+            "the session's branch moved on since the checkpoint was taken",
+        ))
+    }
+}
+
 /// The message of a turn's commit on the session's branch.
 #[must_use]
 pub fn message(checkpoint: CheckpointId) -> String {

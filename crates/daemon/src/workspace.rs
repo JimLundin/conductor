@@ -381,23 +381,55 @@ async fn snapshot_index(
     if let Some(commit) = previous {
         owned_commit(workspace, commit).await?;
     }
-    let tip = text(path, &["rev-parse", "HEAD"]).await?;
+    let branch = host::workspace::head(workspace);
+    let tip = text(path, &["rev-parse", &branch]).await?;
     let tree = tree(path, &tip, index).await?;
+    let commit = recorded_or_made(workspace, checkpoint, &tip, &tree).await?;
+    settle_branch(workspace, &commit, &tip).await?;
+    Ok(commit)
+}
+
+/// The checkpoint's commit as its ref recorded it, when it was taken
+/// before, or a new one on the tip, which the ref then pins.
+async fn recorded_or_made(
+    workspace: &Workspace,
+    checkpoint: CheckpointId,
+    tip: &str,
+    tree: &str,
+) -> Result<String, GitError> {
+    let path = Path::new(&workspace.worktree.0);
     let reference = host::workspace::reference(workspace, checkpoint)?;
     let existing =
         execute(&mut git(path, &["rev-parse", "--verify", &reference])).await?;
-    let commit = if let Some(commit) = host::workspace::existing(existing)? {
+    if let Some(commit) = host::workspace::existing(existing)? {
         let recorded =
             text(path, &["rev-parse", &format!("{commit}^{{tree}}")]).await?;
-        host::workspace::reuse(&recorded, &tree)?;
-        commit
-    } else {
-        let made = turn_commit(path, &tip, &tree, checkpoint).await?;
-        let _ = text(path, &["update-ref", &reference, &made, ""]).await?;
-        made
-    };
-    move_branch(workspace, &commit, &tip).await?;
-    Ok(commit)
+        host::workspace::reuse(&recorded, tree)?;
+        return Ok(commit);
+    }
+    let made = turn_commit(path, tip, tree, checkpoint).await?;
+    let _ = text(path, &["update-ref", &reference, &made, ""]).await?;
+    Ok(made)
+}
+
+/// Moves the branch from `tip` on to the checkpoint's `commit`, as
+/// `host::workspace::settle` says.
+async fn settle_branch(
+    workspace: &Workspace,
+    commit: &str,
+    tip: &str,
+) -> Result<(), GitError> {
+    let path = Path::new(&workspace.worktree.0);
+    let parent = text(
+        path,
+        &["rev-parse", "--verify", "--quiet", &format!("{commit}^")],
+    )
+    .await
+    .ok();
+    if host::workspace::settle(tip, commit, parent.as_deref())? {
+        move_branch(workspace, commit, tip).await?;
+    }
+    Ok(())
 }
 
 /// The turn's commit on the branch's tip, or the tip when the turn
@@ -530,7 +562,8 @@ pub async fn restore(
     )
     .await?;
     let _ = text(path, &["clean", "-q", "-f", "-d", "--", "."]).await?;
-    let tip = text(path, &["rev-parse", "HEAD"]).await?;
+    let tip =
+        text(path, &["rev-parse", &host::workspace::head(workspace)]).await?;
     move_branch(workspace, commit, &tip).await
 }
 
