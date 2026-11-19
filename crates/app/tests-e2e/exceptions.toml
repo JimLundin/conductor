@@ -27,11 +27,6 @@ reason = "the boundary reads the clock for the log's timestamps and the timings 
 
 [[exception]]
 path = "**/*.ts"
-rule = "lint/correctness/noUndeclaredDependencies"
-reason = "under the shared config Biome looks for package.json beside the config, not here, so it can't see playwright; knip's unlisted-dependency check covers it"
-
-[[exception]]
-path = "**/*.ts"
 rule = "lint/performance/useDomNodeTextContent"
 reason = "the checks compare the rendered text, which Playwright's innerText() and the page's innerText give; textContent adds hidden text and source whitespace"
 
