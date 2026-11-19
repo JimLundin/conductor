@@ -4,9 +4,10 @@ use alloc::collections::BTreeMap;
 
 use client::link::{LinkState, Status, Update};
 use proto::{
-    AuthToken, Checkout, Cloning, CommandBody, CommandResult, EventKind, Home,
-    HomeSync, HostPath, Origin, Project, ProjectId, Rejection, StartAt, Ticket,
-    Workspace,
+    AuthToken, ChecklistItem, Checkout, Cloning, CommandBody, CommandResult,
+    EventKind, Home, HomeSync, HostPath, Issue, IssueChange, IssueFields,
+    IssueId, IssueStatus, Origin, Priority, Project, ProjectId, Rejection,
+    StartAt, Ticket, Workspace,
 };
 
 use super::{
@@ -14,8 +15,9 @@ use super::{
     run, screen, sent, signed_in, text,
 };
 use crate::{
-    CheckoutRow, Detail, FormIntent, HomeLine, Intent, Listing, Place,
-    ProjectGroup, ProjectIntent, ProjectsScreen, when,
+    CheckoutRow, Detail, Effect, FormIntent, HomeLine, Intent, IssueIntent,
+    IssueList, IssueRow, IssueScreen, Listing, Place, ProjectGroup,
+    ProjectIntent, ProjectsScreen, StatusGroup, when,
 };
 
 const OTHER: crate::HostId = crate::HostId([7; 32]);
@@ -43,6 +45,7 @@ fn project(
         profiles: Vec::from([text("rust")]),
         checkouts,
         cloning,
+        issues: Vec::new(),
     }
 }
 
@@ -58,6 +61,7 @@ fn home(sync: HomeSync, projects: Vec<Project>) -> Home {
         remote: text("https://github.com/me/home.git"),
         synced: Some(1_700_000_000),
         sync,
+        unpushed: 0,
         projects,
     }
 }
@@ -118,6 +122,17 @@ fn desk_home() -> Home {
     )
 }
 
+/// A project's issue list with no issues, read from desk.
+fn no_issues(name: &str) -> IssueList {
+    IssueList {
+        groups: Vec::new(),
+        new_title: String::new(),
+        project: ProjectId(text(name)),
+        host: Some(HOST),
+        create_disabled: true,
+    }
+}
+
 fn projects(state: &crate::State) -> Option<ProjectsScreen> {
     screen(state).and_then(|host| match host.detail {
         Detail::Projects(shown) => Some(*shown),
@@ -125,7 +140,8 @@ fn projects(state: &crate::State) -> Option<ProjectsScreen> {
         | Detail::Pair(_)
         | Detail::NewSession(_)
         | Detail::Credentials(_)
-        | Detail::Session(_) => None,
+        | Detail::Session(_)
+        | Detail::Issue(_) => None,
     })
 }
 
@@ -220,6 +236,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     key: text("alpha"),
                     title: text("Project alpha"),
                     detail: text("alpha · rust"),
+                    issues: no_issues("alpha"),
                     hosts: Vec::from([
                         row(
                             HOST,
@@ -244,6 +261,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     key: text("beta"),
                     title: text("Project beta"),
                     detail: text("beta · rust"),
+                    issues: no_issues("beta"),
                     hosts: Vec::from([CheckoutRow {
                         clone: Some(clone(HOST, "beta", "desk")),
                         ..row(
@@ -259,6 +277,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     key: text("delta"),
                     title: text("Project delta"),
                     detail: text("delta · rust"),
+                    issues: no_issues("delta"),
                     hosts: Vec::from([CheckoutRow {
                         clone: Some(clone(HOST, "delta", "desk")),
                         ..row(
@@ -274,6 +293,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     key: text("gamma"),
                     title: text("Project gamma"),
                     detail: text("gamma · rust"),
+                    issues: no_issues("gamma"),
                     hosts: Vec::from([row(
                         HOST,
                         "desk",
@@ -286,6 +306,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     key: text("local"),
                     title: text("Project local"),
                     detail: text("local · rust"),
+                    issues: no_issues("local"),
                     hosts: Vec::from([row(
                         HOST,
                         "desk",
@@ -657,5 +678,253 @@ fn a_time_is_a_utc_date_and_minute() {
             text("2023-11-14 22:13 UTC"),
             text("2099-12-31 23:59 UTC"),
         ]
+    );
+}
+
+const OPENED: IssueId = IssueId(1);
+const CLOSED: IssueId = IssueId(2);
+
+fn issue(id: IssueId, title: &str, status: IssueStatus) -> Issue {
+    Issue {
+        id,
+        title: text(title),
+        body: text("Why it matters."),
+        status,
+        priority: Priority::High,
+        labels: Vec::from([text("app")]),
+        branch: text("issue/x"),
+        created: text("2026-11-18T10:12:00Z"),
+        checklist: Vec::from([
+            ChecklistItem {
+                done: true,
+                text: text("protocol"),
+            },
+            ChecklistItem {
+                done: false,
+                text: text("browser"),
+            },
+        ]),
+        notes: Vec::from([text("2026-11-18 desk · iPhone: started")]),
+    }
+}
+
+/// desk, live, whose alpha has an open issue and a done one.
+fn with_issues() -> crate::State {
+    let mut alpha = project("alpha", Some("a"), Vec::new(), Cloning::Idle);
+    alpha.issues = Vec::from([
+        issue(OPENED, "Sign in", IssueStatus::Open),
+        issue(CLOSED, "Pair", IssueStatus::Done),
+    ]);
+    let (shown, _) = run(
+        paired(),
+        Vec::from([
+            homed(
+                HOST,
+                "desk",
+                LinkState::Live,
+                Some(home(HomeSync::Synced, Vec::from([alpha]))),
+            ),
+            Intent::Show(Place::Projects),
+        ]),
+    );
+    shown
+}
+
+fn reply_of(effects: &[Effect]) -> Option<crate::Reply> {
+    effects.iter().find_map(|effect| match effect {
+        Effect::Send { reply, .. } => Some(reply.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
+-> Result<(), &'static str> {
+    let alpha = || ProjectId(text("alpha"));
+    let listed = projects(&with_issues())
+        .and_then(|screen| screen.projects.into_iter().next())
+        .map(|group| group.issues);
+    let row = |id: IssueId, title: &str| IssueRow {
+        key: format!("{:032x}", id.0),
+        title: text(title),
+        detail: text("high · app · 1/2 done"),
+        open: Intent::Show(Place::Issue(HOST, id)),
+    };
+    assert_eq!(
+        listed.map(|list| list.groups),
+        Some(Vec::from([
+            StatusGroup {
+                status: "open",
+                label: "Open",
+                rows: Vec::from([row(OPENED, "Sign in")]),
+            },
+            StatusGroup {
+                status: "done",
+                label: "Done",
+                rows: Vec::from([row(CLOSED, "Pair")]),
+            },
+        ]))
+    );
+    let (typed, effects) = run(
+        with_issues(),
+        Vec::from([
+            Intent::Issue(IssueIntent::TypeNewTitle(alpha(), text(" Remove "))),
+            Intent::Issue(IssueIntent::Create(HOST, alpha())),
+        ]),
+    );
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::CreateIssue {
+            project: alpha(),
+            fields: IssueFields {
+                title: text("Remove"),
+                body: String::new(),
+                priority: Priority::Normal,
+                labels: Vec::new(),
+            },
+        }]
+    );
+    let reply = reply_of(&effects).ok_or("no reply")?;
+    let (opened, _) = run(
+        typed,
+        Vec::from([Intent::Replied(
+            reply,
+            Ok(CommandResult::IssueCreated { issue: OPENED }),
+        )]),
+    );
+    assert_eq!(
+        issue_screen(&opened).map(|issue| issue.title),
+        Some(text("Sign in"))
+    );
+    Ok(())
+}
+
+fn on_issue() -> crate::State {
+    run(
+        with_issues(),
+        Vec::from([Intent::Show(Place::Issue(HOST, OPENED))]),
+    )
+    .0
+}
+
+fn issue_screen(state: &crate::State) -> Option<IssueScreen> {
+    screen(state).and_then(|shown| match shown.detail {
+        Detail::Issue(issue) => Some(*issue),
+        _ => None,
+    })
+}
+
+#[test]
+fn an_issue_shows_its_fields_and_sends_each_change() {
+    let shown = issue_screen(&on_issue());
+    assert_eq!(
+        shown.as_ref().map(|issue| (
+            issue.subtitle.clone(),
+            issue.detail.clone(),
+            issue.notes.clone(),
+            issue
+                .checklist
+                .iter()
+                .map(|item| item.done)
+                .collect::<Vec<_>>(),
+            issue
+                .status
+                .iter()
+                .find(|pick| pick.selected)
+                .map(|pick| pick.word),
+        )),
+        Some((
+            text("Project alpha · desk"),
+            text("issue/x · opened 2026-11-18T10:12:00Z"),
+            Vec::from([text("2026-11-18 desk · iPhone: started")]),
+            Vec::from([true, false]),
+            Some("open"),
+        ))
+    );
+    let (_, effects) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::SetStatus(text("in-progress"))),
+            Intent::Issue(IssueIntent::SetStatus(text("open"))),
+            Intent::Issue(IssueIntent::Toggle(1)),
+            Intent::Issue(IssueIntent::TypeItem(text("docs"))),
+            Intent::Issue(IssueIntent::AddItem),
+            Intent::Issue(IssueIntent::TypeNote(text("  "))),
+            Intent::Issue(IssueIntent::AddNote),
+            Intent::Issue(IssueIntent::TypeNote(text("halfway"))),
+            Intent::Issue(IssueIntent::AddNote),
+        ]),
+    );
+    let item = |done, words: &str| ChecklistItem {
+        done,
+        text: text(words),
+    };
+    let change = |change| CommandBody::ChangeIssue {
+        issue: OPENED,
+        change,
+    };
+    assert_eq!(
+        sent(&effects),
+        [
+            change(IssueChange::Status(IssueStatus::InProgress)),
+            change(IssueChange::Checklist(Vec::from([
+                item(true, "protocol"),
+                item(true, "browser"),
+            ]))),
+            change(IssueChange::Checklist(Vec::from([
+                item(true, "protocol"),
+                item(false, "browser"),
+                item(false, "docs"),
+            ]))),
+            change(IssueChange::Note(text("halfway"))),
+        ]
+    );
+}
+
+#[test]
+fn editing_an_issue_sends_its_fields_once_saved() {
+    let (edited, effects) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::Edit),
+            Intent::Issue(IssueIntent::TypeTitle(text("Sign in from the app"))),
+            Intent::Issue(IssueIntent::TypeLabels(text("app, credentials,"))),
+            Intent::Issue(IssueIntent::Save),
+        ]),
+    );
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::ChangeIssue {
+            issue: OPENED,
+            change: IssueChange::Edit(IssueFields {
+                title: text("Sign in from the app"),
+                body: text("Why it matters."),
+                priority: Priority::High,
+                labels: Vec::from([text("app"), text("credentials")]),
+            }),
+        }]
+    );
+    assert_eq!(issue_screen(&edited).map(|issue| issue.editing), Some(None));
+}
+
+#[test]
+fn an_issue_gone_from_its_home_falls_back_to_the_placeholder() {
+    let (gone, _) = run(
+        paired(),
+        Vec::from([
+            homed(
+                HOST,
+                "desk",
+                LinkState::Live,
+                Some(home(HomeSync::Synced, Vec::new())),
+            ),
+            Intent::Show(Place::Issue(HOST, OPENED)),
+        ]),
+    );
+    assert_eq!(
+        screen(&gone).map(|shown| shown.detail),
+        Some(Detail::Placeholder(
+            "That issue is gone from its host's home."
+        ))
     );
 }

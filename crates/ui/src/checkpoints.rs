@@ -25,7 +25,8 @@ impl DiffState {
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
-                | CommandResult::Instances(_),
+                | CommandResult::Instances(_)
+                | CommandResult::IssueCreated { .. },
             ) => Self::Failed(format!("{host} did not return changes.")),
             Err(reason) => Self::Failed(reason),
         }

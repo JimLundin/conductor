@@ -41,7 +41,7 @@ fn execute(log: &mut Log, key: u128, kind: Kind) -> Ticket {
     let begun = Effect::Begun(ticket, Begun::Execute(CommandId(key)));
     let expected = match kind {
         Kind::Session => Vec::from([Effect::Open, begun]),
-        Kind::Credential => Vec::from([begun]),
+        Kind::Receipt => Vec::from([begun]),
     };
     assert_eq!(log.receipt(None), expected);
     ticket
@@ -157,7 +157,7 @@ fn an_idle_barrier_only_commits() {
 #[test]
 fn dropping_a_running_command_stops_the_log_and_a_finished_one_does_not() {
     let mut log = log();
-    let _ = execute(&mut log, 1, Kind::Credential);
+    let _ = execute(&mut log, 1, Kind::Receipt);
     assert_eq!(log.abort(CommandId(1)), [Effect::Stop]);
     assert_eq!(log.abort(CommandId(2)), Vec::<Effect>::new());
     let _ = log.finish(CommandId(1), CommandResult::Accepted);
@@ -182,11 +182,11 @@ fn a_command_waits_for_the_active_one_then_answers_its_receipt() {
 #[test]
 fn a_credential_finish_waits_for_the_active_command_to_commit() {
     let mut log = log();
-    let _ = execute(&mut log, 23, Kind::Credential);
+    let _ = execute(&mut log, 23, Kind::Receipt);
     let _ = execute(&mut log, 24, Kind::Session);
     let (held, effects) = log.finish(CommandId(23), CommandResult::Accepted);
     assert_eq!(effects, Vec::<Effect>::new());
-    let (retry, effects) = log.begin(CommandId(23), Kind::Credential);
+    let (retry, effects) = log.begin(CommandId(23), Kind::Receipt);
     assert_eq!(effects, Vec::<Effect>::new());
     let (finished, effects) =
         log.finish(CommandId(24), CommandResult::Accepted);
@@ -218,8 +218,8 @@ fn a_credential_finish_waits_for_the_active_command_to_commit() {
 #[test]
 fn a_credential_retry_waits_for_the_first_run_and_takes_its_result() {
     let mut log = log();
-    let _ = execute(&mut log, 23, Kind::Credential);
-    let (retry, effects) = log.begin(CommandId(23), Kind::Credential);
+    let _ = execute(&mut log, 23, Kind::Receipt);
+    let (retry, effects) = log.begin(CommandId(23), Kind::Receipt);
     assert_eq!(effects, [Effect::Lookup(CommandId(23))]);
     assert_eq!(log.receipt(None), Vec::<Effect>::new());
     let (finished, effects) =

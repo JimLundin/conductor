@@ -12,14 +12,15 @@ use proto::{CommandResult, Effort, SessionId, Ticket, TicketError};
 
 use crate::credentials::{CredentialsScreen, Forms};
 use crate::host::{Host, HostId, by_name};
+use crate::issues::{self, Drafts, IssueScreen, Shown};
 use crate::new_session::{Form, NewSessionForm};
 use crate::projects::{self, ProjectsScreen};
 use crate::saved::{Saved, decode};
 use crate::session::{Pane, SessionPane};
 use crate::sessions::{self, SessionList};
 use crate::{
-    At, Effect, Intent, Opening, Pair, Place, Reply, ReplyTo, Screen,
-    SessionIntent,
+    At, Effect, Intent, IssueIntent, Opening, Pair, Place, Reply, ReplyTo,
+    Screen, SessionIntent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub struct State {
     form: Form,
     credentials: BTreeMap<HostId, Forms>,
     pane: Pane,
+    issues: Drafts,
     pairing: Pairing,
     /// Why the join link the app opened on was refused. The pairing form
     /// says so each time it opens.
@@ -81,6 +83,7 @@ pub enum Detail {
     Credentials(Box<CredentialsScreen>),
     Projects(Box<ProjectsScreen>),
     Session(Box<SessionPane>),
+    Issue(Box<IssueScreen>),
 }
 
 impl State {
@@ -111,6 +114,7 @@ impl State {
             form: Form::default(),
             credentials: BTreeMap::new(),
             pane: Pane::default(),
+            issues: Drafts::default(),
             pairing: Pairing {
                 text: String::new(),
                 error: first_error.clone(),
@@ -186,6 +190,7 @@ impl State {
                 (self, change.send(at))
             }
             Intent::Session(change) => self.session(change),
+            Intent::Issue(change) => self.issue(change),
             Intent::Replied(reply, answer) => self.replied(reply, answer),
         }
     }
@@ -205,7 +210,8 @@ impl State {
             | Place::NewSession
             | Place::Credentials
             | Place::Projects
-            | Place::Session(..) => self,
+            | Place::Session(..)
+            | Place::Issue(..) => self,
         };
         Self {
             pairing: Pairing::default(),
@@ -266,6 +272,7 @@ impl State {
             form: Form::on(recent),
             credentials: BTreeMap::new(),
             pane: Pane::default(),
+            issues: Drafts::default(),
             pairing: Pairing {
                 text: String::new(),
                 error,
@@ -314,6 +321,32 @@ impl State {
         (Self { pane, ..self }, effects)
     }
 
+    fn issue(self, intent: IssueIntent) -> (Self, Vec<Effect>) {
+        let shown = match self.place {
+            Place::Issue(host, id) => self
+                .hosts
+                .get(&host)
+                .and_then(|known| issues::find(known, id))
+                .map(|(_, issue)| Shown {
+                    at: At {
+                        host,
+                        visit: self.visit,
+                    },
+                    issue,
+                }),
+            _ => None,
+        };
+        let (drafts, effects) =
+            self.issues.clone().update(intent, self.visit, shown);
+        (
+            Self {
+                issues: drafts,
+                ..self
+            },
+            effects,
+        )
+    }
+
     /// The session shown, if its host still reports it.
     fn selected(&self) -> Option<(HostId, SessionId, &SessionView)> {
         let Place::Session(host, id) = self.place else {
@@ -345,6 +378,9 @@ impl State {
             (ReplyTo::Effort(shown), _) => self.effort_refused(shown, answer),
             (ReplyTo::Start, _) => {
                 (self.started(reply.host, answer, current), Vec::new())
+            }
+            (ReplyTo::Created(project), _) => {
+                (self.opened(reply.host, &project, answer), Vec::new())
             }
             (ReplyTo::Instance(subject, done), true) => {
                 let forms = self
@@ -394,6 +430,25 @@ impl State {
         }
     }
 
+    /// A new issue opens, its title draft gone; a refusal is the notice.
+    fn opened(
+        self,
+        host: HostId,
+        project: &proto::ProjectId,
+        answer: Result<CommandResult, String>,
+    ) -> Self {
+        match answer {
+            Ok(CommandResult::IssueCreated { issue }) => {
+                let issues = self.issues.clone().created(project);
+                Self { issues, ..self }.show(Place::Issue(host, issue))
+            }
+            other => Self {
+                notice: refusal(other),
+                ..self
+            },
+        }
+    }
+
     /// A started session opens; the form shows any refusal.
     fn started(
         self,
@@ -440,11 +495,15 @@ impl State {
                 | Detail::NewSession(_)
                 | Detail::Credentials(_)
                 | Detail::Projects(_)
-                | Detail::Session(_) => "detail",
+                | Detail::Session(_)
+                | Detail::Issue(_) => "detail",
             },
             add_current: self.place == Place::AddHost,
             credentials_current: self.place == Place::Credentials,
-            projects_current: self.place == Place::Projects,
+            projects_current: matches!(
+                self.place,
+                Place::Projects | Place::Issue(..)
+            ),
             list: sessions::list(&self.hosts, self.place),
             detail,
         }))
@@ -481,9 +540,25 @@ impl State {
                         .collect(),
                 }))
             }
-            (Place::Projects, _) => Detail::Projects(Box::new(
-                projects::screen(&self.hosts, self.notice.clone()),
-            )),
+            (Place::Projects, _) => {
+                Detail::Projects(Box::new(projects::screen(
+                    &self.hosts,
+                    &self.issues,
+                    self.notice.clone(),
+                )))
+            }
+            (Place::Issue(host, id), _) => self
+                .hosts
+                .get(&host)
+                .and_then(|known| {
+                    issues::screen(known, id, &self.issues, self.notice.clone())
+                })
+                .map_or(
+                    Detail::Placeholder(
+                        "That issue is gone from its host's home.",
+                    ),
+                    |screen| Detail::Issue(Box::new(screen)),
+                ),
             (Place::Session(..), Some((host, id, session))) => {
                 let known = self.hosts.get(&host);
                 let catalog = known.map_or_default(Host::catalog);
@@ -514,7 +589,8 @@ fn refusal(answer: Result<CommandResult, String>) -> Option<String> {
             CommandResult::Accepted
             | CommandResult::Started { .. }
             | CommandResult::Instances(_)
-            | CommandResult::Diff(_),
+            | CommandResult::Diff(_)
+            | CommandResult::IssueCreated { .. },
         ) => None,
         Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
         Err(error) => Some(error),

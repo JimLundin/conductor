@@ -1258,6 +1258,7 @@ mod tests {
             remote: String::from("file:///home.git"),
             synced: Some(5),
             sync,
+            unpushed: 0,
             projects: Vec::new(),
         };
         let (link, _) = Link::start(hello(), None);

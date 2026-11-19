@@ -39,11 +39,11 @@ use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
     EventKind, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
-    Instances, Kept, ModelChoice, ModelId, Models, ProjectId, Provider,
-    Question, QuestionOption, Rejection, RequestId, Resolution, Roster,
-    Selection, SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
-    SubagentOutcome, Task, TaskId, TaskStatus, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome,
+    Instances, IssueChange, IssueFields, IssueStatus, Kept, ModelChoice,
+    ModelId, Models, Priority, ProjectId, Provider, Question, QuestionOption,
+    Rejection, RequestId, Resolution, Roster, Selection, SessionId, StartAt,
+    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Task, TaskId,
+    TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::net::UdpSocket;
@@ -139,6 +139,7 @@ async fn host_at_home(
     let data = data_dir(&endpoint.id().to_string())?;
     let (store, stored) = Store::open(&data)?;
     let home = HomeClone::spawn(Homing {
+        host: String::from("test-host"),
         data_dir: data.clone(),
         remote: Some(remote),
         roots,
@@ -318,6 +319,7 @@ async fn serve_setup(
 /// The home task of a host given no home.
 fn homeless(data: &Path) -> HomeClone {
     HomeClone::spawn(Homing {
+        host: String::from("test-host"),
         data_dir: data.to_path_buf(),
         remote: None,
         roots: Vec::new(),
@@ -6223,9 +6225,9 @@ struct Homeland {
     home_url: String,
 }
 
-fn homeland() -> Fallible<Homeland> {
+fn homeland(name: &str) -> Fallible<Homeland> {
     let scratch = target_tmp()?
-        .join(format!("conductor-home-e2e-{}", std::process::id()));
+        .join(format!("conductor-home-e2e-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let sources = scratch.join("sources");
     let roots = scratch.join("roots");
@@ -6375,7 +6377,7 @@ async fn starts_in_alpha(
 #[tokio::test]
 async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started()
 -> Fallible {
-    let land = homeland()?;
+    let land = homeland("projects")?;
     let (fx, data) =
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
@@ -6421,6 +6423,168 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
     // The clone stays as of its last sync, with its projects.
     assert_eq!((behind.synced.is_some(), behind.projects.len()), (true, 2));
     assert!(behind.synced >= synced.synced);
+    link.stop().await?;
+    fx.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+fn alpha_issues(home: &proto::Home) -> Vec<proto::Issue> {
+    home.projects
+        .iter()
+        .find(|project| project.id.0 == "alpha")
+        .map_or_else(Vec::new, |project| project.issues.clone())
+}
+
+/// The issue's file as the home's remote has it.
+fn pushed_issue(land: &Homeland, issue: proto::IssueId) -> Fallible<String> {
+    let path =
+        format!("HEAD:projects/alpha/issues/{}.md", home::issue::name(issue));
+    git(&land.home_bare, &["show", &path])
+}
+
+fn change(issue: proto::IssueId, change: IssueChange) -> CommandBody {
+    CommandBody::ChangeIssue { issue, change }
+}
+
+/// A person edits the issue's file in a clone of their own and pushes it,
+/// behind the host's back.
+fn noted_by_hand(land: &Homeland, issue: proto::IssueId) -> Fallible {
+    let person = land.scratch.join("person");
+    git(
+        &land.scratch,
+        &[
+            "clone",
+            "--quiet",
+            &land.home_url,
+            &person.display().to_string(),
+        ],
+    )?;
+    let file = person
+        .join("projects/alpha/issues")
+        .join(format!("{}.md", home::issue::name(issue)));
+    let text = std::fs::read_to_string(&file)?;
+    std::fs::write(&file, format!("{text}\n## Notes\n- by hand\n"))?;
+    git(&person, &["commit", "--quiet", "-am", "a note by hand"])?;
+    git(&person, &["push", "--quiet"])?;
+    Ok(())
+}
+
+/// An issue without a title is refused, and one with one is opened in
+/// alpha and pushed.
+async fn opens_an_issue(
+    link: &HostLink,
+    updates: &mut mpsc::Receiver<Update>,
+    land: &Homeland,
+) -> Fallible<proto::IssueId> {
+    let create = |title: &str| CommandBody::CreateIssue {
+        project: ProjectId(String::from("alpha")),
+        fields: IssueFields {
+            title: String::from(title),
+            body: String::from("Why."),
+            priority: Priority::High,
+            labels: Vec::from([String::from("app")]),
+        },
+    };
+    assert_eq!(
+        send(link, create(" ")).await?,
+        CommandResult::Rejected(Rejection::IssueNotSaved {
+            reason: String::from("an issue needs a title")
+        })
+    );
+    let issue = match send(link, create("Sign in")).await? {
+        CommandResult::IssueCreated { issue } => issue,
+        other => return Err(format!("expected an issue, not {other:?}").into()),
+    };
+    let opened = home_until(link, updates, |home| {
+        home.unpushed == 0 && !alpha_issues(home).is_empty()
+    })
+    .await?;
+    assert_eq!(
+        alpha_issues(&opened)
+            .iter()
+            .map(|shown| (shown.id, shown.title.clone(), shown.status))
+            .collect::<Vec<_>>(),
+        [(issue, String::from("Sign in"), IssueStatus::Open)]
+    );
+    assert!(pushed_issue(land, issue)?.contains("title = \"Sign in\""));
+    Ok(issue)
+}
+
+/// A change made while the home's remote is away is kept, signed, in the
+/// clone, and lands on the next sync.
+async fn lands_an_offline_note(
+    link: &HostLink,
+    updates: &mut mpsc::Receiver<Update>,
+    land: &Homeland,
+    issue: proto::IssueId,
+) -> Fallible {
+    std::fs::rename(&land.home_bare, land.scratch.join("home.gone"))?;
+    assert_eq!(
+        send(
+            link,
+            change(issue, IssueChange::Note(String::from("offline")))
+        )
+        .await?,
+        CommandResult::Accepted
+    );
+    let waiting = home_until(link, updates, |home| home.unpushed == 1).await?;
+    let signed = format!("test-host · {}: offline", test_client().0);
+    assert!(
+        alpha_issues(&waiting)
+            .iter()
+            .flat_map(|shown| shown.notes.clone())
+            .any(|note| note.ends_with(&signed)),
+        "the clone has the note, signed by the host and the client, before the remote does"
+    );
+    std::fs::rename(land.scratch.join("home.gone"), &land.home_bare)?;
+    assert_eq!(
+        send(link, CommandBody::SyncHome).await?,
+        CommandResult::Accepted
+    );
+    let _ = home_until(link, updates, |home| home.unpushed == 0).await?;
+    let landed = pushed_issue(land, issue)?;
+    assert!(
+        landed.contains(&signed) && landed.contains("- by hand"),
+        "{landed}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
+-> Fallible {
+    let land = homeland("issues")?;
+    let (fx, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = link(fx.target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let _ = home_until(&link, &mut updates, |home| home.projects.len() == 2)
+        .await?;
+    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    noted_by_hand(&land, issue)?;
+    assert_eq!(
+        send(
+            &link,
+            change(issue, IssueChange::Status(IssueStatus::InProgress))
+        )
+        .await?,
+        CommandResult::Accepted
+    );
+    let replayed = pushed_issue(&land, issue)?;
+    assert!(
+        replayed.contains("status = \"in-progress\"")
+            && replayed.contains("- by hand"),
+        "the host's change lands on top of the person's: {replayed}"
+    );
+    assert_eq!(
+        send(
+            &link,
+            change(proto::IssueId(7), IssueChange::Note(String::from("x")))
+        )
+        .await?,
+        CommandResult::Rejected(Rejection::UnknownIssue)
+    );
+    lands_an_offline_note(&link, &mut updates, &land, issue).await?;
     link.stop().await?;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);

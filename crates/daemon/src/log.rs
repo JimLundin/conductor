@@ -217,14 +217,14 @@ impl Log {
         .await
     }
 
-    pub(crate) async fn begin_credential(
+    pub(crate) async fn begin_receipt(
         &self,
         key: CommandId,
     ) -> Result<BeginCommand, Stopped> {
         self.ask(|reply| {
             LogMsg::Begin(CommandStart {
                 key,
-                kind: Kind::Credential,
+                kind: Kind::Receipt,
                 reply,
             })
         })
@@ -627,7 +627,7 @@ mod durability_tests {
             .join(format!("credential-receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path)?;
-        let credential = match log.begin_credential(CommandId(23)).await? {
+        let credential = match log.begin_receipt(CommandId(23)).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -669,7 +669,7 @@ mod durability_tests {
         assert_eq!(retried, Some(CommandResult::Accepted));
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
-        let cached = match reopened.begin_credential(CommandId(23)).await? {
+        let cached = match reopened.begin_receipt(CommandId(23)).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
@@ -682,7 +682,7 @@ mod durability_tests {
     async fn credential_lease_drop_fails_closed()
     -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), proto::Epoch(1));
-        let credential = match log.begin_credential(CommandId(23)).await? {
+        let credential = match log.begin_receipt(CommandId(23)).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }

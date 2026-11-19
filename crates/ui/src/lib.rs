@@ -11,6 +11,7 @@ extern crate alloc;
 mod checkpoints;
 mod credentials;
 mod host;
+mod issues;
 mod new_session;
 mod prelude;
 mod projects;
@@ -26,8 +27,8 @@ mod tests;
 use crate::prelude::*;
 use client::link::Update;
 use proto::{
-    CheckpointId, CommandBody, CommandResult, Effort, SessionId, Ticket,
-    TicketError,
+    CheckpointId, CommandBody, CommandResult, Effort, IssueId, ProjectId,
+    SessionId, Ticket, TicketError,
 };
 
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
@@ -37,6 +38,10 @@ pub use credentials::{
     ProviderForms, SignInButton, SignInView, instance_name,
 };
 pub use host::{HostId, StatusLine};
+pub use issues::{
+    EditForm, IssueIntent, IssueList, IssueRow, IssueScreen, ItemRow, Pick,
+    StatusGroup,
+};
 pub use new_session::{
     Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,
 };
@@ -77,13 +82,15 @@ pub enum Place {
     Credentials,
     Projects,
     Session(HostId, SessionId),
+    /// An issue as this host's home has it.
+    Issue(HostId, IssueId),
 }
 
 impl Place {
-    /// The host a session's place is on.
+    /// The host a session's or an issue's place is on.
     const fn host(self) -> Option<HostId> {
         match self {
-            Self::Session(host, _) => Some(host),
+            Self::Session(host, _) | Self::Issue(host, _) => Some(host),
             Self::Sessions
             | Self::AddHost
             | Self::NewSession
@@ -113,6 +120,8 @@ pub enum Intent {
     Project(HostId, ProjectIntent),
     /// Acts on the session shown.
     Session(SessionIntent),
+    /// Opens an issue, or acts on the issue shown.
+    Issue(IssueIntent),
     /// A host's answer to a command an [`Effect::Send`] sent, or why none
     /// came.
     Replied(Reply, Result<CommandResult, String>),
@@ -166,6 +175,8 @@ enum ReplyTo {
     /// A refused effort change puts the picker back on this effort.
     Effort(Option<Effort>),
     Start,
+    /// A new issue in this project: it opens once the host has it.
+    Created(ProjectId),
     Instance(Subject, Done),
     Diff {
         checkpoint: CheckpointId,

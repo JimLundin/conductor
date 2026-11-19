@@ -9,6 +9,7 @@ use proto::{
 };
 
 use crate::host::{Host, HostId, by_name};
+use crate::issues::{self, Drafts, IssueList};
 use crate::{At, Effect, Intent, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +62,7 @@ pub struct ProjectGroup {
     pub detail: String,
     /// One row for each host whose home lists it.
     pub hosts: Vec<CheckoutRow>,
+    pub issues: IssueList,
 }
 
 /// Where a project is checked out on one host.
@@ -85,9 +87,11 @@ pub struct CloneButton {
     pub label: String,
 }
 
-/// The screen over every paired host.
+/// The screen over every paired host. A project's issues are read from
+/// the first live host whose home lists it, else the first that does.
 pub fn screen(
     hosts: &BTreeMap<HostId, Host>,
+    drafts: &Drafts,
     notice: Option<String>,
 ) -> ProjectsScreen {
     let listed = by_name(hosts);
@@ -98,16 +102,22 @@ pub fn screen(
             .map_or_else(Vec::new, |home| home.projects.clone());
         for project in projects {
             let row = row(*id, host, &project);
-            groups
-                .entry(project.id.clone())
-                .or_insert_with(|| ProjectGroup {
+            let group = groups.entry(project.id.clone()).or_insert_with(|| {
+                ProjectGroup {
                     key: project.id.0.clone(),
                     title: project.title.clone(),
                     detail: detail(&project),
                     hosts: Vec::new(),
-                })
-                .hosts
-                .push(row);
+                    issues: issues::list(&project, None, drafts),
+                }
+            });
+            if group.hosts.is_empty()
+                || (host.live() && group.issues.host.is_none())
+            {
+                group.issues =
+                    issues::list(&project, Some((*id, host)), drafts);
+            }
+            group.hosts.push(row);
         }
     }
     let projects = groups.into_values().collect::<Vec<ProjectGroup>>();
@@ -224,7 +234,7 @@ pub fn when(seconds: Option<u64>) -> String {
         || String::from("never"),
         |at| {
             let (days, rest) = (at / 86_400, at % 86_400);
-            let (year, month, day) = civil(days);
+            let (year, month, day) = proto::civil(days);
             format!(
                 "{year}-{month:02}-{day:02} {:02}:{:02} UTC",
                 rest / 3600,
@@ -232,19 +242,4 @@ pub fn when(seconds: Option<u64>) -> String {
             )
         },
     )
-}
-
-/// The proleptic Gregorian date `days` after 1970-01-01 (Howard Hinnant's
-/// `civil_from_days`).
-fn civil(days: u64) -> (u64, u64, u64) {
-    let z = days + 719_468;
-    let era = z / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + u64::from(month <= 2);
-    (year, month, day)
 }

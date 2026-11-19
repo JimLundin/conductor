@@ -49,7 +49,7 @@ pub enum Kind {
     /// Runs alone; its events and receipt commit together.
     Session,
     /// Runs beside session commands and commits its receipt on its own.
-    Credential,
+    Receipt,
 }
 
 /// One write into the open transaction.
@@ -285,7 +285,7 @@ impl Log {
                         effects.push(Effect::Open);
                         self.active = Some(start.key);
                     }
-                    Kind::Credential => {
+                    Kind::Receipt => {
                         self.credentials.insert(start.key, Vec::new());
                     }
                 }

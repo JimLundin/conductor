@@ -224,7 +224,8 @@ fn pane(state: &State) -> Option<SessionPane> {
         | Detail::Pair(_)
         | Detail::NewSession(_)
         | Detail::Credentials(_)
-        | Detail::Projects(_) => None,
+        | Detail::Projects(_)
+        | Detail::Issue(_) => None,
     })
 }
 
@@ -252,7 +253,8 @@ fn form(state: &State) -> Option<NewSessionForm> {
         | Detail::Pair(_)
         | Detail::Credentials(_)
         | Detail::Projects(_)
-        | Detail::Session(_) => None,
+        | Detail::Session(_)
+        | Detail::Issue(_) => None,
     })
 }
 
@@ -1313,7 +1315,8 @@ fn pane_of(state: &State) -> Option<crate::CredentialsPane> {
         | Detail::Pair(_)
         | Detail::NewSession(_)
         | Detail::Projects(_)
-        | Detail::Session(_) => None,
+        | Detail::Session(_)
+        | Detail::Issue(_) => None,
     })
 }
 

@@ -20,10 +20,12 @@
 
 extern crate alloc;
 
+mod calendar;
 mod credential;
 mod frame;
 mod home;
 mod instance;
+mod issue;
 mod sign_in;
 mod ticket;
 
@@ -33,6 +35,7 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
+pub use calendar::civil;
 pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
@@ -43,13 +46,17 @@ pub use home::{
 pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };
+pub use issue::{
+    ChecklistItem, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
+    Priority,
+};
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/19";
+pub const ALPN: &[u8] = b"conductor/20";
 
 /// One frame of a subscription: a logged event, where a sign-in stands, or
 /// the host's home as it is now, which replaces the one before.
@@ -450,6 +457,19 @@ pub enum CommandBody {
     RemoveSession {
         session: SessionId,
     },
+    /// Opens an issue in the project, `open`, on the branch
+    /// `issue/<id>`. Answers `IssueCreated` once the host has written it
+    /// to its clone of the home; pushing it follows, and how that went is
+    /// in the home's `sync`.
+    CreateIssue {
+        project: ProjectId,
+        fields: IssueFields,
+    },
+    /// Answers `Accepted` once written, like `CreateIssue`.
+    ChangeIssue {
+        issue: IssueId,
+        change: IssueChange,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,6 +498,9 @@ pub enum CommandResult {
     Instances(Instances),
     Rejected(Rejection),
     Diff(CheckpointDiff),
+    IssueCreated {
+        issue: IssueId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,6 +558,11 @@ pub enum Rejection {
     /// The project is local only: there is no remote to clone.
     NoRemote,
     SessionRemoved,
+    UnknownIssue,
+    /// The issue's title is empty, or the home can't be written.
+    IssueNotSaved {
+        reason: String,
+    },
 }
 
 impl Rejection {
@@ -601,6 +629,12 @@ impl Rejection {
             Self::NoRemote => String::from(
                 "the project is local only, so there is nothing to clone",
             ),
+            Self::UnknownIssue => {
+                String::from("the host's home lists no such issue")
+            }
+            Self::IssueNotSaved { reason } => {
+                format!("the issue was not saved: {reason}")
+            }
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }

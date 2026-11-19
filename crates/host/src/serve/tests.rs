@@ -1,7 +1,8 @@
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandId,
-    CommandResult, Effort, Epoch, Hello, HostSeq, InstanceId, Models, Open,
-    Provider, Rejection, SessionId, SignInCode, Subscribe,
+    CommandResult, Effort, Epoch, Hello, HostSeq, InstanceId, IssueChange,
+    IssueFields, IssueId, Models, Open, Priority, Provider, Rejection,
+    SessionId, SignInCode, Subscribe,
 };
 
 use super::{
@@ -121,7 +122,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
     .map(|body| route(body, phone()));
     assert_eq!(
         configured.each_ref().map(Route::ledger),
-        [Ledger::Credential; 2]
+        [Ledger::Receipt; 2]
     );
     assert_eq!(
         configured,
@@ -151,6 +152,37 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
         )
     );
     assert_eq!(send.ledger(), Ledger::Session);
+}
+
+#[test]
+fn issue_commands_keep_a_receipt_and_a_change_names_its_client() {
+    let fields = IssueFields {
+        title: String::from("Remove sessions"),
+        body: String::new(),
+        priority: Priority::Normal,
+        labels: Vec::new(),
+    };
+    let project = proto::ProjectId(String::from("conductor"));
+    let note = IssueChange::Note(String::from("done"));
+    let routed = [
+        CommandBody::CreateIssue {
+            project: project.clone(),
+            fields: fields.clone(),
+        },
+        CommandBody::ChangeIssue {
+            issue: IssueId(1),
+            change: note.clone(),
+        },
+    ]
+    .map(|body| route(body, phone()));
+    assert_eq!(routed.each_ref().map(Route::ledger), [Ledger::Receipt; 2]);
+    assert_eq!(
+        routed,
+        [
+            Route::Home(HomeOrder::Create(project, fields)),
+            Route::Home(HomeOrder::Change(IssueId(1), note, phone())),
+        ]
+    );
 }
 
 #[test]

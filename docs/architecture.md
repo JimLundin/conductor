@@ -587,8 +587,8 @@ until someone re-records them by hand (§6.2).
 ### 5.4 The home and its projects (built)
 
 The home (`docs/home.md`) is the owner's git repository of projects,
-standards and, later, issues and work, cloned on every host. Built so far
-is home step 3: the clone, its sync, and each project's checkouts.
+standards and issues, cloned on every host. Built so far are home steps
+3, 4 and 6: the clone, its sync, each project's checkouts, and issues.
 
 - **The home's files.** `projects/<id>/project.toml` lists each project
   under a folder named by its id, a lowercase ULID, which is the
@@ -642,6 +642,27 @@ is home step 3: the clone, its sync, and each project's checkouts.
   stores no project of its own: its worktree's repository, which
   `WorkspaceCreated` records, is the checkout, and the app finds the
   project from it (home §2.2).
+- **Issues** (home step 6). `projects/<project>/issues/<id>.md`, one file
+  per issue in the format of home §3, its name the issue's lowercase ULID
+  (`IssueId`); `home::issue` reads and writes it, keeping front-matter
+  keys it doesn't know, and lists a project's issues in
+  `Project.issues`. `CreateIssue { project, fields }` answers
+  `IssueCreated { issue }`, with an id the host mints, an `open` status
+  and the branch `issue/<id>`; `ChangeIssue { issue, change }` edits the
+  title, body, priority and labels, sets the status, replaces the
+  checklist or adds a note, which the host dates and signs `<host> ·
+  <client>`. Both keep a receipt (`Ledger::Receipt`), so a retry doesn't
+  repeat them, and are refused with `NoHome`, `UnknownProject`,
+  `UnknownIssue` or `IssueNotSaved`. The host writes the file and commits
+  it in the clone as Conductor, one commit per change, keeps the change
+  (`home::issue::Edit`) in `<data>/home-edits.state` and pushes. A push
+  the remote refuses, and a sync while changes are kept
+  (`home::sync::Git::Replay`), fetch, reset the clone to the remote and
+  apply the kept changes again on top, each idempotent, then push; a
+  change whose issue is gone is dropped. So the host never merges its own
+  commits: notes from two hosts both stay, and the last status wins.
+  Offline, changes stay kept and committed locally, `Home.unpushed`
+  counts them, and the next sync lands them.
 
 ## 6. Planned: the fleet
 

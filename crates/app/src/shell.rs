@@ -207,6 +207,9 @@ fn Hosts(hosts: ui::HostsScreen) -> Element {
                         Detail::Session(pane) => rsx! {
                             crate::session::SessionPane { key: "{pane.key}", pane: *pane }
                         },
+                        Detail::Issue(screen) => rsx! {
+                            crate::issue::IssueScreen { key: "{screen.key}", screen: *screen }
+                        },
                     }
                 }
             }

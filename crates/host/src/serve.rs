@@ -5,8 +5,9 @@
 use agents::Reply;
 use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
-    Credential, Effort, InstanceId, ModelId, Models, Open, ProjectId, Provider,
-    Rejection, RequestId, SessionId, SignInCode, StartAt, Subscribe,
+    Credential, Effort, InstanceId, IssueChange, IssueFields, IssueId, ModelId,
+    Models, Open, ProjectId, Provider, Rejection, RequestId, SessionId,
+    SignInCode, StartAt, Subscribe,
 };
 
 use crate::prelude::*;
@@ -167,6 +168,9 @@ pub enum Route {
 pub enum HomeOrder {
     Sync,
     Clone(ProjectId),
+    Create(ProjectId, IssueFields),
+    /// The client signs a note the change adds.
+    Change(IssueId, IssueChange, ClientName),
 }
 
 /// A command about an instance's sign-in from the app.
@@ -193,14 +197,14 @@ pub enum Configure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ledger {
     /// A read, a sign-in command, whose code must reach no store, or a
-    /// home command, which brings the home up to date whenever it runs:
-    /// run it every time.
+    /// sync or clone of the home, which brings it up to date whenever it
+    /// runs: run it every time.
     Unrecorded,
     /// Runs alone, with its events in one transaction with its receipt.
     Session,
-    /// An instance command: runs beside session commands; a retry waits
-    /// for the first.
-    Credential,
+    /// An instance or issue command, which a retry must not repeat: runs
+    /// beside session commands; a retry waits for the first.
+    Receipt,
 }
 
 impl Route {
@@ -209,8 +213,13 @@ impl Route {
         match self {
             Self::Order(_, Order::Diff(_))
             | Self::SignIn(_)
-            | Self::Home(_) => Ledger::Unrecorded,
-            Self::Configure(_) => Ledger::Credential,
+            | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => {
+                Ledger::Unrecorded
+            }
+            Self::Configure(_)
+            | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {
+                Ledger::Receipt
+            }
             Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
                 Ledger::Session
             }
@@ -246,6 +255,12 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         }
         CommandBody::Continue { session } => {
             Route::Relaunch(session, Relaunch::Continue)
+        }
+        CommandBody::CreateIssue { project, fields } => {
+            Route::Home(HomeOrder::Create(project, fields))
+        }
+        CommandBody::ChangeIssue { issue, change } => {
+            Route::Home(HomeOrder::Change(issue, change, by))
         }
         CommandBody::RemoveSession { session } => {
             Route::Order(session, Order::Remove)
