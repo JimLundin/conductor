@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The gate: the shared Rust standard, which runs Conductor's suites from
-# checks.toml beside its own checks. `tools/check.sh [commit|step|release]
-# [--base <ref>|--all] [--no-cache]`.
+# checks.toml beside its own checks, then the shared TypeScript standard on
+# the browser suite in crates/app/tests-e2e. Each checks what changed in its
+# own tree, and the gate fails if either does. `tools/check.sh
+# [commit|step|release] [--base <ref>|--all] [--no-cache]`.
 #
 # The standards come from a clone of the home repository on the Linux
 # filesystem (`STANDARDS_HOME`, default ~/projects/tools/home), which runs
@@ -18,4 +20,14 @@ if [ -z "${STANDARDS:-}" ]; then
 	[ -n "$(find "$home/.git/FETCH_HEAD" -mmin -10 2>/dev/null)" ] ||
 		git -C "$home" pull -q --ff-only || echo "warning: $home not updated" >&2
 fi
-exec "${STANDARDS:-$home/standards}/rust/check.sh" "$@"
+standards=${STANDARDS:-$home/standards}
+status=0
+"$standards/rust/check.sh" "$@" || status=1
+# The type check reads the suite's dependencies; reinstall them when the
+# lockfile is newer than the install. A failed install only warns: when the
+# suite is in scope, its type check then fails on its own.
+e2e=crates/app/tests-e2e
+[ "$e2e/node_modules/.package-lock.json" -nt "$e2e/package-lock.json" ] ||
+	(cd "$e2e" && npm ci --silent) || echo "warning: npm ci failed in $e2e" >&2
+"$standards/typescript/check.sh" "$@" "$e2e" || status=1
+exit "$status"

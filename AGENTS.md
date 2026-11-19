@@ -24,7 +24,9 @@ Home Screen. The design is in
   run-record IP scrub and clippy for the wasm crates at `commit`, and the
   browser suite (`tools/e2e-browser.sh`) at `step` when the web app's
   crates (`app`, `ui`, `net`, `proto`, `client`) or the script change, and
-  at `release`. Run `commit` before
+  at `release`. It then runs the standard's `typescript/check.sh` on that
+  suite, `crates/app/tests-e2e`, whose exceptions live in its own
+  `exceptions.toml`. Run `commit` before
   each commit and `step` (the default) before merging a task branch;
   `release` adds mutation testing and the slow checks, only in CI or when
   asked. It checks only what changed since the merge base with `main`
