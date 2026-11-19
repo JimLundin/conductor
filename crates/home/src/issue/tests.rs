@@ -7,8 +7,9 @@ use proto::{
 };
 
 use super::{
-    Applied, Branch, Change, Edit, Mode, Move, Remote, apply, changing, fields,
-    file, listed, message, name, opening, parse, render, start, started, was,
+    Applied, Branch, Change, Edit, Mode, Move, Remote, apply, branch, changing,
+    fields, file, finished, listed, message, name, opening, parse, render,
+    start, started, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -584,4 +585,26 @@ fn an_issue_needs_a_title() {
         }),
         Err(text("an issue needs a title"))
     );
+}
+
+#[test]
+fn a_finished_issue_whose_branch_gained_commits_is_up_for_review() {
+    assert_eq!(
+        IssueStatus::ALL.map(|status| finished(status, 2)),
+        [
+            Some(IssueStatus::Review),
+            Some(IssueStatus::Review),
+            Some(IssueStatus::Review),
+            None,
+            None,
+            None,
+        ]
+    );
+    assert_eq!(finished(IssueStatus::InProgress, 0), None);
+    let known = home(Vec::from([checkout()]), Vec::from([issue()]));
+    assert_eq!(
+        branch(Some(&known), ID),
+        format!("refs/heads/issue/{}", name(ID))
+    );
+    assert_eq!(branch(None, ID), format!("refs/heads/issue/{}", name(ID)));
 }

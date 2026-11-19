@@ -10,8 +10,8 @@ use client::host_view::{
     ToolState,
 };
 use proto::{
-    Change, Decision, Question, RequestId, Resolution, Selection,
-    SubagentOutcome, ToolKind, TurnOutcome,
+    Change, Decision, Finished, Kept, Question, RequestId, Resolution,
+    Selection, SubagentOutcome, ToolKind, TurnOutcome,
 };
 
 use crate::session::closed;
@@ -39,6 +39,12 @@ pub enum Row {
         text: String,
     },
     ModelChanged(String),
+    /// The session was finished on its issue; `outcome` is also its
+    /// `data-outcome`: `finishing`, `landed` or `failed`.
+    Finished {
+        outcome: &'static str,
+        text: String,
+    },
     Error(String),
 }
 
@@ -186,6 +192,36 @@ pub fn agent_group(
     }
 }
 
+/// What finishing the session landed, and where the issue's branch went.
+fn finished_row(finished: &Finished) -> Row {
+    match finished {
+        Finished::Landed { commits, kept } => {
+            let landed = match commits {
+                0 => String::from("the issue's branch had its work already"),
+                1 => String::from("landed 1 commit on the issue's branch"),
+                many => format!("landed {many} commits on the issue's branch"),
+            };
+            let went = match kept {
+                Kept::Local => String::from(
+                    "kept on this host, as the project has no remote",
+                ),
+                Kept::Pushed { remote } => format!("pushed to {remote}"),
+                Kept::PushFailed { reason } => {
+                    format!("kept on this host, as the push failed: {reason}")
+                }
+            };
+            Row::Finished {
+                outcome: "landed",
+                text: format!("Finished: {landed}; {went}."),
+            }
+        }
+        Finished::Failed { reason } => Row::Finished {
+            outcome: "failed",
+            text: format!("Finished, but nothing landed: {reason}"),
+        },
+    }
+}
+
 pub fn row(item: &Item, drafts: &BTreeMap<RequestId, Draft>) -> Row {
     match item {
         Item::User { text, by } => Row::User {
@@ -207,6 +243,13 @@ pub fn row(item: &Item, drafts: &BTreeMap<RequestId, Draft>) -> Row {
         Item::Continued(reason) => {
             Row::Continued(format!("Continued after: {}", closed(reason)))
         }
+        Item::Finishing => Row::Finished {
+            outcome: "finishing",
+            text: String::from(
+                "Finishing: the agent sums up, then the session's branch lands on the issue's.",
+            ),
+        },
+        Item::Finished(finished) => finished_row(finished),
         Item::Tool {
             tool,
             state,

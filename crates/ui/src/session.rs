@@ -12,7 +12,8 @@ use client::host_view::{
 use client::new_session::{efforts, models};
 use proto::{
     Catalog, CheckpointId, CloseReason, CommandBody, CommandResult, Decision,
-    Effort, Instances, Question, RequestId, SessionId, Task, TaskStatus,
+    Effort, FinishState, Instances, Question, RequestId, SessionId, Task,
+    TaskStatus,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
@@ -30,6 +31,8 @@ pub enum SessionIntent {
     Continue,
     /// Remove a closed session and its workspace, keeping its branch.
     Remove,
+    /// Finish a session on an issue: summary, note, branch landed.
+    Finish,
     /// An effort's word, from the next turn on.
     PickEffort(String),
     Decide(RequestId, Decision),
@@ -71,6 +74,9 @@ pub struct SessionPane {
     pub model: String,
     pub effort: EffortControl,
     pub interrupt: bool,
+    /// The session works on an issue, runs no turn and has done something
+    /// since it last finished, so it can finish.
+    pub finish: bool,
     pub workspace: WorkspaceContext,
     pub undo: UndoNote,
     pub tasks: Option<Tasks>,
@@ -196,6 +202,13 @@ impl Pane {
                 self,
                 Vec::from([notify(
                     CommandBody::RemoveSession { session: id },
+                    at,
+                )]),
+            ),
+            SessionIntent::Finish => (
+                self,
+                Vec::from([notify(
+                    CommandBody::FinishSession { session: id },
                     at,
                 )]),
             ),
@@ -455,6 +468,13 @@ impl Pane {
             ),
             effort: effort_control(session.effort, &offered),
             interrupt: controls.interrupt == Interrupt::Offered,
+            finish: session.issue.is_some()
+                && matches!(
+                    session.status,
+                    SessionStatus::Idle | SessionStatus::Closed(_)
+                )
+                && session.undo == UndoState::Ready
+                && session.finish == FinishState::Ready,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
                     "This session has no worktree checkpoints.",

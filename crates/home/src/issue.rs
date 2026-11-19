@@ -877,6 +877,36 @@ pub const fn started(status: IssueStatus) -> Option<IssueStatus> {
     }
 }
 
+/// The status an issue moves to once a session on it has finished: one
+/// still being worked on is up for review when its branch gained commits.
+#[must_use]
+pub const fn finished(status: IssueStatus, landed: u64) -> Option<IssueStatus> {
+    match (status, landed) {
+        (_, 0)
+        | (IssueStatus::Review | IssueStatus::Done | IssueStatus::Dropped, _) => {
+            None
+        }
+        (
+            IssueStatus::Open | IssueStatus::Ready | IssueStatus::InProgress,
+            _,
+        ) => Some(IssueStatus::Review),
+    }
+}
+
+/// Issue `id`'s branch, as a full ref, as the home has it.
+#[must_use]
+pub fn branch(home: Option<&Home>, id: IssueId) -> String {
+    let named = home.and_then(|known| {
+        known
+            .projects
+            .iter()
+            .flat_map(|project| &project.issues)
+            .find(|issue| issue.id == id)
+            .map(|issue| issue.branch.clone())
+    });
+    format!("refs/heads/{}", named.unwrap_or_else(|| branch_of(id)))
+}
+
 /// The agent's first message: the issue as its file has it, and what to
 /// do with it.
 fn brief(project: &str, issue: &Issue) -> String {

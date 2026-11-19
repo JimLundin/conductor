@@ -1905,3 +1905,46 @@ fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
         ]
     );
 }
+
+#[test]
+fn a_session_on_an_issue_finishes_and_says_what_landed() {
+    let (plain, _) = opened(Vec::new());
+    assert_eq!(pane(&plain).map(|shown| shown.finish), Some(false));
+    let (on_issue, _) = opened(Vec::from([event(
+        3,
+        EventKind::OnIssue {
+            issue: proto::IssueId(5),
+        },
+    )]));
+    assert_eq!(pane(&on_issue).map(|shown| shown.finish), Some(true));
+    let (finished, effects) = run(
+        on_issue,
+        Vec::from([
+            Intent::Session(SessionIntent::Finish),
+            event(
+                4,
+                EventKind::SessionFinished {
+                    finished: proto::Finished::Landed {
+                        commits: 1,
+                        kept: proto::Kept::Pushed {
+                            remote: text("git@example.com:me/alpha.git"),
+                        },
+                    },
+                },
+            ),
+        ]),
+    );
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::FinishSession { session: SESSION }]
+    );
+    assert_eq!(
+        rows(&finished).last(),
+        Some(&Row::Finished {
+            outcome: "landed",
+            text: text(
+                "Finished: landed 1 commit on the issue's branch; pushed to git@example.com:me/alpha.git."
+            ),
+        })
+    );
+}

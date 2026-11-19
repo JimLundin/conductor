@@ -155,10 +155,16 @@ What is built and what comes next. Update it in the commit that changes it.
   session works on a branch cut from the issue's `issue/<id>`, which the
   host takes from the project's remote when it has it; its first message
   is the issue's brief, and the issue moves to `in-progress`. One session
-  per instance and issue (ALPN `conductor/21`). Next: finishing a session
-  onto the issue's branch and pushing it, which lets another host
-  continue, then turns as commits. *Try:* start a session on an issue and
-  read its first message.
+  per instance and issue (ALPN `conductor/21`). *Try:* start a session on
+  an issue and read its first message.
+- **Finishing a session** (home step 7b, architecture §5.4). *Finish* on a
+  session on an issue asks its agent for a summary, stops it, lands its
+  branch on the issue's (fast-forward, or a merge commit; a conflict
+  lands nothing), pushes that to the project's remote, adds the summary
+  to the issue's notes and moves the issue to `review` when it gained
+  commits (ALPN `conductor/22`). Another host then continues the issue
+  from its branch. Next: turns as commits (step 7c). *Try:* finish a
+  session on an issue, then start one on another host.
 
 ## Next
 

@@ -89,6 +89,8 @@ pub enum Order {
     Effort(Effort, Models),
     /// Stops the agent between turns and removes the session's workspace.
     Remove,
+    /// Stops the agent between turns, for this reason.
+    Stop(String),
 }
 
 impl Order {
@@ -108,6 +110,7 @@ impl Order {
             Self::Start(offered) => Core::Start { offered },
             Self::Effort(effort, offered) => Core::Effort(effort, offered),
             Self::Remove => Core::Remove,
+            Self::Stop(reason) => Core::Stop(reason),
         }
     }
 }
@@ -161,6 +164,8 @@ pub enum Route {
     Configure(Configure),
     SignIn(SignInOrder),
     Home(HomeOrder),
+    /// Finishes the session on its issue, in the background.
+    Finish(SessionId, ClientName),
 }
 
 /// A command about the host's clone of the home.
@@ -217,6 +222,7 @@ impl Route {
                 Ledger::Unrecorded
             }
             Self::Configure(_)
+            | Self::Finish(..)
             | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {
                 Ledger::Receipt
             }
@@ -262,6 +268,7 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         CommandBody::ChangeIssue { issue, change } => {
             Route::Home(HomeOrder::Change(issue, change, by))
         }
+        CommandBody::FinishSession { session } => Route::Finish(session, by),
         CommandBody::RemoveSession { session } => {
             Route::Order(session, Order::Remove)
         }

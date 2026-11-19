@@ -10,9 +10,9 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandResult, Effort, Event,
-    Feed as Frame, HelloReply, Home, InstanceId, ModelId, Open, Rejection,
-    SessionId, SignIn, StartAt, Subscribe, Welcome,
+    AuthToken, ClientName, Command, CommandResult, Effort, Event, EventKind,
+    Feed as Frame, HelloReply, Home, HostSeq, InstanceId, ModelId, Open,
+    Rejection, SessionId, SignIn, StartAt, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -222,6 +222,7 @@ impl Conductor {
             }
             Route::SignIn(order) => self.registry.sign_in(order).await,
             Route::Home(order) => self.home.order(order).await,
+            Route::Finish(session, by) => self.finish(session, by).await,
         }
     }
 
@@ -282,6 +283,171 @@ impl Conductor {
             return Ok(Some(Rejection::IssueTaken { session }));
         }
         Ok(self.home.ready(start.clone()).await?.err())
+    }
+
+    /// Finishes the session in a task of its own, once it can: the
+    /// command answers before the agent's summary turn ends, and
+    /// `FinishStarted` in the log shows it has begun.
+    async fn finish(
+        &self,
+        session: SessionId,
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        let history = self.log.history().await?;
+        let finishing = match host::finish::finishing(&history, session) {
+            Err(rejection) => return Ok(CommandResult::Rejected(rejection)),
+            Ok(finishing) => finishing,
+        };
+        let Some(handle) = self.registry.find(session).await? else {
+            return Ok(CommandResult::Rejected(Rejection::UnknownSession));
+        };
+        self.log.append(session, EventKind::FinishStarted).await?;
+        self.spawn_finish(session, finishing, handle, by);
+        Ok(CommandResult::Accepted)
+    }
+
+    fn spawn_finish(
+        &self,
+        session: SessionId,
+        finishing: host::finish::Finishing,
+        handle: crate::session::Session,
+        by: ClientName,
+    ) {
+        let finisher = self.clone();
+        tokio::spawn(async move {
+            let ended = finisher.finished(session, finishing, handle, by).await;
+            if ended.is_err() {
+                tracing::warn!(?session, "finishing stopped with the host");
+            }
+        });
+    }
+
+    /// Summarizes and stops the session, readies the issue's branch from
+    /// the remote's, lands and pushes it, notes the issue and moves it on,
+    /// then logs what it did. A summary that didn't come, or an agent
+    /// that didn't stop, lands nothing.
+    async fn finished(
+        &self,
+        session: SessionId,
+        finishing: host::finish::Finishing,
+        handle: crate::session::Session,
+        by: ClientName,
+    ) -> Result<(), Stopped> {
+        let summary = self.summary(session, &finishing, &handle, by).await?;
+        let branch =
+            home::issue::branch(self.home.shown().as_ref(), finishing.issue);
+        let finished = match &summary {
+            Err(reason) => host::finish::finished(Err(reason.clone()), None),
+            Ok(_) => land(&finishing.workspace, &branch).await,
+        };
+        let signer = ClientName(host::finish::signer(&finishing.instance));
+        let commits = host::finish::landed(&finished);
+        self.home
+            .finished(finishing.issue, summary.ok().flatten(), signer, commits)
+            .await?;
+        self.log
+            .append(session, EventKind::SessionFinished { finished })
+            .await
+    }
+
+    /// The agent's summary: asked for in one more turn, then the agent is
+    /// stopped; the last reply when it had stopped already. Why finishing
+    /// can't go on, when the agent wasn't asked, didn't answer in time, or
+    /// didn't stop.
+    async fn summary(
+        &self,
+        session: SessionId,
+        finishing: &host::finish::Finishing,
+        handle: &crate::session::Session,
+        by: ClientName,
+    ) -> Result<Result<Option<String>, String>, Stopped> {
+        let history = self.log.history().await?;
+        if !finishing.running {
+            return Ok(Ok(host::finish::summary(
+                &history,
+                session,
+                HostSeq(0),
+            )));
+        }
+        let after = history.last().map_or(HostSeq(0), |event| event.seq);
+        self.asked_summary(session, handle, by, after).await
+    }
+
+    /// Asks the running agent for its summary after `after`, waits for the
+    /// turn to end, and stops the agent.
+    async fn asked_summary(
+        &self,
+        session: SessionId,
+        handle: &crate::session::Session,
+        by: ClientName,
+        after: HostSeq,
+    ) -> Result<Result<Option<String>, String>, Stopped> {
+        let watched = self.log.subscribe(after).await?;
+        let text = String::from(host::finish::SUMMARY);
+        let asked = handle.order(Order::Send { text, by }).await.ok();
+        if let Some(reason) =
+            host::finish::interrupted("asking for a summary", asked.as_ref())
+        {
+            return Ok(Err(reason));
+        }
+        let Some(seen) = self.turn(session, watched, after).await? else {
+            let _ = handle.order(Order::Interrupt).await;
+            return Ok(Err(String::from(host::finish::IMPATIENT)));
+        };
+        let reason = String::from(host::finish::FINISHED);
+        let stopped = handle.order(Order::Stop(reason)).await.ok();
+        Ok(
+            host::finish::interrupted("stopping the agent", stopped.as_ref())
+                .map_or_else(
+                    || Ok(host::finish::summary(&seen, session, after)),
+                    Err,
+                ),
+        )
+    }
+
+    /// The events from `after` until the session's turn ends, or `None`
+    /// when it doesn't end within `host::finish::PATIENCE`.
+    async fn turn(
+        &self,
+        session: SessionId,
+        watched: crate::log::Subscription,
+        after: HostSeq,
+    ) -> Result<Option<Vec<Event>>, Stopped> {
+        let patience = std::time::Duration::from_secs(host::finish::PATIENCE);
+        tokio::time::timeout(
+            patience,
+            self.until_ended(session, watched, after),
+        )
+        .await
+        .map_or(Ok(None), |seen| seen.map(Some))
+    }
+
+    /// Reads the log until the session's turn ends; a subscription that
+    /// falls behind reads the log again rather than miss the end.
+    async fn until_ended(
+        &self,
+        session: SessionId,
+        watched: crate::log::Subscription,
+        after: HostSeq,
+    ) -> Result<Vec<Event>, Stopped> {
+        let mut seen = watched.replay;
+        let mut live = watched.live;
+        while !seen
+            .iter()
+            .any(|event| host::finish::turn_ended(event, session))
+        {
+            match live.recv().await {
+                Ok(event) => seen.push(event),
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let again = self.log.subscribe(after).await?;
+                    (seen, live) = (again.replay, again.live);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(Stopped {});
+                }
+            }
+        }
+        Ok(seen)
     }
 
     async fn order(
@@ -382,6 +548,21 @@ impl Feed {
             }
         }
     }
+}
+
+/// Brings the issue's branch up to the remote's, lands the session's on
+/// it and pushes it.
+async fn land(workspace: &proto::Workspace, branch: &str) -> proto::Finished {
+    let checkout = std::path::Path::new(&workspace.repository.0);
+    let landed = match crate::home::ready_issue_branch(checkout, branch).await {
+        Err(reason) => Err(reason),
+        Ok(()) => crate::workspace::land(workspace, branch).await,
+    };
+    let pushed = match &landed {
+        Ok(_) => crate::workspace::push_branch(workspace, branch).await,
+        Err(_) => None,
+    };
+    host::finish::finished(landed, pushed)
 }
 
 /// A live frame, or a resubscribe if the subscriber fell behind or the

@@ -31,7 +31,7 @@ use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
     Checkout, ClientName, Cloning, CommandResult, Home, Issue, IssueChange,
-    IssueFields, IssueId, ProjectId, Rejection, StartAt,
+    IssueFields, IssueId, IssueStatus, ProjectId, Rejection, StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -86,6 +86,13 @@ enum Msg {
     Started {
         issue: IssueId,
         client: ClientName,
+        reply: oneshot::Sender<()>,
+    },
+    Finished {
+        issue: IssueId,
+        summary: Option<String>,
+        client: ClientName,
+        landed: u64,
         reply: oneshot::Sender<()>,
     },
 }
@@ -171,6 +178,30 @@ impl HomeClone {
         self.ask(|reply| Msg::Started {
             issue,
             client,
+            reply,
+        })
+        .await
+    }
+
+    /// A session on the issue finished: its summary goes to the issue's
+    /// notes, signed by `client`, and the issue is up for review when its
+    /// branch gained commits.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the task has stopped.
+    pub async fn finished(
+        &self,
+        issue: IssueId,
+        summary: Option<String>,
+        client: ClientName,
+        landed: u64,
+    ) -> Result<(), Stopped> {
+        self.ask(|reply| Msg::Finished {
+            issue,
+            summary,
+            client,
+            landed,
             reply,
         })
         .await
@@ -321,27 +352,66 @@ impl Actor {
                 client,
                 reply,
             } => {
-                self.move_on(issue, &client).await;
+                self.move_on(issue, &client, |status| {
+                    home::issue::started(status)
+                })
+                .await;
+                let _ = reply.send(());
+            }
+            Msg::Finished {
+                issue,
+                summary,
+                client,
+                landed,
+                reply,
+            } => {
+                self.note(issue, summary, &client).await;
+                self.move_on(issue, &client, |status| {
+                    home::issue::finished(status, landed)
+                })
+                .await;
                 let _ = reply.send(());
             }
         }
     }
 
-    /// Moves the issue to what work on it starting makes it, as the home
-    /// has it now.
-    async fn move_on(&mut self, issue: IssueId, client: &ClientName) {
+    /// Moves the issue to what `next` makes of its status, as the home has
+    /// it now.
+    async fn move_on(
+        &mut self,
+        issue: IssueId,
+        client: &ClientName,
+        next: impl Fn(IssueStatus) -> Option<IssueStatus>,
+    ) {
         let status = self
             .issues
             .values()
             .flatten()
             .find(|known| known.id == issue)
-            .and_then(|known| home::issue::started(known.status));
-        let Some(next) = status else {
+            .and_then(|known| next(known.status));
+        let Some(moved) = status else {
             return;
         };
-        let moved = self.change(issue, IssueChange::Status(next), client).await;
-        if moved != CommandResult::Accepted {
-            tracing::warn!(target: "home", ?moved, "an issue whose session started did not move on");
+        let answer =
+            self.change(issue, IssueChange::Status(moved), client).await;
+        if answer != CommandResult::Accepted {
+            tracing::warn!(target: "home", ?answer, "an issue did not move on");
+        }
+    }
+
+    /// Adds a finished session's summary to the issue's notes.
+    async fn note(
+        &mut self,
+        issue: IssueId,
+        summary: Option<String>,
+        client: &ClientName,
+    ) {
+        let Some(text) = summary else {
+            return;
+        };
+        let answer = self.change(issue, IssueChange::Note(text), client).await;
+        if answer != CommandResult::Accepted {
+            tracing::warn!(target: "home", ?answer, "a session's summary was not noted");
         }
     }
 
@@ -703,14 +773,27 @@ async fn pull(clone: &Path) -> Result<(), String> {
 /// Makes the checkout's issue branch what `home::issue::Branch` says. The
 /// remote is `origin`, which is how the home matched the checkout.
 async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
-    let checkout = Path::new(&start.checkout.0);
-    let facts = branch_facts(checkout, &start.branch).await?;
+    ready_issue_branch(Path::new(&start.checkout.0), &start.branch).await
+}
+
+/// Makes the checkout's issue branch `branch`, a full ref, what
+/// `home::issue::Branch` says: the remote's, when the checkout's has
+/// nothing the remote's lacks.
+///
+/// # Errors
+///
+/// When the remote can't be read for a new branch, or both have moved on.
+pub(crate) async fn ready_issue_branch(
+    checkout: &Path,
+    branch: &str,
+) -> Result<(), String> {
+    let facts = branch_facts(checkout, branch).await?;
     match facts.next() {
         home::issue::Move::Keep => Ok(()),
         home::issue::Move::Refuse(reason) => Err(reason),
         home::issue::Move::Set { commit, old } => {
             let was = old.unwrap_or_default();
-            run(checkout, &["update-ref", &start.branch, &commit, &was]).await
+            run(checkout, &["update-ref", branch, &commit, &was]).await
         }
     }
 }

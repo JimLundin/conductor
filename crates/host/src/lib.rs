@@ -11,6 +11,7 @@
 extern crate alloc;
 
 pub mod checkpoints;
+pub mod finish;
 pub mod log;
 mod note;
 mod prelude;

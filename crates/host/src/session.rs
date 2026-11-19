@@ -144,6 +144,8 @@ pub enum Order {
     /// Stops the agent between turns and removes the session's workspace,
     /// keeping its branch. The session takes no order after it.
     Remove,
+    /// Stops the agent between turns, closing the session for this reason.
+    Stop(String),
 }
 
 /// Why the agent of a session being removed stops.
@@ -337,6 +339,8 @@ enum Flow {
     /// The agent stops, for the session to be removed.
     Stopping,
     Removing,
+    /// The agent stops, and the session closes for this reason.
+    Halting(String),
 }
 
 struct Saving {
@@ -519,6 +523,12 @@ impl Session {
                 }),
                 self.clean(),
             ),
+            (Flow::Halting(reason), Input::Agent(Outcome::ShutDown(_))) => {
+                join(
+                    self.closed(CloseReason::Stopped { reason }),
+                    [Effect::Reply(CommandResult::Accepted)],
+                )
+            }
             (Flow::Removing, Input::Removed(Ok(kept))) => self.gone(Some(kept)),
             (Flow::Removing, Input::Removed(Err(reason))) => Vec::from([
                 Effect::Emit(EventKind::Error {
@@ -553,8 +563,17 @@ impl Session {
 
     fn normal_order(&mut self, order: Order) -> Vec<Effect> {
         match (order, &self.turn, &self.agent) {
-            (Order::Remove, Turn::Starting(_) | Turn::Running(_), _) => {
-                rejected(Rejection::TurnInProgress)
+            (
+                Order::Remove | Order::Stop(_),
+                Turn::Starting(_) | Turn::Running(_),
+                _,
+            ) => rejected(Rejection::TurnInProgress),
+            (Order::Stop(_), Turn::Idle, Agent::Down) => {
+                answer(CommandResult::Accepted)
+            }
+            (Order::Stop(reason), Turn::Idle, Agent::Up { .. }) => {
+                self.flow = Flow::Halting(reason);
+                Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
             }
             (Order::Remove, Turn::Idle, Agent::Down) => self.clean(),
             (Order::Remove, Turn::Idle, Agent::Up { .. }) => {
