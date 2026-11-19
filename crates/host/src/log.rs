@@ -49,7 +49,7 @@ pub enum Kind {
     /// Runs alone; its events and receipt commit together.
     Session,
     /// Runs beside session commands and commits its receipt on its own.
-    Credential,
+    Receipt,
 }
 
 /// One write into the open transaction.
@@ -115,8 +115,8 @@ pub struct Log {
     waiting: VecDeque<Start>,
     /// The start whose receipt the shell is reading.
     starting: Option<Start>,
-    /// Each running credential command, and the retries waiting for it.
-    credentials: BTreeMap<CommandId, Vec<Ticket>>,
+    /// Each running receipt command, and the retries waiting for it.
+    receipts: BTreeMap<CommandId, Vec<Ticket>>,
     /// Credential finishes held until the active command commits, since
     /// only one transaction can be open.
     held: VecDeque<Finish>,
@@ -145,7 +145,7 @@ impl Log {
             active: None,
             waiting: VecDeque::new(),
             starting: None,
-            credentials: BTreeMap::new(),
+            receipts: BTreeMap::new(),
             held: VecDeque::new(),
             tickets: 0,
         }
@@ -273,7 +273,7 @@ impl Log {
             return Vec::new();
         };
         let mut effects = Vec::new();
-        match (found, self.credentials.get_mut(&start.key)) {
+        match (found, self.receipts.get_mut(&start.key)) {
             (Some(result), _) => {
                 effects
                     .push(Effect::Begun(start.ticket, Begun::Cached(result)));
@@ -285,8 +285,8 @@ impl Log {
                         effects.push(Effect::Open);
                         self.active = Some(start.key);
                     }
-                    Kind::Credential => {
-                        self.credentials.insert(start.key, Vec::new());
+                    Kind::Receipt => {
+                        self.receipts.insert(start.key, Vec::new());
                     }
                 }
                 effects.push(Effect::Begun(
@@ -312,7 +312,7 @@ impl Log {
             result,
         };
         let ticket = finish.ticket;
-        let effects = match (self.credentials.contains_key(&key), self.active) {
+        let effects = match (self.receipts.contains_key(&key), self.active) {
             (true, Some(_)) => {
                 self.held.push_back(finish);
                 Vec::new()
@@ -328,7 +328,7 @@ impl Log {
     #[must_use]
     pub fn abort(&self, key: CommandId) -> Vec<Effect> {
         let running =
-            self.credentials.contains_key(&key) || self.active == Some(key);
+            self.receipts.contains_key(&key) || self.active == Some(key);
         running.then_some(Effect::Stop).into_iter().collect()
     }
 
@@ -351,7 +351,7 @@ impl Log {
     fn settle(&mut self, finish: &Finish) -> Vec<Effect> {
         let mut effects =
             alone(Write::Receipt(finish.key, finish.result.clone()));
-        let waiters = self.credentials.remove(&finish.key).unwrap_or_default();
+        let waiters = self.receipts.remove(&finish.key).unwrap_or_default();
         effects.extend(waiters.into_iter().map(|waiter| {
             Effect::Begun(waiter, Begun::Cached(finish.result.clone()))
         }));

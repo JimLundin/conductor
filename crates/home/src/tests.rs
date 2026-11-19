@@ -8,7 +8,7 @@ use proto::{
 use crate::checkout::{Probe, Root, candidates, matched, normal, probed};
 use crate::project::{Listing, Project, listed, parse};
 use crate::sync::{Git, Sync, next};
-use crate::{Stored, cloned, place, remote_of, view};
+use crate::{Found, Stored, cloned, place, remote_of, view};
 
 const ROOT: &str = "fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5";
 const OTHER: &str = "d2cef7849f3ce7cc16f17979e0acb8c21d9aed2a";
@@ -156,8 +156,18 @@ fn a_renamed_project_keeps_its_id_and_its_checkouts() {
         Vec::from([checkout("/a", Origin::Found)]),
     )]);
     let shown = renamed.clone().map(|project| {
-        view(REMOTE, &Sync::new(), &[project], (&found, &BTreeMap::new()))
-            .projects
+        view(
+            REMOTE,
+            &Sync::new(),
+            &[project],
+            Found {
+                checkouts: &found,
+                cloning: &BTreeMap::new(),
+                issues: &BTreeMap::new(),
+                unpushed: 0,
+            },
+        )
+        .projects
     });
     assert_eq!(
         (
@@ -322,8 +332,12 @@ fn a_remote_is_normal_without_scheme_user_suffix_or_case() {
 }
 
 #[test]
-fn the_host_clones_without_a_clone_and_pulls_with_one() {
-    assert_eq!([next(false), next(true)], [Git::Clone, Git::Pull]);
+fn the_host_clones_without_a_clone_pulls_with_one_and_replays_its_changes() {
+    assert_eq!(
+        [next(false, false), next(true, false), next(true, true)],
+        [Git::Clone, Git::Pull, Git::Replay]
+    );
+    assert_eq!(next(false, true), Git::Clone);
 }
 
 #[test]
@@ -379,21 +393,23 @@ fn home(checkouts: &[&str]) -> Home {
         REMOTE,
         &Sync::new().after(Ok(()), true, 5),
         &[project("conductor", Some(REMOTE)), project("sop", None)],
-        (
-            &BTreeMap::from([(
+        Found {
+            checkouts: &BTreeMap::from([(
                 id("conductor"),
                 checkouts
                     .iter()
                     .map(|path| checkout(path, Origin::Found))
                     .collect(),
             )]),
-            &BTreeMap::from([(
+            cloning: &BTreeMap::from([(
                 id("sop"),
                 Cloning::Failed {
                     reason: String::from("no"),
                 },
             )]),
-        ),
+            issues: &BTreeMap::new(),
+            unpushed: 2,
+        },
     )
 }
 
@@ -401,8 +417,13 @@ fn home(checkouts: &[&str]) -> Home {
 fn the_view_gives_each_project_its_checkouts_and_its_clone() {
     let shown = home(&["/a", "/b"]);
     assert_eq!(
-        (shown.remote.as_str(), shown.synced, &shown.sync),
-        (REMOTE, Some(5), &HomeSync::Synced)
+        (
+            shown.remote.as_str(),
+            shown.synced,
+            &shown.sync,
+            shown.unpushed
+        ),
+        (REMOTE, Some(5), &HomeSync::Synced, 2)
     );
     assert_eq!(
         shown.projects,
@@ -418,6 +439,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
                     checkout("/b", Origin::Found),
                 ]),
                 cloning: Cloning::Idle,
+                issues: Vec::new(),
             },
             proto::Project {
                 id: id("sop"),
@@ -429,6 +451,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
                 cloning: Cloning::Failed {
                     reason: String::from("no"),
                 },
+                issues: Vec::new(),
             },
         ]
     );

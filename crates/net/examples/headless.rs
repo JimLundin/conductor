@@ -377,9 +377,12 @@ impl Session {
                     }
                     CommandResult::Accepted
                     | CommandResult::Started { .. }
-                    | CommandResult::Diff(_) => Err(anyhow::Error::msg(
-                        "the host gave an unexpected answer",
-                    )),
+                    | CommandResult::Diff(_)
+                    | CommandResult::IssueCreated { .. } => {
+                        Err(anyhow::Error::msg(
+                            "the host gave an unexpected answer",
+                        ))
+                    }
                 }?;
                 self.log(&format!("registered the credential -> {kind}"))?;
                 Ok(())
@@ -403,9 +406,10 @@ impl Session {
             CommandResult::Accepted
             | CommandResult::Instances(_)
             | CommandResult::Rejected(_)
-            | CommandResult::Diff(_) => Err(anyhow::Error::msg(format!(
-                "the host did not start a session: {result:?}"
-            ))),
+            | CommandResult::Diff(_)
+            | CommandResult::IssueCreated { .. } => Err(anyhow::Error::msg(
+                format!("the host did not start a session: {result:?}"),
+            )),
         }
     }
 

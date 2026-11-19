@@ -11,8 +11,12 @@ use crate::prelude::*;
 /// What the host runs next to bring its clone up to date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Git {
+    /// Clone, then replay the host's unpushed issue changes, if any.
     Clone,
     Pull,
+    /// Fetch, reset to the remote, replay the host's unpushed issue
+    /// changes on top and push them: no merge of its own commits.
+    Replay,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,8 +82,13 @@ impl Sync {
     }
 }
 
-/// A clone with a `.git` is pulled; otherwise the host clones.
+/// A clone with a `.git` is pulled, or replayed onto when the host has
+/// changes the remote lacks; otherwise the host clones.
 #[must_use]
-pub const fn next(cloned: bool) -> Git {
-    if cloned { Git::Pull } else { Git::Clone }
+pub const fn next(cloned: bool, unpushed: bool) -> Git {
+    match (cloned, unpushed) {
+        (false, _) => Git::Clone,
+        (true, false) => Git::Pull,
+        (true, true) => Git::Replay,
+    }
 }

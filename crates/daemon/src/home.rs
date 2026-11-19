@@ -1,12 +1,18 @@
-//! The host's clone of the home (docs/home.md §3) and its projects'
-//! checkouts on this host.
+//! The host's clone of the home (docs/home.md §3), its projects' checkouts
+//! on this host, and the issues it writes.
 //!
-//! What the files say, which repositories are
-//! checkouts and where the clone stands are the `home` core's decisions;
-//! this task runs `git`, reads the directories and keeps what the host
-//! stores of its home, and nothing else touches the clone. It never
-//! writes in a checkout it found: it only reads them, and clones into its
-//! own data dir.
+//! What the files say, which repositories are checkouts, where the clone
+//! stands and what an issue change does to its file are the `home` core's
+//! decisions; this task runs `git`, reads and writes the files and keeps
+//! what the host stores of its home, and nothing else touches the clone.
+//! It never writes in a checkout it found: it only reads them, and clones
+//! into its own data dir.
+//!
+//! An issue change is written and committed in the clone at once, and
+//! kept in `<data>/home-edits.state` until the remote has it. When a push
+//! is refused, or the host syncs with changes still kept, it resets the
+//! clone to the remote and applies them again on top, so it never merges
+//! its own commits.
 //!
 //! One task owns it; [`HomeClone`] handles talk to it over a channel. What
 //! the home looks like now is on a watch channel, so a `Welcome` and a
@@ -16,15 +22,18 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use home::Stored;
 use home::checkout::{Probe, Root};
+use home::issue::{Applied, Change, Edit, Mode};
 use home::project::Project;
 use home::sync::{Git, Sync};
+use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
-    Checkout, Cloning, CommandResult, Home, HostPath, ProjectId, Rejection,
-    StartAt,
+    Checkout, ClientName, Cloning, CommandResult, Home, HostPath, Issue,
+    IssueChange, IssueFields, IssueId, ProjectId, Rejection, StartAt,
 };
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::Stopped;
@@ -38,6 +47,8 @@ const FRESH: u64 = 30;
 /// Where the host keeps its home, and where it looks for checkouts.
 #[derive(Debug, Clone)]
 pub struct Homing {
+    /// The host's name, which signs the notes it writes.
+    pub host: String,
     pub data_dir: PathBuf,
     /// The home's remote from the command line; `None` keeps the one the
     /// host stored, if any.
@@ -133,7 +144,25 @@ impl HomeClone {
     }
 }
 
+/// An issue change the remote doesn't have yet, and whether the clone's
+/// branch holds it now, so a push lands it.
+struct Pending {
+    edit: Edit,
+    written: bool,
+}
+
+/// What became of a change applied to the clone.
+enum Fate {
+    /// The clone's branch holds it.
+    Written,
+    /// Its issue is gone.
+    Dropped,
+    /// Its file doesn't read, for this reason.
+    Waiting(String),
+}
+
 struct Actor {
+    host: String,
     data_dir: PathBuf,
     /// The clone, `<data>/home-repo`.
     clone: PathBuf,
@@ -146,6 +175,10 @@ struct Actor {
     projects: Vec<Project>,
     found: BTreeMap<ProjectId, Vec<Checkout>>,
     cloning: BTreeMap<ProjectId, Cloning>,
+    issues: BTreeMap<ProjectId, Vec<Issue>>,
+    /// The issue changes the remote doesn't have yet, oldest first.
+    edits: Vec<Pending>,
+    edits_at: PathBuf,
     known: Vec<String>,
     shown: watch::Sender<Option<Home>>,
 }
@@ -153,12 +186,14 @@ struct Actor {
 impl Actor {
     fn new(homing: Homing, shown: watch::Sender<Option<Home>>) -> Self {
         let Homing {
+            host,
             data_dir,
             remote,
             roots,
         } = homing;
         let stored_at = data_dir.join("home.state");
-        let stored = load(&stored_at);
+        let stored: Stored = load(&stored_at);
+        let edits_at = data_dir.join("home-edits.state");
         let clones = data_dir.join("projects");
         let _ = std::fs::create_dir_all(&clones);
         Self {
@@ -169,6 +204,7 @@ impl Actor {
                 .into_owned(),
             remote: stored.remote(remote),
             known: stored.known(),
+            host,
             data_dir,
             stored: stored_at,
             roots,
@@ -176,6 +212,15 @@ impl Actor {
             projects: Vec::new(),
             found: BTreeMap::new(),
             cloning: BTreeMap::new(),
+            issues: BTreeMap::new(),
+            edits: load_edits(&edits_at)
+                .into_iter()
+                .map(|edit| Pending {
+                    edit,
+                    written: false,
+                })
+                .collect(),
+            edits_at,
             shown,
         }
     }
@@ -203,6 +248,18 @@ impl Actor {
             } => {
                 let _ = reply.send(self.clone_project(project).await);
             }
+            Msg::Order {
+                order: HomeOrder::Create(project, fields),
+                reply,
+            } => {
+                let _ = reply.send(self.create(project, fields).await);
+            }
+            Msg::Order {
+                order: HomeOrder::Change(issue, change, client),
+                reply,
+            } => {
+                let _ = reply.send(self.change(issue, change, &client).await);
+            }
             Msg::Place { project, reply } => {
                 self.fresh().await;
                 let shown = self.shown.borrow().clone();
@@ -229,18 +286,227 @@ impl Actor {
         }
     }
 
-    /// Clones or pulls the home, then reads it again.
+    /// Clones or pulls the home, or replays the host's changes onto it,
+    /// then reads it again.
     async fn refresh(&mut self) {
         let Some(remote) = self.remote.clone() else {
             return;
         };
-        let outcome = match home::sync::next(cloned(&self.clone)) {
-            Git::Clone => clone(&self.data_dir, &remote, &self.clone).await,
-            Git::Pull => pull(&self.clone).await,
-        };
+        let outcome = self.bring_up(&remote).await;
         self.sync =
             self.sync.clone().after(outcome, cloned(&self.clone), now());
         self.scan().await;
+    }
+
+    /// Runs what brings the clone up to date with the remote.
+    async fn bring_up(&mut self, remote: &str) -> Result<(), String> {
+        match home::sync::next(cloned(&self.clone), !self.edits.is_empty()) {
+            Git::Clone => {
+                let cloned = clone(&self.data_dir, remote, &self.clone).await;
+                self.replay_after(cloned).await
+            }
+            Git::Pull => pull(&self.clone).await,
+            Git::Replay => {
+                let fetched = fetch(&self.clone).await;
+                self.replay_after(fetched).await
+            }
+        }
+    }
+
+    /// Replays the kept changes once the remote has been read; how the
+    /// read or the replay's push went.
+    async fn replay_after(
+        &mut self,
+        read: Result<(), String>,
+    ) -> Result<(), String> {
+        read?;
+        self.replay().await
+    }
+
+    async fn create(
+        &mut self,
+        project: ProjectId,
+        wanted: IssueFields,
+    ) -> CommandResult {
+        self.fresh().await;
+        let projects = self
+            .projects
+            .iter()
+            .map(|known| known.id.clone())
+            .collect::<Vec<ProjectId>>();
+        match home::issue::opening(
+            self.remote.as_deref(),
+            &projects,
+            &project,
+            &wanted,
+        ) {
+            Err(rejection) => CommandResult::Rejected(rejection),
+            Ok(fields) => {
+                let issue = IssueId(ulid::Ulid::new().0);
+                let edit = Edit {
+                    project,
+                    issue,
+                    at: now(),
+                    by: self.host.clone(),
+                    change: Change::Create(fields),
+                    was: None,
+                };
+                match self.record(edit).await {
+                    Ok(()) => CommandResult::IssueCreated { issue },
+                    Err(rejection) => CommandResult::Rejected(rejection),
+                }
+            }
+        }
+    }
+
+    async fn change(
+        &mut self,
+        issue: IssueId,
+        change: IssueChange,
+        client: &ClientName,
+    ) -> CommandResult {
+        self.fresh().await;
+        let changing = home::issue::changing(
+            self.remote.as_deref(),
+            &self.issues,
+            issue,
+            change,
+        );
+        let recorded = match changing {
+            Err(rejection) => Err(rejection),
+            Ok((project, change)) => {
+                let edit = Edit {
+                    project,
+                    issue,
+                    at: now(),
+                    by: home::issue::signer(&self.host, &client.0),
+                    change: Change::Issue(change),
+                    was: None,
+                };
+                self.record(edit).await
+            }
+        };
+        home::answer(recorded)
+    }
+
+    /// Writes and commits the change in the clone, keeps it until the
+    /// remote has it, and pushes.
+    async fn record(&mut self, made: Edit) -> Result<(), Rejection> {
+        let current = std::fs::read_to_string(self.path(&made)).ok();
+        let edit = Edit {
+            was: home::issue::was(current.as_deref(), made.issue, &made.change),
+            ..made
+        };
+        match self.write(&edit, Mode::Record).await {
+            Ok(Fate::Written) => {}
+            Ok(Fate::Dropped) => return Err(Rejection::UnknownIssue),
+            Ok(Fate::Waiting(reason)) | Err(reason) => {
+                return Err(Rejection::IssueNotSaved { reason });
+            }
+        }
+        self.edits.push(Pending {
+            edit,
+            written: true,
+        });
+        self.keep();
+        self.land().await;
+        self.scan().await;
+        Ok(())
+    }
+
+    /// Pushes the kept changes; when the remote refuses them, replays them
+    /// on top of it.
+    async fn land(&mut self) {
+        if push(&self.clone).await.is_ok() {
+            self.landed();
+        } else if fetch(&self.clone).await.is_ok() {
+            let _ = self.replay().await;
+        }
+    }
+
+    /// Resets the clone to the remote, applies the kept changes on top,
+    /// each its own commit, and pushes them; how the reset or the push
+    /// went.
+    async fn replay(&mut self) -> Result<(), String> {
+        if self.edits.is_empty() {
+            return Ok(());
+        }
+        reset(&self.clone).await?;
+        self.rewrite_all().await;
+        self.keep();
+        push(&self.clone).await.map(|()| self.landed())
+    }
+
+    async fn rewrite_all(&mut self) {
+        let mut kept = Vec::new();
+        for pending in core::mem::take(&mut self.edits) {
+            kept.extend(self.rewrite(pending.edit).await);
+        }
+        self.edits = kept;
+    }
+
+    /// Applies a kept change again on top of the remote, and keeps it
+    /// unless its issue is gone; one that can't be written waits.
+    async fn rewrite(&self, edit: Edit) -> Option<Pending> {
+        let changed = changed_at(&self.clone, &relative(&edit)).await;
+        let fate = self.write(&edit, Mode::Replay { changed }).await;
+        let written = matches!(fate, Ok(Fate::Written));
+        match fate {
+            Ok(Fate::Dropped) => {
+                tracing::warn!(target: "home", issue = %home::issue::name(edit.issue), "dropped a change to an issue the home no longer has");
+                return None;
+            }
+            Ok(Fate::Waiting(reason)) | Err(reason) => {
+                tracing::warn!(target: "home", %reason, "an issue change waits");
+            }
+            Ok(Fate::Written) => {}
+        }
+        Some(Pending { edit, written })
+    }
+
+    /// The remote has every change written in the clone.
+    fn landed(&mut self) {
+        self.edits.retain(|pending| !pending.written);
+        self.keep();
+    }
+
+    fn keep(&self) {
+        let edits = self
+            .edits
+            .iter()
+            .map(|pending| pending.edit.clone())
+            .collect::<Vec<Edit>>();
+        save(&self.edits_at, &edits, "the unpushed issue changes");
+    }
+
+    fn path(&self, edit: &Edit) -> PathBuf {
+        self.clone.join(relative(edit))
+    }
+
+    /// Applies the change to the issue's file in the clone and commits it.
+    ///
+    /// # Errors
+    ///
+    /// When it can't be written or committed.
+    async fn write(&self, edit: &Edit, mode: Mode) -> Result<Fate, String> {
+        let path = self.path(edit);
+        let current = std::fs::read_to_string(&path).ok();
+        match home::issue::apply(current.as_deref(), edit, mode) {
+            Applied::Unchanged => Ok(Fate::Written),
+            Applied::Gone => Ok(Fate::Dropped),
+            Applied::Unreadable(reason) => Ok(Fate::Waiting(reason)),
+            Applied::Write(text) => {
+                if let Some(folder) = path.parent() {
+                    std::fs::create_dir_all(folder)
+                        .map_err(|err| err.to_string())?;
+                }
+                std::fs::write(&path, text).map_err(|err| err.to_string())?;
+                let message = home::issue::message(edit);
+                commit(&self.clone, &relative(edit), &message)
+                    .await
+                    .map(|()| Fate::Written)
+            }
+        }
     }
 
     async fn clone_project(&mut self, project: ProjectId) -> CommandResult {
@@ -264,6 +530,21 @@ impl Actor {
             tracing::warn!(target: "home", %problem, "skipped a project");
         }
         self.projects = listing.projects;
+        self.issues = self
+            .projects
+            .iter()
+            .map(|project| {
+                let folder = home::issue::folder(&project.id);
+                let (issues, problems) = home::issue::listed(
+                    &project.id,
+                    issue_files(&self.clone.join(folder)),
+                );
+                for problem in &problems {
+                    tracing::warn!(target: "home", %problem, "skipped an issue");
+                }
+                (project.id.clone(), issues)
+            })
+            .collect();
         let roots = self
             .roots
             .iter()
@@ -282,7 +563,7 @@ impl Actor {
         );
         let stored = Stored::kept(self.remote.clone(), &self.found);
         self.known = stored.known();
-        save(&self.stored, &stored);
+        save(&self.stored, &stored, "the home's checkouts");
         self.publish();
     }
 
@@ -293,7 +574,13 @@ impl Actor {
                     remote,
                     &self.sync,
                     &self.projects,
-                    (&self.found, &self.cloning),
+                    Found {
+                        checkouts: &self.found,
+                        cloning: &self.cloning,
+                        issues: &self.issues,
+                        unpushed: u64::try_from(self.edits.len())
+                            .unwrap_or(u64::MAX),
+                    },
                 )
             }));
     }
@@ -337,6 +624,94 @@ async fn pull(clone: &Path) -> Result<(), String> {
         let _ = text(clone, &["rebase", "--abort"]).await;
     }
     pulled
+}
+
+/// An issue's file, from the clone's root.
+fn relative(edit: &Edit) -> String {
+    home::issue::file(&edit.project, edit.issue)
+}
+
+async fn fetch(clone: &Path) -> Result<(), String> {
+    run(clone, &["fetch", "--quiet"]).await
+}
+
+/// Moves the clone to its upstream as fetched, dropping its own commits:
+/// the host keeps their changes and applies them again.
+async fn reset(clone: &Path) -> Result<(), String> {
+    run(clone, &["reset", "--quiet", "--hard", "@{upstream}"]).await
+}
+
+/// Pushes the clone's branch to its upstream, never forced.
+async fn push(clone: &Path) -> Result<(), String> {
+    run(clone, &["push", "--quiet"]).await
+}
+
+async fn run(clone: &Path, args: &[&str]) -> Result<(), String> {
+    text(clone, args)
+        .await
+        .map(drop)
+        .map_err(|err| err.to_string())
+}
+
+/// When the clone's branch last changed the file, in seconds since the
+/// Unix epoch; 0 when it never did.
+async fn changed_at(clone: &Path, relative: &str) -> u64 {
+    text(clone, &["log", "-1", "--format=%ct", "--", relative])
+        .await
+        .ok()
+        .and_then(|seconds| seconds.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Commits the file at `relative` alone, as Conductor.
+async fn commit(
+    clone: &Path,
+    relative: &str,
+    message: &str,
+) -> Result<(), String> {
+    text(clone, &["add", "--", relative])
+        .await
+        .map_err(|err| err.to_string())?;
+    text(
+        clone,
+        &[
+            "-c",
+            "user.name=Conductor",
+            "-c",
+            "user.email=conductor@localhost",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+            "--",
+            relative,
+        ],
+    )
+    .await
+    .map(drop)
+    .map_err(|err| err.to_string())
+}
+
+/// Each `.md` file in a project's issues folder, by its name without the
+/// extension, with its text.
+fn issue_files(folder: &Path) -> Vec<(String, Result<String, String>)> {
+    std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let stem = path
+                .extension()
+                .filter(|extension| *extension == "md")
+                .and_then(|_| path.file_stem())?
+                .to_string_lossy()
+                .into_owned();
+            let read =
+                std::fs::read_to_string(&path).map_err(|err| err.to_string());
+            Some((stem, read))
+        })
+        .collect()
 }
 
 /// Each folder of the clone's `projects/`, with its `project.toml`.
@@ -420,8 +795,22 @@ async fn probe(path: &str) -> Option<Probe> {
     )
 }
 
-/// What the host stored of its home, or nothing if it can't be read.
-fn load(path: &Path) -> Stored {
+/// The unpushed issue changes the host kept. A store that no longer reads
+/// is moved aside, so its changes are not lost unseen.
+fn load_edits(path: &Path) -> Vec<Edit> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    postcard::from_bytes(&bytes).unwrap_or_else(|err| {
+        let aside = path.with_extension("unreadable");
+        let moved = std::fs::rename(path, &aside);
+        tracing::warn!(target: "home", %err, aside = %aside.display(), ?moved, "could not read the unpushed issue changes");
+        Vec::new()
+    })
+}
+
+/// What the host stored at `path`, or nothing if it can't be read.
+fn load<T: DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
         .and_then(|bytes| postcard::from_bytes(&bytes).ok())
@@ -430,12 +819,12 @@ fn load(path: &Path) -> Stored {
 
 /// Writes the store beside its file, then renames it over, so a crash
 /// leaves either.
-fn save(path: &Path, stored: &Stored) {
+fn save<T: Serialize + ?Sized>(path: &Path, stored: &T, what: &str) {
     let written = postcard::to_stdvec(stored)
         .map_err(anyhow::Error::from)
         .and_then(|bytes| replace(path, &bytes));
     if let Err(err) = written {
-        tracing::warn!(target: "home", %err, "could not store the home's checkouts");
+        tracing::warn!(target: "home", %err, "could not store {what}");
     }
 }
 

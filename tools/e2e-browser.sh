@@ -14,7 +14,8 @@
 # (credentials, WebKit), Claude signed in from the app on the fake's sign-in
 # (sign-in, WebKit), two hosts paired in one app with a session started on
 # each (hosts, Chromium), a home's projects with a checkout found and one
-# cloned from the app and a session started in a project (projects,
+# cloned from the app, an issue opened, moved on, checked and noted, and a
+# session started in a project (projects,
 # Chromium), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
 # Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
@@ -377,6 +378,13 @@ projects_scenario() {
   [ -z "$(git -C "$at/roots/alpha" status --porcelain --untracked-files=no)" ] ||
     { echo "FAILED: host projects-host: the person's checkout changed"; return 1; }
   echo "ok: host projects-host: the person's checkout is untouched"
+  local pushed
+  pushed=$(git -C "$at/home-remote.git" log --format=%s)
+  for subject in '^Open issue .*: Remove sessions$' '^Move issue .* to in-progress$' '^Add an item to issue ' '^Note on issue '; do
+    grep -q "$subject" <<<"$pushed" ||
+      { echo "FAILED: host projects-host: the home's remote has no commit matching $subject"; return 1; }
+  done
+  echo "ok: host projects-host: each issue change reached the home's remote as its own commit"
 }
 
 screens() {

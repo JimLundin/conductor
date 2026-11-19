@@ -193,7 +193,7 @@ impl Conductor {
         let begun = match route.ledger() {
             Ledger::Unrecorded => return self.command(route).await,
             Ledger::Session => self.log.begin(command.id).await?,
-            Ledger::Credential => self.log.begin_credential(command.id).await?,
+            Ledger::Receipt => self.log.begin_receipt(command.id).await?,
         };
         match begun {
             BeginCommand::Cached(result) => Ok(result),

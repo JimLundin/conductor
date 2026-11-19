@@ -397,7 +397,8 @@ impl Forms {
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
-                | CommandResult::Diff(_),
+                | CommandResult::Diff(_)
+                | CommandResult::IssueCreated { .. },
             ) => Sent::Failed(format!("{host} gave an unexpected answer.")),
             Err(error) => Sent::Failed(error),
         };

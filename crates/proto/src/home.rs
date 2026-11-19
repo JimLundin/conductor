@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::HostPath;
+use crate::{HostPath, Issue};
 
 /// A project by its folder's name in the home's `projects/`, a lowercase
 /// ULID. Its name and title may change; its id never does.
@@ -24,6 +24,8 @@ pub struct Home {
     /// epoch on the host's clock.
     pub synced: Option<u64>,
     pub sync: HomeSync,
+    /// Issue changes the host has made that the remote doesn't have yet.
+    pub unpushed: u64,
     /// As the clone lists them, by id.
     pub projects: Vec<Project>,
 }
@@ -56,6 +58,8 @@ pub struct Project {
     /// first. None: it isn't checked out here.
     pub checkouts: Vec<Checkout>,
     pub cloning: Cloning,
+    /// By id, which orders them by when they were opened.
+    pub issues: Vec<Issue>,
 }
 
 /// A repository on this host whose root commit and remote are a project's.

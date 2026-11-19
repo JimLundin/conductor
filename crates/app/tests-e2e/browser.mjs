@@ -804,6 +804,32 @@ if (scenario === 'turn') {
   await page.screenshot({ path: out });
   log(`screenshot ${out}`);
 
+  // An issue opened from the project, moved on, checked and noted.
+  await project('alpha').locator('input[name="issue-title"]').fill('Remove sessions');
+  await project('alpha').getByRole('button', { name: 'Open', exact: true }).click();
+  const issue = page.locator('.issue-pane');
+  await issue.waitFor({ timeout: PATIENCE });
+  check((await issue.locator('.pane-title h2').innerText()) === 'Remove sessions', 'the new issue opens');
+  check((await issue.locator('select[name="status"]').inputValue()) === 'open', 'it opens as open');
+  await issue.locator('select[name="status"]').selectOption('in-progress');
+  await issue.locator('input[name="item"]').fill('the browser scenario');
+  await issue.getByRole('button', { name: 'Add', exact: true }).click();
+  await issue.locator('.checklist li', { hasText: 'the browser scenario' }).waitFor({ timeout: PATIENCE });
+  await issue.locator('textarea[name="note"]').fill('from the phone');
+  await issue.getByRole('button', { name: 'Add note' }).click();
+  await issue.locator('.note', { hasText: 'from the phone' }).waitFor({ timeout: PATIENCE });
+  const note = await issue.locator('.note').innerText();
+  check(/^\d{4}-\d\d-\d\d conductor · iPhone: from the phone$/.test(note), `the note is dated and signed by the host and the device ("${note}")`);
+  check((await issue.locator('select[name="status"]').inputValue()) === 'in-progress', 'the status moved on');
+  await settled();
+  await page.screenshot({ path: out.replace(/\.png$/, '-issue.png') });
+  await issue.getByRole('button', { name: 'Back to projects' }).click();
+  await project('alpha').locator('.issue-group[data-status="in-progress"] .issue-title').waitFor({ timeout: PATIENCE });
+  check(
+    (await project('alpha').locator('.issue-group[data-status="in-progress"] .issue-detail').innerText()) === 'normal · 0/1 done',
+    'the project lists the issue under its status, with its checklist',
+  );
+
   await back();
   await page.getByRole('button', { name: 'New session' }).click();
   const choices = await page.locator('select[name="project"] option').allInnerTexts();

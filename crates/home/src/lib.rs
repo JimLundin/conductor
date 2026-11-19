@@ -11,6 +11,7 @@
 extern crate alloc;
 
 pub mod checkout;
+pub mod issue;
 mod prelude;
 pub mod project;
 pub mod sync;
@@ -18,8 +19,8 @@ pub mod sync;
 use alloc::collections::BTreeMap;
 
 use proto::{
-    Checkout, Cloning, CommandResult, Home, HostPath, ProjectId, Rejection,
-    StartAt,
+    Checkout, Cloning, CommandResult, Home, HostPath, Issue, ProjectId,
+    Rejection, StartAt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -68,22 +69,35 @@ impl Stored {
     }
 }
 
+/// What the host found of its projects beside what the home lists.
+#[derive(Debug, Clone, Copy)]
+pub struct Found<'host> {
+    pub checkouts: &'host BTreeMap<ProjectId, Vec<Checkout>>,
+    pub cloning: &'host BTreeMap<ProjectId, Cloning>,
+    pub issues: &'host BTreeMap<ProjectId, Vec<Issue>>,
+    /// Issue changes the remote doesn't have yet.
+    pub unpushed: u64,
+}
+
 /// The home as the host reports it.
 #[must_use]
 pub fn view(
     remote: &str,
     sync: &Sync,
     projects: &[Project],
-    found: (
-        &BTreeMap<ProjectId, Vec<Checkout>>,
-        &BTreeMap<ProjectId, Cloning>,
-    ),
+    found: Found<'_>,
 ) -> Home {
-    let (checkouts, cloning) = found;
+    let Found {
+        checkouts,
+        cloning,
+        issues,
+        unpushed,
+    } = found;
     Home {
         remote: remote.to_owned(),
         synced: sync.synced,
         sync: sync.status.clone(),
+        unpushed,
         projects: projects
             .iter()
             .map(|project| proto::Project {
@@ -100,6 +114,7 @@ pub fn view(
                     .get(&project.id)
                     .cloned()
                     .unwrap_or(Cloning::Idle),
+                issues: issues.get(&project.id).cloned().unwrap_or_default(),
             })
             .collect(),
     }

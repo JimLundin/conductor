@@ -162,7 +162,25 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .checkout-path { font-size: 0.8125rem; overflow-wrap: anywhere; }
 .checkout-state { color: var(--muted); font-size: 0.875rem; }
 .checkout[data-checkout="failed"] .checkout-state { color: var(--red); }
-.projects-pane .clear { min-height: 44px; background: var(--surface); color: var(--ink); box-shadow: inset 0 1px 0 var(--line), inset 0 0 0 1px var(--line); }
+.projects-pane .clear, .issue-pane .clear { min-height: 44px; background: var(--surface); color: var(--ink); box-shadow: inset 0 1px 0 var(--line), inset 0 0 0 1px var(--line); }
+
+/* Issues. */
+.issues { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.9rem; }
+.issue-group h3, .issue-pane h3 { margin: 0 0 0.4rem; font-size: 0.8125rem; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.issue-group ul, .checklist, .notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+.issue-row { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+.issue-title { font-weight: 600; }
+.issue-detail { color: var(--muted); font-size: 0.8125rem; }
+.new-issue, .add-item, .add-note { display: flex; gap: 0.5rem; align-items: flex-start; }
+.new-issue input, .add-item input, .add-note textarea { flex: 1; }
+.issue-fields { display: flex; gap: 1rem; flex-wrap: wrap; }
+.issue-fields label, .edit-issue label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.875rem; }
+.issue-body { white-space: pre-wrap; }
+.issue-labels { color: var(--muted); font-size: 0.875rem; margin: 0; }
+.checklist li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.checklist li[data-done="true"] label { color: var(--muted); text-decoration: line-through; }
+.note { white-space: pre-wrap; font-size: 0.9375rem; padding-left: 0.75rem; border-left: 2px solid var(--line); }
+.edit-issue { display: flex; flex-direction: column; gap: 0.9rem; }
 .host-credentials + .host-credentials { margin-top: 2rem; }
 .host-credentials > .credential-head h2 { font-size: 1.2rem; }
 

@@ -19,7 +19,7 @@
 )]
 
 use dioxus::prelude::*;
-use ui::Intent;
+use ui::{Intent, NewIssueIntent};
 
 use crate::{PaneHeader, Shell};
 
@@ -83,6 +83,53 @@ fn Project(project: ui::ProjectGroup) -> Element {
                 for row in project.hosts {
                     Checkout { key: "{row.key}", row }
                 }
+            }
+            Issues { list: project.issues }
+        }
+    }
+}
+
+/// The project's issues by status, and the field that opens a new one.
+#[component]
+fn Issues(list: ui::IssueList) -> Element {
+    let shell = use_context::<Shell>();
+    let project = list.project.clone();
+    let create = list.create.clone();
+    rsx! {
+        div { class: "issues",
+            for group in list.groups {
+                div { class: "issue-group", "data-status": group.status,
+                    h3 { "{group.label}" }
+                    ul {
+                        for row in group.rows {
+                            li { key: "{row.key}",
+                                button {
+                                    r#type: "button",
+                                    class: "issue-row",
+                                    onclick: move |_| shell.dispatch(row.open.clone()),
+                                    span { class: "issue-title", "{row.title}" }
+                                    span { class: "issue-detail", "{row.detail}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            form { class: "new-issue",
+                onsubmit: move |event: FormEvent| {
+                    event.prevent_default();
+                    if let Some(intent) = create.clone() {
+                        shell.dispatch(intent);
+                    }
+                },
+                input {
+                    name: "issue-title",
+                    placeholder: "New issue",
+                    "aria-label": "New issue's title",
+                    value: "{list.new_title}",
+                    oninput: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::TypeTitle(project.clone(), event.value()))),
+                }
+                button { r#type: "submit", class: "clear", disabled: list.create.is_none(), "Open" }
             }
         }
     }

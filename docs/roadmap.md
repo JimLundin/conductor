@@ -136,9 +136,21 @@ What is built and what comes next. Update it in the commit that changes it.
   `conductor/<ulid>`, pushes that branch alone to the checkout's `origin`
   without force, and removes the worktree and its checkpoint refs. The
   branch stays in the checkout; `SessionRemoved` says whether it was
-  pushed. The removed session leaves the app and takes no command. Next:
-  issues (home step 6). *Try:* close a session, press *Remove*, and find
-  its work on `conductor/<ulid>` in the checkout.
+  pushed. The removed session leaves the app and takes no command. *Try:*
+  close a session, press *Remove*, and find its work on
+  `conductor/<ulid>` in the checkout.
+- **Issues** (home step 6, architecture §5.4). Each project in *Projects*
+  lists its issues by status, with a field that opens one; an issue's pane
+  sets its status and priority, edits its title, body and labels, checks
+  off its checklist and takes notes, which the host dates and signs with
+  its name and the device's (ALPN `conductor/20`). The host writes each
+  change to `projects/<project>/issues/<id>.md` in its clone of the home,
+  one commit each, and pushes; when the remote has moved on it resets to
+  it and applies its kept changes again on top, so concurrent notes both
+  stay. Offline changes wait in `<data>/home-edits.state` and land on the
+  next sync. Next: sessions on issues (home step 7). *Try:* open an issue
+  in a project, add a note from the phone, and find the commit in the
+  home's history.
 
 ## Next
 

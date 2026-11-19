@@ -107,7 +107,8 @@ impl Attempt {
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Instances(_)
-                | CommandResult::Diff(_),
+                | CommandResult::Diff(_)
+                | CommandResult::IssueCreated { .. },
             ) => Self::Editing,
             Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
                 Self::Refused(Refusal::Directory)

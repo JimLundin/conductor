@@ -159,6 +159,7 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         signer: signer(plugins, data_dir.clone()),
     };
     let home = HomeClone::spawn(Homing {
+        host: name.clone(),
         data_dir: data_dir.clone(),
         remote,
         roots: projects,

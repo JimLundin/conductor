@@ -2026,6 +2026,7 @@ dependencies = [
  "proto",
  "serde",
  "toml",
+ "ulid",
 ]
 
 [[package]]
@@ -4807,6 +4808,7 @@ dependencies = [
  "serde_spanned",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.5",
 ]
 
