@@ -56,7 +56,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/20";
+pub const ALPN: &[u8] = b"conductor/21";
 
 /// One frame of a subscription: a logged event, where a sign-in stands, or
 /// the host's home as it is now, which replaces the one before.
@@ -563,6 +563,11 @@ pub enum Rejection {
     IssueNotSaved {
         reason: String,
     },
+    /// The instance has this session on the issue already: one session
+    /// per instance and issue.
+    IssueTaken {
+        session: SessionId,
+    },
 }
 
 impl Rejection {
@@ -635,6 +640,9 @@ impl Rejection {
             Self::IssueNotSaved { reason } => {
                 format!("the issue was not saved: {reason}")
             }
+            Self::IssueTaken { .. } => String::from(
+                "that instance has a session on the issue already; continue it, or remove it first",
+            ),
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }
@@ -798,6 +806,11 @@ pub enum EventKind {
     /// `None` when it had no workspace. Nothing follows it.
     SessionRemoved {
         kept: Option<Kept>,
+    },
+    /// The session works on this issue, on a branch cut from the issue's.
+    /// It follows `SessionCreated`.
+    OnIssue {
+        issue: IssueId,
     },
 }
 

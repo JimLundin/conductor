@@ -17,7 +17,7 @@ use proto::{
 use tokio::sync::{broadcast, watch};
 
 use crate::Stopped;
-use crate::home::HomeClone;
+use crate::home::{HomeClone, Placement};
 use crate::log::{BeginCommand, Log};
 use crate::registry::Registry;
 
@@ -235,10 +235,53 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         match self.home.place(at).await? {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok(directory) => {
-                self.registry.start(instance, directory, choice, by).await
-            }
+            Ok(placed) => self.start_placed(instance, placed, choice, by).await,
         }
+    }
+
+    /// Starts a session where it was placed. One on an issue first needs
+    /// the instance to have no session on it and the issue's branch to be
+    /// ready, and then moves the issue on.
+    async fn start_placed(
+        &self,
+        instance: InstanceId,
+        placed: Placement,
+        choice: (Option<ModelId>, Option<Effort>),
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        let issue = placed.on.as_ref().map(|on| on.issue);
+        if let Some(refused) =
+            self.unready(&instance, placed.on.as_ref()).await?
+        {
+            return Ok(CommandResult::Rejected(refused));
+        }
+        let started = self
+            .registry
+            .start(instance, placed, choice, by.clone())
+            .await?;
+        if let (CommandResult::Started { .. }, Some(on)) = (&started, issue) {
+            self.home.started(on, by).await?;
+        }
+        Ok(started)
+    }
+
+    /// Why a session on the issue can't start yet: the instance has one on
+    /// it, or the issue's branch can't be readied.
+    async fn unready(
+        &self,
+        instance: &InstanceId,
+        on: Option<&home::issue::Start>,
+    ) -> Result<Option<Rejection>, Stopped> {
+        let Some(start) = on else {
+            return Ok(None);
+        };
+        let history = self.log.history().await?;
+        if let Some(session) =
+            host::registry::on_issue(&history, start.issue, instance)
+        {
+            return Ok(Some(Rejection::IssueTaken { session }));
+        }
+        Ok(self.home.ready(start.clone()).await?.err())
     }
 
     async fn order(

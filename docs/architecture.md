@@ -672,6 +672,29 @@ standards and issues, cloned on every host. Built so far are home steps
   `Home.unpushed` counts them, the sync is `Behind` while a push fails,
   and the next sync lands them. A store of them that no longer decodes is
   moved aside to `home-edits.unreadable`.
+- **Sessions on issues** (home step 7, started). `StartSession { at:
+  StartAt::Issue(issue) }` starts in the issue's project's first
+  checkout (`NotCheckedOut` without one). An instance has one session on
+  an issue until it is removed (`host::registry::on_issue`; `IssueTaken`),
+  checked before anything else. Then the host readies the issue's branch,
+  `issue/<id>`, in the checkout (`home::issue::Branch`): it fetches
+  `origin`'s, the remote the home matched the checkout by, into
+  `refs/remotes/origin/issue/<id>`, and points the checkout's at it when
+  the checkout has none or one the remote's contains; one the remote's
+  lacks commits of stays. A new one starts at `origin/HEAD`, else the
+  checkout's `HEAD`. It refuses (`WorkspaceFailure`) to make a new branch
+  while `origin` can't be read, and to start when both have moved on,
+  so a session never leaves the remote's work out. The session's own
+  branch is cut from it, `OnIssue { issue }` follows `SessionCreated`, and
+  the agent's first message is the issue's brief (`home::issue::start`):
+  its title, body, checklist and notes, the branch, and what to do when
+  done; one that doesn't reach the agent leaves an `Error` in the session.
+  The home actor then moves an `open` or `ready` issue to `in-progress`,
+  as the issue is then (`home::issue::started`). The fetch runs in the
+  home actor, so issue commands wait for it. The app's issue pane lists
+  its sessions on every paired host and opens the new-session form on it.
+  Another host continues the issue from its branch once finishing pushes
+  it (next).
 
 ## 6. Planned: the fleet
 

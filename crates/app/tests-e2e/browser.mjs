@@ -842,6 +842,24 @@ if (scenario === 'turn') {
   check((await pane.locator('.pane-title p').innerText()) === `${dir}/roots/alpha on conductor`, "the session runs in alpha's checkout");
   await back();
   check((await page.locator('.row-title').allInnerTexts()).join(', ') === 'alpha', 'the session is listed by its project');
+
+  // A session on the issue, started from its page: its first message is
+  // the issue's brief, and the issue lists it.
+  await page.getByRole('button', { name: 'Projects', exact: true }).click();
+  await project('alpha').locator('.issue-row', { hasText: 'Remove sessions' }).click();
+  await page.locator('.issue-pane').getByRole('button', { name: 'Start a session' }).click();
+  check((await page.locator('.on-issue').innerText()) === 'On the issue Remove sessions', 'the form starts on the issue');
+  check((await page.locator('input[name="directory"]').count()) === 0, 'an issue hides the directory');
+  await page.locator('.segment', { hasText: 'Claude Code' }).click();
+  await page.getByRole('button', { name: 'Start session' }).click();
+  const brief = pane.locator('.user .bubble', { hasText: 'Remove sessions' });
+  await brief.waitFor({ timeout: PATIENCE });
+  check((await brief.innerText()).startsWith('You are working on the issue "Remove sessions" in alpha.'), 'the first message is the issue\'s brief');
+  await back();
+  await page.getByRole('button', { name: 'Projects', exact: true }).click();
+  await project('alpha').locator('.issue-row', { hasText: 'Remove sessions' }).click();
+  await page.locator('.issue-sessions li').first().waitFor({ timeout: PATIENCE });
+  check(/^Claude Code on conductor · /.test(await page.locator('.issue-sessions li').innerText()), 'the issue lists its session');
 } else if (scenario === 'hosts') {
   const secondJoin = process.env.SECOND_JOIN;
   const group = (name) => page.locator('.host-group', { has: page.locator('.status .host', { hasText: new RegExp(`^${name}$`) }) });

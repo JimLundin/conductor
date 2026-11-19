@@ -110,6 +110,9 @@ pub fn NewSession(form: ui::NewSessionForm) -> Element {
                     event.prevent_default();
                     change(FormIntent::Start);
                 },
+                if let Some(title) = form.issue {
+                    p { class: "on-issue", "On the issue " strong { "{title}" } }
+                }
                 label { class: "field",
                     span { class: "field-label", "Host" }
                     select {

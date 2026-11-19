@@ -39,8 +39,8 @@ pub use credentials::{
 };
 pub use host::{HostId, StatusLine};
 pub use issues::{
-    EditForm, IssueIntent, IssueList, IssueRow, IssueScreen, ItemRow,
-    NewIssueIntent, Pick, StatusGroup,
+    EditForm, IssueIntent, IssueList, IssueRow, IssueScreen, IssueSession,
+    ItemRow, NewIssueIntent, Pick, StatusGroup,
 };
 pub use new_session::{
     Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,
@@ -122,6 +122,8 @@ pub enum Intent {
     Session(SessionIntent),
     /// Opens an issue from the projects view.
     NewIssue(NewIssueIntent),
+    /// Opens the new-session form on this issue, on this host.
+    StartOn(HostId, IssueId),
     /// Acts on the issue shown.
     Issue(IssueIntent),
     /// A host's answer to a command an [`Effect::Send`] sent, or why none

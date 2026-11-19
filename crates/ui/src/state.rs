@@ -196,6 +196,16 @@ impl State {
                 (Self { issues, ..self }, effects)
             }
             Intent::Issue(change) => self.issue(change),
+            Intent::StartOn(host, issue) => {
+                let shown = self.show(Place::NewSession);
+                (
+                    Self {
+                        form: Form::on_issue(host, issue),
+                        ..shown
+                    },
+                    Vec::new(),
+                )
+            }
             Intent::Replied(reply, answer) => self.replied(reply, answer),
         }
     }
@@ -558,7 +568,12 @@ impl State {
                 .hosts
                 .get(&host)
                 .and_then(|known| {
-                    issues::screen(known, id, &self.issues, self.notice.clone())
+                    issues::screen(
+                        (host, known),
+                        id,
+                        (&self.issues, &self.hosts),
+                        self.notice.clone(),
+                    )
                 })
                 .map_or(
                     Detail::Placeholder(

@@ -16,8 +16,8 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use proto::{
-    ChecklistItem, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
-    Priority, ProjectId, Rejection,
+    ChecklistItem, Home, HostPath, Issue, IssueChange, IssueFields, IssueId,
+    IssueStatus, Priority, ProjectId, Rejection,
 };
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
@@ -822,6 +822,171 @@ fn rfc3339(at: u64) -> String {
         rest % 3600 / 60,
         rest % 60
     )
+}
+
+/// What a session on an issue starts from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Start {
+    pub issue: IssueId,
+    /// The project's checkout the session's worktree is made from.
+    pub checkout: HostPath,
+    /// The issue's branch, as a full ref, which the session's is cut from.
+    pub branch: String,
+    /// The agent's first message.
+    pub brief: String,
+}
+
+/// How a session on issue `id` starts, in its project's first checkout.
+///
+/// # Errors
+///
+/// The host has no home, its home lists no such issue, or the issue's
+/// project has no checkout on the host.
+pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
+    let known = home.ok_or(Rejection::NoHome)?;
+    let (project, issue) = known
+        .projects
+        .iter()
+        .find_map(|project| {
+            project
+                .issues
+                .iter()
+                .find(|issue| issue.id == id)
+                .map(|issue| (project, issue))
+        })
+        .ok_or(Rejection::UnknownIssue)?;
+    let checkout = project.checkouts.first().ok_or(Rejection::NotCheckedOut)?;
+    Ok(Start {
+        issue: id,
+        checkout: checkout.path.clone(),
+        branch: format!("refs/heads/{}", issue.branch),
+        brief: brief(&project.title, issue),
+    })
+}
+
+/// The status an issue moves to once a session on it has started: work
+/// on an `open` or `ready` one is in progress.
+#[must_use]
+pub const fn started(status: IssueStatus) -> Option<IssueStatus> {
+    match status {
+        IssueStatus::Open | IssueStatus::Ready => Some(IssueStatus::InProgress),
+        IssueStatus::InProgress
+        | IssueStatus::Review
+        | IssueStatus::Done
+        | IssueStatus::Dropped => None,
+    }
+}
+
+/// The agent's first message: the issue as its file has it, and what to
+/// do with it.
+fn brief(project: &str, issue: &Issue) -> String {
+    let checklist = issue
+        .checklist
+        .iter()
+        .map(item_line)
+        .collect::<Vec<String>>();
+    let notes = issue
+        .notes
+        .iter()
+        .flat_map(|note| note_lines(note))
+        .collect::<Vec<String>>();
+    let section = |heading: &str, lines: &[String]| {
+        if lines.is_empty() {
+            String::new()
+        } else {
+            format!("\n{heading}:\n{}\n", lines.join("\n"))
+        }
+    };
+    format!(
+        "You are working on the issue \"{title}\" in {project}. You are on a branch cut from {branch}; commit your work on it as you go.\n\n{body}\n{checklist}{notes}\nWork through what is left. When you are done, or stuck, say so, and sum up what you did and what is left.",
+        title = issue.title,
+        branch = issue.branch,
+        body = if issue.body.is_empty() {
+            "The issue has no description."
+        } else {
+            &issue.body
+        },
+        checklist = section("Its checklist", &checklist),
+        notes = section("Its notes so far", &notes),
+    )
+}
+
+/// The remote's copy of an issue's branch, as the checkout found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Remote {
+    /// The project has no remote, or its remote has no such branch.
+    Absent,
+    At(String),
+    /// The remote couldn't be read, for this reason.
+    Unreachable(String),
+}
+
+/// Where an issue's branch stands in a checkout, before a session on it
+/// starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branch {
+    pub local: Option<String>,
+    pub remote: Remote,
+    /// Where a new issue's branch starts: the remote's default branch,
+    /// else the checkout's `HEAD`.
+    pub base: String,
+    /// The local branch is an ancestor of the remote's.
+    pub behind: bool,
+    /// The remote's branch is an ancestor of the local one.
+    pub ahead: bool,
+}
+
+/// What becomes of the checkout's issue branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Move {
+    Keep,
+    /// Point it at `commit`; `old` is where it is, `None` when it's new.
+    Set {
+        commit: String,
+        old: Option<String>,
+    },
+    /// The session can't start from it, for this reason.
+    Refuse(String),
+}
+
+impl Branch {
+    /// The branch follows the remote's, which carries the issue from host
+    /// to host. One with commits of its own the remote lacks stays as it
+    /// is; one whose remote moved on too, or a new one while the remote
+    /// can't be read, would leave the remote's work out, so the session
+    /// doesn't start.
+    #[must_use]
+    pub fn next(self) -> Move {
+        match (self.local, self.remote) {
+            (None, Remote::Absent) => Move::Set {
+                commit: self.base,
+                old: None,
+            },
+            (None, Remote::At(remote)) => Move::Set {
+                commit: remote,
+                old: None,
+            },
+            (None, Remote::Unreachable(reason)) => Move::Refuse(format!(
+                "the project's remote can't be read, and the issue's branch may be there: {reason}"
+            )),
+            (Some(local), Remote::At(remote))
+                if local != remote && self.behind =>
+            {
+                Move::Set {
+                    commit: remote,
+                    old: Some(local),
+                }
+            }
+            (Some(local), Remote::At(remote))
+                if local != remote && !self.ahead =>
+            {
+                Move::Refuse(String::from(
+                    "the issue's branch here and on the remote have both moved on; merge them first",
+                ))
+            }
+            (Some(_), _) => Move::Keep,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -120,17 +120,20 @@ pub fn view(
     }
 }
 
-/// The directory a session starts in: the one given, or a project's first
-/// checkout. The session's project follows from its worktree's repository,
+/// The directory a session starts in: the one given, or the first
+/// checkout of a project or an issue's project. The session's project follows from its worktree's repository,
 /// so it isn't kept apart.
 ///
 /// # Errors
 ///
 /// The host has no home, its home lists no such project, or the project
 /// has no checkout on the host.
-pub fn place(at: StartAt, home: Option<&Home>) -> Result<HostPath, Rejection> {
+pub fn place(at: StartAt, home: Option<&Home>) -> Result<Placement, Rejection> {
     match at {
-        StartAt::Directory(directory) => Ok(directory),
+        StartAt::Directory(directory) => Ok(Placement {
+            directory,
+            on: None,
+        }),
         StartAt::Project(id) => {
             let known = home.ok_or(Rejection::NoHome)?;
             let project = known
@@ -140,9 +143,23 @@ pub fn place(at: StartAt, home: Option<&Home>) -> Result<HostPath, Rejection> {
                 .ok_or(Rejection::UnknownProject)?;
             let checkout =
                 project.checkouts.first().ok_or(Rejection::NotCheckedOut)?;
-            Ok(checkout.path.clone())
+            Ok(Placement {
+                directory: checkout.path.clone(),
+                on: None,
+            })
         }
+        StartAt::Issue(id) => issue::start(home, id).map(|on| Placement {
+            directory: on.checkout.clone(),
+            on: Some(on),
+        }),
     }
+}
+
+/// Where a session starts, and the issue it works on, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub directory: HostPath,
+    pub on: Option<issue::Start>,
 }
 
 /// The remote to clone a project from.

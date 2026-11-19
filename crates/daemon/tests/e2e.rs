@@ -6590,3 +6590,84 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
 }
+
+fn on_issue(issue: proto::IssueId) -> CommandBody {
+    CommandBody::StartSession {
+        instance: instance(Provider::Claude),
+        at: StartAt::Issue(issue),
+        model: None,
+        effort: None,
+    }
+}
+
+#[tokio::test]
+async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
+-> Fallible {
+    let land = homeland("issue-sessions")?;
+    let (fx, _) =
+        host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
+            .await?;
+    let (link, mut updates) = link(fx.target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let _ = home_until(&link, &mut updates, |home| {
+        !checkouts_of(home, "alpha").is_empty()
+    })
+    .await?;
+    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let session = started_session(&send(&link, on_issue(issue)).await?)?;
+    let events = events_until(&mut updates, Until::Request).await?;
+    let mine = events
+        .iter()
+        .filter(|event| event.session == session)
+        .map(|event| event.kind.clone())
+        .collect::<Vec<EventKind>>();
+    assert!(mine.contains(&EventKind::OnIssue { issue }));
+    let brief = mine.iter().find_map(|kind| match kind {
+        EventKind::UserMessage { text, by } => Some((text.clone(), by.clone())),
+        _ => None,
+    });
+    assert!(
+        brief.as_ref().is_some_and(|(text, by)| {
+            text.contains("\"Sign in\"")
+                && text.contains("Why.")
+                && *by == test_client()
+        }),
+        "the first message is the issue's brief: {brief:?}"
+    );
+    let branch = format!("issue/{}", home::issue::name(issue));
+    let alpha = land.roots.join("apps").join("alpha");
+    let session_branch = mine
+        .iter()
+        .find_map(|kind| match kind {
+            EventKind::WorkspaceCreated { workspace } => {
+                Some(workspace.branch.clone())
+            }
+            _ => None,
+        })
+        .ok_or("the session made no workspace")?;
+    assert_eq!(
+        git(&alpha, &["rev-parse", &session_branch])?,
+        git(&alpha, &["rev-parse", &branch])?,
+        "the session's branch is cut from the issue's"
+    );
+    assert_eq!(
+        git(&alpha, &["rev-parse", &branch])?,
+        git(&alpha, &["rev-parse", "HEAD"])?,
+        "a new issue's branch starts at the checkout's HEAD"
+    );
+    let moved = home_until(&link, &mut updates, |home| {
+        alpha_issues(home)
+            .iter()
+            .any(|shown| shown.status == IssueStatus::InProgress)
+    })
+    .await?;
+    assert_eq!(moved.unpushed, 0);
+    assert_eq!(
+        send(&link, on_issue(issue)).await?,
+        CommandResult::Rejected(Rejection::IssueTaken { session })
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}

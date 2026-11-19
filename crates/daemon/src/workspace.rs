@@ -193,14 +193,17 @@ async fn validate(workspace: &Workspace) -> Result<PathBuf, GitError> {
     }
 }
 
+/// The session's worktree of the repository at `original`, on its own
+/// branch from `base`, a ref, or else the repository's committed `HEAD`.
 pub async fn create(
     data_dir: &Path,
     original: &HostPath,
     session: SessionId,
+    base: Option<&str>,
 ) -> Result<Workspace, GitError> {
     let original_path = canonical(Path::new(&original.0))?;
     let repository = repository_root(&original_path).await?;
-    let head = committed_head(&repository).await?;
+    let head = start_commit(&repository, base).await?;
     let relative =
         original_path.strip_prefix(&repository).map_err(|error| {
             failure("selected subdirectory", &error.to_string())
@@ -230,6 +233,21 @@ pub async fn create(
     }
     let _ = validate(&workspace).await?;
     Ok(workspace)
+}
+
+/// The commit a session's branch starts at: `base`'s, or the committed
+/// `HEAD`'s.
+async fn start_commit(
+    repository: &Path,
+    base: Option<&str>,
+) -> Result<String, GitError> {
+    match base {
+        Some(reference) => {
+            let wanted = format!("{reference}^{{commit}}");
+            text(repository, &["rev-parse", "--verify", &wanted]).await
+        }
+        None => committed_head(repository).await,
+    }
 }
 
 async fn repository_root(original: &Path) -> Result<PathBuf, GitError> {
@@ -725,7 +743,7 @@ mod tests {
         let _ = text(&repo.source, &["remote", "add", "origin", &url]).await?;
         let id = SessionId(u128::from(ulid::Ulid::new()));
         let original = super::host(&repo.source)?;
-        let workspace = create(&repo.data, &original, id).await?;
+        let workspace = create(&repo.data, &original, id, None).await?;
         let checkpointed =
             snapshot(&workspace, id, CheckpointId(0), None).await?;
         let root = PathBuf::from(&workspace.worktree.0);
@@ -755,7 +773,7 @@ mod tests {
         let repo = repository().await?;
         let id = SessionId(u128::from(ulid::Ulid::new()));
         let original = super::host(&repo.source)?;
-        let workspace = create(&repo.data, &original, id).await?;
+        let workspace = create(&repo.data, &original, id, None).await?;
         let head = text(&repo.source, &["rev-parse", "HEAD"]).await?;
         assert_eq!(remove(&workspace).await?, Kept::Local);
         let branch = host::workspace::head(&workspace);
@@ -895,10 +913,10 @@ mod tests {
         let (source_index, source_head) = dirty_source(&repo).await?;
         let id = SessionId(ulid::Ulid::new().into());
         let workspace =
-            create(&repo.data, &host(&repo.source.join("sub dir"))?, id)
+            create(&repo.data, &host(&repo.source.join("sub dir"))?, id, None)
                 .await?;
         assert_eq!(
-            create(&repo.data, &workspace.original, id).await?,
+            create(&repo.data, &workspace.original, id, None).await?,
             workspace
         );
         let root = Path::new(&workspace.worktree.0);
@@ -989,7 +1007,8 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await?;
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace = create(&repo.data, &host(&repo.source)?, id).await?;
+        let workspace =
+            create(&repo.data, &host(&repo.source)?, id, None).await?;
         let root = Path::new(&workspace.worktree.0);
         let initial = checkpoint(
             0,
@@ -1058,7 +1077,7 @@ mod tests {
         let repo = repository().await?;
         let id = SessionId(ulid::Ulid::new().into());
         let workspace =
-            create(&repo.data, &host(&repo.source.join("sub dir"))?, id)
+            create(&repo.data, &host(&repo.source.join("sub dir"))?, id, None)
                 .await?;
         let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
         std::fs::remove_dir_all(&workspace.directory.0)?;
@@ -1111,7 +1130,7 @@ mod tests {
         std::fs::create_dir(&plain)?;
         assert_eq!(
             matches!(
-                create(&repo.data, &host(&plain)?, SessionId(1)).await,
+                create(&repo.data, &host(&plain)?, SessionId(1), None).await,
                 Err(GitError::NotRepository)
             )
             .then_some(()),
@@ -1120,7 +1139,7 @@ mod tests {
         let _ = text(&plain, &["init", "-q"]).await?;
         assert_eq!(
             matches!(
-                create(&repo.data, &host(&plain)?, SessionId(1)).await,
+                create(&repo.data, &host(&plain)?, SessionId(1), None).await,
                 Err(GitError::NotRepository)
             )
             .then_some(()),
@@ -1135,7 +1154,7 @@ mod tests {
         std::fs::write(occupied.join("unrelated.txt"), "keep\n")?;
         assert_eq!(
             matches!(
-                create(&repo.data, &host(&repo.source)?, id).await,
+                create(&repo.data, &host(&repo.source)?, id, None).await,
                 Err(GitError::Failed(_))
             )
             .then_some(()),
@@ -1146,7 +1165,8 @@ mod tests {
             "keep\n"
         );
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace = create(&repo.data, &host(&repo.source)?, id).await?;
+        let workspace =
+            create(&repo.data, &host(&repo.source)?, id, None).await?;
         let commit = snapshot(&workspace, id, CheckpointId(0), None).await?;
         let root = Path::new(&workspace.worktree.0);
         let _ = text(root, &["symbolic-ref", "HEAD", "refs/heads/unrelated"])

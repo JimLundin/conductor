@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{HostPath, Issue};
+use crate::{HostPath, Issue, IssueId};
 
 /// A project by its folder's name in the home's `projects/`, a lowercase
 /// ULID. Its name and title may change; its id never does.
@@ -87,9 +87,11 @@ pub enum Cloning {
     Failed { reason: String },
 }
 
-/// Where a new session runs: a directory, or a project's checkout.
+/// Where a new session runs: a directory, a project's checkout, or an
+/// issue's project's checkout on a branch cut from the issue's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StartAt {
     Directory(HostPath),
     Project(ProjectId),
+    Issue(IssueId),
 }

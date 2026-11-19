@@ -11,7 +11,7 @@ use proto::{
     Priority, Project, ProjectId,
 };
 
-use crate::host::{Host, HostId};
+use crate::host::{Host, HostId, by_name};
 use crate::{At, Effect, Intent, Place, ReplyTo};
 
 /// Opening an issue from the projects view.
@@ -394,6 +394,19 @@ pub struct IssueScreen {
     /// The host is live, so the issue can change.
     pub enabled: bool,
     pub notice: Option<String>,
+    /// Opens the new-session form on the issue.
+    pub start: Intent,
+    /// The sessions on it, on every paired host.
+    pub sessions: Vec<IssueSession>,
+}
+
+/// A session on the issue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueSession {
+    pub key: String,
+    /// Its instance and host, and its state.
+    pub label: String,
+    pub open: Intent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,9 +444,9 @@ pub fn find(host: &Host, id: IssueId) -> Option<(&Project, &Issue)> {
 }
 
 pub fn screen(
-    host: &Host,
+    (at, host): (HostId, &Host),
     id: IssueId,
-    drafts: &Drafts,
+    (drafts, hosts): (&Drafts, &BTreeMap<HostId, Host>),
     notice: Option<String>,
 ) -> Option<IssueScreen> {
     let (project, issue) = find(host, id)?;
@@ -482,5 +495,39 @@ pub fn screen(
         }),
         enabled: host.live(),
         notice,
+        start: Intent::StartOn(at, id),
+        sessions: sessions(hosts, id),
     })
+}
+
+/// The sessions on issue `id` on every paired host, by host and the most
+/// recently active first.
+fn sessions(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> Vec<IssueSession> {
+    by_name(hosts)
+        .into_iter()
+        .flat_map(|(host_id, host)| {
+            let catalog = host.catalog();
+            host.view
+                .recent()
+                .into_iter()
+                .filter_map(|session| {
+                    host.view.sessions.get(&session).map(|view| (session, view))
+                })
+                .filter(|(_, view)| view.issue == Some(id))
+                .map(|(session, view)| IssueSession {
+                    key: format!("{}-{:032x}", host_id.key(), session.0),
+                    label: format!(
+                        "{} on {} · {}",
+                        crate::credentials::instance_name(
+                            &view.instance,
+                            &catalog
+                        ),
+                        host.name(),
+                        view.status.word()
+                    ),
+                    open: Intent::Show(Place::Session(host_id, session)),
+                })
+                .collect::<Vec<IssueSession>>()
+        })
+        .collect()
 }

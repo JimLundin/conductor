@@ -373,6 +373,10 @@ projects_scenario() {
   echo
   expect projects-host 1 'body: CloneProject { project: ProjectId("beta") }' 'the clone reached the host'
   expect projects-host 1 'at: Project(ProjectId("alpha"))' 'the session started in alpha'
+  expect projects-host 1 'at: Issue(IssueId(' 'a session started on the issue'
+  [ -n "$(git -C "$at/roots/alpha" for-each-ref 'refs/heads/issue/')" ] ||
+    { echo "FAILED: host projects-host: the checkout has no issue branch"; return 1; }
+  echo "ok: host projects-host: the issue's branch is in the checkout"
   [ -e "$scratch/projects-host/projects/beta/.git" ] || { echo "FAILED: host projects-host: beta was not cloned into the data dir"; return 1; }
   echo "ok: host projects-host: beta was cloned into the data dir"
   [ -z "$(git -C "$at/roots/alpha" status --porcelain --untracked-files=no)" ] ||
