@@ -37,7 +37,7 @@ pub struct Profile {
     pub config: Config,
     /// The instructions file its CLI reads by itself in its working
     /// directory, which a session's instructions then leave out.
-    pub reads: String,
+    pub instructions_file: String,
     /// The CLI's `--version`, which must succeed for the host to offer it.
     pub version: Invocation,
     /// The CLI's own check, which succeeds when its home is signed in.

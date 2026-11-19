@@ -29,17 +29,18 @@ use crate::workspace;
 /// What a performed effect hands back: the next input, after a call.
 type Performed = Result<Option<Input>, Stopped>;
 
-type Compose = dyn Fn(&HostPath, Provider) -> Option<String> + Send + Sync;
+type Compose =
+    dyn Fn(&HostPath, &HostPath, Provider) -> Option<String> + Send + Sync;
 
 /// What the host tells a session's agent beside its CLI's own
-/// instructions, for a session created in a directory with a provider's
-/// CLI (docs/home.md §5).
+/// instructions (docs/home.md §5), for a session created in a directory,
+/// whose agent runs in another, with a provider's CLI.
 #[derive(Clone)]
 pub struct Instructor(Arc<Compose>);
 
 impl Instructor {
     pub fn new(
-        compose: impl Fn(&HostPath, Provider) -> Option<String>
+        compose: impl Fn(&HostPath, &HostPath, Provider) -> Option<String>
         + Send
         + Sync
         + 'static,
@@ -54,13 +55,12 @@ impl fmt::Debug for Instructor {
     }
 }
 
-/// Where a session was created and which provider runs it, and how the
-/// host composes its instructions from those each time its agent starts,
-/// so they follow the home as it is then.
+/// How the host composes a session's instructions each time its agent
+/// starts, so they follow the home as it is then, and the provider whose
+/// CLI runs it.
 #[derive(Debug, Clone)]
 pub struct Told {
     pub instructor: Instructor,
-    pub directory: HostPath,
     pub provider: Provider,
 }
 
@@ -89,6 +89,8 @@ struct Actor {
     inbox: mpsc::Receiver<SessionMsg>,
     runtime: Runtime,
     told: Told,
+    /// Where the session was created, which places it in its project.
+    created: HostPath,
     /// The agent's steps that arrived while the actor waited on a call;
     /// it takes them once it has taken the call's outcome.
     held: VecDeque<Step>,
@@ -135,12 +137,14 @@ impl Session {
     ) -> Self {
         let (runtime, conversation) = agent;
         let (inbox, messages) = mpsc::channel(16);
+        let created = directory.clone();
         let core = Core::restore(id, directory, choice, conversation, history);
         let actor = Actor {
             id,
             inbox: messages,
             runtime,
             told,
+            created,
             held: VecDeque::new(),
             log,
             reply: None,
@@ -287,17 +291,18 @@ impl Actor {
     /// Sends the agent `command` and waits for its outcome. A start takes
     /// the session's instructions as the home has them now.
     async fn ask(&mut self, command: Command) -> Outcome {
-        let told = self.told(command);
-        let unanswered = told.failed("the agent's runtime has stopped");
-        let _ = self.runtime.commands.send(told).await;
+        let instructed = self.instructed(command);
+        let unanswered = instructed.failed("the agent's runtime has stopped");
+        let _ = self.runtime.commands.send(instructed).await;
         self.outcome().await.unwrap_or(unanswered)
     }
 
-    fn told(&self, command: Command) -> Command {
+    fn instructed(&self, command: Command) -> Command {
         match command {
             Command::Start(start) => Command::Start(Start {
                 instructions: (self.told.instructor.0)(
-                    &self.told.directory,
+                    &self.created,
+                    &start.directory,
                     self.told.provider,
                 ),
                 ..start

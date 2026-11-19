@@ -108,7 +108,7 @@ impl HomeClone {
     pub fn spawn(homing: Homing) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let (shown, watched) = watch::channel(None);
-        let clone = homing.data_dir.join("home-repo");
+        let clone = clone_of(&homing.data_dir);
         tokio::spawn(Actor::new(homing, shown).run(messages));
         Self {
             inbox,
@@ -117,29 +117,31 @@ impl HomeClone {
         }
     }
 
-    /// What a session created in `directory` is told, by a CLI that reads
-    /// `reads` by itself: the files as the clone and the project's checkout
-    /// have them now, read without waiting on the task.
+    /// What a session created in `created`, whose agent runs in
+    /// `runs_in`, is told by a CLI that reads `file` by itself: the files
+    /// as the clone and the directory it runs in have them now, read
+    /// without waiting on the task. Before the task first shows the home,
+    /// that is the shared rules alone.
     #[must_use]
     pub fn instructions(
         &self,
-        directory: &HostPath,
-        reads: &str,
+        created: &HostPath,
+        runs_in: &HostPath,
+        file: &str,
     ) -> Option<String> {
         let projects = self.shown().map_or_default(|home| home.projects);
-        let own = home::instructions::project_of(&projects, &directory.0).map(
-            |(project, checkout)| {
-                let top = Path::new(&checkout.path.0);
-                Own {
+        let directory = Path::new(&runs_in.0);
+        let own =
+            home::instructions::project_of(&projects, &canonical(created)).map(
+                |(project, _)| Own {
                     project,
-                    rules: read(&top.join("AGENTS.md")),
-                    native: top.join(reads).is_file(),
-                }
-            },
-        );
+                    rules: read(&directory.join(home::instructions::RULES)),
+                    cli_reads_rules: directory.join(file).is_file(),
+                },
+            );
         home::instructions::compose(&Sources {
             home: self.clone.display().to_string(),
-            shared: read(&self.clone.join("AGENTS.md")),
+            shared: read(&self.clone.join(home::instructions::RULES)),
             own,
         })
     }
@@ -306,7 +308,7 @@ impl Actor {
         let clones = data_dir.join("projects");
         let _ = std::fs::create_dir_all(&clones);
         Self {
-            clone: data_dir.join("home-repo"),
+            clone: clone_of(&data_dir),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
                 .to_string_lossy()
@@ -1083,6 +1085,19 @@ async fn probe(path: &str) -> Option<Probe> {
         roots.as_deref(),
         remote.as_deref(),
     )
+}
+
+/// The host's clone of the home, `<data>/home-repo`.
+fn clone_of(data_dir: &Path) -> PathBuf {
+    data_dir.join("home-repo")
+}
+
+/// `path` as checkouts are found, through any symlink.
+fn canonical(path: &HostPath) -> String {
+    std::fs::canonicalize(&path.0)
+        .ok()
+        .and_then(|resolved| resolved.to_str().map(str::to_owned))
+        .unwrap_or_else(|| path.0.clone())
 }
 
 fn read(path: &Path) -> Option<String> {

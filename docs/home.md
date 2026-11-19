@@ -198,12 +198,15 @@ Built (`home::instructions`). The shared rules are the home's root
 `AGENTS.md`, and the composed text says where the node's clone is, so the
 rules' paths into the home resolve. Each profile is named with the path of
 its `standards/<profile>/` and its `check.sh`. The session's project is the
-one with a checkout at or around the directory it was created in; a
-session elsewhere gets the shared rules only. The project's `AGENTS.md` is
-left out when the checkout holds the file the CLI reads by itself, which
-its plugin names (`CLAUDE.md` for Claude, `AGENTS.md` for Codex). The
-session's actor composes them each time its agent starts, from the files
-as they are then, so an edit to the standards reaches the next start;
+one with a checkout at or around the directory it was created in, through
+any symlink; a session elsewhere, or one whose agent starts before the
+node first reads its home, gets the shared rules only. The project's
+`AGENTS.md` is read where the agent runs, its workspace on the session's
+branch, and left out when that holds the file the CLI reads by itself,
+which its plugin names (`CLAUDE.md` for Claude, `AGENTS.md` for Codex): a
+`CLAUDE.md` is taken to bring in the project's rules. The session's actor
+composes them each time its agent starts, from the files as they are
+then, so an edit to the standards reaches the next start;
 Claude takes them as an appended system prompt, Codex as the thread's
 developer instructions (architecture §3).
 

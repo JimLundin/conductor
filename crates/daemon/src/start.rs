@@ -116,15 +116,17 @@ pub async fn signing(
 /// A session's instructions from the home, leaving out the file its
 /// provider's CLI reads by itself, as its plugin says.
 fn instructor(plugins: &Plugins, home: HomeClone) -> Instructor {
-    let reads = plugins
+    let files = plugins
         .0
         .iter()
-        .map(|(provider, plugin)| (*provider, plugin.profile.reads.clone()))
+        .map(|(provider, plugin)| {
+            (*provider, plugin.profile.instructions_file.clone())
+        })
         .collect::<BTreeMap<Provider, String>>();
-    Instructor::new(move |directory, provider| {
-        reads
+    Instructor::new(move |created, runs_in, provider| {
+        files
             .get(&provider)
-            .and_then(|file| home.instructions(directory, file))
+            .and_then(|file| home.instructions(created, runs_in, file))
     })
 }
 

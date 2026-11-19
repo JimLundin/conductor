@@ -551,7 +551,7 @@ impl RegistryActor {
             .core
             .launcher(&instance)
             .map_or_else(Runtime::refusing, |start| start.start());
-        let told = self.told(&directory, provider);
+        let told = self.told(provider);
         let session = Session::restore(
             id,
             directory,
@@ -565,10 +565,9 @@ impl RegistryActor {
         Ok(())
     }
 
-    fn told(&self, directory: &HostPath, provider: Provider) -> Told {
+    fn told(&self, provider: Provider) -> Told {
         Told {
             instructor: self.instructor.clone(),
-            directory: directory.clone(),
             provider,
         }
     }
@@ -675,7 +674,7 @@ impl RegistryActor {
                     .log
                     .record(id, EventKind::CheckpointCreated { checkpoint })
                     .await?;
-                let told = self.told(&directory, provider);
+                let told = self.told(provider);
                 let session = Session::spawn(
                     id,
                     directory,
@@ -927,8 +926,8 @@ mod tests {
                     Err(String::from("no instance signs in"))
                 }),
                 instructor: crate::session::Instructor::new(
-                    |directory, provider| {
-                        Some(format!("{} in {}", provider.name(), directory.0))
+                    |created, _, provider| {
+                        Some(format!("{} in {}", provider.name(), created.0))
                     },
                 ),
             },

@@ -51,7 +51,7 @@ fn a_session_takes_the_shared_rules_its_profiles_and_the_project_rules_its_cli_s
         own: Some(Own {
             project: &project,
             rules: Some(String::from("Gate with tools/check.sh.")),
-            native: false,
+            cli_reads_rules: false,
         }),
     };
     assert_eq!(
@@ -95,7 +95,7 @@ fn rules_the_cli_reads_by_itself_are_left_out_and_no_sources_make_none() {
         own: Some(Own {
             project: &project,
             rules: Some(String::from("Gate with tools/check.sh.")),
-            native: true,
+            cli_reads_rules: true,
         }),
     };
     assert_eq!(

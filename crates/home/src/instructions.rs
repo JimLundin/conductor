@@ -8,6 +8,10 @@ use proto::{Checkout, Project};
 
 use crate::prelude::*;
 
+/// The file that holds rules: the home's shared ones at its top, and a
+/// project's own in its checkout.
+pub const RULES: &str = "AGENTS.md";
+
 /// What the host read for a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sources<'a> {
@@ -19,14 +23,15 @@ pub struct Sources<'a> {
     pub own: Option<Own<'a>>,
 }
 
+/// The project a session is in, as its directory has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Own<'a> {
     pub project: &'a Project,
-    /// The checkout's `AGENTS.md`.
+    /// The project's [`RULES`].
     pub rules: Option<String>,
-    /// The session's CLI reads its own instructions file in the checkout,
-    /// which holds one.
-    pub native: bool,
+    /// The directory holds the file the session's CLI reads by itself,
+    /// which then tells it the project's rules.
+    pub cli_reads_rules: bool,
 }
 
 /// The project with a checkout at `directory` or around it, and that
@@ -97,7 +102,7 @@ fn project(home: &str, own: &Own<'_>) -> String {
     let rules = own
         .rules
         .as_deref()
-        .filter(|text| !own.native && !text.trim().is_empty())
+        .filter(|text| !own.cli_reads_rules && !text.trim().is_empty())
         .map(|text| {
             section(&format!("Rules of {title} (its `AGENTS.md`)"), text)
         });

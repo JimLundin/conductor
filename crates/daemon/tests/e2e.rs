@@ -2992,7 +2992,7 @@ async fn plugin_host_logging(data: &Path, log: Log) -> Fallible<Fixture> {
         catalog: catalog(),
         builder: daemon::start::builder(plugins.clone(), data.to_path_buf()),
         signer: daemon::start::signer(plugins, data.to_path_buf()),
-        instructor: Instructor::new(|_, _| None),
+        instructor: Instructor::new(|_, _, _| None),
     };
     serve_setup(endpoint().await?, setup, log).await
 }
@@ -4186,7 +4186,7 @@ fn setup(
             Launcher::Unavailable(String::from(UNAVAILABLE))
         }),
         signer: Signer::new(|_, _| async { Err(String::from(UNAVAILABLE)) }),
-        instructor: Instructor::new(|_, _| None),
+        instructor: Instructor::new(|_, _, _| None),
     }
 }
 

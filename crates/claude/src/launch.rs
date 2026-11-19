@@ -187,7 +187,7 @@ pub fn profile() -> Profile {
         provider: Provider::Claude,
         info: crate::info(),
         pin: Cli::Claude,
-        reads: String::from("CLAUDE.md"),
+        instructions_file: String::from("CLAUDE.md"),
         config: Config {
             file: String::from("settings.json"),
             contents: String::from("{\n  \"cleanupPeriodDays\": 36500\n}\n"),
