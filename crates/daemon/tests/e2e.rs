@@ -6709,7 +6709,7 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_it_and_asks_review
         finishing.last(),
         Some(&EventKind::SessionFinished {
             finished: proto::Finished::Landed {
-                commits: 1,
+                commits: 2,
                 kept: Kept::Pushed {
                     remote: String::from(remote.trim())
                 },

@@ -155,22 +155,22 @@ fn a_commit_is_owned_when_a_checkpoint_ref_names_it() {
 }
 
 #[test]
-fn a_checkpoint_id_taken_again_must_record_the_same_tree_and_parent() {
+fn a_checkpoint_id_taken_again_must_record_the_same_tree() {
     assert_eq!(existing(failed("")), Ok(None));
     assert_eq!(existing(output(b"abc\n")), Ok(Some(String::from("abc"))));
-    assert_eq!(reuse(("t", "p"), "t", "p"), Ok(()));
+    assert_eq!(reuse("t", "t"), Ok(()));
     assert_eq!(
-        reuse(("t", "p"), "u", "p"),
+        reuse("t", "u"),
         failure(
             "checkpoint id already records a different tree: metadata differs"
         )
     );
-    assert_eq!(
-        reuse(("t", "p"), "t", "q"),
-        failure(
-            "checkpoint id already records a different parent: metadata differs"
-        )
-    );
+}
+
+#[test]
+fn a_turn_that_changed_no_file_makes_no_commit() {
+    assert_eq!(super::turn("t", "t"), super::Turn::Tip);
+    assert_eq!(super::turn("t", "u"), super::Turn::Commit);
 }
 
 #[test]
