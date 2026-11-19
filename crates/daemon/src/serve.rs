@@ -2,7 +2,9 @@
 //! protocol's rules are [`host::serve`]; this reads and writes the frames
 //! and calls the log and the registry.
 
-use host::serve::{self, Admission, Ledger, Order, Relaunch, Route, Stream};
+use host::serve::{
+    self, Admission, HomeOrder, Ledger, Order, Relaunch, Route, Stream,
+};
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
@@ -11,8 +13,8 @@ use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, Command, CommandResult, Effort, Event,
-    Feed as Frame, HelloReply, Home, InstanceId, ModelId, Open, Rejection,
-    SessionId, SignIn, StartAt, Subscribe, Welcome,
+    Feed as Frame, HelloReply, Home, InstanceId, IssueChange, ModelId, Open,
+    Rejection, SessionId, SignIn, StartAt, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -235,8 +237,25 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         match self.home.place(at).await? {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok(directory) => {
-                self.registry.start(instance, directory, choice, by).await
+            Ok(placed) => {
+                let moved = placed
+                    .on
+                    .as_ref()
+                    .and_then(|on| on.moved.map(|status| (on.issue, status)));
+                let started = self
+                    .registry
+                    .start(instance, placed, choice, by.clone())
+                    .await?;
+                if let (CommandResult::Started { .. }, Some((issue, status))) =
+                    (&started, moved)
+                {
+                    let change = IssueChange::Status(status);
+                    let _ = self
+                        .home
+                        .order(HomeOrder::Change(issue, change, by))
+                        .await?;
+                }
+                Ok(started)
             }
         }
     }

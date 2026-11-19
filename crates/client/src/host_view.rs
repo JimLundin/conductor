@@ -7,10 +7,10 @@ use core::cmp::Reverse;
 
 use proto::{
     CheckpointId, ClientName, CloseReason, Effort, Event, EventKind, HostPath,
-    HostSeq, InstanceId, ModelId, Provider, Question, RequestId, Resolution,
-    SessionId, SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome,
-    Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
-    UndoAvailability, Workspace,
+    HostSeq, InstanceId, IssueId, ModelId, Provider, Question, RequestId,
+    Resolution, SessionId, SubagentActivity, SubagentEvent, SubagentId,
+    SubagentOutcome, Task, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +28,8 @@ pub struct SessionView {
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
+    /// The issue it works on, if any.
+    pub issue: Option<IssueId>,
     /// The tasks the session holds, in its agent's order.
     pub tasks: Vec<Task>,
     pub workspace: Option<Workspace>,
@@ -306,6 +308,7 @@ impl HostView {
                 model,
                 effort,
                 status: SessionStatus::Starting,
+                issue: None,
                 tasks: Vec::new(),
                 workspace: None,
                 checkpoints: Vec::new(),
@@ -527,6 +530,10 @@ impl SessionView {
                 ..self
             },
             EventKind::TasksChanged { tasks } => Self { tasks, ..self },
+            EventKind::OnIssue { issue } => Self {
+                issue: Some(issue),
+                ..self
+            },
             EventKind::EffortChanged { effort } => Self {
                 effort: Some(effort),
                 ..self
@@ -1231,6 +1238,7 @@ mod tests {
                     model: None,
                     effort: None,
                     status: SessionStatus::Idle,
+                    issue: None,
                     tasks: Vec::new(),
                     subagents: Vec::new(),
                     items: Vec::from([
@@ -1299,6 +1307,7 @@ mod tests {
                     status: SessionStatus::Closed(CloseReason::Exited {
                         status: text("1"),
                     }),
+                    issue: None,
                     tasks: Vec::new(),
                     subagents: Vec::new(),
                     items: Vec::from([Item::Error(text("odd"))]),

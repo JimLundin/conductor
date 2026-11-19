@@ -115,6 +115,25 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                     }
                     button { r#type: "submit", class: "clear", disabled, "Add" }
                 }
+                h3 { "Sessions" }
+                ul { class: "issue-sessions",
+                    for session in screen.sessions {
+                        li { key: "{session.key}",
+                            button {
+                                r#type: "button",
+                                class: "issue-row",
+                                onclick: move |_| shell.dispatch(session.open.clone()),
+                                "{session.label}"
+                            }
+                        }
+                    }
+                }
+                button {
+                    r#type: "button",
+                    class: "clear start-on-issue",
+                    onclick: move |_| shell.dispatch(screen.start.clone()),
+                    "Start a session"
+                }
                 h3 { "Notes" }
                 ul { class: "notes",
                     for note in screen.notes {

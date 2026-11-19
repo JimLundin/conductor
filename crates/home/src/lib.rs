@@ -120,8 +120,8 @@ pub fn view(
     }
 }
 
-/// The directory a session starts in: the one given, or a project's first
-/// checkout. The session's project follows from its worktree's repository,
+/// The directory a session starts in: the one given, or the first
+/// checkout of a project or an issue's project. The session's project follows from its worktree's repository,
 /// so it isn't kept apart.
 ///
 /// # Errors
@@ -142,6 +142,7 @@ pub fn place(at: StartAt, home: Option<&Home>) -> Result<HostPath, Rejection> {
                 project.checkouts.first().ok_or(Rejection::NotCheckedOut)?;
             Ok(checkout.path.clone())
         }
+        StartAt::Issue(id) => issue::start(home, id).map(|at| at.checkout),
     }
 }
 

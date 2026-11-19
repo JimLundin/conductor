@@ -1,6 +1,6 @@
 //! The form that starts a session: the host it runs on, then one of that
 //! host's instances, its model and effort, and one of the host's projects
-//! or a directory there.
+//! or a directory there; or, opened from an issue, the issue.
 
 use alloc::collections::BTreeMap;
 
@@ -11,7 +11,7 @@ use client::new_session::{
 };
 use proto::{
     Availability, CommandBody, CommandResult, Effort, Home, HostPath,
-    InstanceId, Instances, ModelId, ProjectId, StartAt,
+    InstanceId, Instances, IssueId, ModelId, ProjectId, StartAt,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -39,6 +39,9 @@ pub enum FormIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSessionForm {
     pub subtitle: String,
+    /// The issue the session works on, by its title, when the form was
+    /// opened from one; the projects and the directory are hidden then.
+    pub issue: Option<String>,
     /// The `select` of the paired hosts, each valued by its key.
     pub hosts: Vec<Choice>,
     pub instances: Vec<InstanceChoice>,
@@ -105,6 +108,8 @@ pub struct Form {
     effort: Option<Effort>,
     /// `None` starts in the directory.
     project: Option<ProjectId>,
+    /// Starts on this issue instead of a project or a directory.
+    issue: Option<IssueId>,
     directory: String,
     attempt: Attempt,
 }
@@ -124,8 +129,18 @@ impl Form {
             model: None,
             effort: None,
             project: None,
+            issue: None,
             directory: String::new(),
             attempt: Attempt::Editing,
+        }
+    }
+
+    /// A blank form that starts a session on `issue`, on `host` unless a
+    /// person picks another: continuing elsewhere is the same form.
+    pub fn on_issue(host: HostId, issue: IssueId) -> Self {
+        Self {
+            issue: Some(issue),
+            ..Self::on(Some(host))
         }
     }
 
@@ -202,14 +217,7 @@ impl Form {
                 else {
                     return (self, Vec::new());
                 };
-                let at = self.project(known.home()).map_or_else(
-                    || {
-                        StartAt::Directory(HostPath(
-                            self.directory.trim().to_owned(),
-                        ))
-                    },
-                    |project| StartAt::Project(project.clone()),
-                );
+                let at = self.place(known.home());
                 let body = CommandBody::StartSession {
                     instance,
                     at,
@@ -251,6 +259,24 @@ impl Form {
                 .or_else(|| listed.first())
                 .copied()
         })
+    }
+
+    /// Where the session starts: the issue, else the project, else the
+    /// directory.
+    fn place(&self, home: Option<&Home>) -> StartAt {
+        self.issue.map_or_else(
+            || {
+                self.project(home).map_or_else(
+                    || {
+                        StartAt::Directory(HostPath(
+                            self.directory.trim().to_owned(),
+                        ))
+                    },
+                    |project| StartAt::Project(project.clone()),
+                )
+            },
+            StartAt::Issue,
+        )
     }
 
     /// The project a person picked, if the host's home still lists it.
@@ -320,7 +346,10 @@ impl Form {
             .collect::<Vec<Suggestion>>();
         let home = chosen.and_then(|(_, host)| host.home());
         let project = self.project(home);
-        let placed = project.is_some() || !self.directory.trim().is_empty();
+        let issue = self.issue.map(|id| issue_title(hosts, id));
+        let placed = issue.is_some()
+            || project.is_some()
+            || !self.directory.trim().is_empty();
         let (start_disabled, start_label) =
             match (&self.attempt, placed, picked) {
                 (Attempt::Starting, _, _) => (true, "Starting…"),
@@ -328,9 +357,11 @@ impl Form {
                 (_, true, Some(_)) => (false, "Start session"),
             };
         NewSessionForm {
-            subtitle: String::from(
-                "Runs on the host you choose, in one of its projects or a directory there.",
-            ),
+            subtitle: String::from(if issue.is_some() {
+                "Runs on the host you choose, on the issue's branch in its project there."
+            } else {
+                "Runs on the host you choose, in one of its projects or a directory there."
+            }),
             hosts: by_name(hosts)
                 .into_iter()
                 .map(|(id, host)| host_choice(id, host, chosen))
@@ -361,8 +392,11 @@ impl Form {
             efforts: self
                 .effort_choices(&efforts(&offered, self.model.as_ref())),
             models: self.model_choices(&offered),
-            projects: home.map(|known| project_choices(known, project)),
-            directory_shown: project.is_none(),
+            projects: home
+                .filter(|_| issue.is_none())
+                .map(|known| project_choices(known, project)),
+            directory_shown: project.is_none() && issue.is_none(),
+            issue,
             directory: self.directory.clone(),
             directory_invalid: directory_error.is_some(),
             directory_error: directory_error.map(alert),
@@ -406,6 +440,17 @@ impl Form {
         });
         core::iter::once(first).chain(listed).collect()
     }
+}
+
+/// The issue's title as a paired host's home has it, else its id.
+fn issue_title(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> String {
+    hosts
+        .values()
+        .find_map(|host| crate::issues::find(host, id))
+        .map_or_else(
+            || format!("{:032x}", id.0),
+            |(_, issue)| issue.title.clone(),
+        )
 }
 
 /// A directory first, then each project the home lists; one with no

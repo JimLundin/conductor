@@ -34,8 +34,8 @@ use alloc::format;
 
 use proto::{
     Account, Auth, Availability, Catalog, CommandResult, Credential, Effort,
-    Event, EventKind, Instance, InstanceId, InstanceStatus, Instances, ModelId,
-    Models, Provider, Rejection, Roster, SessionId,
+    Event, EventKind, Instance, InstanceId, InstanceStatus, Instances, IssueId,
+    ModelId, Models, Provider, Rejection, Roster, SessionId,
 };
 use sha2::{Digest, Sha256};
 
@@ -258,6 +258,38 @@ pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
         }
     }
     running
+}
+
+/// The session `instance` has on `issue` after `history`, if it has one
+/// it hasn't removed: an instance works on an issue in one session.
+#[must_use]
+pub fn on_issue(
+    history: &[Event],
+    issue: IssueId,
+    instance: &InstanceId,
+) -> Option<SessionId> {
+    let mut issues = BTreeMap::new();
+    let mut of = BTreeMap::new();
+    for event in history {
+        match &event.kind {
+            EventKind::SessionCreated { instance, .. } => {
+                of.insert(event.session, instance);
+            }
+            EventKind::OnIssue { issue } => {
+                issues.insert(event.session, *issue);
+            }
+            EventKind::SessionRemoved { .. } => {
+                issues.remove(&event.session);
+            }
+            _ => {}
+        }
+    }
+    issues
+        .into_iter()
+        .find(|(session, on)| {
+            *on == issue && of.get(session).is_some_and(|it| *it == instance)
+        })
+        .map(|(session, _)| session)
 }
 
 /// An instance's refresh: its agents take `credential`, and, if the

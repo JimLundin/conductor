@@ -181,6 +181,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .checklist li[data-done="true"] label { color: var(--muted); text-decoration: line-through; }
 .note { white-space: pre-wrap; font-size: 0.9375rem; padding-left: 0.75rem; border-left: 2px solid var(--line); }
 .edit-issue { display: flex; flex-direction: column; gap: 0.9rem; }
+.issue-sessions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+.on-issue { margin: 0; color: var(--muted); }
+.on-issue strong { color: var(--ink); }
 .host-credentials + .host-credentials { margin-top: 2rem; }
 .host-credentials > .credential-head h2 { font-size: 1.2rem; }
 

@@ -672,6 +672,21 @@ standards and issues, cloned on every host. Built so far are home steps
   `Home.unpushed` counts them, the sync is `Behind` while a push fails,
   and the next sync lands them. A store of them that no longer decodes is
   moved aside to `home-edits.unreadable`.
+- **Sessions on issues** (home step 7, started). `StartSession { at:
+  StartAt::Issue(issue) }` starts in the issue's project's first
+  checkout. Before it does, the host readies the issue's branch,
+  `issue/<id>`, there: it fetches the remote's into
+  `refs/remotes/origin/issue/<id>` and points the checkout's at it when
+  the checkout has none or one the remote's contains, or makes a new one
+  at the checkout's `HEAD` (`home::issue::Branch`). The session's own
+  branch is cut from it, `OnIssue { issue }` follows `SessionCreated`, and
+  the agent's first message is the issue's brief (`home::issue::start`):
+  its title, body, checklist and notes, the branch, and what to do when
+  done. An `open` or `ready` issue moves to `in-progress`. An instance has
+  one session on an issue until it is removed (`host::registry::on_issue`;
+  `IssueTaken`); another instance, on this host or another, continues the
+  issue from its branch and notes. The app's issue pane lists its
+  sessions on every paired host and opens the new-session form on it.
 
 ## 6. Planned: the fleet
 

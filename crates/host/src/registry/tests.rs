@@ -1056,3 +1056,42 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
         )
     );
 }
+
+#[test]
+fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
+    let issue = proto::IssueId(5);
+    let event = |session: u128, kind: EventKind| Event {
+        seq: HostSeq(1),
+        session: SessionId(session),
+        kind,
+    };
+    let created = |session: u128, instance: InstanceId| {
+        event(
+            session,
+            EventKind::SessionCreated {
+                instance,
+                provider: Provider::Claude,
+                directory: HostPath(String::from("/src")),
+                by: ClientName(String::from("phone")),
+                model: None,
+                effort: None,
+            },
+        )
+    };
+    let own = InstanceId::own(Provider::Claude);
+    let other = InstanceId::named(Provider::Claude, "https://gateway.example");
+    let history = Vec::from([
+        created(1, own.clone()),
+        event(1, EventKind::OnIssue { issue }),
+        created(2, other.clone()),
+    ]);
+    assert_eq!(super::on_issue(&history, issue, &own), Some(SessionId(1)));
+    assert_eq!(super::on_issue(&history, issue, &other), None);
+    assert_eq!(super::on_issue(&history, proto::IssueId(6), &own), None);
+    let removed = [
+        history,
+        Vec::from([event(1, EventKind::SessionRemoved { kept: None })]),
+    ]
+    .concat();
+    assert_eq!(super::on_issue(&removed, issue, &own), None);
+}

@@ -148,9 +148,16 @@ What is built and what comes next. Update it in the commit that changes it.
   one commit each, and pushes; when the remote has moved on it resets to
   it and applies its kept changes again on top, so concurrent notes both
   stay. Offline changes wait in `<data>/home-edits.state` and land on the
-  next sync. Next: sessions on issues (home step 7). *Try:* open an issue
-  in a project, add a note from the phone, and find the commit in the
-  home's history.
+  next sync. *Try:* open an issue in a project, add a note from the
+  phone, and find the commit in the home's history.
+- **Sessions on issues** (home step 7a, architecture §5.4). *Start a
+  session* on an issue's pane opens the new-session form on it: the
+  session works on a branch cut from the issue's `issue/<id>`, which the
+  host fetches from the project's remote, so another host continues it;
+  its first message is the issue's brief, and the issue moves to
+  `in-progress`. One session per instance and issue (ALPN `conductor/21`).
+  Next: finishing a session onto the issue's branch, then turns as commits.
+  *Try:* start a session on an issue, then another on a second host.
 
 ## Next
 

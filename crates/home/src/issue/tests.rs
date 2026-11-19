@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    ChecklistItem, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
-    Priority, ProjectId, Rejection,
+    ChecklistItem, Checkout, Cloning, Home, HomeSync, HostPath, Issue,
+    IssueChange, IssueFields, IssueId, IssueStatus, Origin, Priority,
+    ProjectId, Rejection,
 };
 
 use super::{
-    Applied, Change, Edit, Mode, apply, changing, fields, file, listed,
-    message, name, opening, parse, render, was,
+    Applied, Branch, Change, Edit, Mode, Move, apply, changing, fields, file,
+    listed, message, name, opening, parse, render, start, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -445,6 +446,118 @@ fn each_change_is_its_own_commit() {
             format!("Open issue {}: Sign in", name(ID)),
             format!("Move issue {} to review", name(ID)),
             format!("Note on issue {}", name(ID)),
+        ]
+    );
+}
+
+fn home(checkouts: Vec<Checkout>, issues: Vec<Issue>) -> Home {
+    Home {
+        remote: text("file:///home.git"),
+        synced: None,
+        sync: HomeSync::Synced,
+        unpushed: 0,
+        projects: Vec::from([proto::Project {
+            id: project(),
+            name: text("conductor"),
+            title: text("Conductor"),
+            remote: None,
+            profiles: Vec::new(),
+            checkouts,
+            cloning: Cloning::Idle,
+            issues,
+        }]),
+    }
+}
+
+fn checkout() -> Checkout {
+    Checkout {
+        path: HostPath(text("/src/conductor")),
+        origin: Origin::Found,
+    }
+}
+
+#[test]
+fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
+    let open = Issue {
+        status: IssueStatus::Open,
+        ..issue()
+    };
+    let started =
+        start(Some(&home(Vec::from([checkout()]), Vec::from([open]))), ID);
+    assert_eq!(
+        started.as_ref().map(|at| (
+            at.checkout.clone(),
+            at.branch.clone(),
+            at.moved
+        )),
+        Ok((
+            HostPath(text("/src/conductor")),
+            format!("refs/heads/issue/{}", name(ID)),
+            Some(IssueStatus::InProgress)
+        ))
+    );
+    let brief = started.map_or_else(|_| String::new(), |at| at.brief);
+    for part in [
+        "Sign in to a subscription from the app",
+        "Conductor",
+        "What to build and why.",
+        "- [x] the protocol",
+        "- [ ] the browser scenario",
+        "built the protocol",
+        format!("issue/{}", name(ID)).as_str(),
+    ] {
+        assert!(brief.contains(part), "the brief has {part:?}: {brief}");
+    }
+    assert_eq!(
+        start(
+            Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
+            ID
+        )
+        .map(|at| at.moved),
+        Ok(None),
+        "an issue in progress stays so"
+    );
+    assert_eq!(
+        start(Some(&home(Vec::new(), Vec::from([issue()]))), ID).map(|_| ()),
+        Err(Rejection::NotCheckedOut)
+    );
+    assert_eq!(
+        start(Some(&home(Vec::from([checkout()]), Vec::new())), ID).map(|_| ()),
+        Err(Rejection::UnknownIssue)
+    );
+    assert_eq!(start(None, ID).map(|_| ()), Err(Rejection::NoHome));
+}
+
+#[test]
+fn the_issue_branch_follows_the_remote_unless_it_has_work_of_its_own() {
+    let facts =
+        |local: Option<&str>, remote: Option<&str>, behind: bool| Branch {
+            local: local.map(text),
+            remote: remote.map(text),
+            head: text("head"),
+            behind,
+        };
+    let set = |commit: &str, old: Option<&str>| Move::Set {
+        commit: text(commit),
+        old: old.map(text),
+    };
+    assert_eq!(
+        [
+            facts(None, None, false),
+            facts(None, Some("r"), false),
+            facts(Some("l"), None, false),
+            facts(Some("r"), Some("r"), true),
+            facts(Some("l"), Some("r"), true),
+            facts(Some("l"), Some("r"), false),
+        ]
+        .map(Branch::next),
+        [
+            set("head", None),
+            set("r", None),
+            Move::Keep,
+            Move::Keep,
+            set("r", Some("l")),
+            Move::Keep,
         ]
     );
 }

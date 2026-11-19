@@ -233,7 +233,10 @@ call that started each, a description, its own transcript and status.
    (architecture §5.4).
 7. Sessions on issues: start, finish, continue elsewhere, with the
    session's branch cut from the issue's and each turn a commit on it
-   (§2.3) in place of the checkpoint refs.
+   (§2.3) in place of the checkpoint refs. Starting and continuing
+   elsewhere are done (architecture §5.4); finishing and turns as commits
+   are next. An issue of a project with no remote travels only on its own
+   host until bundles are built.
 8. Standards and instructions composed into sessions.
 9. Agents reporting progress notes during a session.
 

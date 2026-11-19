@@ -5,8 +5,9 @@
 //! stands and what an issue change does to its file are the `home` core's
 //! decisions; this task runs `git`, reads and writes the files and keeps
 //! what the host stores of its home, and nothing else touches the clone.
-//! It never writes in a checkout it found: it only reads them, and clones
-//! into its own data dir.
+//! In a checkout it found it writes only an issue's branch, `issue/<id>`,
+//! before a session on the issue starts, and fetches the remote's; it
+//! clones into its own data dir.
 //!
 //! An issue change is written and committed in the clone at once, and
 //! kept in `<data>/home-edits.state` until the remote has it. When a push
@@ -63,7 +64,14 @@ pub struct HomeClone {
     shown: watch::Receiver<Option<Home>>,
 }
 
-type Placed = Result<HostPath, Rejection>;
+type Placed = Result<Placement, Rejection>;
+
+/// Where a session starts, and the issue it works on, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub directory: HostPath,
+    pub on: Option<home::issue::Start>,
+}
 
 #[derive(Debug)]
 enum Msg {
@@ -73,7 +81,7 @@ enum Msg {
         reply: oneshot::Sender<CommandResult>,
     },
     Place {
-        project: ProjectId,
+        at: StartAt,
         reply: oneshot::Sender<Placed>,
     },
 }
@@ -116,18 +124,20 @@ impl HomeClone {
         self.ask(|reply| Msg::Order { order, reply }).await
     }
 
-    /// Where a session starts: a directory as it is, or a project's
-    /// checkout once the home is fresh.
+    /// Where a session starts: a directory as it is, or a project's or an
+    /// issue's checkout once the home is fresh, with the issue's branch
+    /// ready there.
     ///
     /// # Errors
     ///
     /// Fails if the task has stopped.
     pub async fn place(&self, at: StartAt) -> Result<Placed, Stopped> {
         match at {
-            StartAt::Directory(directory) => Ok(Ok(directory)),
-            StartAt::Project(project) => {
-                self.ask(|reply| Msg::Place { project, reply }).await
-            }
+            StartAt::Directory(directory) => Ok(Ok(Placement {
+                directory,
+                on: None,
+            })),
+            home => self.ask(|reply| Msg::Place { at: home, reply }).await,
         }
     }
 
@@ -260,15 +270,31 @@ impl Actor {
             } => {
                 let _ = reply.send(self.change(issue, change, &client).await);
             }
-            Msg::Place { project, reply } => {
+            Msg::Place { at, reply } => {
                 self.fresh().await;
-                let shown = self.shown.borrow().clone();
-                let _ = reply.send(home::place(
-                    StartAt::Project(project),
-                    shown.as_ref(),
-                ));
+                let _ = reply.send(self.placed(at).await);
             }
         }
+    }
+
+    async fn placed(&self, at: StartAt) -> Placed {
+        let shown = self.shown.borrow().clone();
+        let StartAt::Issue(id) = at else {
+            return home::place(at, shown.as_ref()).map(|directory| {
+                Placement {
+                    directory,
+                    on: None,
+                }
+            });
+        };
+        let start = home::issue::start(shown.as_ref(), id)?;
+        ready_branch(&start)
+            .await
+            .map_err(|reason| Rejection::WorkspaceFailure { reason })?;
+        Ok(Placement {
+            directory: start.checkout.clone(),
+            on: Some(start),
+        })
     }
 
     async fn pull_now(&mut self) -> CommandResult {
@@ -624,6 +650,62 @@ async fn pull(clone: &Path) -> Result<(), String> {
         let _ = text(clone, &["rebase", "--abort"]).await;
     }
     pulled
+}
+
+/// Makes the checkout's issue branch what `home::issue::Branch` says: the
+/// remote's, when it has it and the checkout's has nothing of its own.
+async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
+    let checkout = Path::new(&start.checkout.0);
+    let facts = branch_facts(checkout, &start.branch).await?;
+    match facts.next() {
+        home::issue::Move::Keep => Ok(()),
+        home::issue::Move::Set { commit, old } => {
+            let was = old.unwrap_or_default();
+            run(checkout, &["update-ref", &start.branch, &commit, &was]).await
+        }
+    }
+}
+
+async fn branch_facts(
+    checkout: &Path,
+    branch: &str,
+) -> Result<home::issue::Branch, String> {
+    let tracking = branch.replacen("refs/heads/", "refs/remotes/origin/", 1);
+    let wanted = format!("+{branch}:{tracking}");
+    let fetched = run(checkout, &["fetch", "--quiet", "origin", &wanted]).await;
+    let local = commit_of(checkout, branch).await;
+    let remote = fetched.ok().and(commit_of(checkout, &tracking).await);
+    let head = text(checkout, &["rev-parse", "--verify", "HEAD^{commit}"])
+        .await
+        .map_err(|err| err.to_string())?;
+    let behind = ancestor(checkout, local.as_deref(), remote.as_deref()).await;
+    Ok(home::issue::Branch {
+        local,
+        remote,
+        head,
+        behind,
+    })
+}
+
+async fn commit_of(repository: &Path, reference: &str) -> Option<String> {
+    let wanted = format!("{reference}^{{commit}}");
+    text(repository, &["rev-parse", "--verify", "--quiet", &wanted])
+        .await
+        .ok()
+}
+
+/// Whether `older` is an ancestor of `newer`, when the checkout has both.
+async fn ancestor(
+    repository: &Path,
+    older: Option<&str>,
+    newer: Option<&str>,
+) -> bool {
+    let Some((first, then)) = older.zip(newer) else {
+        return false;
+    };
+    run(repository, &["merge-base", "--is-ancestor", first, then])
+        .await
+        .is_ok()
 }
 
 /// An issue's file, from the clone's root.

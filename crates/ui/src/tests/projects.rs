@@ -925,3 +925,53 @@ fn an_issue_gone_from_its_home_falls_back_to_the_placeholder() {
         ))
     );
 }
+
+#[test]
+fn an_issue_starts_a_session_on_it_and_lists_its_sessions() {
+    let shown = issue_screen(&on_issue());
+    assert_eq!(
+        shown.as_ref().map(|issue| issue.start.clone()),
+        Some(Intent::StartOn(HOST, OPENED))
+    );
+    let (opened, _) =
+        run(on_issue(), Vec::from([Intent::StartOn(HOST, OPENED)]));
+    let shown_form = form(&opened);
+    assert_eq!(
+        shown_form.as_ref().map(|it| (
+            it.issue.clone(),
+            it.projects.is_none(),
+            it.directory_shown
+        )),
+        Some((Some(text("Sign in")), true, false))
+    );
+    let (_, effects) =
+        run(opened, Vec::from([Intent::Form(FormIntent::Start)]));
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::StartSession {
+            instance: id("claude"),
+            at: StartAt::Issue(OPENED),
+            model: None,
+            effort: None,
+        }]
+    );
+    let (worked, _) = run(
+        on_issue(),
+        Vec::from([
+            event(1, created()),
+            event(2, EventKind::OnIssue { issue: OPENED }),
+            event(3, EventKind::SessionReady),
+        ]),
+    );
+    assert_eq!(
+        issue_screen(&worked).map(|issue| issue
+            .sessions
+            .into_iter()
+            .map(|session| (session.label, session.open))
+            .collect::<Vec<_>>()),
+        Some(Vec::from([(
+            text("Claude Code on desk · idle"),
+            Intent::Show(Place::Session(HOST, SESSION)),
+        )]))
+    );
+}

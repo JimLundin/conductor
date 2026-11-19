@@ -33,8 +33,9 @@ use tokio::task::JoinSet;
 
 use crate::Stopped;
 use crate::credentials::{Store, Stored};
+use crate::home::Placement;
 use crate::log::Log;
-use crate::session::Session;
+use crate::session::{Order, Session};
 use crate::sign_in::{Report, Runs, Signer};
 
 /// A subscriber this far behind the sign-ins is dropped and resubscribes.
@@ -107,7 +108,7 @@ enum RegistryMsg {
     Started(Started<Starter>),
     Start {
         instance: InstanceId,
-        directory: HostPath,
+        placed: Placement,
         model: Option<ModelId>,
         effort: Option<Effort>,
         by: ClientName,
@@ -188,7 +189,10 @@ impl Registry {
 
     /// Checks the directory and the instance, logs `SessionCreated` and
     /// answers `Started` at once. The agent starts inside the session's own
-    /// task, so a slow start never blocks the registry.
+    /// task, so a slow start never blocks the registry. A session on an
+    /// issue is refused while the instance has one on it, works on a
+    /// branch cut from the issue's, and gets the issue's brief as its first
+    /// message.
     ///
     /// # Errors
     ///
@@ -196,14 +200,14 @@ impl Registry {
     pub async fn start(
         &self,
         instance: InstanceId,
-        directory: HostPath,
+        placed: Placement,
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         let (model, effort) = choice;
         self.ask(|reply| RegistryMsg::Start {
             instance,
-            directory,
+            placed,
             model,
             effort,
             by,
@@ -329,15 +333,14 @@ impl RegistryActor {
             }
             RegistryMsg::Start {
                 instance,
-                directory,
+                placed,
                 model,
                 effort,
                 by,
                 reply,
             } => {
-                let result = self
-                    .start(instance, directory, (model, effort), by)
-                    .await?;
+                let result =
+                    self.start(instance, placed, (model, effort), by).await?;
                 let _ = reply.send(result);
             }
             RegistryMsg::Continue { session, reply } => {
@@ -569,17 +572,50 @@ impl RegistryActor {
     async fn start(
         &mut self,
         instance: InstanceId,
-        directory: HostPath,
+        placed: Placement,
         asked: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
+        if let Some(session) = self.taken(&placed, &instance).await? {
+            return Ok(CommandResult::Rejected(Rejection::IssueTaken {
+                session,
+            }));
+        }
         // `read_dir` fails for a missing path and for a file alike.
-        let exists = std::fs::read_dir(&directory.0).is_ok();
+        let exists = std::fs::read_dir(&placed.directory.0).is_ok();
         let (model, effort) = asked;
         match self.core.start(&instance, exists, model, effort) {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok(launch) => self.create(instance, directory, launch, by).await,
+            Ok(launch) => self.create(instance, placed, launch, by).await,
         }
+    }
+
+    /// Logs the issue the new session works on, if any.
+    async fn attach(
+        &self,
+        id: SessionId,
+        on: Option<&home::issue::Start>,
+    ) -> Result<(), Stopped> {
+        match on {
+            Some(start) => {
+                let issue = start.issue;
+                self.log.append(id, EventKind::OnIssue { issue }).await
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// The session the instance has on the placement's issue already.
+    async fn taken(
+        &self,
+        placed: &Placement,
+        instance: &InstanceId,
+    ) -> Result<Option<SessionId>, Stopped> {
+        let Some(on) = &placed.on else {
+            return Ok(None);
+        };
+        let history = self.log.history().await?;
+        Ok(host::registry::on_issue(&history, on.issue, instance))
     }
 
     /// Makes the session's workspace and first checkpoint, logs them, and
@@ -587,12 +623,14 @@ impl RegistryActor {
     async fn create(
         &mut self,
         instance: InstanceId,
-        directory: HostPath,
+        placed: Placement,
         launch: Launch<Starter>,
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
         let id = SessionId(u128::from(ulid::Ulid::new()));
-        match prepare(self.store.dir(), &directory, id).await {
+        let Placement { directory, on } = placed;
+        let base = on.as_ref().map(|start| start.branch.as_str());
+        match prepare(self.store.dir(), &directory, id, base).await {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
             Ok((workspace, commit)) => {
                 let Launch {
@@ -605,11 +643,12 @@ impl RegistryActor {
                     instance: instance.clone(),
                     provider,
                     directory: directory.clone(),
-                    by,
+                    by: by.clone(),
                     model: choice.model.clone(),
                     effort: choice.effort,
                 };
                 self.log.append(id, created).await?;
+                self.attach(id, on.as_ref()).await?;
                 let workspace_event = self
                     .log
                     .record(id, EventKind::WorkspaceCreated { workspace })
@@ -627,6 +666,7 @@ impl RegistryActor {
                     self.log.clone(),
                     &[workspace_event, checkpoint_event],
                 );
+                brief(&session, on, by);
                 self.core.admit(id, instance, session);
                 Ok(CommandResult::Started { session: id })
             }
@@ -674,13 +714,32 @@ async fn listing(
     Ok(Listing { models, named })
 }
 
-/// The session's workspace and the commit of its first checkpoint.
+/// Sends a session on an issue the issue's brief, once its agent has
+/// started, in a task of its own so the registry doesn't wait for the
+/// agent.
+fn brief(session: &Session, on: Option<home::issue::Start>, by: ClientName) {
+    let Some(start) = on else {
+        return;
+    };
+    let briefed = session.clone();
+    let text = start.brief;
+    tokio::spawn(async move {
+        let sent = briefed.order(Order::Send { text, by }).await;
+        if !matches!(sent, Ok(CommandResult::Accepted)) {
+            tracing::warn!(?sent, "the issue's brief was not sent");
+        }
+    });
+}
+
+/// The session's workspace, on a branch cut from `base` or else the
+/// checkout's `HEAD`, and the commit of its first checkpoint.
 async fn prepare(
     data_dir: &Path,
     directory: &HostPath,
     id: SessionId,
+    base: Option<&str>,
 ) -> Result<(Workspace, String), Rejection> {
-    let workspace = crate::workspace::create(data_dir, directory, id)
+    let workspace = crate::workspace::create(data_dir, directory, id, base)
         .await
         .map_err(host::registry::unprepared)?;
     let commit =
