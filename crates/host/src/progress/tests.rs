@@ -4,6 +4,7 @@ use proto::{
 };
 
 use super::{Progress, ends_turn, latest, progress};
+use crate::assignment::Assignment;
 
 const SESSION: SessionId = SessionId(1);
 const ISSUE: IssueId = IssueId(7);
@@ -92,8 +93,10 @@ fn a_turn_notes_the_checklist_items_its_agent_finished_in_it() {
     ]));
     let noted = |text: &str| {
         Some(Progress {
-            issue: ISSUE,
-            instance: instance(),
+            assignment: Assignment {
+                issue: ISSUE,
+                instance: instance(),
+            },
             text: String::from(text),
         })
     };
@@ -157,8 +160,10 @@ fn an_unfinished_turn_carries_its_items_on_and_a_summary_turn_notes_none() {
     assert_eq!(
         at(&log, 5),
         Some(Progress {
-            issue: ISSUE,
-            instance: instance(),
+            assignment: Assignment {
+                issue: ISSUE,
+                instance: instance(),
+            },
             text: String::from("Done: plan."),
         })
     );

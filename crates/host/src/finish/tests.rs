@@ -6,8 +6,9 @@ use proto::{
 
 use super::{
     Branches, Finishing, Landing, checked_out, finished, finishing, landed,
-    signer, summary, turn_ended,
+    summary, turn_ended,
 };
+use crate::assignment::Assignment;
 
 const SESSION: SessionId = SessionId(1);
 const ISSUE: IssueId = IssueId(9);
@@ -91,8 +92,10 @@ fn a_session_on_an_issue_finishes_between_turns() {
     assert_eq!(
         finishing(&started(), SESSION),
         Ok(Finishing {
-            issue: ISSUE,
-            instance: InstanceId::own(Provider::Claude),
+            assignment: Assignment {
+                issue: ISSUE,
+                instance: InstanceId::own(Provider::Claude),
+            },
             workspace: workspace(),
             running: true,
         })
@@ -211,11 +214,6 @@ fn finishing_says_what_landed_and_where_the_branch_went() {
         }
     );
     assert_eq!(landed(&failed), 0);
-    assert_eq!(signer(&InstanceId::own(Provider::Claude)), "claude");
-    assert_eq!(
-        signer(&InstanceId::named(Provider::Codex, "https://gw")),
-        "codex · https://gw"
-    );
 }
 
 #[test]

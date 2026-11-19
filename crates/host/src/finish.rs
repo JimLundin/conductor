@@ -7,10 +7,11 @@
 use alloc::format;
 
 use proto::{
-    CommandResult, Event, EventKind, FinishState, Finished, HostSeq,
-    InstanceId, IssueId, Rejection, SessionId, Workspace,
+    CommandResult, Event, EventKind, FinishState, Finished, HostSeq, Rejection,
+    SessionId, Workspace,
 };
 
+use crate::assignment::{Assigned, Assignment};
 use crate::prelude::*;
 use crate::workspace::kept;
 
@@ -23,8 +24,7 @@ pub const FINISHED: &str = "the session was finished";
 /// A session that can finish, as its log has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finishing {
-    pub issue: IssueId,
-    pub instance: InstanceId,
+    pub assignment: Assignment,
     pub workspace: Workspace,
     /// Its agent runs, so it is asked for a summary first.
     pub running: bool,
@@ -41,8 +41,7 @@ pub fn finishing(
     history: &[Event],
     session: SessionId,
 ) -> Result<Finishing, Rejection> {
-    let mut created = None;
-    let mut issue = None;
+    let mut assigned = Assigned::default();
     let mut workspace = None;
     let mut removed = false;
     let mut running = false;
@@ -50,16 +49,13 @@ pub fn finishing(
     let mut finish = FinishState::Ready;
     for event in history.iter().filter(|event| event.session == session) {
         match &event.kind {
-            EventKind::SessionCreated { instance, .. } => {
-                created = Some(instance.clone());
+            EventKind::SessionCreated { .. } | EventKind::SessionReady => {
                 running = true;
             }
-            EventKind::OnIssue { issue: on } => issue = Some(*on),
             EventKind::WorkspaceCreated { workspace: made } => {
                 workspace = Some(made.clone());
             }
             EventKind::SessionRemoved { .. } => removed = true,
-            EventKind::SessionReady => running = true,
             EventKind::UserMessage { .. } => turning = true,
             EventKind::TurnCompleted { .. } => turning = false,
             EventKind::SessionClosed { .. } => {
@@ -68,8 +64,9 @@ pub fn finishing(
             _ => {}
         }
         finish = finish.after(&event.kind);
+        assigned = assigned.after(&event.kind);
     }
-    let instance = created.ok_or(Rejection::UnknownSession)?;
+    let instance = assigned.instance.ok_or(Rejection::UnknownSession)?;
     let refused = [
         (removed, Rejection::SessionRemoved),
         (turning, Rejection::TurnInProgress),
@@ -79,8 +76,10 @@ pub fn finishing(
         return Err(rejection);
     }
     Ok(Finishing {
-        issue: issue.ok_or(Rejection::NotOnIssue)?,
-        instance,
+        assignment: Assignment {
+            issue: assigned.issue.ok_or(Rejection::NotOnIssue)?,
+            instance,
+        },
         workspace: workspace.ok_or_else(|| Rejection::WorkspaceFailure {
             reason: String::from("the session has no workspace to land"),
         })?,
@@ -196,17 +195,6 @@ pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
 #[must_use]
 pub fn merge_message(issue: &str, session: &str) -> String {
     format!("Land {session} on {issue}")
-}
-
-/// Who signs the notes a session writes on its issue: its instance.
-#[must_use]
-pub fn signer(instance: &InstanceId) -> String {
-    match &instance.account {
-        proto::Account::Own => String::from(instance.provider.name()),
-        proto::Account::Named(account) => {
-            format!("{} · {account}", instance.provider.name())
-        }
-    }
 }
 
 /// What finishing did: the commits that landed, or why none did, and the
