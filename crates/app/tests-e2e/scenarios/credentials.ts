@@ -1,9 +1,14 @@
 import type { Locator } from "playwright";
-import { pageKeeps, type Run, tools } from "../harness.ts";
+import {
+	claudeRegion,
+	OWN_CLI,
+	pageKeeps,
+	type Run,
+	tools,
+} from "../harness.ts";
 
 const GATEWAY = "https://gateway.conductor-test.invalid";
 const TOKEN = "conductor-test-browser-token";
-const OWN_CLI = "conductor's own CLI, signed in on its own";
 const NOTHING_KEPT =
 	"Sent to conductor over the encrypted link. This app doesn't keep it; your browser may offer to save it.";
 
@@ -15,7 +20,7 @@ const labels = async (form: Locator): Promise<string> =>
 const forms = async (run: Run): Promise<void> => {
 	const { page } = run;
 	const { check } = tools(run);
-	const claude = page.getByRole("region", { name: "Claude Code", exact: true });
+	const claude = claudeRegion(page);
 	const codex = page.getByRole("region", { name: "Codex", exact: true });
 	const add = page.getByRole("region", { name: "Add a credential" });
 	check(
@@ -53,7 +58,7 @@ export const credentials = async (run: Run): Promise<void> => {
 	const { check, back } = tools(run);
 	await page.getByRole("button", { name: "Credentials" }).click();
 	await forms(run);
-	const claude = page.getByRole("region", { name: "Claude Code", exact: true });
+	const claude = claudeRegion(page);
 	const add = page.getByRole("region", { name: "Add a credential" });
 	const gateway = add.getByRole("form", { name: "Gateway" });
 	const token = gateway.getByLabel("Token");
@@ -65,18 +70,23 @@ export const credentials = async (run: Run): Promise<void> => {
 		(await token.getAttribute("autocomplete")) === "new-password",
 		"the token field asks a password manager not to fill it",
 	);
-	const api = page.getByRole("region", { name: GATEWAY, exact: true });
+	const gatewayRegion = page.getByRole("region", {
+		name: GATEWAY,
+		exact: true,
+	});
 	const save = async (): Promise<void> => {
 		await gateway.getByLabel("Gateway URL").fill(GATEWAY);
 		await token.fill(TOKEN);
 		await gateway.getByRole("button", { name: "Save gateway" }).click();
-		await api
+		await gatewayRegion
 			.locator(".credential-state")
 			.filter({ hasText: `Gateway at ${GATEWAY}` })
 			.waitFor({ timeout: patience });
 	};
 	await save();
-	log(`state: "${await api.locator(".credential-state").innerText()}"`);
+	log(
+		`state: "${await gatewayRegion.locator(".credential-state").innerText()}"`,
+	);
 	check(
 		(await token.inputValue()) === "",
 		"the token field is empty once sent",
@@ -86,7 +96,8 @@ export const credentials = async (run: Run): Promise<void> => {
 		"the form says the app keeps nothing",
 	);
 	check(
-		(await api.locator(".credential-provider").innerText()) === "Claude Code",
+		(await gatewayRegion.locator(".credential-provider").innerText()) ===
+			"Claude Code",
 		"the gateway's account runs Claude Code",
 	);
 	check(
@@ -94,7 +105,7 @@ export const credentials = async (run: Run): Promise<void> => {
 		"the gateway's account leaves Claude's own instance on its own CLI",
 	);
 	check(
-		(await api.getByText("conductord login").innerText()) ===
+		(await gatewayRegion.getByText("conductord login").innerText()) ===
 			`To sign it in again on conductor's terminal: conductord login claude --account ${GATEWAY}`,
 		"the instance names its account for a sign-in on the host",
 	);
@@ -103,8 +114,10 @@ export const credentials = async (run: Run): Promise<void> => {
 		"the token is in no storage, the URL or the DOM",
 	);
 	await page.screenshot({ path: out });
-	await api.getByRole("button", { name: `Remove ${GATEWAY}` }).click();
-	await api.waitFor({ state: "detached", timeout: patience });
+	await gatewayRegion
+		.getByRole("button", { name: `Remove ${GATEWAY}` })
+		.click();
+	await gatewayRegion.waitFor({ state: "detached", timeout: patience });
 	check(
 		(await add.getByRole("status").first().innerText()) ===
 			"Removed from conductor.",

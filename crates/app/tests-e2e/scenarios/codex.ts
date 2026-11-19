@@ -1,4 +1,4 @@
-import { type Run, squeeze, tools } from "../harness.ts";
+import { COMPLETED, type Run, squeeze, tools } from "../harness.ts";
 
 const WHAT_CODEX_DOES =
 	"Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network.";
@@ -10,7 +10,7 @@ export const codex = async (run: Run): Promise<void> => {
 	const { page, out, dir, patience, log } = run;
 	const { check, pane, startSession, openRow, send, text } = tools(run);
 	const open = pane.locator('.request[data-open="true"]');
-	const completed = pane.locator('.turn-end[data-outcome="completed"]');
+	const completed = pane.locator(COMPLETED);
 	await page.getByRole("button", { name: "New session" }).click();
 	await page.locator(".segment", { hasText: "Codex" }).click();
 	check(

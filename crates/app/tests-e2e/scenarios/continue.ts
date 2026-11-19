@@ -1,5 +1,5 @@
 import type { Locator } from "playwright";
-import { type Run, shotNamed, tools } from "../harness.ts";
+import { COMPLETED, isOpen, type Run, shotNamed, tools } from "../harness.ts";
 
 const KILLED = "The session has ended (signal: 9 (SIGKILL)).";
 const REASONING =
@@ -41,9 +41,7 @@ const killedAndContinued = async (run: Run): Promise<void> => {
 		"the header shows the effort",
 	);
 	await send("sheep?");
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	await send("count");
 	const closed = pane.locator(".closed-note");
 	await closed.waitFor({ timeout: patience });
@@ -78,9 +76,7 @@ const killedAndContinued = async (run: Run): Promise<void> => {
 		"the transcript keeps the close and the continue",
 	);
 	await send("how many sheep?");
-	await pane
-		.locator('.turn-end[data-outcome="completed"] >> nth=1')
-		.waitFor({ timeout: patience });
+	await pane.locator(`${COMPLETED} >> nth=1`).waitFor({ timeout: patience });
 	check((await text(".reply")) === "18 | 18", "the continued session answered");
 	check(
 		(await text(".user .bubble")) === "sheep? | count | how many sheep?",
@@ -112,20 +108,16 @@ const reasoning = async (run: Run): Promise<void> => {
 		(await pane.locator(".working").count()) === 0,
 		"the streaming reasoning stands in for the working line",
 	);
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	const done = pane.locator('details.reasoning[data-state="done"]');
-	const isOpen = (): Promise<boolean> =>
-		done.evaluate((details: HTMLDetailsElement) => details.open);
 	check((await done.count()) === 1, "one Thinking disclosure for the turn");
 	check(
 		(await done.locator("summary").innerText()) === "Thinking",
 		'it reads "Thinking" once finished',
 	);
-	check(!(await isOpen()), "it starts collapsed");
+	check(!(await isOpen(done)), "it starts collapsed");
 	await done.locator("summary").tap();
-	check(await isOpen(), "a tap expands it");
+	check(await isOpen(done), "a tap expands it");
 	check(
 		(await done.locator(".reasoning-text").innerText()).trim() === REASONING,
 		"it shows the reasoning text",

@@ -1,5 +1,6 @@
 import {
 	boxOf,
+	COMPLETED,
 	type Run,
 	shotNamed,
 	squeeze,
@@ -57,9 +58,7 @@ const question = async (run: Run): Promise<void> => {
 	await page.screenshot({ path: shotNamed(out, "question") });
 	await sendAnswer.tap();
 	log("tapped Send answer");
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	check(
 		(await text(".question .question-answer")) === "Blue",
 		"the card shows the answer given",
@@ -98,9 +97,7 @@ const forSession = async (run: Run): Promise<void> => {
 	await page.screenshot({ path: shotNamed(out, "for-session") });
 	await allow.tap();
 	log("tapped Allow for this session");
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	check(
 		(await text(".request .resolved")) === "Allowed for this session by iPhone",
 		"the request was allowed for the session by this device",
@@ -110,9 +107,7 @@ const forSession = async (run: Run): Promise<void> => {
 		"focus moved to the resolved approval card, not the page",
 	);
 	await send("again");
-	await pane
-		.locator('.turn-end[data-outcome="completed"] >> nth=1')
-		.waitFor({ timeout: patience });
+	await pane.locator(`${COMPLETED} >> nth=1`).waitFor({ timeout: patience });
 	check(
 		(await pane.locator(".request").count()) === 1,
 		"the second identical call asked nothing",

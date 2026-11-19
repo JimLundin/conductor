@@ -51,7 +51,16 @@
 // and the clock, and writes to the console.
 
 import { type Browser, chromium, type Page, webkit } from "playwright";
-import { PHONE, type Run, squeeze, stamp, tools } from "./harness.ts";
+import {
+	JOIN_FRAGMENT,
+	LIVE,
+	MS_PER_SECOND,
+	PHONE,
+	type Run,
+	squeeze,
+	stamp,
+	tools,
+} from "./harness.ts";
 import { checkConsole, type Recorder, recorder } from "./records.ts";
 import { codex } from "./scenarios/codex.ts";
 import { continueSession } from "./scenarios/continue.ts";
@@ -96,7 +105,6 @@ const DEFAULT_PATIENCE_MS = 120_000;
 const DEFAULT_DEADLINE_MS = 600_000;
 const PATIENCE = Number(patienceSetting ?? DEFAULT_PATIENCE_MS);
 const DEADLINE = Number(deadlineSetting ?? DEFAULT_DEADLINE_MS);
-const MS_PER_SECOND = 1000;
 const FAILURE_SHOT_MS = 10_000;
 const USAGE_EXIT = 2;
 const FIRST_ARGUMENT = 2;
@@ -104,7 +112,15 @@ const FIRST_ARGUMENT = 2;
 // An iPhone's user agent, so the app names itself "iPhone" in Hello.
 const IPHONE_UA =
 	"Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
-const JOIN_FRAGMENT = /#join=.*/u;
+
+/** The run's positional arguments: usage: node browser.ts <join-url> <out>
+ * <scenario> <dir>. */
+interface Arguments {
+	readonly joinUrl: string;
+	readonly out: string;
+	readonly scenario: string;
+	readonly dir: string;
+}
 
 interface Started {
 	readonly run: Run;
@@ -117,7 +133,7 @@ const isScenario = (name: string): name is keyof typeof SCENARIOS =>
 const isEngine = (name: string): name is keyof typeof ENGINES =>
 	Object.hasOwn(ENGINES, name);
 
-const describe = (error: unknown): string => {
+const traceOf = (error: unknown): string => {
 	if (error instanceof Error && error.stack !== undefined) {
 		return error.stack;
 	}
@@ -131,9 +147,7 @@ const messageOf = (error: unknown): string => {
 	return String(error);
 };
 
-const parsed = (
-	args: readonly string[],
-): readonly [string, string, string, string] => {
+const argumentsOf = (args: readonly string[]): Arguments => {
 	const [joinUrl, out, scenario, dir] = args;
 	if (
 		joinUrl === undefined ||
@@ -142,11 +156,11 @@ const parsed = (
 		!dir
 	) {
 		console.error(
-			"usage: node browser.ts <join-url> <out> <turn|codex|screens> <dir>",
+			`usage: node browser.ts <join-url> <out> <${Object.keys(SCENARIOS).join("|")}> <dir>`,
 		);
 		process.exit(USAGE_EXIT);
 	}
-	return [joinUrl, out, scenario, dir];
+	return { joinUrl, out, scenario, dir };
 };
 
 const launch = async (
@@ -195,7 +209,7 @@ const shootFailure = async (run: Run, scenario: string): Promise<void> => {
 const onFailure =
 	({ run, record, scenario }: Started) =>
 	async (failure: unknown): Promise<void> => {
-		run.log(describe(failure));
+		run.log(traceOf(failure));
 		await shootFailure(run, scenario);
 		run.log("last console lines:");
 		for (const line of record.tail()) {
@@ -230,7 +244,7 @@ const armDeadline = (): void => {
 };
 
 const start = async (args: readonly string[]): Promise<Started> => {
-	const [joinUrl, out, scenario, dir] = parsed(args);
+	const { joinUrl, out, scenario, dir } = argumentsOf(args);
 	const { now, elapsed, log } = clock();
 	armDeadline();
 	const { browser, page } = await launch(scenario, log);
@@ -260,7 +274,7 @@ const connect = async (run: Run): Promise<void> => {
 	log(`open ${joinUrl.replace(JOIN_FRAGMENT, "#join=<ticket>")}`);
 	const opened = now();
 	await page.goto(joinUrl);
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	log(`Live ${now() - opened}ms after navigation (first connect)`);
 	log(`status line: "${await statusLine()}"`);
 };

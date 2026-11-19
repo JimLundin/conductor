@@ -1,4 +1,4 @@
-import { isWithinWidth, type Run, tools } from "../harness.ts";
+import { isWithinWidth, LIVE, type Run, tools } from "../harness.ts";
 
 const PENDING_RESPONSE_MS = 250;
 const TURNS = 3;
@@ -135,7 +135,7 @@ export const worktrees = async (run: Run): Promise<void> => {
 		"selected and later checkpoint controls removed",
 	);
 	await page.reload();
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	await page.locator(".session-row").first().tap();
 	await pane.locator(".user").waitFor();
 	check(

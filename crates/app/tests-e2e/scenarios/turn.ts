@@ -1,6 +1,9 @@
 import {
 	boxOf,
+	COMPLETED,
+	JOIN_FRAGMENT,
 	lastSegment,
+	LIVE,
 	PHONE,
 	PROMPT,
 	type Run,
@@ -14,7 +17,6 @@ const WRITTEN = "/tmp/s1-scratch/a.txt";
 const REPLY =
 	"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.";
 const LIVE_PARTIALS = 3;
-const JOIN_FRAGMENT = /#join=.*/u;
 const BEFORE_TICKET = /.*#join=/u;
 const CONTROLS = [
 	".request button.approve",
@@ -64,9 +66,7 @@ const approvedTurn = async (run: Run): Promise<void> => {
 	});
 	await approve.tap();
 	log("tapped Approve");
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	const seen = await page.evaluate(() => {
 		const streamed: ReadonlySet<string> = Reflect.get(globalThis, "streamed");
 		return streamed.size;
@@ -146,7 +146,7 @@ const freshInstall = async (run: Run): Promise<void> => {
 	const asksToPair = installed.getByRole("heading", {
 		name: "Connect to a host",
 	});
-	const live = installed.locator('header.status[data-state="Live"]');
+	const live = installed.locator(LIVE);
 	await installed.goto(joinUrl.replace(JOIN_FRAGMENT, ""));
 	await asksToPair.waitFor({ timeout: patience });
 	check(true, "a fresh install asks for a join link");
@@ -200,7 +200,7 @@ export const turn = async (run: Run): Promise<void> => {
 
 	const reloaded = now();
 	await page.goto(joinUrl.replace(JOIN_FRAGMENT, ""));
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	log(
 		`Live ${now() - reloaded}ms after reload without the fragment (reconnect)`,
 	);

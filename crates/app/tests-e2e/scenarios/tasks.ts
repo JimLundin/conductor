@@ -1,7 +1,10 @@
 import {
 	boxOf,
-	lastSegment,
+	COMPLETED,
+	isOpen,
 	isWithinWidth,
+	lastSegment,
+	LIVE,
 	type Run,
 	squeeze,
 	THUMB,
@@ -31,12 +34,8 @@ export const tasks = async (run: Run): Promise<void> => {
 		"no checklist before the agent writes one",
 	);
 	await send("plan");
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	const checklist = pane.locator("details.tasks");
-	const isOpen = (): Promise<boolean> =>
-		checklist.evaluate((details: HTMLDetailsElement) => details.open);
 	check(
 		squeeze(await checklist.locator("summary").innerText()).trim() ===
 			"Tasks 1 of 3 done",
@@ -65,7 +64,7 @@ export const tasks = async (run: Run): Promise<void> => {
 			.getAttribute("aria-label")) === "Done",
 		"a status is announced in words",
 	);
-	check(await isOpen(), "the checklist starts open");
+	check(await isOpen(checklist), "the checklist starts open");
 	check(
 		(await pane.locator(".tool").count()) === 0,
 		"the checklist calls show no tool cards",
@@ -91,14 +90,12 @@ export const tasks = async (run: Run): Promise<void> => {
 		"the header shows the new effort once the host has logged it",
 	);
 	await send("pong");
-	await pane
-		.locator('.turn-end[data-outcome="completed"] >> nth=1')
-		.waitFor({ timeout: patience });
+	await pane.locator(`${COMPLETED} >> nth=1`).waitFor({ timeout: patience });
 	check((await text(".reply")).endsWith("pong"), "the next turn ran");
 	await checklist.locator("summary").tap();
-	check(!(await isOpen()), "a tap folds the checklist away");
+	check(!(await isOpen(checklist)), "a tap folds the checklist away");
 	await page.reload();
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	await openRow(lastSegment(dir));
 	await pane.locator("details.tasks").waitFor({ timeout: patience });
 	check(

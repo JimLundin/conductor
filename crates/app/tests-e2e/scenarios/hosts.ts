@@ -1,5 +1,5 @@
 import type { Locator } from "playwright";
-import { type Run, savedHosts, tools } from "../harness.ts";
+import { LIVE, type Run, savedHosts, tools } from "../harness.ts";
 
 const HOSTS = ["desk", "laptop"] as const;
 
@@ -29,9 +29,7 @@ const listOf = (run: Run): HostList => {
 		);
 	const bothLive = async (): Promise<void> => {
 		for (const name of HOSTS) {
-			await group(name)
-				.locator('header.status[data-state="Live"]')
-				.waitFor({ timeout: patience });
+			await group(name).locator(LIVE).waitFor({ timeout: patience });
 		}
 	};
 	const pair = async (join: string): Promise<void> => {
@@ -140,7 +138,7 @@ export const hosts = async (run: Run): Promise<void> => {
 		.waitFor({ state: "detached", timeout: patience });
 	check((await names()) === "desk", "forgetting laptop drops its group");
 	await page.reload();
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	check(
 		(await names()) === "desk" && (await rowsOf("desk")) === "desk",
 		"laptop stays forgotten after a reload",

@@ -24,9 +24,10 @@ standards=${STANDARDS:-$home/standards}
 status=0
 "$standards/rust/check.sh" "$@" || status=1
 # The type check reads the suite's dependencies; reinstall them when the
-# lockfile is newer than the install.
+# lockfile is newer than the install. A failed install only warns: when the
+# suite is in scope, its type check then fails on its own.
 e2e=crates/app/tests-e2e
 [ "$e2e/node_modules/.package-lock.json" -nt "$e2e/package-lock.json" ] ||
-	(cd "$e2e" && npm ci --silent) || status=1
+	(cd "$e2e" && npm ci --silent) || echo "warning: npm ci failed in $e2e" >&2
 "$standards/typescript/check.sh" "$@" "$e2e" || status=1
 exit "$status"

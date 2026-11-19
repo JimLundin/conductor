@@ -16,11 +16,12 @@ const DOTTED_RELAY = /relay\.n0\.iroh\.link\.\//u;
 const IGNORED_VIEWPORT =
 	/^Viewport argument key "interactive-widget" not recognized and ignored\.$/u;
 
-const detail = (errors: readonly string[]): string =>
-	errors
-		.slice(0, 1)
-		.map(() => `: ${errors.join(" | ")}`)
-		.join("");
+const detail = (errors: readonly string[]): string => {
+	if (errors.length === 0) {
+		return "";
+	}
+	return `: ${errors.join(" | ")}`;
+};
 
 /** The errors left once the relay hiccups and the viewport notices are
  * logged as such. */

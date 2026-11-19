@@ -1,7 +1,10 @@
 import {
 	boxOf,
-	lastSegment,
+	COMPLETED,
+	isOpen,
 	isWithinWidth,
+	lastSegment,
+	LIVE,
 	type Run,
 	squeeze,
 	THUMB,
@@ -16,12 +19,8 @@ export const subagents = async (run: Run): Promise<void> => {
 		tools(run);
 	await startSession("Claude Code", dir);
 	await send("delegate");
-	await pane
-		.locator('.turn-end[data-outcome="completed"]')
-		.waitFor({ timeout: patience });
+	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	const group = pane.locator("details.subagent");
-	const isOpen = (): Promise<boolean> =>
-		group.evaluate((details: HTMLDetailsElement) => details.open);
 	check((await group.count()) === 1, "one sub-agent group");
 	check(
 		(await text(".tool .tool-name")) === "Agent",
@@ -42,7 +41,7 @@ export const subagents = async (run: Run): Promise<void> => {
 			"Run TodoWrite checklist task Finished",
 		"the folded group names its description and status",
 	);
-	check(!(await isOpen()), "the group starts folded");
+	check(!(await isOpen(group)), "the group starts folded");
 	check(
 		!(await group.locator(".subagent-items").isVisible()),
 		"its transcript is hidden while folded",
@@ -61,7 +60,7 @@ export const subagents = async (run: Run): Promise<void> => {
 		`the group's summary is a thumb-sized target (${Math.round(summary.height)}px)`,
 	);
 	await group.locator("summary").tap();
-	check(await isOpen(), "a tap opens the group");
+	check(await isOpen(group), "a tap opens the group");
 	check(
 		(await group.locator(".subagent-items .reply").innerText()) === "ok",
 		"the open group shows the sub-agent's report",
@@ -70,7 +69,7 @@ export const subagents = async (run: Run): Promise<void> => {
 	await page.screenshot({ path: out });
 	log(`screenshot ${out}`);
 	await page.reload();
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	await openRow(lastSegment(dir));
 	await pane.locator("details.subagent").waitFor({ timeout: patience });
 	check(

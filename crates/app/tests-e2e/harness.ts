@@ -1,6 +1,5 @@
 import type { Browser, Locator, Page } from "playwright";
 
-const MS_PER_SECOND = 1000;
 const STAMP_DECIMALS = 3;
 const STAMP_WIDTH = 7;
 const SPACES = /\s+/gu;
@@ -19,7 +18,7 @@ const onHost = (host: string | undefined): string => {
 };
 
 /** Waits until the page has painted and its finite animations and
- * transitions have ended. */
+ * transitions have ended, so a screenshot shows where they settle. */
 const settle = (page: Page): Promise<void> =>
 	page.evaluate(async () => {
 		const frame = (): Promise<number> =>
@@ -46,6 +45,12 @@ const backOn = async (page: Page): Promise<void> => {
 	}
 };
 
+export const MS_PER_SECOND = 1000;
+export const JOIN_FRAGMENT = /#join=.*/u;
+export const LIVE = 'header.status[data-state="Live"]';
+export const COMPLETED = '.turn-end[data-outcome="completed"]';
+export const OWN_CLI = "conductor's own CLI, signed in on its own";
+
 /** The smallest target a thumb can hit, in CSS pixels. */
 export const THUMB = 44;
 export const PHONE = { width: 390, height: 844 } as const;
@@ -71,11 +76,9 @@ export interface Run {
 /** The steps and checks every scenario drives the app's page with. */
 export interface Tools {
 	readonly check: (isMet: boolean, what: string) => void;
-	readonly status: Locator;
 	readonly statusLine: () => Promise<string>;
 	readonly waitFor: (selector: string) => Promise<void>;
-	/** Waits until the page has painted and its finite animations and
-	 * transitions have ended, so a screenshot shows where they settle. */
+	/** Waits as settle does, so a screenshot shows where things settle. */
 	readonly settled: (p?: Page) => Promise<void>;
 	readonly pane: Locator;
 	/** Back to the session list; only a phone has the button. */
@@ -138,6 +141,12 @@ export const boxOf = async (
 	return box;
 };
 
+export const isOpen = (details: Locator): Promise<boolean> =>
+	details.evaluate((element: HTMLDetailsElement) => element.open);
+
+export const claudeRegion = (page: Page): Locator =>
+	page.getByRole("region", { name: "Claude Code", exact: true });
+
 export const tools = (run: Run): Tools => {
 	const { page, patience, log } = run;
 	const status = page.locator("header.status");
@@ -150,7 +159,6 @@ export const tools = (run: Run): Tools => {
 			}
 			log(`ok: ${what}`);
 		},
-		status,
 		statusLine: async (): Promise<string> => squeeze(await status.innerText()),
 		waitFor: (selector: string): Promise<void> =>
 			page.locator(selector).waitFor(),

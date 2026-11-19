@@ -1,4 +1,12 @@
-import { pageKeeps, type Run, shotNamed, tools } from "../harness.ts";
+import {
+	claudeRegion,
+	LIVE,
+	OWN_CLI,
+	pageKeeps,
+	type Run,
+	shotNamed,
+	tools,
+} from "../harness.ts";
 
 // The fake's sign-in (fixtures/fake-login.py) prints Claude's link and
 // takes one code; this is the one it accepts, and the account its
@@ -6,7 +14,6 @@ import { pageKeeps, type Run, shotNamed, tools } from "../harness.ts";
 const CODE = "conductor-test-sign-in-code#fake-state";
 const WRONG = "conductor-test-wrong-code";
 const ACCOUNT = "conductor-test@example.invalid";
-const OWN_CLI = "conductor's own CLI, signed in on its own";
 const AUTHORIZE = "https://claude.com/cai/oauth/authorize?";
 
 /** Claude's sign-in started, its link checked, and a refused code. */
@@ -16,7 +23,7 @@ const refusedCode = async (
 ): Promise<void> => {
 	const { page, out, patience } = run;
 	const { check } = tools(run);
-	const claude = page.getByRole("region", { name: "Claude Code", exact: true });
+	const claude = claudeRegion(page);
 	await start();
 	const link = claude.getByRole("link", { name: "Open the sign-in page" });
 	check(
@@ -52,7 +59,7 @@ export const signIn = async (run: Run): Promise<void> => {
 	const { page, out, patience, log } = run;
 	const { check, waitFor } = tools(run);
 	await page.getByRole("button", { name: "Credentials" }).click();
-	const claude = page.getByRole("region", { name: "Claude Code", exact: true });
+	const claude = claudeRegion(page);
 	check(
 		(await claude.locator(".credential-state").innerText()) === OWN_CLI,
 		"Claude starts on its own CLI",
@@ -97,7 +104,7 @@ export const signIn = async (run: Run): Promise<void> => {
 		"no code is in storage, the URL or the DOM",
 	);
 	await page.reload();
-	await waitFor('header.status[data-state="Live"]');
+	await waitFor(LIVE);
 	await page.getByRole("button", { name: "Credentials" }).click();
 	check(
 		(await page

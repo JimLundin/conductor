@@ -36,9 +36,39 @@ rule = "lint/performance/useDomNodeTextContent"
 reason = "the checks compare the rendered text, which Playwright's innerText() and the page's innerText give; textContent adds hidden text and source whitespace"
 
 [[exception]]
-path = "**/*.ts"
+path = "browser.ts"
 rule = "lint/security/noSecrets"
-reason = "what it flags are CSS selectors, and the fake credentials the scenarios check never leak"
+reason = "it flags the iPhone user agent the app is driven with; nothing in it is a secret"
+
+[[exception]]
+path = "harness.ts"
+rule = "lint/security/noSecrets"
+reason = "it flags the form's CSS selectors; nothing in it is a secret"
+
+[[exception]]
+path = "scenarios/continue.ts"
+rule = "lint/security/noSecrets"
+reason = "it flags the form's and the reasoning disclosure's CSS selectors; nothing in it is a secret"
+
+[[exception]]
+path = "scenarios/hosts.ts"
+rule = "lint/security/noSecrets"
+reason = "it flags the host picker's CSS selectors; nothing in it is a secret"
+
+[[exception]]
+path = "scenarios/projects.ts"
+rule = "lint/security/noSecrets"
+reason = "it flags the project and issue forms' CSS selectors; nothing in it is a secret"
+
+[[exception]]
+path = "scenarios/screens.ts"
+rule = "lint/security/noSecrets"
+reason = "it flags the composer's CSS selector; nothing in it is a secret"
+
+[[exception]]
+path = "scenarios/sign-in.ts"
+rule = "lint/security/noSecrets"
+reason = "it flags the sign-in card's CSS selectors; nothing in it is a secret"
 
 [[exception]]
 path = "**/*.ts"
@@ -48,12 +78,12 @@ reason = "each step drives the one page in order; run at once they would race it
 [[exception]]
 path = "scenarios/*.ts"
 rule = "lint/nursery/noExcessiveStatementsPerFunction"
-reason = "a scenario's step is one script of page actions and checks in the order a person takes them; cut at ten statements it would scatter that order across functions with no seam between them"
+reason = "each scenario is already cut into the steps a person takes on one screen (opening a session, answering a card, pairing a host); each step runs to a few dozen page actions and checks, and cutting it at ten statements would split a screen's checks from the actions they follow"
 
 [[exception]]
 path = "scenarios/*.ts"
 rule = "lint/complexity/noExcessiveLinesPerFunction"
-reason = "a scenario's step is one script of page actions and checks in the order a person takes them; its long expected texts make it run past fifty lines"
+reason = "each step is one screen's actions and checks, and the exact texts it compares against wrap over several lines each, which takes the longer steps past fifty lines"
 
 [[exception]]
 path = "profiles"

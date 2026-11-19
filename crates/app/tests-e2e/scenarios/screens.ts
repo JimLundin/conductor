@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from "playwright";
-import { PHONE, PROMPT, type Run, tools } from "../harness.ts";
+import { LIVE, PHONE, PROMPT, type Run, tools } from "../harness.ts";
 
 type State = "running" | "closed" | "idle";
 
@@ -8,7 +8,7 @@ interface Shooter {
 	readonly device: string;
 	readonly states: readonly (readonly [string, State])[];
 	readonly context: BrowserContext;
-	readonly shot: Page;
+	readonly view: Page;
 }
 
 const SCHEMES = ["light", "dark"] as const;
@@ -49,23 +49,21 @@ const shooters = async (run: Run): Promise<readonly Shooter[]> => {
 				reducedMotion: "reduce",
 			});
 			context.setDefaultTimeout(patience);
-			const shot = await context.newPage();
-			watch(shot);
-			await shot.goto(joinUrl);
-			await shot
-				.locator('header.status[data-state="Live"]')
-				.waitFor({ timeout: patience });
-			ready = [...ready, { scheme, device, states, context, shot }];
+			const view = await context.newPage();
+			watch(view);
+			await view.goto(joinUrl);
+			await view.locator(LIVE).waitFor({ timeout: patience });
+			ready = [...ready, { scheme, device, states, context, view }];
 		}
 	}
 	return ready;
 };
 
-const shown = (shot: Page, state: State): Locator =>
+const shown = (view: Page, state: State): Locator =>
 	({
-		running: shot.locator(".reply.streaming", { hasText: "/tmp/s1" }),
-		closed: shot.locator(".session-pane .closed-note"),
-		idle: shot.locator(".session-pane .composer textarea:not([disabled])"),
+		running: view.locator(".reply.streaming", { hasText: "/tmp/s1" }),
+		closed: view.locator(".session-pane .closed-note"),
+		idle: view.locator(".session-pane .composer textarea:not([disabled])"),
 	})[state];
 
 export const screens = async (run: Run): Promise<void> => {
@@ -85,13 +83,13 @@ export const screens = async (run: Run): Promise<void> => {
 		.locator(".reply.streaming", { hasText: "/tmp/s1" })
 		.waitFor({ timeout: patience });
 	log(`running, held mid-reply: "${await text(".reply")}"`);
-	for (const { scheme, device, states, context, shot } of ready) {
+	for (const { scheme, device, states, context, view } of ready) {
 		for (const [title, state] of states) {
-			await openRow(title, shot);
-			await shown(shot, state).waitFor();
-			await settled(shot);
+			await openRow(title, view);
+			await shown(view, state).waitFor();
+			await settled(view);
 			const file = `${out}/${device}-${scheme}-${state}.png`;
-			await shot.screenshot({ path: file });
+			await view.screenshot({ path: file });
 			log(`screenshot ${file}`);
 		}
 		await context.close();
