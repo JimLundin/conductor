@@ -155,22 +155,22 @@ fn a_commit_is_owned_when_a_checkpoint_ref_names_it() {
 }
 
 #[test]
-fn a_checkpoint_id_taken_again_must_record_the_same_tree_and_parent() {
+fn a_checkpoint_id_taken_again_must_record_the_same_tree() {
     assert_eq!(existing(failed("")), Ok(None));
     assert_eq!(existing(output(b"abc\n")), Ok(Some(String::from("abc"))));
-    assert_eq!(reuse(("t", "p"), "t", "p"), Ok(()));
+    assert_eq!(reuse("t", "t"), Ok(()));
     assert_eq!(
-        reuse(("t", "p"), "u", "p"),
+        reuse("t", "u"),
         failure(
             "checkpoint id already records a different tree: metadata differs"
         )
     );
-    assert_eq!(
-        reuse(("t", "p"), "t", "q"),
-        failure(
-            "checkpoint id already records a different parent: metadata differs"
-        )
-    );
+}
+
+#[test]
+fn a_turn_that_changed_no_file_makes_no_commit() {
+    assert_eq!(super::turn("t", "t"), super::Turn::Tip);
+    assert_eq!(super::turn("t", "u"), super::Turn::Commit);
 }
 
 #[test]
@@ -369,5 +369,17 @@ fn only_a_branch_of_conductors_own_is_ever_pushed_and_never_forced() {
         pushes.iter().flatten().all(|arg| !arg.starts_with('+')
             && arg != "--force"
             && arg != "-f")
+    );
+}
+
+#[test]
+fn a_checkpoint_moves_the_branch_on_from_its_parent_and_never_drops_commits() {
+    assert_eq!(super::settle("c", "c", Some("p")), Ok(false));
+    assert_eq!(super::settle("p", "c", Some("p")), Ok(true));
+    assert_eq!(
+        super::settle("x", "c", Some("p")),
+        Err(GitError::Failed(String::from(
+            "checkpoint: the session's branch moved on since the checkpoint was taken"
+        )))
     );
 }

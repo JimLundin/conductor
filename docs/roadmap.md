@@ -163,8 +163,15 @@ What is built and what comes next. Update it in the commit that changes it.
   lands nothing), pushes that to the project's remote, adds the summary
   to the issue's notes and moves the issue to `review` when it gained
   commits (ALPN `conductor/22`). Another host then continues the issue
-  from its branch. Next: turns as commits (step 7c). *Try:* finish a
-  session on an issue, then start one on another host.
+  from its branch. *Try:* finish a session on an issue, then start one on
+  another host.
+- **Turns as commits** (home step 7c, architecture §5.3). Each turn of a
+  session is a commit on its branch, on top of any the agent made, and
+  undoing a turn resets the branch to the turn before; a turn that
+  changed nothing makes none. A finished issue's branch has a commit per
+  turn. No protocol change. Next: standards and instructions composed
+  into sessions (home step 8). *Try:* run two turns, then `git log` the
+  session's `conductor/<ulid>` branch.
 
 ## Next
 

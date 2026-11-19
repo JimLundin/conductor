@@ -367,6 +367,10 @@ async fn tree(
     .map(|tree| tree.trim().to_owned())
 }
 
+/// The worktree as checkpoint `checkpoint`: a commit on the session's
+/// branch, which moves to it, with the worktree's index following, so
+/// each turn is a commit there. `previous`, the last checkpoint's commit,
+/// must be one of the workspace's own.
 async fn snapshot_index(
     workspace: &Workspace,
     checkpoint: CheckpointId,
@@ -374,39 +378,90 @@ async fn snapshot_index(
     index: &Path,
 ) -> Result<String, GitError> {
     let path = Path::new(&workspace.worktree.0);
-    let parent = match previous {
-        Some(commit) => {
-            owned_commit(workspace, commit).await?;
-            String::from(commit)
-        }
-        None => text(path, &["rev-parse", "HEAD"]).await?,
-    };
-    let tree = tree(path, &parent, index).await?;
+    if let Some(commit) = previous {
+        owned_commit(workspace, commit).await?;
+    }
+    let branch = host::workspace::head(workspace);
+    let tip = text(path, &["rev-parse", &branch]).await?;
+    let tree = tree(path, &tip, index).await?;
+    let commit = recorded_or_made(workspace, checkpoint, &tip, &tree).await?;
+    settle_branch(workspace, &commit, &tip).await?;
+    Ok(commit)
+}
+
+/// The checkpoint's commit as its ref recorded it, when it was taken
+/// before, or a new one on the tip, which the ref then pins.
+async fn recorded_or_made(
+    workspace: &Workspace,
+    checkpoint: CheckpointId,
+    tip: &str,
+    tree: &str,
+) -> Result<String, GitError> {
+    let path = Path::new(&workspace.worktree.0);
     let reference = host::workspace::reference(workspace, checkpoint)?;
     let existing =
         execute(&mut git(path, &["rev-parse", "--verify", &reference])).await?;
     if let Some(commit) = host::workspace::existing(existing)? {
-        let recorded_tree =
+        let recorded =
             text(path, &["rev-parse", &format!("{commit}^{{tree}}")]).await?;
-        let recorded_parent =
-            text(path, &["rev-parse", &format!("{commit}^")]).await?;
-        host::workspace::reuse(
-            (&recorded_tree, &recorded_parent),
-            &tree,
-            &parent,
-        )?;
-        Ok(commit)
-    } else {
-        let commit = text_commit(
-            path,
-            &tree,
-            &[&parent],
-            &host::workspace::message(checkpoint),
-        )
-        .await?;
-        let _ = text(path, &["update-ref", &reference, &commit, ""]).await?;
-        Ok(commit)
+        host::workspace::reuse(&recorded, tree)?;
+        return Ok(commit);
     }
+    let made = turn_commit(path, tip, tree, checkpoint).await?;
+    let _ = text(path, &["update-ref", &reference, &made, ""]).await?;
+    Ok(made)
+}
+
+/// Moves the branch from `tip` on to the checkpoint's `commit`, as
+/// `host::workspace::settle` says.
+async fn settle_branch(
+    workspace: &Workspace,
+    commit: &str,
+    tip: &str,
+) -> Result<(), GitError> {
+    let path = Path::new(&workspace.worktree.0);
+    let parent = text(
+        path,
+        &["rev-parse", "--verify", "--quiet", &format!("{commit}^")],
+    )
+    .await
+    .ok();
+    if host::workspace::settle(tip, commit, parent.as_deref())? {
+        move_branch(workspace, commit, tip).await?;
+    }
+    Ok(())
+}
+
+/// The turn's commit on the branch's tip, or the tip when the turn
+/// changed no file.
+async fn turn_commit(
+    path: &Path,
+    tip: &str,
+    tree: &str,
+    checkpoint: CheckpointId,
+) -> Result<String, GitError> {
+    let tip_tree =
+        text(path, &["rev-parse", &format!("{tip}^{{tree}}")]).await?;
+    match host::workspace::turn(&tip_tree, tree) {
+        host::workspace::Turn::Tip => Ok(String::from(tip)),
+        host::workspace::Turn::Commit => {
+            let message = host::workspace::message(checkpoint);
+            text_commit(path, tree, &[tip], &message).await
+        }
+    }
+}
+
+/// Points the session's branch at `commit`, from `from`, and makes the
+/// worktree's index its tree, leaving the files as they are.
+async fn move_branch(
+    workspace: &Workspace,
+    commit: &str,
+    from: &str,
+) -> Result<(), GitError> {
+    let path = Path::new(&workspace.worktree.0);
+    let branch = host::workspace::head(workspace);
+    let _ = text(path, &["update-ref", &branch, commit, from]).await?;
+    text(path, &["reset", "--quiet"]).await.map(drop)
 }
 
 async fn text_commit(
@@ -507,7 +562,9 @@ pub async fn restore(
     )
     .await?;
     let _ = text(path, &["clean", "-q", "-f", "-d", "--", "."]).await?;
-    Ok(())
+    let tip =
+        text(path, &["rev-parse", &host::workspace::head(workspace)]).await?;
+    move_branch(workspace, commit, &tip).await
 }
 
 async fn patch(
@@ -1143,6 +1200,10 @@ mod tests {
         let original_mode = mode(&root.join("sub dir/original.txt"))?;
         let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
         assert_eq!(
+            initial, source_head,
+            "a checkpoint that changed nothing is the branch's tip"
+        );
+        assert_eq!(
             text(root, &["show", &format!("{initial}:deleted.txt")]).await?,
             "keep"
         );
@@ -1152,8 +1213,6 @@ mod tests {
         std::fs::write(root.join("space 雪.txt"), "added\n")?;
         std::fs::write(root.join("binary.dat"), [0, 254, 2])?;
         std::fs::write(root.join("ignored.txt"), "private\n")?;
-        let worktree_index =
-            std::fs::read(super::git_dir(root).await?.join("index"))?;
         let changed =
             snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?;
         assert_eq!(
@@ -1161,14 +1220,17 @@ mod tests {
             changed
         );
         assert_eq!(
-            std::fs::read(super::git_dir(root).await?.join("index"))?,
-            worktree_index
+            (
+                text(root, &["rev-parse", "HEAD"]).await?,
+                text(root, &["status", "--porcelain"]).await?
+            ),
+            (changed.clone(), String::new()),
+            "the turn is a commit on the branch, and the index follows it"
         );
         assert_eq!(
             text(root, &["show", &format!("{changed}:space 雪.txt")]).await?,
             "added"
         );
-        assert_eq!(text(root, &["rev-parse", "HEAD"]).await?, source_head);
         std::fs::write(root.join("space 雪.txt"), "different\n")?;
         assert_eq!(
             matches!(
@@ -1218,7 +1280,11 @@ mod tests {
             std::fs::read_to_string(root.join("ignored.txt"))?,
             "private\n"
         );
-        assert_eq!(text(root, &["rev-parse", "HEAD"]).await?, source_head);
+        assert_eq!(
+            text(root, &["rev-parse", "HEAD"]).await?,
+            source_head,
+            "undoing resets the session's branch"
+        );
         assert_source_untouched(&repo, &source_index, &source_head).await
     }
 

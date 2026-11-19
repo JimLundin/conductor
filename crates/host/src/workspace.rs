@@ -256,34 +256,69 @@ pub fn existing(output: Output) -> Result<Option<String>, GitError> {
     }
 }
 
-/// A checkpoint id is immutable: taken again, it must record the same tree
-/// on the same parent.
+/// A checkpoint id is immutable: taken again, it must record the same
+/// tree. Its parent is the branch's tip when it was first taken, which a
+/// retry after a crash may find the branch already past.
 ///
 /// # Errors
 ///
-/// When the recorded tree or parent differs.
-pub fn reuse(
-    recorded: (&str, &str),
-    tree: &str,
-    parent: &str,
-) -> Result<(), GitError> {
-    let (recorded_tree, recorded_parent) = recorded;
+/// When the recorded tree differs.
+pub fn reuse(recorded_tree: &str, tree: &str) -> Result<(), GitError> {
     same(
         recorded_tree,
         tree,
         "checkpoint id already records a different tree",
-    )?;
-    same(
-        recorded_parent,
-        parent,
-        "checkpoint id already records a different parent",
     )
 }
 
-/// The checkpoint commit's message.
+/// A turn's checkpoint is a commit on the session's branch: a new one on
+/// its tip, or the tip itself when the turn changed no file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Turn {
+    Tip,
+    Commit,
+}
+
+/// Whether a turn whose worktree holds `tree` makes a commit on a branch
+/// whose tip holds `tip_tree`.
+#[must_use]
+pub fn turn(tip_tree: &str, tree: &str) -> Turn {
+    if tip_tree == tree {
+        Turn::Tip
+    } else {
+        Turn::Commit
+    }
+}
+
+/// What becomes of the session's branch, at `tip`, once checkpoint
+/// `commit`, made on `parent`, is taken: it moves on from the parent, or
+/// is there already after a retry.
+///
+/// # Errors
+///
+/// When the branch moved elsewhere since, so moving it would drop
+/// commits.
+pub fn settle(
+    tip: &str,
+    commit: &str,
+    parent: Option<&str>,
+) -> Result<bool, GitError> {
+    if tip == commit {
+        Ok(false)
+    } else if parent == Some(tip) {
+        Ok(true)
+    } else {
+        Err(failure(
+            "checkpoint",
+            "the session's branch moved on since the checkpoint was taken",
+        ))
+    }
+}
+
+/// The message of a turn's commit on the session's branch.
 #[must_use]
 pub fn message(checkpoint: CheckpointId) -> String {
-    format!("Conductor checkpoint {}", checkpoint.0)
+    format!("Conductor: checkpoint {} of the session", checkpoint.0)
 }
 
 /// The files to patch from `git diff --name-status -z`, at most

@@ -538,9 +538,19 @@ until someone re-records them by hand (§6.2).
   initially from committed HEAD. The original working tree and index stay
   untouched. The selected subdirectory is resolved within the managed tree.
   An initial snapshot and each actual finished, failed or interrupted turn
-  get immutable `refs/conductor/<ulid>/<checkpoint>` refs. A temporary index
-  reads the previous snapshot before `add -A`, `write-tree`, `commit-tree`
-  and `update-ref`; branch HEAD never moves. Durable reservations prevent
+  is a commit on the session's branch (home §2.3): a temporary index reads
+  the branch's tip before `add -A` and `write-tree`, `commit-tree` makes
+  the turn's commit on the tip, or the tip is the checkpoint when the turn
+  changed no file, and the branch moves to it with the worktree's index
+  following (`reset`), so the files stay. A commit the agent makes in a
+  turn becomes the checkpoint's parent. Each checkpoint's commit is also
+  pinned by `refs/conductor/<ulid>/<checkpoint>`, which diffs and undo
+  check it against; a checkpoint taken again must record the same tree,
+  and moves the branch only from the checkpoint's parent, so a retry after
+  a crash never drops a commit made since (`host::workspace::settle`). The
+  tip is read from the branch, which the workspace's checks hold `HEAD`
+  to. The index follows the branch, so what the agent staged apart from
+  its files, such as a file `.gitignore` names but it added, isn't kept. Durable reservations prevent
   checkpoint id reuse after undo or a failed snapshot. A failed snapshot
   retains its native turn boundary and retries before Send or a closed
   session's Continue; an unsuccessful retry rejects that command before
@@ -561,7 +571,8 @@ until someone re-records them by hand (§6.2).
   counts and patch sizes; binary and oversized files get markers. `GetDiff`
   bypasses durable receipts so patches are never copied into the event log
   or receipt table. Undo removes the selected turn and all later turns from
-  the client projection and restores the preceding snapshot. Native history
+  the client projection and restores the preceding snapshot, resetting
+  the session's branch to its commit. Native history
   restoration runs first: Codex uses `thread/revert {beforeTurnId}` and
   verifies the exact retained native turn-id prefix. Claude forks through
   the preceding top-level message UUID with `--resume-session-at` and a
