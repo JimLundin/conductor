@@ -49,7 +49,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/18";
+pub const ALPN: &[u8] = b"conductor/19";
 
 /// One frame of a subscription: a logged event, where a sign-in stands, or
 /// the host's home as it is now, which replaces the one before.
@@ -443,6 +443,13 @@ pub enum CommandBody {
     CloneProject {
         project: ProjectId,
     },
+    /// Stops the session's agent between turns, commits what its workspace
+    /// holds onto its branch, pushes that branch to the checkout's
+    /// `origin`, and removes the workspace. `SessionRemoved` follows in the
+    /// log; the session takes no command after it.
+    RemoveSession {
+        session: SessionId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -527,6 +534,7 @@ pub enum Rejection {
     NotCheckedOut,
     /// The project is local only: there is no remote to clone.
     NoRemote,
+    SessionRemoved,
 }
 
 impl Rejection {
@@ -551,6 +559,9 @@ impl Rejection {
             ),
             Self::UnknownSession => String::from("no session with that id"),
             Self::SessionClosed => String::from("the session has closed"),
+            Self::SessionRemoved => {
+                String::from("the session and its workspace were removed")
+            }
             Self::TurnInProgress => String::from("a turn is already running"),
             Self::NoTurnRunning => String::from("no turn is running"),
             Self::UnknownRequest => String::from("no request with that id"),
@@ -749,6 +760,11 @@ pub enum EventKind {
         agent: SubagentId,
         event: SubagentEvent,
     },
+    /// The session's workspace is gone and its branch kept as `kept` says;
+    /// `None` when it had no workspace. Nothing follows it.
+    SessionRemoved {
+        kept: Option<Kept>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -840,6 +856,20 @@ pub struct Workspace {
     pub worktree: HostPath,
     pub directory: HostPath,
     pub branch: String,
+}
+
+/// Where a removed session's branch was kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Kept {
+    /// In the checkout only: it has no `origin`.
+    Local,
+    Pushed {
+        remote: String,
+    },
+    /// In the checkout only, since the push failed.
+    PushFailed {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -39,9 +39,9 @@ use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
     EventKind, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
-    Instances, ModelChoice, ModelId, Models, ProjectId, Provider, Question,
-    QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
-    SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
+    Instances, Kept, ModelChoice, ModelId, Models, ProjectId, Provider,
+    Question, QuestionOption, Rejection, RequestId, Resolution, Roster,
+    Selection, SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
     SubagentOutcome, Task, TaskId, TaskStatus, ToolCallId, ToolKind,
     ToolOutcome, ToolPhase, TurnOutcome,
 };
@@ -842,6 +842,7 @@ enum Until {
     Closed,
     Undone,
     UndoFailure,
+    Removed,
 }
 
 enum Reached {
@@ -859,7 +860,8 @@ const fn reached(until: &Until, kind: &EventKind) -> Reached {
         | (Until::TurnEnd, EventKind::TurnCompleted { .. })
         | (Until::Closed, EventKind::SessionClosed { .. })
         | (Until::Undone, EventKind::TurnsUndone { .. })
-        | (Until::UndoFailure, EventKind::UndoFailed { .. }) => Reached::Yes,
+        | (Until::UndoFailure, EventKind::UndoFailed { .. })
+        | (Until::Removed, EventKind::SessionRemoved { .. }) => Reached::Yes,
         _ => Reached::No,
     }
 }
@@ -1165,6 +1167,52 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
             Vec::from([reply(text), turn_end(TurnOutcome::Completed)]),
         ]
         .concat()
+    );
+    link.stop().await?;
+    fx.router.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
+    let fx = host().await?;
+    let dir = scratch("remove", "claude-approve.jsonl")?;
+    let (link, mut updates) = link(fx.target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let session =
+        started_session(&send(&link, start(Provider::Claude, &dir)).await?)?;
+    let opened = events_until(&mut updates, Until::Ready).await?;
+    let worktree = opened
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::WorkspaceCreated { workspace } => {
+                Some(PathBuf::from(&workspace.worktree.0))
+            }
+            _ => None,
+        })
+        .ok_or("the session made no workspace")?;
+    assert!(worktree.is_dir());
+    assert_eq!(
+        send(&link, CommandBody::RemoveSession { session }).await?,
+        CommandResult::Accepted
+    );
+    assert_eq!(
+        kinds_until(&mut updates, Until::Removed).await?,
+        [
+            EventKind::SessionClosed {
+                reason: CloseReason::Stopped {
+                    reason: String::from(host::session::REMOVED),
+                },
+            },
+            EventKind::SessionRemoved {
+                kept: Some(Kept::Local),
+            },
+        ]
+    );
+    assert!(!worktree.exists());
+    assert_eq!(
+        send(&link, CommandBody::Continue { session }).await?,
+        CommandResult::Rejected(Rejection::SessionRemoved)
     );
     link.stop().await?;
     fx.router.shutdown().await?;

@@ -127,10 +127,18 @@ What is built and what comes next. Update it in the commit that changes it.
   and clones one from the app into `<data>/projects/<project>`. The new
   `home` core crate holds the decisions. `StartSession` takes a project or
   a directory (ALPN `conductor/17`); the app has a *Projects* view and a
-  project picker in the new-session form. Next: a session's workspace
-  removed with the session (home step 5). *Try:* start a host with `--home
+  project picker in the new-session form. *Try:* start a host with `--home
   https://github.com/JimLundin/home.git --projects <your projects dir>`,
   open *Projects*, clone a project you lack, and start a session in it.
+- **Removing a session** (home step 5, architecture §5.3). A closed
+  session's *Remove* (`RemoveSession`, ALPN `conductor/19`) stops its
+  agent between turns, commits what its worktree holds onto
+  `conductor/<ulid>`, pushes that branch alone to the checkout's `origin`
+  without force, and removes the worktree and its checkpoint refs. The
+  branch stays in the checkout; `SessionRemoved` says whether it was
+  pushed. The removed session leaves the app and takes no command. Next:
+  issues (home step 6). *Try:* close a session, press *Remove*, and find
+  its work on `conductor/<ulid>` in the checkout.
 
 ## Next
 

@@ -86,6 +86,8 @@ pub enum Order {
     /// Sets the effort of later turns, if the session's model in these
     /// models takes it. The agent gets it when the next turn starts.
     Effort(Effort, Models),
+    /// Stops the agent between turns and removes the session's workspace.
+    Remove,
 }
 
 impl Order {
@@ -104,6 +106,7 @@ impl Order {
             }
             Self::Start(offered) => Core::Start { offered },
             Self::Effort(effort, offered) => Core::Effort(effort, offered),
+            Self::Remove => Core::Remove,
         }
     }
 }
@@ -243,6 +246,9 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         }
         CommandBody::Continue { session } => {
             Route::Relaunch(session, Relaunch::Continue)
+        }
+        CommandBody::RemoveSession { session } => {
+            Route::Order(session, Order::Remove)
         }
         CommandBody::SetEffort { session, effort } => {
             Route::Relaunch(session, Relaunch::Effort(effort))

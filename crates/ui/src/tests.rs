@@ -980,6 +980,36 @@ fn a_closed_session_offers_continue_and_focuses_the_composer_that_follows() {
     );
 }
 
+#[test]
+fn removing_a_closed_session_sends_the_removal_and_leaves_its_pane() {
+    let (closed, _) = opened(Vec::from([event(
+        3,
+        EventKind::SessionClosed {
+            reason: CloseReason::Stopped {
+                reason: text("reset"),
+            },
+        },
+    )]));
+    let (removed, effects) = run(
+        closed,
+        Vec::from([
+            Intent::Session(SessionIntent::Remove),
+            event(4, EventKind::SessionRemoved { kept: None }),
+        ]),
+    );
+    assert_eq!(
+        (effects, pane(&removed)),
+        (
+            Vec::from([Effect::Send {
+                host: HOST,
+                body: CommandBody::RemoveSession { session: SESSION },
+                reply: reply(ReplyTo::Notice),
+            }]),
+            None,
+        )
+    );
+}
+
 fn models() -> Models {
     Models {
         choices: Vec::from([ModelChoice {

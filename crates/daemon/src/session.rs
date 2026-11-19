@@ -233,6 +233,11 @@ impl Actor {
                 done(workspace::restore(&workspace, &commit).await)
             }
             Call::Diff(compared) => diff(*compared).await,
+            Call::Remove(workspace) => Input::Removed(
+                workspace::remove(&workspace)
+                    .await
+                    .map_err(|err| err.to_string()),
+            ),
             Call::Agent(command) => Input::Agent(self.ask(command).await),
         };
         Ok(Some(input))

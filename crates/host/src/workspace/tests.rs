@@ -1,12 +1,12 @@
 use proto::{
     Change, CheckpointFile, CheckpointId, DiffExtent, FilePatch, HostPath,
-    SessionId, Workspace,
+    Kept, SessionId, Workspace,
 };
 
 use super::{
-    Entry, GitError, Output, PATCH_LIMIT, branch, budget, checked, checkpoints,
-    existing, host_path, listing, owned, owner, patch, probed, reference,
-    reuse, subtree, text, worktree,
+    Entry, Facts, GitError, Output, PATCH_LIMIT, Step, branch, budget, checked,
+    checkpoints, existing, host_path, kept, listing, owned, owner, patch, plan,
+    probed, reference, reuse, subtree, text, worktree,
 };
 
 fn output(bytes: &[u8]) -> Output {
@@ -262,5 +262,112 @@ fn patches_past_the_total_budget_are_sent_as_too_large() {
     assert_eq!(
         budget(Vec::from([file("1", big())]), DiffExtent::Complete).1,
         DiffExtent::Complete
+    );
+}
+
+fn facts(tree: Option<&str>, origin: Option<&str>) -> Facts {
+    Facts {
+        head_tree: String::from("head"),
+        tree: tree.map(String::from),
+        origin: origin.map(String::from),
+    }
+}
+
+fn push() -> Step {
+    let name = branch(SESSION);
+    Step::Push {
+        remote: String::from("file:///remote.git"),
+        args: Vec::from([
+            String::from("push"),
+            String::from("--quiet"),
+            String::from("origin"),
+            format!("refs/heads/{name}:refs/heads/{name}"),
+        ]),
+    }
+}
+
+fn forget() -> Step {
+    Step::Forget(String::from("refs/conductor/00000000000000000000000001/"))
+}
+
+#[test]
+fn a_dirty_workspace_is_committed_pushed_then_removed_with_its_refs() {
+    assert_eq!(
+        plan(
+            &workspace(),
+            &facts(Some("dirty"), Some("file:///remote.git"))
+        ),
+        Ok(Vec::from([
+            Step::Commit {
+                tree: String::from("dirty")
+            },
+            push(),
+            Step::Remove,
+            forget(),
+        ]))
+    );
+}
+
+#[test]
+fn a_clean_workspace_without_a_remote_keeps_its_branch_locally() {
+    assert_eq!(
+        plan(&workspace(), &facts(Some("head"), None)),
+        Ok(Vec::from([Step::Remove, forget()]))
+    );
+    assert_eq!(kept(None), Kept::Local);
+}
+
+#[test]
+fn a_workspace_whose_directory_is_gone_is_pruned() {
+    assert_eq!(
+        plan(&workspace(), &facts(None, Some("file:///remote.git"))),
+        Ok(Vec::from([push(), Step::Prune, forget()]))
+    );
+}
+
+#[test]
+fn a_failed_push_keeps_the_branch_locally_and_a_pushed_one_names_the_remote() {
+    assert_eq!(
+        kept(Some((
+            String::from("file:///remote.git"),
+            Err(String::from("rejected"))
+        ))),
+        Kept::PushFailed {
+            reason: String::from("rejected")
+        }
+    );
+    assert_eq!(
+        kept(Some((String::from("file:///remote.git"), Ok(())))),
+        Kept::Pushed {
+            remote: String::from("file:///remote.git")
+        }
+    );
+}
+
+#[test]
+fn only_a_branch_of_conductors_own_is_ever_pushed_and_never_forced() {
+    let foreign = Workspace {
+        branch: String::from("main"),
+        ..workspace()
+    };
+    assert_eq!(
+        plan(&foreign, &facts(Some("dirty"), Some("origin"))),
+        Err(GitError::Failed(String::from(
+            "workspace branch: not owned by Conductor"
+        )))
+    );
+    let pushes = plan(&workspace(), &facts(Some("dirty"), Some("origin")))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|step| match step {
+            Step::Push { args, .. } => Some(args),
+            _ => None,
+        })
+        .collect::<Vec<Vec<String>>>();
+    assert_eq!(pushes.len(), 1);
+    assert!(
+        pushes.iter().flatten().all(|arg| !arg.starts_with('+')
+            && arg != "--force"
+            && arg != "-f")
     );
 }

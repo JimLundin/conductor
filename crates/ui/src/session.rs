@@ -28,6 +28,8 @@ pub enum SessionIntent {
     Interrupt,
     /// Start a closed session's agent again.
     Continue,
+    /// Remove a closed session and its workspace, keeping its branch.
+    Remove,
     /// An effort's word, from the next turn on.
     PickEffort(String),
     Decide(RequestId, Decision),
@@ -138,7 +140,11 @@ pub struct Entry {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Footer {
-    Closed { text: String, resume: bool },
+    /// `resume`: the session takes a `Continue` or a removal.
+    Closed {
+        text: String,
+        resume: bool,
+    },
     Composer(Composer),
 }
 
@@ -185,6 +191,13 @@ impl Pane {
                     ..self
                 },
                 Vec::from([notify(CommandBody::Continue { session: id }, at)]),
+            ),
+            SessionIntent::Remove => (
+                self,
+                Vec::from([notify(
+                    CommandBody::RemoveSession { session: id },
+                    at,
+                )]),
             ),
             SessionIntent::PickEffort(word) => {
                 (self, set_effort(&word, id, session.effort, at))

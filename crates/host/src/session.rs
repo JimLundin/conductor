@@ -30,9 +30,10 @@ use alloc::format;
 use proto::{
     Checkpoint, CheckpointDiff, CheckpointId, ClientName, CloseReason,
     CommandResult, Decision, Effort, Event, EventKind, HistoryAnchor, HostPath,
-    HostSeq, ModelId, Models, Rejection, RequestId, Resolution, SessionId,
-    SubagentActivity, SubagentEvent, SubagentId, Task, TaskId, ToolCallId,
-    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    HostSeq, Kept, ModelId, Models, Rejection, RequestId, Resolution,
+    SessionId, SubagentActivity, SubagentEvent, SubagentId, Task, TaskId,
+    ToolCallId, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability,
+    Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -140,7 +141,13 @@ pub enum Order {
     /// Sets the effort of later turns, if the session's model in these
     /// models takes it. The agent gets it when the next turn starts.
     Effort(Effort, Models),
+    /// Stops the agent between turns and removes the session's workspace,
+    /// keeping its branch. The session takes no order after it.
+    Remove,
 }
+
+/// Why the agent of a session being removed stops.
+pub const REMOVED: &str = "the session was removed";
 
 /// What happened, as the shell saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +169,8 @@ pub enum Input {
     Exists(bool),
     /// The outcome of a workspace call that answers nothing else.
     Done(Result<(), String>),
+    /// Where [`Call::Remove`] kept the branch.
+    Removed(Result<Kept, String>),
 }
 
 /// What the shell does next.
@@ -205,6 +214,9 @@ pub enum Call {
     /// This many new task ids.
     Mint(usize),
     Exists(HostPath),
+    /// Remove the workspace by [`crate::workspace::plan`], keeping its
+    /// branch.
+    Remove(Workspace),
     /// Send the agent this command; its outcome is [`Input::Agent`].
     Agent(Command),
 }
@@ -322,6 +334,9 @@ enum Flow {
     Leaving(Undoing, HistoryAnchor),
     Retasking(Undoing, HistoryAnchor),
     Restoring(Undoing),
+    /// The agent stops, for the session to be removed.
+    Stopping,
+    Removing,
 }
 
 struct Saving {
@@ -383,6 +398,7 @@ pub struct Session {
     declined: Vec<ToolCallId>,
     /// The tasks the session holds, from its agent's checklist.
     tasks: Vec<Task>,
+    removed: bool,
     flow: Flow,
 }
 
@@ -427,6 +443,9 @@ impl Session {
                 .unwrap_or(RequestId(0)),
             declined: Vec::new(),
             tasks: last_tasks(history.iter()),
+            removed: history.iter().any(|event| {
+                matches!(event.kind, EventKind::SessionRemoved { .. })
+            }),
             flow: Flow::Idle,
         }
     }
@@ -494,6 +513,16 @@ impl Session {
             (Flow::Restoring(undoing), Input::Done(restored)) => {
                 self.files_restored(undoing, restored)
             }
+            (Flow::Stopping, Input::Agent(Outcome::ShutDown(_))) => join(
+                self.closed(CloseReason::Stopped {
+                    reason: String::from(REMOVED),
+                }),
+                self.clean(),
+            ),
+            (Flow::Removing, Input::Removed(Ok(kept))) => self.gone(Some(kept)),
+            (Flow::Removing, Input::Removed(Err(reason))) => {
+                rejected(Rejection::WorkspaceFailure { reason })
+            }
             (waiting, _) => {
                 self.flow = waiting;
                 Vec::new()
@@ -502,6 +531,9 @@ impl Session {
     }
 
     fn order(&mut self, order: Order) -> Vec<Effect> {
+        if self.removed {
+            return rejected(Rejection::SessionRemoved);
+        }
         match order {
             Order::Diff(checkpoint) => self.diff(checkpoint),
             Order::Undo { checkpoint, fork } => {
@@ -516,6 +548,14 @@ impl Session {
 
     fn normal_order(&mut self, order: Order) -> Vec<Effect> {
         match (order, &self.turn, &self.agent) {
+            (Order::Remove, Turn::Starting(_) | Turn::Running(_), _) => {
+                rejected(Rejection::TurnInProgress)
+            }
+            (Order::Remove, Turn::Idle, Agent::Down) => self.clean(),
+            (Order::Remove, Turn::Idle, Agent::Up { .. }) => {
+                self.flow = Flow::Stopping;
+                Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
+            }
             (Order::Start { offered }, _, Agent::Down) => {
                 self.save(Saved::Start(offered))
             }
@@ -949,6 +989,29 @@ impl Session {
             }
         };
         join(join(join(saved, materialized), started), held)
+    }
+
+    /// Removes the closed session's workspace, once what the log staged is
+    /// committed; a session without one is removed at once.
+    fn clean(&mut self) -> Vec<Effect> {
+        match self.book.workspace.clone() {
+            Some(workspace) => {
+                self.flow = Flow::Removing;
+                Vec::from([
+                    Effect::Barrier,
+                    Effect::Call(Call::Remove(workspace)),
+                ])
+            }
+            None => self.gone(None),
+        }
+    }
+
+    fn gone(&mut self, kept: Option<Kept>) -> Vec<Effect> {
+        self.removed = true;
+        Vec::from([
+            Effect::Emit(EventKind::SessionRemoved { kept }),
+            Effect::Reply(CommandResult::Accepted),
+        ])
     }
 
     fn closed(&mut self, reason: CloseReason) -> Vec<Effect> {

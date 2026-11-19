@@ -3,8 +3,8 @@ use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
     Answer, Checkpoint, CheckpointId, ClientName, CloseReason, CommandResult,
     Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq,
-    InstanceId, ModelChoice, ModelId, Models, Provider, Question, Rejection,
-    RequestId, Resolution, Selection, SessionId, SubagentActivity,
+    InstanceId, Kept, ModelChoice, ModelId, Models, Provider, Question,
+    Rejection, RequestId, Resolution, Selection, SessionId, SubagentActivity,
     SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
     ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
@@ -958,5 +958,122 @@ fn a_reply_must_fit_what_the_request_asked() {
             Ok(()),
             Err(text("0 answers for 2 questions")),
         ]
+    );
+}
+
+fn remove() -> Input {
+    Input::Order(Order::Remove)
+}
+
+fn in_workspace() -> [Event; 2] {
+    [
+        event(EventKind::WorkspaceCreated {
+            workspace: workspace(),
+        }),
+        checkpoint(0, HistoryAnchor::Fresh, UndoAvailability::Available),
+    ]
+}
+
+#[test]
+fn removing_stops_the_agent_between_turns_then_removes_the_workspace() {
+    let up = expect(
+        restored(&in_workspace(), None),
+        Vec::from([
+            (start(), Vec::from([launching("/work", None, None)])),
+            (
+                started("conv", Anchoring::Messages),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::SessionReady),
+                    accepted(),
+                ]),
+            ),
+        ]),
+    );
+    let removed = expect(
+        up,
+        Vec::from([
+            (remove(), Vec::from([agent(Command::Shutdown)])),
+            (
+                Input::Agent(Outcome::ShutDown(Ok(()))),
+                Vec::from([
+                    Effect::Emit(EventKind::SessionClosed {
+                        reason: CloseReason::Stopped {
+                            reason: text(super::REMOVED),
+                        },
+                    }),
+                    Effect::Barrier,
+                    Effect::Call(Call::Remove(workspace())),
+                ]),
+            ),
+            (
+                Input::Removed(Ok(Kept::Local)),
+                Vec::from([
+                    Effect::Emit(EventKind::SessionRemoved {
+                        kept: Some(Kept::Local),
+                    }),
+                    accepted(),
+                ]),
+            ),
+        ]),
+    );
+    let _ = expect(
+        removed,
+        Vec::from([
+            (start(), Vec::from([rejected(Rejection::SessionRemoved)])),
+            (remove(), Vec::from([rejected(Rejection::SessionRemoved)])),
+        ]),
+    );
+}
+
+#[test]
+fn a_session_is_not_removed_while_a_turn_runs() {
+    let _ = expect(
+        running(),
+        Vec::from([(
+            remove(),
+            Vec::from([rejected(Rejection::TurnInProgress)]),
+        )]),
+    );
+}
+
+#[test]
+fn a_removal_that_fails_keeps_the_session_to_try_again() {
+    let removing = || {
+        Vec::from([Effect::Barrier, Effect::Call(Call::Remove(workspace()))])
+    };
+    let _ = expect(
+        restored(&in_workspace(), None),
+        Vec::from([
+            (remove(), removing()),
+            (
+                Input::Removed(Err(text("worktree locked"))),
+                Vec::from([rejected(Rejection::WorkspaceFailure {
+                    reason: text("worktree locked"),
+                })]),
+            ),
+            (remove(), removing()),
+        ]),
+    );
+}
+
+#[test]
+fn a_session_without_a_workspace_is_removed_at_once_and_stays_removed() {
+    let _ = expect(
+        restored(&[], None),
+        Vec::from([(
+            remove(),
+            Vec::from([
+                Effect::Emit(EventKind::SessionRemoved { kept: None }),
+                accepted(),
+            ]),
+        )]),
+    );
+    let _ = expect(
+        restored(&[event(EventKind::SessionRemoved { kept: None })], None),
+        Vec::from([(
+            start(),
+            Vec::from([rejected(Rejection::SessionRemoved)]),
+        )]),
     );
 }
