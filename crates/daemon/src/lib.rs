@@ -5,6 +5,7 @@
 pub mod credentials;
 pub mod home;
 pub mod log;
+pub mod progress;
 pub mod registry;
 pub mod serve;
 pub mod session;
