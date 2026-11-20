@@ -1200,7 +1200,7 @@ async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
         [
             EventKind::SessionClosed {
                 reason: CloseReason::Stopped {
-                    reason: String::from(host::session::REMOVED),
+                    reason: String::from("the session was removed"),
                 },
             },
             EventKind::SessionRemoved {

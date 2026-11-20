@@ -191,7 +191,7 @@ fn replay_resume(events: &[Event]) -> Option<HistoryAnchor> {
 }
 
 #[must_use]
-pub fn availability(
+fn availability(
     parent: Option<&Checkpoint>,
     history: &HistoryAnchor,
 ) -> UndoAvailability {
