@@ -27,9 +27,9 @@ pub struct SessionView {
     /// What the agent runs with; `None` is the CLI's own default.
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
-    pub status: SessionStatus,
+    status: SessionStatus,
     pub issue: Option<IssueId>,
-    pub finish: FinishState,
+    finish: FinishState,
     /// The tasks the session holds, in its agent's order.
     pub tasks: Vec<Task>,
     pub workspace: Option<Workspace>,
@@ -108,7 +108,7 @@ pub enum UndoState {
 
 /// Derived from the events, never sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionStatus {
+enum SessionStatus {
     Starting,
     Idle,
     Running,
@@ -234,17 +234,27 @@ enum Change {
     End,
 }
 
-impl SessionStatus {
-    /// The status in one word, for the UI's text and its `data-status`.
-    #[must_use]
-    pub fn word(&self) -> String {
-        String::from(match self {
-            Self::Starting => "starting",
-            Self::Idle => "idle",
-            Self::Running => "running",
-            Self::Closed(_) => "closed",
-        })
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusLabel {
+    Starting,
+    Idle,
+    Running,
+    Closed,
+    Undoing,
+    RecoveryNeeded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListStatus {
+    Session(StatusLabel),
+    Requests(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyTranscript {
+    Starting,
+    Ready,
+    Closed,
 }
 
 /// What the UI offers for a session, decided here so markup only shows it.
@@ -253,6 +263,7 @@ pub struct Controls {
     pub composer: Composer,
     pub interrupt: Interrupt,
     pub resume: Resume,
+    pub finish: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,7 +418,72 @@ impl SessionView {
             composer,
             interrupt,
             resume,
+            finish: self.issue.is_some()
+                && matches!(
+                    self.status,
+                    SessionStatus::Idle | SessionStatus::Closed(_)
+                )
+                && matches!(self.undo, UndoState::Ready | UndoState::Undone)
+                && matches!(self.finish, FinishState::Ready),
         }
+    }
+
+    #[must_use]
+    pub const fn status_label(&self) -> StatusLabel {
+        match (&self.undo, &self.status) {
+            (UndoState::Undoing(_), _) => StatusLabel::Undoing,
+            (UndoState::Failed { .. }, _) => StatusLabel::RecoveryNeeded,
+            (_, SessionStatus::Starting) => StatusLabel::Starting,
+            (_, SessionStatus::Idle) => StatusLabel::Idle,
+            (_, SessionStatus::Running) => StatusLabel::Running,
+            (_, SessionStatus::Closed(_)) => StatusLabel::Closed,
+        }
+    }
+
+    #[must_use]
+    pub fn list_status(&self) -> ListStatus {
+        let label = self.status_label();
+        match label {
+            StatusLabel::Undoing | StatusLabel::RecoveryNeeded => {
+                ListStatus::Session(label)
+            }
+            StatusLabel::Starting
+            | StatusLabel::Idle
+            | StatusLabel::Running
+            | StatusLabel::Closed => match self.attention() {
+                Attention::Quiet => ListStatus::Session(label),
+                Attention::Requests(open) => ListStatus::Requests(open),
+            },
+        }
+    }
+
+    #[must_use]
+    pub const fn closed_reason(&self) -> Option<&CloseReason> {
+        match &self.status {
+            SessionStatus::Closed(reason) => Some(reason),
+            SessionStatus::Starting
+            | SessionStatus::Idle
+            | SessionStatus::Running => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn empty_transcript(&self) -> Option<EmptyTranscript> {
+        if !self.items.is_empty() {
+            return None;
+        }
+        Some(match self.status {
+            SessionStatus::Starting => EmptyTranscript::Starting,
+            SessionStatus::Idle | SessionStatus::Running => {
+                EmptyTranscript::Ready
+            }
+            SessionStatus::Closed(_) => EmptyTranscript::Closed,
+        })
+    }
+
+    #[must_use]
+    pub const fn can_view_changes(&self) -> bool {
+        !matches!(self.undo, UndoState::Undoing(_))
     }
 
     /// A running turn shows it is working, unless it waits on a person or
@@ -1167,9 +1243,9 @@ mod tests {
     };
 
     use super::{
-        Approval, Attention, Composer, HostView, Interrupt, Item, ReplyState,
-        RequestState, Resume, SessionStatus, SessionView, Subagent,
-        SubagentStatus, ToolState, UndoState, Working,
+        Approval, Attention, Composer, HostView, Interrupt, Item, ListStatus,
+        ReplyState, RequestState, Resume, SessionStatus, SessionView,
+        StatusLabel, Subagent, SubagentStatus, ToolState, UndoState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -2448,9 +2524,21 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let original = numbered(checkpoint_events())
             .into_iter()
-            .fold(HostView::empty(), HostView::apply);
+            .fold(HostView::empty(), HostView::apply)
+            .apply(Event {
+                seq: HostSeq(15),
+                session: SessionId(1),
+                kind: EventKind::OnIssue {
+                    issue: proto::IssueId(7),
+                },
+            });
+        let session = original
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
+        assert!(session.controls().finish);
         let pending = original.clone().apply(Event {
-            seq: HostSeq(15),
+            seq: HostSeq(16),
             session: SessionId(1),
             kind: EventKind::UndoStarted {
                 checkpoint: proto::CheckpointId(2),
@@ -2463,16 +2551,22 @@ mod tests {
             .get(&SessionId(1))
             .ok_or("expected a value")?;
         assert_eq!(session.items.len(), 9);
+        assert_eq!(session.status_label(), StatusLabel::Undoing);
+        assert_eq!(
+            session.list_status(),
+            ListStatus::Session(StatusLabel::Undoing)
+        );
         assert_eq!(
             session.controls(),
             super::Controls {
                 composer: Composer::Busy,
                 interrupt: Interrupt::Hidden,
-                resume: Resume::Hidden
+                resume: Resume::Hidden,
+                finish: false,
             }
         );
         let failed = pending.apply(Event {
-            seq: HostSeq(16),
+            seq: HostSeq(17),
             session: SessionId(1),
             kind: EventKind::UndoFailed {
                 checkpoint: proto::CheckpointId(2),
@@ -2500,6 +2594,12 @@ mod tests {
             }
         );
         assert_eq!(session.controls().composer, Composer::Busy);
+        assert!(!session.controls().finish);
+        assert_eq!(session.status_label(), StatusLabel::RecoveryNeeded);
+        assert_eq!(
+            session.list_status(),
+            ListStatus::Session(StatusLabel::RecoveryNeeded)
+        );
         Ok(())
     }
 
@@ -2590,18 +2690,6 @@ mod tests {
             ],
             [true, false]
         );
-        assert_eq!(
-            [
-                SessionStatus::Starting,
-                SessionStatus::Idle,
-                SessionStatus::Running,
-                SessionStatus::Closed(CloseReason::Exited {
-                    status: text("9")
-                }),
-            ]
-            .map(|status| status.word()),
-            ["starting", "idle", "running", "closed"].map(text)
-        );
     }
 
     #[test]
@@ -2638,6 +2726,66 @@ mod tests {
             (session.workspace.clone(), session.effort),
             (Some(workspace), Some(Effort::High))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn finish_and_status_follow_the_session_lifecycle()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reason = CloseReason::Exited { status: text("0") };
+        let cases = [
+            (created("/a"), StatusLabel::Starting, false),
+            (EventKind::SessionReady, StatusLabel::Idle, false),
+            (
+                EventKind::OnIssue {
+                    issue: proto::IssueId(7),
+                },
+                StatusLabel::Idle,
+                true,
+            ),
+            (
+                EventKind::UserMessage {
+                    text: text("work"),
+                    by: ClientName(text("phone")),
+                },
+                StatusLabel::Running,
+                false,
+            ),
+            (
+                EventKind::SessionClosed {
+                    reason: reason.clone(),
+                },
+                StatusLabel::Closed,
+                true,
+            ),
+            (EventKind::FinishStarted, StatusLabel::Closed, false),
+            (
+                EventKind::SessionFinished {
+                    finished: proto::Finished::Failed {
+                        reason: text("merge conflict"),
+                    },
+                },
+                StatusLabel::Closed,
+                false,
+            ),
+        ];
+        let mut view = HostView::empty();
+        for (index, (kind, status, finish)) in cases.into_iter().enumerate() {
+            view = view.apply(Event {
+                seq: HostSeq(u64::try_from(index)? + 1),
+                session: SessionId(1),
+                kind,
+            });
+            let session =
+                view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
+            assert_eq!(session.status_label(), status);
+            assert_eq!(session.list_status(), ListStatus::Session(status));
+            assert_eq!(session.controls().finish, finish);
+            assert_eq!(
+                session.closed_reason(),
+                (status == StatusLabel::Closed).then_some(&reason)
+            );
+        }
         Ok(())
     }
 
@@ -2730,16 +2878,19 @@ mod tests {
         let undone = numbered(Vec::from([
             created("/a"),
             EventKind::SessionReady,
+            EventKind::OnIssue {
+                issue: proto::IssueId(7),
+            },
             said("first"),
             started("call1"),
             subagent_started("a", "call1"),
             completed(),
-            checkpoint(1, 3, 0),
+            checkpoint(1, 4, 0),
             said("second"),
             started("call2"),
             subagent_started("b", "call2"),
             completed(),
-            checkpoint(2, 8, 1),
+            checkpoint(2, 9, 1),
             said("third"),
             EventKind::TurnsUndone {
                 checkpoint: proto::CheckpointId(2),
@@ -2762,12 +2913,14 @@ mod tests {
         );
         assert_eq!(
             session.turn_starts.keys().copied().collect::<Vec<_>>(),
-            Vec::from([HostSeq(3)])
+            Vec::from([HostSeq(4)])
         );
         assert_eq!(
             (session.status.clone(), session.undo.clone()),
             (SessionStatus::Idle, UndoState::Undone)
         );
+        assert_eq!(session.status_label(), StatusLabel::Idle);
+        assert!(session.controls().finish);
         Ok(())
     }
 

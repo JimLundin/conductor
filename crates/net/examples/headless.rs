@@ -14,7 +14,7 @@ use clap::{Parser, ValueEnum};
 use client::host_fold::HostFold;
 use client::host_view::{
     Approval, Attention, Composer, Interrupt, Item, ReplyState, Resume,
-    SessionStatus, UndoState,
+    UndoState,
 };
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
@@ -337,7 +337,7 @@ impl Session {
             .get(&session)
             .context("the session is missing")?;
         let controls = view.controls();
-        if let SessionStatus::Closed(reason) = &view.status {
+        if let Some(reason) = view.closed_reason() {
             if matches!(self.stage, Stage::Open)
                 && controls.resume == Resume::Offered
             {

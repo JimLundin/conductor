@@ -6,14 +6,13 @@ use alloc::collections::BTreeMap;
 use crate::prelude::*;
 use client::answers::Draft;
 use client::host_view::{
-    self, Interrupt, Item, Resume, SessionStatus, SessionView, UndoState,
-    Working,
+    self, EmptyTranscript, Interrupt, Item, Resume, SessionView, StatusLabel,
+    UndoState, Working,
 };
 use client::new_session::{efforts, models};
 use proto::{
     Catalog, CheckpointId, CloseReason, CommandBody, CommandResult, Decision,
-    Effort, FinishState, Instances, Question, RequestId, SessionId, Task,
-    TaskStatus,
+    Effort, Instances, Question, RequestId, SessionId, Task, TaskStatus,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
@@ -444,11 +443,7 @@ impl Pane {
     ) -> SessionPane {
         let controls = session.controls();
         let provider = agent(session, known);
-        let status = match session.undo {
-            UndoState::Undoing(_) => String::from("undoing"),
-            UndoState::Failed { .. } => String::from("recovery needed"),
-            UndoState::Ready | UndoState::Undone => session.status.word(),
-        };
+        let status = String::from(status_text(session.status_label()));
         let offered = efforts(
             &models(
                 known
@@ -468,13 +463,7 @@ impl Pane {
             ),
             effort: effort_control(session.effort, &offered),
             interrupt: controls.interrupt == Interrupt::Offered,
-            finish: session.issue.is_some()
-                && matches!(
-                    session.status,
-                    SessionStatus::Idle | SessionStatus::Closed(_)
-                )
-                && session.undo == UndoState::Ready
-                && session.finish == FinishState::Ready,
+            finish: controls.finish,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
                     "This session has no worktree checkpoints.",
@@ -486,33 +475,36 @@ impl Pane {
             ),
             undo: undo_note(id, &session.undo),
             tasks: tasks(&session.tasks),
-            empty: empty(&session.status, session.items.is_empty(), &provider),
+            empty: session
+                .empty_transcript()
+                .map(|kind| empty(kind, &provider)),
             entries: self.entries(session),
             working: session.working() == Working::Shown,
             notice,
-            footer: match &session.status {
-                SessionStatus::Closed(reason) => Footer::Closed {
+            footer: session.closed_reason().map_or_else(
+                || {
+                    Footer::Composer(Composer {
+                        text: self.draft.clone(),
+                        placeholder: match controls.composer {
+                            host_view::Composer::Open => {
+                                format!("Message {provider}")
+                            }
+                            host_view::Composer::Busy => {
+                                format!("{provider} is working…")
+                            }
+                            host_view::Composer::Closed => {
+                                String::from("This session has ended")
+                            }
+                        },
+                        disabled: controls.composer
+                            != host_view::Composer::Open,
+                    })
+                },
+                |reason| Footer::Closed {
                     text: closed(reason),
                     resume: controls.resume == Resume::Offered,
                 },
-                SessionStatus::Starting
-                | SessionStatus::Idle
-                | SessionStatus::Running => Footer::Composer(Composer {
-                    text: self.draft.clone(),
-                    placeholder: match controls.composer {
-                        host_view::Composer::Open => {
-                            format!("Message {provider}")
-                        }
-                        host_view::Composer::Busy => {
-                            format!("{provider} is working…")
-                        }
-                        host_view::Composer::Closed => {
-                            String::from("This session has ended")
-                        }
-                    },
-                    disabled: controls.composer != host_view::Composer::Open,
-                }),
-            },
+            ),
             status,
         }
     }
@@ -545,7 +537,7 @@ impl Pane {
                             turn,
                             self.diffs.get(&turn.checkpoint),
                             composer,
-                            &session.undo,
+                            session.can_view_changes(),
                         )
                     }),
             })
@@ -624,22 +616,26 @@ fn tasks(tasks: &[Task]) -> Option<Tasks> {
     })
 }
 
-fn empty(
-    status: &SessionStatus,
-    no_items: bool,
-    provider: &str,
-) -> Option<String> {
-    match (status, no_items) {
-        (_, false) => None,
-        (SessionStatus::Starting, true) => {
-            Some(format!("Starting {provider}…"))
+fn empty(kind: EmptyTranscript, provider: &str) -> String {
+    match kind {
+        EmptyTranscript::Starting => format!("Starting {provider}…"),
+        EmptyTranscript::Ready => {
+            format!("{provider} is ready. Send a message to begin.")
         }
-        (SessionStatus::Idle | SessionStatus::Running, true) => {
-            Some(format!("{provider} is ready. Send a message to begin."))
+        EmptyTranscript::Closed => {
+            String::from("This session ended before it began.")
         }
-        (SessionStatus::Closed(_), true) => {
-            Some(String::from("This session ended before it began."))
-        }
+    }
+}
+
+pub const fn status_text(label: StatusLabel) -> &'static str {
+    match label {
+        StatusLabel::Starting => "starting",
+        StatusLabel::Idle => "idle",
+        StatusLabel::Running => "running",
+        StatusLabel::Closed => "closed",
+        StatusLabel::Undoing => "undoing",
+        StatusLabel::RecoveryNeeded => "recovery needed",
     }
 }
 

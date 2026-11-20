@@ -15,8 +15,8 @@ use std::time::Duration;
 use claude_cli::Sandbox;
 use client::host_fold::HostFold;
 use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
-    Subagent, SubagentStatus, ToolState,
+    Approval, HostView, Item, ReplyState, RequestState, StatusLabel, Subagent,
+    SubagentStatus, ToolState,
 };
 use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
@@ -714,7 +714,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() -> Fallibl
     assert_eq!(found.provider, Provider::Claude);
     assert_eq!(found.directory.0, source.display().to_string());
     assert_eq!(found.activity, head);
-    assert_eq!(found.status, SessionStatus::Idle);
+    assert_eq!(found.status_label(), StatusLabel::Idle);
     assert_eq!(
         found.items,
         [

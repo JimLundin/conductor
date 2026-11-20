@@ -1662,8 +1662,10 @@ The owner settled these on 2026-11-12.
   clears the event history before the link replays the new epoch.
 - `HostView` (in `client`, the pure `no_std` core) folds a host's events
   into what the UI renders: sessions,
-  transcripts, tool cards, open requests, what the composer and the
-  interrupt button may do. It has no UI types and is unit-tested.
+  transcripts, tool cards and open requests. Its `SessionView` decides
+  when to offer the composer, Interrupt, Continue and Finish. It also
+  supplies the status for the pane and list and the reason for a closed
+  footer. The UI maps these decisions to text and markup.
 - Both compile to wasm32 for the app. A native build exists only as
   the harness for the daemon's e2e tests and the headless example.
   `tools/live-host.sh` runs the example from `net` against a live host.
