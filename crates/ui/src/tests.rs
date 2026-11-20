@@ -13,13 +13,13 @@ use proto::{
     Auth, AuthToken, Availability, Catalog, Checkpoint, CheckpointDiff,
     CheckpointFile, CheckpointId, ClientName, CloseReason, CommandBody,
     CommandResult, Credential, CredentialForm, Decision, DiffExtent, Effort,
-    Event, EventKind, Field, FieldKind, FilePatch, HistoryAnchor, HostPath,
-    HostSeq, InstanceId, InstanceStatus, Instances, ModelChoice, ModelId,
-    Models, Provider, ProviderInfo, Question, QuestionOption, Rejection,
-    RequestId, Resolution, Selection, SessionId, SignInCode, SignInStep,
-    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Ticket,
-    TicketError, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
-    UndoAvailability,
+    Epoch, Event, EventKind, Feed, Field, FieldKind, FilePatch, HistoryAnchor,
+    Home, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
+    ModelChoice, ModelId, Models, Provider, ProviderInfo, Question,
+    QuestionOption, Rejection, RequestId, Resolution, Selection, SessionId,
+    SignIn, SignInCode, SignInStep, SubagentActivity, SubagentEvent,
+    SubagentId, SubagentOutcome, Ticket, TicketError, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Welcome,
 };
 
 use crate::credentials::{Done, Subject};
@@ -59,13 +59,7 @@ fn joined(link: Result<Ticket, TicketError>) -> State {
 fn paired() -> State {
     let (state, _) = update(
         joined(Ok(ticket())),
-        Intent::Link(
-            HOST,
-            Update::Status(Status {
-                catalog: catalog(),
-                ..Status::default()
-            }),
-        ),
+        welcomed(HOST, "desk", Instances::default(), None),
     );
     state
 }
@@ -136,11 +130,11 @@ fn run(state: State, intents: Vec<Intent>) -> (State, Vec<Effect>) {
 fn event(seq: u64, kind: EventKind) -> Intent {
     Intent::Link(
         HOST,
-        Update::Event(Event {
+        Update::Feed(Feed::Event(Event {
             seq: HostSeq(seq),
             session: SESSION,
             kind,
-        }),
+        })),
     )
 }
 
@@ -162,27 +156,37 @@ fn said(words: &str) -> EventKind {
     }
 }
 
-fn status(instances: Instances) -> Intent {
-    signing_in(instances, BTreeMap::new())
-}
-
-/// A live host with these instances and their sign-ins from the app.
-fn signing_in(
+fn welcomed(
+    host: HostId,
+    name: &str,
     instances: Instances,
-    sign_ins: BTreeMap<InstanceId, SignInStep>,
+    home: Option<Home>,
 ) -> Intent {
     Intent::Link(
-        HOST,
-        Update::Status(Status {
-            state: LinkState::Live,
-            host: Some(text("desk")),
-            instances: Some(instances),
+        host,
+        Update::Welcome(Welcome {
+            host: text(name),
+            epoch: Epoch(1),
+            head_seq: HostSeq(0),
+            instances,
             catalog: catalog(),
-            sign_ins,
-            home: None,
-            error: None,
+            home,
         }),
     )
+}
+
+fn connection(host: HostId, state: LinkState, error: Option<&str>) -> Intent {
+    Intent::Link(
+        host,
+        Update::Status(Status {
+            state,
+            error: error.map(text),
+        }),
+    )
+}
+
+fn roster(instances: Instances) -> Intent {
+    Intent::Link(HOST, Update::Answer(CommandResult::Instances(instances)))
 }
 
 /// A provider's own instance by its name, and otherwise Claude's of the
@@ -393,7 +397,7 @@ fn the_list_marks_the_shown_session_and_what_waits_on_a_person() {
                 text("Claude Code, needs you"),
                 text("1")
             )),
-            Some(Listing::Empty(text("No sessions on host 09090909 yet."))),
+            Some(Listing::Empty(text("No sessions on desk yet."))),
         )
     );
 }
@@ -1038,7 +1042,8 @@ fn signed_in() -> Availability {
 #[test]
 fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
     let (state, effects) = opened(Vec::from([
-        status(claude(signed_in())),
+        connection(HOST, LinkState::Live, None),
+        roster(claude(signed_in())),
         Intent::Session(SessionIntent::PickEffort(text("high"))),
         Intent::Session(SessionIntent::PickEffort(String::new())),
     ]));
@@ -1101,7 +1106,11 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
     ]));
     let (empty, _) = run(
         paired(),
-        Vec::from([status(instances), Intent::Show(Place::NewSession)]),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            roster(instances),
+            Intent::Show(Place::NewSession),
+        ]),
     );
     let (codex, _) = run(
         empty.clone(),
@@ -1228,7 +1237,8 @@ fn a_secret_is_sent_once_and_its_account_makes_the_instance() {
     let (filled, _) = run(
         paired(),
         Vec::from([
-            status(claude(signed_in())),
+            connection(HOST, LinkState::Live, None),
+            roster(claude(signed_in())),
             Intent::Show(Place::Credentials),
             fill("base_url", " https://gw.example "),
             fill("token", "secret"),
@@ -1254,7 +1264,8 @@ fn a_secret_is_sent_once_and_its_account_makes_the_instance() {
                 )),
                 Ok(CommandResult::Instances(two_claudes())),
             ),
-            status(two_claudes()),
+            connection(HOST, LinkState::Live, None),
+            roster(two_claudes()),
         ]),
     );
     assert_eq!(
@@ -1328,7 +1339,11 @@ fn pane_of(state: &State) -> Option<crate::CredentialsPane> {
 fn each_instance_is_its_account_and_each_provider_has_its_forms() {
     let (shown, _) = run(
         paired(),
-        Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            roster(two_claudes()),
+            Intent::Show(Place::Credentials),
+        ]),
     );
     let sections = pane_of(&shown).map(|pane| {
         (
@@ -1388,7 +1403,11 @@ fn each_instance_is_its_account_and_each_provider_has_its_forms() {
 fn an_instance_is_removed_and_a_refusal_shows_why() {
     let (shown, _) = run(
         paired(),
-        Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            roster(two_claudes()),
+            Intent::Show(Place::Credentials),
+        ]),
     );
     let api = || id("https://gw.example");
     let (_, removed) = run(
@@ -1438,7 +1457,11 @@ fn an_instance_is_removed_and_a_refusal_shows_why() {
 fn the_new_session_form_lists_each_instance_and_starts_on_the_one_picked() {
     let (shown, _) = run(
         paired(),
-        Vec::from([status(two_claudes()), Intent::Show(Place::NewSession)]),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+        ]),
     );
     let (_, started) = run(
         shown.clone(),
@@ -1729,16 +1752,22 @@ fn sign_in(intent: CredentialIntent) -> Intent {
 
 /// The credentials screen of a host whose Claude instance signs in at
 /// `step`, if a sign-in runs on it.
-fn signing(step: Option<SignInStep>) -> State {
-    let steps = step.map_or_default(|at| BTreeMap::from([(id("claude"), at)]));
-    run(
-        paired(),
-        Vec::from([
-            signing_in(claude(signed_in()), steps),
-            Intent::Show(Place::Credentials),
-        ]),
-    )
-    .0
+fn signing(progress: Option<SignInStep>) -> State {
+    let mut intents = Vec::from([
+        connection(HOST, LinkState::Live, None),
+        roster(claude(signed_in())),
+    ]);
+    intents.extend(progress.map(|step| {
+        Intent::Link(
+            HOST,
+            Update::Feed(Feed::SignIn(SignIn {
+                instance: id("claude"),
+                step,
+            })),
+        )
+    }));
+    intents.push(Intent::Show(Place::Credentials));
+    run(paired(), intents).0
 }
 
 #[test]
@@ -1876,7 +1905,7 @@ fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
             progress(SignInStep::Starting),
             progress(SignInStep::Finishing),
             progress(SignInStep::SignedIn {
-                instances: Instances::default()
+                instances: claude(signed_in())
             }),
             progress(SignInStep::Failed {
                 reason: text("the code expired")

@@ -11,14 +11,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
+use client::host_fold::HostFold;
 use client::host_view::{
-    Approval, Attention, Composer, HostView, Interrupt, Item, ReplyState,
-    Resume, SessionStatus, UndoState,
+    Approval, Attention, Composer, Interrupt, Item, ReplyState, Resume,
+    SessionStatus, UndoState,
 };
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
     Answer, Auth, Availability, Change, CheckpointId, ClientName, CommandBody,
-    CommandResult, Credential, Decision, Event, EventKind, HostPath,
+    CommandResult, Credential, Decision, Event, EventKind, Feed, HostPath,
     InstanceId, Provider, RequestId, SessionId, StartAt, Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
@@ -123,7 +124,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let mut session = Session {
         args,
         start,
-        view: HostView::empty(),
+        host: HostFold::default(),
         answered: BTreeSet::new(),
         turn_start: 0,
         stage: Stage::FirstTurn,
@@ -147,7 +148,7 @@ enum Flow {
 struct Session {
     args: Args,
     start: Instant,
-    view: HostView,
+    host: HostFold,
     answered: BTreeSet<RequestId>,
     turn_start: usize,
     stage: Stage,
@@ -163,20 +164,24 @@ impl Session {
     async fn drive(&mut self) -> anyhow::Result<()> {
         while let Some(update) = self.updates.recv().await {
             match update {
-                Update::Status(status) => self.on_status(status).await?,
+                Update::Status(status) => {
+                    self.host.apply(Update::Status(status.clone()));
+                    self.on_status(status).await?;
+                }
                 Update::Reset(epoch) => {
                     self.log(&format!("reset to epoch {}", epoch.0))?;
                     anyhow::ensure!(
                         self.ours.is_none(),
                         "the host reset during the run"
                     );
-                    self.view = HostView::empty();
+                    self.host.apply(Update::Reset(epoch));
                 }
-                Update::Event(event) => {
+                Update::Feed(Feed::Event(event)) => {
                     if matches!(self.on_event(event).await?, Flow::Finished) {
                         return Ok(());
                     }
                 }
+                other => self.host.apply(other),
             }
         }
         anyhow::bail!("the link stopped")
@@ -294,13 +299,12 @@ impl Session {
         let delta = matches!(event.kind, EventKind::AssistantDelta { .. });
         let session = event.session;
         let seq = event.seq;
-        let before = std::mem::replace(&mut self.view, HostView::empty());
-        self.view = before.apply(event);
+        self.host.apply(Update::Feed(Feed::Event(event)));
         if !ours {
             return Ok(Flow::Next);
         }
         if delta
-            && self.view.sessions.get(&session).is_some_and(|view| {
+            && self.host.view.sessions.get(&session).is_some_and(|view| {
                 view.controls().interrupt == Interrupt::Offered
             })
         {
@@ -327,6 +331,7 @@ impl Session {
     async fn advance(&mut self, session: SessionId) -> anyhow::Result<Flow> {
         self.answer_requests(session).await?;
         let view = self
+            .host
             .view
             .sessions
             .get(&session)
@@ -383,6 +388,7 @@ impl Session {
         session: SessionId,
     ) -> anyhow::Result<()> {
         let view = self
+            .host
             .view
             .sessions
             .get(&session)
@@ -444,6 +450,7 @@ impl Session {
 
     async fn completed(&mut self, session: SessionId) -> anyhow::Result<Flow> {
         let view = self
+            .host
             .view
             .sessions
             .get(&session)
@@ -510,6 +517,7 @@ impl Session {
         text: String,
     ) -> anyhow::Result<()> {
         self.turn_start = self
+            .host
             .view
             .sessions
             .get(&session)

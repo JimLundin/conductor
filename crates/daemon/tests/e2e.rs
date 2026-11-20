@@ -13,21 +13,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use claude_cli::Sandbox;
+use client::host_fold::HostFold;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, SessionStatus,
     Subagent, SubagentStatus, ToolState,
 };
+use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
 mod disk;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
-use net::{
-    Cursor, HostLink, LinkOptions, LinkState, Network, Status, Target, Update,
-};
+use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
-    EventKind, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
+    EventKind, Feed, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
     Instances, IssueChange, IssueFields, IssueStatus, Kept, ModelChoice,
     ModelId, Models, Priority, ProjectId, Provider, Question, QuestionOption,
     Rejection, RequestId, Resolution, Roster, Selection, SessionId, StartAt,
@@ -85,7 +85,7 @@ impl Fixture {
         Ok(welcome.epoch)
     }
 
-    async fn connect(&self) -> Fallible<(HostLink, mpsc::Receiver<Update>)> {
+    async fn connect(&self) -> Fallible<(HostLink, Updates)> {
         let (link, mut updates) = link(self.target.clone(), None).await?;
         until_live(&mut updates).await?;
         Ok((link, updates))
@@ -310,29 +310,48 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
     serve(endpoint, claude_plugins(), data).await
 }
 
+struct Updates {
+    incoming: mpsc::Receiver<Update>,
+    host: HostFold,
+}
+
+async fn spawn_link(
+    target: Target,
+    options: LinkOptions,
+) -> Fallible<(HostLink, Updates)> {
+    let (link, incoming) = HostLink::spawn(target, options).await?;
+    Ok((
+        link,
+        Updates {
+            incoming,
+            host: HostFold::default(),
+        },
+    ))
+}
+
 async fn link(
     target: Target,
     resume: Option<Cursor>,
-) -> Fallible<(HostLink, mpsc::Receiver<Update>)> {
+) -> Fallible<(HostLink, Updates)> {
     let options = LinkOptions {
         resume,
         network: Network::Local,
         ..LinkOptions::new(ClientName(String::from("test-client")))
     };
-    Ok(HostLink::spawn(target, options).await?)
+    spawn_link(target, options).await
 }
 
-async fn next(updates: &mut mpsc::Receiver<Update>) -> Fallible<Update> {
-    tokio::time::timeout(STEP, updates.recv())
+async fn next(updates: &mut Updates) -> Fallible<Update> {
+    let update = tokio::time::timeout(STEP, updates.incoming.recv())
         .await
         .map_err(|_| "no update within the step timeout")?
-        .ok_or_else(|| "the link stopped".into())
+        .ok_or("the link stopped")?;
+    updates.host.apply(update.clone());
+    Ok(update)
 }
 
 /// The updates before the link went live.
-async fn until_live(
-    updates: &mut mpsc::Receiver<Update>,
-) -> Fallible<Vec<Update>> {
+async fn until_live(updates: &mut Updates) -> Fallible<Vec<Update>> {
     let mut seen = Vec::new();
     loop {
         match next(updates).await? {
@@ -350,14 +369,14 @@ fn states(updates: Vec<Update>) -> Vec<LinkState> {
         .into_iter()
         .filter_map(|update| match update {
             Update::Status(status) => Some(status.state),
-            Update::Reset(_) | Update::Event(_) => None,
+            _ => None,
         })
         .collect()
 }
 
 /// The events up to and including `last`.
 async fn events_through(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     last: HostSeq,
 ) -> Fallible<Vec<Event>> {
     read_events(updates, |event| event.seq >= last).await
@@ -378,8 +397,8 @@ fn replayed(updates: Vec<Update>) -> Vec<Event> {
     updates
         .into_iter()
         .filter_map(|update| match update {
-            Update::Event(event) => Some(event),
-            Update::Reset(_) | Update::Status(_) => None,
+            Update::Feed(Feed::Event(event)) => Some(event),
+            _ => None,
         })
         .collect()
 }
@@ -445,9 +464,9 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
             LinkState::CatchingUp
         ]
     );
-    assert_eq!(link.status().host, Some(String::from("test-host")));
+    assert_eq!(updates.host.name, Some(String::from("test-host")));
     assert_eq!(
-        link.status().instances,
+        updates.host.instances,
         Some(statuses(BTreeMap::from([
             (
                 Provider::Claude,
@@ -511,7 +530,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
 
 async fn feed_session(
     link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     name: &str,
 ) -> Fallible<SessionId> {
     let source = scratch(name, "claude-feed.jsonl")?;
@@ -520,7 +539,7 @@ async fn feed_session(
 
 async fn feed_turn(
     link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     session: SessionId,
     text: &str,
 ) -> Fallible<Vec<Event>> {
@@ -677,7 +696,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() -> Fallibl
             .iter()
             .filter_map(|update| match update {
                 Update::Reset(epoch) => Some(epoch),
-                Update::Status(_) | Update::Event(_) => None,
+                _ => None,
             })
             .collect::<Vec<_>>(),
         [&epoch]
@@ -799,7 +818,7 @@ const fn reached(until: &Until, kind: &EventKind) -> bool {
 /// The kinds of the events the link receives, through the first that
 /// reaches `until`, for tests that start one session.
 async fn kinds_until(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     until: Until,
 ) -> Fallible<Vec<EventKind>> {
     Ok(legacy_events_until(updates, until)
@@ -812,7 +831,7 @@ async fn kinds_until(
 /// Preserve existing protocol assertions while workspace metadata has dedicated
 /// raw-event coverage below.
 async fn legacy_events_until(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     until: Until,
 ) -> Fallible<Vec<Event>> {
     let mut events = events_until(updates, until).await?;
@@ -833,19 +852,19 @@ const fn conversation_event(kind: &EventKind) -> bool {
 
 /// The events the link receives, through the first that reaches `until`.
 async fn events_until(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     until: Until,
 ) -> Fallible<Vec<Event>> {
     read_events(updates, |event| reached(&until, &event.kind)).await
 }
 
 async fn read_events(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     done: impl Fn(&Event) -> bool,
 ) -> Fallible<Vec<Event>> {
     let mut events = Vec::new();
     loop {
-        if let Update::Event(event) = next(updates).await? {
+        if let Update::Feed(Feed::Event(event)) = next(updates).await? {
             let reached = done(&event);
             events.push(event);
             if reached {
@@ -1060,7 +1079,7 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
         ..LinkOptions::new(ClientName(String::from("desk")))
     };
     let (desk, mut at_desk) =
-        HostLink::spawn(fx.target.clone(), desk_options).await?;
+        spawn_link(fx.target.clone(), desk_options).await?;
     until_live(&mut at_desk).await?;
     assert_eq!(
         [
@@ -1407,7 +1426,7 @@ async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
         ..LinkOptions::new(ClientName(String::from("desk")))
     };
     let (desk, mut at_desk) =
-        HostLink::spawn(fx.target.clone(), desk_options).await?;
+        spawn_link(fx.target.clone(), desk_options).await?;
     until_live(&mut at_desk).await?;
     assert_eq!(
         [
@@ -2095,7 +2114,7 @@ async fn the_app_server_exiting_closes_every_codex_session() -> Fallible {
 
 /// The states before the link reported an error, and the error.
 async fn until_error(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
 ) -> Fallible<(Vec<LinkState>, String)> {
     let mut seen = Vec::new();
     loop {
@@ -2104,7 +2123,7 @@ async fn until_error(
                 error: Some(error), ..
             }) => break Ok((seen, error)),
             Update::Status(status) => seen.push(status.state),
-            Update::Reset(_) | Update::Event(_) => {}
+            _ => {}
         }
     }
 }
@@ -2406,9 +2425,9 @@ fn start_on(instance: InstanceId, directory: &Path) -> CommandBody {
 /// A fresh link to `fx`, live, and the providers its `Welcome` reported.
 async fn live(
     fx: &Fixture,
-) -> Fallible<(HostLink, mpsc::Receiver<Update>, Option<Instances>)> {
+) -> Fallible<(HostLink, Updates, Option<Instances>)> {
     let (link, updates) = fx.connect().await?;
-    let instances = link.status().instances;
+    let instances = updates.host.instances.clone();
     Ok((link, updates, instances))
 }
 
@@ -2432,13 +2451,20 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
         send(&link, claude_gateway()).await?,
         CommandResult::Instances(with_api.clone())
     );
+    loop {
+        if next(&mut updates).await?
+            == Update::Answer(CommandResult::Instances(with_api.clone()))
+        {
+            break;
+        }
+    }
     assert_eq!(
         (
-            link.status().instances,
+            &updates.host.instances,
             read(&dir_of(&data, "work", &claude_api).join("env.txt"))?
                 .contains(GATEWAY)
         ),
-        (Some(with_api.clone()), true),
+        (&Some(with_api.clone()), true),
         "the gateway's account is an instance, its models listed with the credential"
     );
     launch(&link, start_on(claude_api.clone(), &dir)).await?;
@@ -3107,8 +3133,8 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
         .await?
         .into_iter()
         .filter_map(|update| match update {
-            Update::Event(event) => Some(event),
-            Update::Status(_) | Update::Reset(_) => None,
+            Update::Feed(Feed::Event(event)) => Some(event),
+            _ => None,
         })
         .collect::<Vec<Event>>();
     assert_eq!(
@@ -4021,7 +4047,7 @@ async fn assert_refreshing_claude_refuses(
 
 async fn start_ready(
     phone: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     instance: InstanceId,
     source: &Path,
 ) -> Fallible<SessionId> {
@@ -4339,7 +4365,7 @@ async fn restart(
     data: &Path,
     address: SocketAddr,
     phone: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
 ) -> Fallible<Fixture> {
     first.shutdown().await?;
     let second = durable_host(data, address).await?;
@@ -4358,7 +4384,7 @@ struct TwoTurns {
 
 async fn two_turns(
     phone: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     source: &Path,
 ) -> Fallible<TwoTurns> {
     let session = launch(phone, start(Provider::Claude, source)).await?;
@@ -4462,7 +4488,7 @@ fn assert_undone_files(worktree: &Path) -> Fallible {
 /// worktree.
 async fn assert_independent(
     phone: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     other: SessionId,
     other_path: &Path,
     worktree: &Path,
@@ -5598,14 +5624,17 @@ const WRONG_CODE: &str = "conductor-test-wrong-code";
 /// The instance's sign-in steps the link shows, through the first that
 /// `done` takes.
 async fn sign_in_until(
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     instance: &InstanceId,
     done: impl Fn(&proto::SignInStep) -> bool,
 ) -> Fallible<proto::SignInStep> {
     loop {
-        if let Update::Status(status) = next(updates).await?
-            && let Some(step) = status.sign_ins.get(instance)
-            && done(step)
+        let _ = next(updates).await?;
+        if let Some(step) = updates
+            .host
+            .sign_ins
+            .get(instance)
+            .filter(|step| done(step))
         {
             break Ok(step.clone());
         }
@@ -5709,8 +5738,10 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
                 }
                 _ => None,
             },
-            link.status()
+            updates
+                .host
                 .instances
+                .as_ref()
                 .and_then(|known| known.of(&account).cloned())
                 .map(|it| it.availability),
             dir_of(&data, "home", &account)
@@ -5793,15 +5824,15 @@ fn listed_project(home: &Path, id: &str, fields: (&str, &str)) -> Fallible {
     Ok(())
 }
 
-/// The home as the link has it, once it is as `done` wants.
+/// The home as reported by the host, once it is as `done` wants.
 async fn home_until(
-    link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     done: impl Fn(&proto::Home) -> bool,
 ) -> Fallible<proto::Home> {
     loop {
-        if let Some(home) = link.status().home.filter(&done) {
-            break Ok(home);
+        if let Some(home) = updates.host.home.as_ref().filter(|home| done(home))
+        {
+            break Ok(home.clone());
         }
         let _ = next(updates).await?;
     }
@@ -5902,17 +5933,16 @@ fn clone_project(id: &str) -> CommandBody {
 /// is refused.
 async fn clones_beta(
     link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     data: &Path,
 ) -> Fallible<proto::Home> {
     assert_eq!(
         send(link, clone_project("beta")).await?,
         CommandResult::Accepted
     );
-    let cloned = home_until(link, updates, |home| {
-        !checkouts_of(home, "beta").is_empty()
-    })
-    .await?;
+    let cloned =
+        home_until(updates, |home| !checkouts_of(home, "beta").is_empty())
+            .await?;
     assert_eq!(
         checkouts_of(&cloned, "beta"),
         [found(
@@ -5931,7 +5961,7 @@ async fn clones_beta(
 /// was; an unknown project is refused.
 async fn starts_in_alpha(
     link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     land: &Homeland,
 ) -> Fallible {
     let in_project = |id: &str| CommandBody::StartSession {
@@ -5989,7 +6019,7 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
     let (link, mut updates) = fx.connect().await?;
-    let synced = home_until(&link, &mut updates, |home| {
+    let synced = home_until(&mut updates, |home| {
         home.sync == proto::HomeSync::Synced && home.projects.len() == 2
     })
     .await?;
@@ -6022,7 +6052,7 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
         send(&link, CommandBody::SyncHome).await?,
         CommandResult::Accepted
     );
-    let behind = home_until(&link, &mut updates, |home| {
+    let behind = home_until(&mut updates, |home| {
         matches!(home.sync, proto::HomeSync::Behind { .. })
     })
     .await?;
@@ -6083,7 +6113,7 @@ fn noted_by_hand(land: &Homeland, issue: proto::IssueId) -> Fallible {
 /// alpha and pushed.
 async fn opens_an_issue(
     link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     land: &Homeland,
 ) -> Fallible<proto::IssueId> {
     let create = |title: &str| CommandBody::CreateIssue {
@@ -6105,7 +6135,7 @@ async fn opens_an_issue(
         CommandResult::IssueCreated { issue } => issue,
         other => return Err(format!("expected an issue, not {other:?}").into()),
     };
-    let opened = home_until(link, updates, |home| {
+    let opened = home_until(updates, |home| {
         home.unpushed == 0 && !alpha_issues(home).is_empty()
     })
     .await?;
@@ -6124,7 +6154,7 @@ async fn opens_an_issue(
 /// clone, and lands on the next sync.
 async fn lands_an_offline_note(
     link: &HostLink,
-    updates: &mut mpsc::Receiver<Update>,
+    updates: &mut Updates,
     land: &Homeland,
     issue: proto::IssueId,
 ) -> Fallible {
@@ -6137,7 +6167,7 @@ async fn lands_an_offline_note(
         .await?,
         CommandResult::Accepted
     );
-    let waiting = home_until(link, updates, |home| home.unpushed == 1).await?;
+    let waiting = home_until(updates, |home| home.unpushed == 1).await?;
     let signed = format!("test-host · {}: offline", test_client().0);
     assert!(
         alpha_issues(&waiting)
@@ -6151,7 +6181,7 @@ async fn lands_an_offline_note(
         send(link, CommandBody::SyncHome).await?,
         CommandResult::Accepted
     );
-    let _ = home_until(link, updates, |home| home.unpushed == 0).await?;
+    let _ = home_until(updates, |home| home.unpushed == 0).await?;
     let landed = pushed_issue(land, issue)?;
     assert!(
         landed.contains(&signed) && landed.contains("- by hand"),
@@ -6166,8 +6196,7 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
     let land = homeland("issues")?;
     let (fx, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
     let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&link, &mut updates, |home| home.projects.len() == 2)
-        .await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
     noted_by_hand(&land, issue)?;
     assert_eq!(
@@ -6246,8 +6275,8 @@ async fn competing_start_during_fetch(
 ) -> Fallible<CommandResult> {
     let (mut barrier, _) =
         tokio::time::timeout(STEP, listener.accept()).await??;
-    let (other, _updates) = fx.connect().await?;
-    assert!(other.status().instances.is_some());
+    let (other, updates) = fx.connect().await?;
+    assert!(updates.host.instances.is_some());
     let release = async {
         barrier.write_all(b"continue\n").await?;
         Ok(())
@@ -6266,7 +6295,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
     let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&link, &mut updates, |home| {
+    let _ = home_until(&mut updates, |home| {
         !checkouts_of(home, "alpha").is_empty()
     })
     .await?;
@@ -6321,7 +6350,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
         git(&alpha, &["rev-parse", "HEAD"])?,
         "a new issue's branch starts at the checkout's HEAD"
     );
-    let moved = home_until(&link, &mut updates, |home| {
+    let moved = home_until(&mut updates, |home| {
         alpha_issues(home)
             .iter()
             .any(|shown| shown.status == IssueStatus::InProgress)
@@ -6347,7 +6376,7 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
     let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&link, &mut updates, |home| {
+    let _ = home_until(&mut updates, |home| {
         !checkouts_of(home, "alpha").is_empty()
     })
     .await?;
@@ -6387,7 +6416,7 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
         pushed.starts_with("turn two\n"),
         "what the worktree held when it finished landed and was pushed: {pushed}"
     );
-    let reviewed = home_until(&link, &mut updates, |home| {
+    let reviewed = home_until(&mut updates, |home| {
         alpha_issues(home)
             .iter()
             .any(|shown| shown.status == IssueStatus::Review)

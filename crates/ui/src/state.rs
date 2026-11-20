@@ -311,7 +311,7 @@ impl State {
                 host,
                 visit: self.visit,
             },
-            &known.catalog(),
+            &known.fold.catalog,
         );
         self.credentials.insert(host, forms);
         (self, effects)
@@ -324,7 +324,7 @@ impl State {
         let Some(session) = self
             .hosts
             .get(&host)
-            .and_then(|known| known.view.sessions.get(&id))
+            .and_then(|known| known.fold.view.sessions.get(&id))
         else {
             return (self, Vec::new());
         };
@@ -371,7 +371,7 @@ impl State {
         };
         self.hosts
             .get(&host)
-            .and_then(|known| known.view.sessions.get(&id))
+            .and_then(|known| known.fold.view.sessions.get(&id))
             .map(|session| (host, id, session))
     }
 
@@ -583,11 +583,16 @@ impl State {
                 ),
             (Place::Session(..), Some((host, id, session))) => {
                 let known = self.hosts.get(&host);
-                let catalog = known.map_or_default(Host::catalog);
+                let empty_catalog = proto::Catalog::default();
+                let catalog =
+                    known.map_or(&empty_catalog, |host| &host.fold.catalog);
                 Detail::Session(Box::new(self.pane.screen(
                     id,
                     session,
-                    (known.and_then(Host::instances), &catalog),
+                    (
+                        known.and_then(|host| host.fold.instances.as_ref()),
+                        catalog,
+                    ),
                     (self.notice.clone(), known.map_or_default(Host::name)),
                 )))
             }

@@ -412,9 +412,9 @@ impl Forms {
     pub fn screen(&self, id: HostId, known: &Host) -> CredentialsPane {
         let name = known.name();
         let host = name.as_str();
-        let instances = known.instances();
-        let catalog = &known.catalog();
-        let sign_ins = known.sign_ins();
+        let instances = known.fold.instances.as_ref();
+        let catalog = &known.fold.catalog;
+        let sign_ins = &known.fold.sign_ins;
         let listed = instances.map_or_else(Vec::new, |listed| {
             listed
                 .0

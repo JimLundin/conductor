@@ -8,6 +8,7 @@ extern crate alloc;
 
 pub mod answers;
 pub mod device;
+pub mod host_fold;
 pub mod host_view;
 pub mod link;
 pub mod new_session;

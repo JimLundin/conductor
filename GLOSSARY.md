@@ -19,3 +19,6 @@
   stdout lines and I/O outcomes to the protocol driver and runs its effects.
 - **Protocol driver** translates CLI frames and handle commands into
   ordered effects and tracks replies that are waiting on the CLI.
+- **Host fold** is the client’s read model for one host. It takes link
+  updates and keeps the host’s latest welcome, sign-ins, home, instance
+  roster, and folded sessions.

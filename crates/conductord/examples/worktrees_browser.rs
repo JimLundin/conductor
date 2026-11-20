@@ -63,12 +63,12 @@ async fn drive_live(
     updates: &mut mpsc::Receiver<Update>,
 ) -> anyhow::Result<()> {
     loop {
-        match next(updates).await? {
-            Update::Status(Status {
-                state: LinkState::Live,
-                ..
-            }) => break Ok(()),
-            Update::Status(_) | Update::Reset(_) | Update::Event(_) => {}
+        if let Update::Status(Status {
+            state: LinkState::Live,
+            ..
+        }) = next(updates).await?
+        {
+            break Ok(());
         }
     }
 }
@@ -98,13 +98,11 @@ async fn drive_turn(
     session: SessionId,
 ) -> anyhow::Result<()> {
     loop {
-        match next(updates).await? {
-            Update::Event(event) if event.session == session => {
-                if let EventKind::TurnCompleted { .. } = event.kind {
-                    break Ok(());
-                }
-            }
-            Update::Status(_) | Update::Reset(_) | Update::Event(_) => {}
+        if let Update::Feed(proto::Feed::Event(event)) = next(updates).await?
+            && event.session == session
+            && matches!(event.kind, EventKind::TurnCompleted { .. })
+        {
+            break Ok(());
         }
     }
 }

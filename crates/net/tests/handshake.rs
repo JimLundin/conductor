@@ -104,14 +104,14 @@ async fn until_live(
 ) -> TestResult<Vec<Status>> {
     let mut seen = Vec::new();
     loop {
-        match updates.recv().await.ok_or("the link's updates ended")? {
-            Update::Status(status) => {
-                seen.push(status.clone());
-                if status.state == LinkState::Live {
-                    break Ok(seen);
-                }
+        if let Update::Status(status) =
+            updates.recv().await.ok_or("the link's updates ended")?
+        {
+            let live = status.state == LinkState::Live;
+            seen.push(status);
+            if live {
+                break Ok(seen);
             }
-            Update::Reset(_) | Update::Event(_) => {}
         }
     }
 }

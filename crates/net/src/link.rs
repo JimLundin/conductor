@@ -17,12 +17,12 @@ use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{FuturesUnordered, StreamExt, join_all, task};
 
 use client::link::{
-    Attempt, Effect, Input, Link as Core, Lost, Operation, Unreached,
+    Attempt, Cursor, Effect, Input, Link as Core, Lost, Operation, Unreached,
 };
-pub use client::link::{Cursor, LinkState, Status, Update, shown_after};
+pub use client::link::{LinkState, Status, Update};
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, CommandResult,
-    Feed, Hello, HelloReply, Instances, Open, Subscribe, Ticket, TicketError,
+    Feed, Hello, HelloReply, Open, Subscribe, Ticket, TicketError,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -98,6 +98,7 @@ pub enum SendError {
 #[derive(Debug)]
 pub struct HostLink {
     requests: mpsc::Sender<Request>,
+    answers: mpsc::UnboundedSender<Answer>,
     status: watch::Receiver<Status>,
 }
 
@@ -107,15 +108,16 @@ enum Request {
     Connection {
         reply: oneshot::Sender<Option<Connection>>,
     },
-    /// What the host runs now, from a command's answer.
-    Adopt {
-        instances: Instances,
-        reply: oneshot::Sender<()>,
-    },
     Reconnect,
     Stop {
         reply: oneshot::Sender<()>,
     },
+}
+
+#[derive(Debug)]
+struct Answer {
+    connection: Connection,
+    result: CommandResult,
 }
 
 impl HostLink {
@@ -155,6 +157,8 @@ impl HostLink {
     ) -> Result<(Self, mpsc::Receiver<Update>), BindError> {
         let endpoint = platform::bind_endpoint(options.network).await?;
         let (requests_tx, requests_rx) = mpsc::channel(16);
+        // A caller draining updates may be waiting for its RPC to return.
+        let (answers_tx, answers_rx) = mpsc::unbounded_channel();
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
         let (status_tx, status_rx) = watch::channel(Status::default());
         let hello = Hello {
@@ -173,6 +177,7 @@ impl HostLink {
             dials: FuturesUnordered::new(),
             pending: idle(),
             requests: requests_rx,
+            answers: answers_rx,
             outbox: Outbox {
                 status: status_tx,
                 updates: updates_tx,
@@ -181,6 +186,7 @@ impl HostLink {
         task::spawn(link.run(core, first));
         let handle = Self {
             requests: requests_tx,
+            answers: answers_tx,
             status: status_rx,
         };
         Ok((handle, updates_rx))
@@ -193,7 +199,6 @@ impl HostLink {
 
     /// Runs one command on its own stream. Fails fast while not connected;
     /// the caller decides whether to retry.
-    /// An `Instances` answer is in the status by the time this returns.
     ///
     /// # Errors
     /// Fails when the link is not connected or has stopped, or the host
@@ -208,16 +213,18 @@ impl HostLink {
             .await?
             .ok_or(SendError::NotConnected)?;
         let (reply, answer) = oneshot::channel();
+        let answers = self.answers.clone();
         task::spawn(async move {
-            let _ = reply.send(rpc(conn, body).await);
+            let result = rpc(&conn, body).await;
+            if let Ok(completed) = &result {
+                let _ = answers.send(Answer {
+                    connection: conn,
+                    result: completed.clone(),
+                });
+            }
+            let _ = reply.send(result);
         });
-        let result = answer.await.map_err(|_| SendError::Stopped)??;
-        if let CommandResult::Instances(listed) = &result {
-            let instances = listed.clone();
-            self.ask(|reply| Request::Adopt { instances, reply })
-                .await?;
-        }
-        Ok(result)
+        answer.await.map_err(|_| SendError::Stopped)?
     }
 
     /// Drops the current connection and connects again at once, as after a
@@ -268,6 +275,7 @@ enum Happening {
     /// A dial ended; the operation in flight runs on.
     Dialed(Box<Dialed>),
     Request(Option<Request>),
+    Answer(Answer),
 }
 
 struct Link {
@@ -286,6 +294,7 @@ struct Link {
     /// across `select!`s, so a read in progress loses no bytes.
     pending: BoxFuture<Done>,
     requests: mpsc::Receiver<Request>,
+    answers: mpsc::UnboundedReceiver<Answer>,
     outbox: Outbox,
 }
 
@@ -318,17 +327,11 @@ impl Link {
     }
 
     async fn next(&mut self, takes_requests: bool) -> Happening {
-        if takes_requests {
-            tokio::select! {
-                done = &mut self.pending => Happening::Done(Box::new(done)),
-                Some(dialed) = self.dials.next() => Happening::Dialed(Box::new(dialed)),
-                request = self.requests.recv() => Happening::Request(request),
-            }
-        } else {
-            tokio::select! {
-                done = &mut self.pending => Happening::Done(Box::new(done)),
-                Some(dialed) = self.dials.next() => Happening::Dialed(Box::new(dialed)),
-            }
+        tokio::select! {
+            done = &mut self.pending => Happening::Done(Box::new(done)),
+            Some(dialed) = self.dials.next() => Happening::Dialed(Box::new(dialed)),
+            request = self.requests.recv(), if takes_requests => Happening::Request(request),
+            Some(answer) = self.answers.recv() => Happening::Answer(answer),
         }
     }
 
@@ -349,6 +352,15 @@ impl Link {
             Happening::Request(Some(request)) => {
                 self.request(core, request).await
             }
+            Happening::Answer(answer) => {
+                if self.conn.as_ref().is_some_and(|conn| {
+                    conn.stable_id() == answer.connection.stable_id()
+                }) {
+                    self.step(core, Input::Answered(answer.result)).await
+                } else {
+                    Ok(core)
+                }
+            }
             Happening::Request(None) => Err(Stopped::default()),
         }
     }
@@ -363,12 +375,6 @@ impl Link {
                 let _ = reply.send(self.conn.clone());
                 Ok(core)
             }
-            Request::Adopt { instances, reply } => self
-                .step(core, Input::Instances(instances))
-                .await
-                .inspect(|_| {
-                    let _ = reply.send(());
-                }),
             Request::Reconnect => self.step(core, Input::Reconnect).await,
             Request::Stop { reply } => Err(Stopped { reply: Some(reply) }),
         }
@@ -626,7 +632,7 @@ async fn read((send, mut recv): Halves) -> Done {
 }
 
 async fn rpc(
-    conn: Connection,
+    conn: &Connection,
     body: CommandBody,
 ) -> Result<CommandResult, SendError> {
     let command = Command {
