@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use runtime::{Instance, Launch, Plugin, Settings};
 
-use crate::{Hub, ServerOptions};
+use super::{hub::Hub, server::ServerOptions};
 
 /// Codex, run as `settings` say.
 #[must_use]
@@ -27,6 +27,5 @@ fn instance(launch: Launch) -> Instance {
         home: launch.home,
         credential: None,
         cwd: launch.work,
-        stdout_log: None,
     }))
 }

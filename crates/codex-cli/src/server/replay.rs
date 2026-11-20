@@ -1,12 +1,9 @@
-#![cfg(test)]
-
 //! Replays recorded `codex app-server` stdout (fixtures/codex) through a real
 //! `CodexServer`. A stand-in process prints the recording, holding each
 //! response until our request with that id arrives and each
 //! `serverRequest/resolved` until we answer that request, as Codex does. The
 //! actor, the boundary mapping and the exactly-once approval bookkeeping all
 //! run against Codex's real bytes, driven by the calls the recorded run made.
-#![cfg(unix)]
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -16,40 +13,15 @@ use codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, Decision, Sandbox,
     ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
 };
-use codex_cli::{CodexServer, CodexThread, ServerOptions};
 use install::Home;
 use n0_future::StreamExt;
 use proto::{Answer, Effort, TaskStatus, ToolKind, ToolPhase, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+use crate::replay_support::{TestResult, fake_codex_dir, fixture};
 
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/codex")
-        .join(name)
-}
-
-/// A working directory for `tests/fake-codex.sh`, which plays the recording
-/// found there. The script is committed, not written here: executing a file
-/// another test thread may have just written fails with "Text file busy" when
-/// a concurrent fork still holds it open.
-fn fake_codex_dir(fixture: &Path) -> TestResult<PathBuf> {
-    let stem = fixture
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .ok_or("the fixture has no UTF-8 file stem")?;
-    let dir = std::env::current_exe()?
-        .ancestors()
-        .nth(3)
-        .ok_or("the test binary is not under target/<profile>/deps")?
-        .join("tmp")
-        .join(format!("agents-codex-replay-{}-{stem}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
-    std::fs::copy(fixture, dir.join("stdout.jsonl"))?;
-    Ok(dir)
-}
+use super::{CodexServer, CodexThread, Error, ServerOptions};
 
 fn opts() -> ThreadOptions {
     ThreadOptions {
@@ -97,6 +69,7 @@ enum Progress {
 /// instead of listed, since deltas and status frames dominate the stream.
 struct Recorder {
     server: CodexServer,
+    cwd: PathBuf,
     events: mpsc::Receiver<CodexEvent>,
     goal: Goal,
     interrupt: Interrupt,
@@ -323,17 +296,18 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 }
 
 async fn spawn(name: &str) -> TestResult<Recorder> {
+    let cwd = fake_codex_dir(&fixture(name), "driver")?;
     let (server, events) = CodexServer::spawn(ServerOptions {
         codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fake-codex.sh"),
         home: Home::User,
         credential: None,
-        cwd: fake_codex_dir(&fixture(name))?,
-        stdout_log: None,
+        cwd: cwd.clone(),
     })
     .await?;
     Ok(Recorder {
         server,
+        cwd,
         events,
         goal: Goal::Exit,
         interrupt: Interrupt::Never,
@@ -344,6 +318,13 @@ async fn spawn(name: &str) -> TestResult<Recorder> {
         unknown: BTreeMap::new(),
         answered: Vec::new(),
     })
+}
+
+fn captured(cwd: &Path) -> TestResult<Vec<Value>> {
+    Ok(std::fs::read_to_string(cwd.join("stdin.jsonl"))?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 /// Starts a turn on `thread` and records it until it completes.
@@ -370,94 +351,6 @@ async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
     }
 }
 
-fn stored_gateway() -> proto::Credential {
-    proto::Credential {
-        kind: String::from("provider"),
-        values: [
-            ("name", "gateway"),
-            ("base_url", "https://gateway.example"),
-            ("key", "conductor-test-key"),
-            ("model", "gateway-model"),
-        ]
-        .map(|(key, value)| (String::from(key), String::from(value)))
-        .into(),
-    }
-}
-
-#[tokio::test]
-async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_default()
--> TestResult<()> {
-    let work =
-        fake_codex_dir(&fixture("../e2e/codex-two-threads-listed.jsonl"))?;
-    let plugin = codex_cli::plugin(runtime::Settings::default());
-    let instance = (plugin.instance)(runtime::Launch {
-        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
-        home: Home::private(&work, "gateway", &plugin.profile.config)?,
-        work: work.clone(),
-    });
-    let configured = instance.configure(Some(stored_gateway())).await?;
-    assert_eq!(
-        configured.named,
-        Some(proto::ModelId(String::from("gateway-model")))
-    );
-    assert_eq!(
-        configured.models?.default,
-        Some(proto::ModelId(String::from("gpt-6.1-sol")))
-    );
-    assert!(
-        std::fs::read_to_string(work.join("env.txt"))?
-            .contains("CONDUCTOR_CODEX_KEY=conductor-test-key")
-    );
-    let cleared = instance.configure(None).await?;
-    assert_eq!(cleared.named, None);
-    assert_eq!(
-        cleared.models?.default,
-        Some(proto::ModelId(String::from("gpt-6.1-sol")))
-    );
-    assert!(
-        !std::fs::read_to_string(work.join("env.txt"))?
-            .contains("CONDUCTOR_CODEX_KEY=")
-    );
-    assert!(
-        !std::fs::read_to_string(work.join("codex-config.toml"))?
-            .contains("gateway-model")
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_malformed_codex_provider_config_refuses_the_credential_before_discovery()
--> TestResult<()> {
-    let work =
-        fake_codex_dir(&fixture("server2-resume.jsonl"))?.join("bad-config");
-    let plugin = codex_cli::plugin(runtime::Settings::default());
-    let home = Home::private(&work, "gateway", &plugin.profile.config)?;
-    std::fs::write(work.join("home/gateway/config.toml"), "private-value = [")?;
-    let instance = (plugin.instance)(runtime::Launch {
-        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
-        home,
-        work: work.clone(),
-    });
-    let reason = instance
-        .configure(Some(stored_gateway()))
-        .await
-        .err()
-        .ok_or("expected a credential refusal")?;
-    assert!(reason.contains("config.toml"));
-    assert!(!reason.contains("private-value"));
-    std::fs::write(
-        work.join("home/gateway/config.toml"),
-        "model_providers = 1",
-    )?;
-    let conflict = instance
-        .configure(Some(stored_gateway()))
-        .await
-        .err()
-        .ok_or("expected a conflicting provider table to be refused")?;
-    assert!(conflict.contains("model_providers"));
-    Ok(())
-}
-
 #[tokio::test]
 async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     let mut rec = spawn("server1.jsonl").await?;
@@ -472,7 +365,7 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
         Some("gpt-6-luna")
     );
 
-    let a = server.start_thread(opts()).await?;
+    let a = server.open_thread(opts(), None).await?;
     turn(&mut rec, &a, "a.txt", Decision::Accept, Interrupt::Never).await?;
     turn(&mut rec, &a, "b.txt", Decision::Decline, Interrupt::Never).await?;
     turn(
@@ -485,8 +378,8 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     .await?;
     turn(&mut rec, &a, "pong", Decision::Decline, Interrupt::Never).await?;
 
-    let b = server.start_thread(opts()).await?;
-    let c = server.start_thread(opts()).await?;
+    let b = server.open_thread(opts(), None).await?;
+    let c = server.open_thread(opts(), None).await?;
     let (tb, tc) = n0_future::future::try_zip(
         b.send_turn(String::from("alpha"), None),
         c.send_turn(String::from("bravo"), None),
@@ -503,6 +396,17 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     rec.until(Goal::Exit, Interrupt::Never).await?;
 
     assert_eq!(rec.seen, SERVER1_SEEN);
+    let replies = captured(&rec.cwd)?
+        .into_iter()
+        .filter(|line| line.get("id").is_some() && line.get("method").is_none())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        replies,
+        [
+            serde_json::json!({"id": 0, "result": {"decision": "accept"}}),
+            serde_json::json!({"id": 1, "result": {"decision": "decline"}}),
+        ],
+    );
     assert_eq!(
         again,
         ["no open approval with id 0", "no open approval with id 1",]
@@ -585,7 +489,7 @@ async fn resume_in_a_new_process() -> TestResult<()> {
     let mut rec = spawn("server2-resume.jsonl").await?;
     let server = rec.server.clone();
     let a = ThreadId(first_thread_id(&fixture("server1.jsonl"))?);
-    let resumed = server.resume_thread(a.clone(), opts()).await?;
+    let resumed = server.open_thread(opts(), Some(a.clone())).await?;
     assert_eq!(resumed.id, a);
     turn(
         &mut rec,
@@ -624,7 +528,7 @@ async fn resume_in_a_new_process() -> TestResult<()> {
 async fn chosen_effort_and_reasoning() -> TestResult<()> {
     let mut rec = spawn("server4-chosen-killed.jsonl").await?;
     let server = rec.server.clone();
-    let a = server.start_thread(opts()).await?;
+    let a = server.open_thread(opts(), None).await?;
     turn(
         &mut rec,
         &a,
@@ -676,7 +580,7 @@ async fn chosen_effort_and_reasoning() -> TestResult<()> {
 async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
     let mut rec = spawn("server8-plan-effort.jsonl").await?;
     let server = rec.server.clone();
-    let a = server.start_thread(opts()).await?;
+    let a = server.open_thread(opts(), None).await?;
     turn(&mut rec, &a, "plan", Decision::Decline, Interrupt::Never).await?;
     let high = a
         .send_turn(String::from("pong"), Some(Effort::High))
@@ -697,17 +601,13 @@ async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
             "A plan [(\"write a.txt\", {first}), (\"write b.txt\", Pending), (\"write c.txt\", Pending)]"
         )
     };
-    let started = std::fs::read_to_string(
-        fake_codex_dir(&fixture("server8-plan-effort.jsonl"))?
-            .join("stdin.jsonl"),
-    )?
-    .lines()
-    .map(serde_json::from_str::<Value>)
-    .collect::<Result<Vec<Value>, _>>()?
-    .into_iter()
-    .filter(|request| request.get("method") == Some(&Value::from("turn/start")))
-    .map(|request| request.pointer("/params/effort").cloned())
-    .collect::<Vec<Option<Value>>>();
+    let started = captured(&rec.cwd)?
+        .into_iter()
+        .filter(|request| {
+            request.get("method") == Some(&Value::from("turn/start"))
+        })
+        .map(|request| request.pointer("/params/effort").cloned())
+        .collect::<Vec<Option<Value>>>();
     assert_eq!(
         (started, rec.seen.into_iter().collect::<Vec<String>>()),
         (
@@ -743,7 +643,7 @@ async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
 async fn questions_and_accept_for_session() -> TestResult<()> {
     let mut rec = spawn("server3-questions.jsonl").await?;
     let server = rec.server.clone();
-    let a = server.start_thread(opts()).await?;
+    let a = server.open_thread(opts(), None).await?;
     let blue =
         Decision::Answer(Vec::from([Answer(Vec::from([String::from(
             "Blue",
@@ -833,7 +733,6 @@ fn refusal_options(name: &str, recording: &str) -> TestResult<ServerOptions> {
         home: Home::User,
         credential: None,
         cwd,
-        stdout_log: None,
     })
 }
 
@@ -904,25 +803,23 @@ async fn thread_refusal(
     let (server, _events) = CodexServer::spawn(options).await?;
     let error = match method {
         "thread/start" => server
-            .start_thread(opts())
+            .open_thread(opts(), None)
             .await
             .err()
             .ok_or("thread/start succeeded")?,
         "thread/resume" => server
-            .resume_thread(ThreadId(String::from("missing")), opts())
+            .open_thread(opts(), Some(ThreadId(String::from("missing"))))
             .await
             .err()
             .ok_or("thread/resume succeeded")?,
-        _ => codex_cli::Error::Command(format!(
-            "unexpected test method {method}"
-        )),
+        _ => Error::Command(format!("unexpected test method {method}")),
     };
     assert_eq!(error.to_string(), expected);
     // A later request must retain the same stderr reason after the actor exits.
-    if let codex_cli::Error::Refused(_) = error {
+    if let Error::Refused(_) = error {
         assert_eq!(
             server
-                .start_thread(opts())
+                .open_thread(opts(), None)
                 .await
                 .err()
                 .ok_or("a later thread/start succeeded")?
@@ -989,7 +886,7 @@ async fn revert_fixture(
     let options = refusal_options(name, &recording)?;
     let cwd = options.cwd.clone();
     let (server, _events) = CodexServer::spawn(options).await?;
-    let thread = server.start_thread(opts()).await?;
+    let thread = server.open_thread(opts(), None).await?;
     let _ = thread.send_turn(String::from("retain"), None).await?;
     let _ = thread.send_turn(String::from("discard"), None).await?;
     Ok(RevertFixture {
@@ -1073,7 +970,7 @@ async fn history_fixture(name: &str, pages: &str) -> TestResult<RevertFixture> {
     let options = refusal_options(name, &recording)?;
     let cwd = options.cwd.clone();
     let (server, _events) = CodexServer::spawn(options).await?;
-    let thread = server.start_thread(opts()).await?;
+    let thread = server.open_thread(opts(), None).await?;
     Ok(RevertFixture {
         server,
         thread,
