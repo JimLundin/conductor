@@ -726,20 +726,21 @@ standards and issues, cloned on every host. Built so far are home steps
   on an issue between turns (`NotOnIssue`, `TurnInProgress`) that has done
   something since it last finished (`AlreadyFinished`; its own summary
   turn doesn't count, `proto::FinishState`), keeps a receipt, logs
-  `FinishStarted` and answers `Accepted`; the rest runs in a task. A
-  running or starting agent is asked for a summary in one more turn
-  (`host::finish::SUMMARY`) and then stopped (`Order::Stop`,
-  `SessionClosed` for `host::finish::FINISHED`); a stopped one's last
-  reply stands in. A summary that isn't asked (a turn got in first),
-  takes over ten minutes (the agent is interrupted) or an agent that
-  doesn't stop lands nothing. The log is followed for the turn's end and
-  read again if the follower falls behind. The host brings the issue's
+  `FinishStarted` and answers `Accepted`. The session actor drives
+  `host::finish::Finish`. It asks a running agent for one summary turn
+  and then stops it. A stopped agent's last reply stands in. If asking
+  or stopping fails, the finish lands nothing. The actor continues
+  handling runtime events and ordinary orders while following the log
+  for the summary turn's end. It replays from the same cursor if the
+  subscription falls behind, keeping the original ten-minute deadline.
+  On timeout it interrupts the summary and records a failed finish.
+  The host brings the issue's
   branch up to `origin`'s first, as a start does, refusing when both have
   moved on; commits what the worktree holds onto the session's branch;
   then lands it on the issue's in the checkout
-  (`host::finish::Branches`): nothing when the issue's has it all, a
+  (`host::workspace::Branches`): nothing when the issue's has it all, a
   fast-forward, or a merge commit made with `git merge-tree` without a
-  worktree, whose answer `host::finish::merged` reads; a conflict, named
+  worktree, whose answer `host::workspace::merged` reads; a conflict, named
   by its files, lands nothing, and neither does an issue branch
   checked out somewhere, which can't move under its worktree. It pushes
   the issue's branch to `origin`, never forced, which lets another host

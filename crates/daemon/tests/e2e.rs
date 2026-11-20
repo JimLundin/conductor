@@ -6369,9 +6369,10 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
             }
         })
     );
+    assert!(matches!(finishing.first(), Some(EventKind::FinishStarted)));
     assert!(finishing.contains(&EventKind::SessionClosed {
         reason: CloseReason::Stopped {
-            reason: String::from(host::finish::FINISHED)
+            reason: String::from("the session was finished")
         }
     }));
     let branch = format!("issue/{}", home::issue::name(issue));

@@ -755,7 +755,7 @@ async fn refs(repository: &Path, prefix: &str) -> Result<String, GitError> {
 
 /// Lands the session's branch on the issue's, `issue`, a full ref, in the
 /// checkout: commits what its worktree holds first, then moves the issue's
-/// branch on as `host::finish::Branches` says. The commits it landed.
+/// branch on as `host::workspace::Branches` says. The commits it landed.
 ///
 /// # Errors
 ///
@@ -771,12 +771,12 @@ pub async fn land(workspace: &Workspace, issue: &str) -> Result<u64, String> {
         .map_err(|err| err.to_string())?;
     let ahead = branches.ahead;
     let moved = match branches.landing() {
-        host::finish::Landing::Nothing => return Ok(0),
-        host::finish::Landing::Refuse(reason) => return Err(reason),
-        host::finish::Landing::FastForward => {
+        host::workspace::Landing::Nothing => return Ok(0),
+        host::workspace::Landing::Refuse(reason) => return Err(reason),
+        host::workspace::Landing::FastForward => {
             fast_forward(repository, issue, &session).await
         }
-        host::finish::Landing::Merge => {
+        host::workspace::Landing::Merge => {
             merge(repository, issue, &session).await
         }
     };
@@ -796,7 +796,7 @@ async fn branches(
     repository: &Path,
     issue: &str,
     session: &str,
-) -> Result<host::finish::Branches, GitError> {
+) -> Result<host::workspace::Branches, GitError> {
     let range = format!("{issue}..{session}");
     let counted = text(repository, &["rev-list", "--count", &range]).await?;
     let fast_forward =
@@ -808,10 +808,10 @@ async fn branches(
         .trim()
         .parse()
         .map_err(|_| failure("landing", "Git counted no commits"))?;
-    Ok(host::finish::Branches {
+    Ok(host::workspace::Branches {
         ahead,
         fast_forward,
-        checked_out: host::finish::checked_out(&listed, issue),
+        checked_out: host::workspace::checked_out(&listed, issue),
     })
 }
 
@@ -846,7 +846,7 @@ async fn merge(
         ],
     ))
     .await?;
-    let tree = host::finish::merged(
+    let tree = host::workspace::merged(
         output.success,
         &String::from_utf8_lossy(&output.bytes),
         &output.error,
@@ -854,7 +854,7 @@ async fn merge(
     .map_err(|reason| failure("landing", &reason))?;
     let old = text(repository, &["rev-parse", issue]).await?;
     let new = text(repository, &["rev-parse", session]).await?;
-    let message = host::finish::merge_message(issue, session);
+    let message = host::workspace::merge_message(issue, session);
     let commit =
         text_commit(repository, tree.trim(), &[&old, &new], &message).await?;
     text(repository, &["update-ref", issue, &commit, &old])
