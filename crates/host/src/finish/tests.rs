@@ -1,14 +1,16 @@
 use proto::{
-    ClientName, CloseReason, Event, EventKind, Finished, HostPath, HostSeq,
-    InstanceId, IssueId, Kept, Provider, Rejection, SessionId, TurnOutcome,
-    Workspace,
+    ClientName, CloseReason, CommandResult, Event, EventKind, Finished,
+    HostPath, HostSeq, InstanceId, IssueId, Kept, Provider, Rejection,
+    SessionId, TurnOutcome, Workspace,
 };
 
 use super::{
-    Branches, Finishing, Landing, checked_out, finished, finishing, landed,
-    summary, turn_ended,
+    Effect, Finish, Finishing, Input, finished, finishing, landed, summary,
+    turn_ended,
 };
 use crate::assignment::Assignment;
+use crate::session::Order;
+use crate::workspace::{Branches, Landing, checked_out, merge_message, merged};
 
 const SESSION: SessionId = SessionId(1);
 const ISSUE: IssueId = IssueId(9);
@@ -35,12 +37,16 @@ fn workspace() -> Workspace {
     }
 }
 
+fn instance() -> InstanceId {
+    InstanceId::own(Provider::Claude)
+}
+
 fn started() -> Vec<Event> {
     Vec::from([
         event(
             1,
             EventKind::SessionCreated {
-                instance: InstanceId::own(Provider::Claude),
+                instance: instance(),
                 provider: Provider::Claude,
                 directory: HostPath(text("/src")),
                 by: ClientName(text("phone")),
@@ -94,7 +100,7 @@ fn a_session_on_an_issue_finishes_between_turns() {
         Ok(Finishing {
             assignment: Assignment {
                 issue: ISSUE,
-                instance: InstanceId::own(Provider::Claude),
+                instance: instance(),
             },
             workspace: workspace(),
             running: true,
@@ -182,10 +188,6 @@ fn the_summary_is_the_last_reply_of_the_summary_turn() {
         "the reply the summary turn started after isn't the summary"
     );
     assert!(turn_ended(&done(11), SESSION));
-    let accepted = Some(&proto::CommandResult::Accepted);
-    assert!(super::waits(accepted, &[], SESSION));
-    assert!(!super::waits(accepted, &[done(11)], SESSION));
-    assert!(!super::waits(None, &[], SESSION));
     assert!(!turn_ended(&reply(10, "x"), SESSION));
 }
 
@@ -291,15 +293,15 @@ fn a_session_finishes_once_until_it_does_more() {
 
 #[test]
 fn a_merge_gives_its_tree_or_names_the_conflicts() {
-    assert_eq!(super::merged(true, "abc\n", ""), Ok(text("abc")));
+    assert_eq!(merged(true, "abc\n", ""), Ok(text("abc")));
     assert_eq!(
-        super::merged(false, "abc\na.txt\nb.txt\n", ""),
+        merged(false, "abc\na.txt\nb.txt\n", ""),
         Err(text(
             "the session's branch conflicts with the issue's in a.txt, b.txt; merge them by hand"
         ))
     );
     assert_eq!(
-        super::merged(false, "", "fatal: bad revision"),
+        merged(false, "", "fatal: bad revision"),
         Err(text("the branches couldn't be merged: fatal: bad revision"))
     );
     assert_eq!(
@@ -321,7 +323,264 @@ fn a_merge_gives_its_tree_or_names_the_conflicts() {
 #[test]
 fn the_merge_commit_says_which_session_lands_on_which_issue() {
     assert_eq!(
-        super::merge_message("issue/01JD", "conductor/01JE"),
+        merge_message("issue/01JD", "conductor/01JE"),
         "Land conductor/01JE on issue/01JD"
+    );
+}
+
+fn client() -> ClientName {
+    ClientName(text("phone"))
+}
+
+fn ask() -> (Finish, Vec<Effect>) {
+    let (mut finish, first) = Finish::new(SESSION, client());
+    assert_eq!(first, Effect::History);
+    let effects = finish.step(Input::History(started()));
+    (finish, effects)
+}
+
+fn watching() -> Finish {
+    let (mut finish, _) = ask();
+    assert_eq!(
+        finish.step(Input::Ordered(Some(CommandResult::Accepted))),
+        [Effect::Watch {
+            after: HostSeq(4),
+            seconds: 600
+        }]
+    );
+    finish
+}
+
+fn branch() -> String {
+    home::issue::branch(None, ISSUE)
+}
+
+fn note(summary: Option<&str>, commits: u64) -> Effect {
+    Effect::Note {
+        issue: ISSUE,
+        summary: summary.map(text),
+        by: Assignment {
+            issue: ISSUE,
+            instance: instance(),
+        }
+        .signer(),
+        commits,
+    }
+}
+
+fn last(finish: &mut Finish, finished: Finished) {
+    assert_eq!(
+        finish.step(Input::Noted),
+        [Effect::Emit(EventKind::SessionFinished { finished })]
+    );
+}
+
+fn failed(finish: &mut Finish, reason: &str) {
+    last(
+        finish,
+        Finished::Failed {
+            reason: text(reason),
+        },
+    );
+}
+
+#[test]
+fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch()
+ {
+    let (mut finish, effects) = ask();
+    assert_eq!(
+        effects,
+        [
+            Effect::Emit(EventKind::FinishStarted),
+            Effect::Reply(CommandResult::Accepted),
+            Effect::Order(Order::Send {
+                text: text(super::SUMMARY),
+                by: client()
+            }),
+        ]
+    );
+    assert!(matches!(
+        &finish.step(Input::Ordered(Some(CommandResult::Accepted)))[..],
+        [Effect::Watch { .. }]
+    ));
+    assert_eq!(
+        finish.step(Input::RequestedAgain(and(
+            started(),
+            Vec::from([event(5, EventKind::FinishStarted)])
+        ))),
+        [
+            Effect::Reply(CommandResult::Rejected(Rejection::AlreadyFinished)),
+            Effect::NextEvent,
+        ]
+    );
+    assert_eq!(
+        finish.step(Input::Events(Vec::from([reply(5, "old")]))),
+        [Effect::NextEvent]
+    );
+    assert_eq!(finish.step(Input::Lagged), [Effect::Replay(HostSeq(4))]);
+    assert_eq!(
+        finish.step(Input::Events(Vec::from([
+            reply(4, "before"),
+            reply(5, "old"),
+            reply(6, "summary"),
+            done(7),
+            reply(8, "after"),
+        ]))),
+        [Effect::Order(Order::Stop(text(super::FINISHED)))]
+    );
+    assert_eq!(
+        finish.step(Input::Ordered(Some(CommandResult::Accepted))),
+        [Effect::ReadHome]
+    );
+    assert_eq!(
+        finish.step(Input::Home(None)),
+        [Effect::Ready {
+            workspace: workspace(),
+            branch: branch()
+        }]
+    );
+    assert_eq!(
+        finish.step(Input::Ready(Ok(()))),
+        [Effect::Land {
+            workspace: workspace(),
+            branch: branch()
+        }]
+    );
+    assert_eq!(
+        finish.step(Input::Landed(Ok(3))),
+        [Effect::Push {
+            workspace: workspace(),
+            branch: branch()
+        }]
+    );
+    assert_eq!(
+        finish.step(Input::Pushed(Some((text("origin"), Ok(()))))),
+        [note(Some("summary"), 3)]
+    );
+    last(
+        &mut finish,
+        Finished::Landed {
+            commits: 3,
+            kept: Kept::Pushed {
+                remote: text("origin"),
+            },
+        },
+    );
+}
+
+#[test]
+fn an_active_turn_is_rejected_before_logging_or_asking() {
+    let (mut finish, _) = Finish::new(SESSION, client());
+    assert_eq!(
+        finish.step(Input::History(and(started(), Vec::from([user(5)])))),
+        [Effect::Reply(CommandResult::Rejected(
+            Rejection::TurnInProgress
+        ))]
+    );
+}
+
+#[test]
+fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure() {
+    let (mut finish, _) = ask();
+    assert_eq!(finish.step(Input::Ordered(None)), [note(None, 0)]);
+    failed(&mut finish, "asking for a summary: the session stopped");
+
+    let mut finish = watching();
+    let closed = event(
+        6,
+        EventKind::SessionClosed {
+            reason: CloseReason::Exited { status: text("0") },
+        },
+    );
+    assert_eq!(
+        finish.step(Input::Events(Vec::from([reply(5, "summary"), closed]))),
+        [Effect::Order(Order::Stop(text(super::FINISHED)))]
+    );
+    let rejection = Rejection::TurnInProgress;
+    let reason = format!("stopping the agent: {}", rejection.label());
+    assert_eq!(
+        finish.step(Input::Ordered(Some(CommandResult::Rejected(rejection)))),
+        [note(None, 0)]
+    );
+    failed(&mut finish, &reason);
+}
+
+#[test]
+fn a_summary_timeout_interrupts_and_skips_landing_even_if_the_interrupt_is_refused()
+ {
+    let mut finish = watching();
+    assert_eq!(
+        finish.step(Input::TimedOut),
+        [Effect::Order(Order::Interrupt)]
+    );
+    assert_eq!(
+        finish.step(Input::Ordered(Some(CommandResult::Rejected(
+            Rejection::NoTurnRunning
+        )))),
+        [note(None, 0)]
+    );
+    failed(&mut finish, super::IMPATIENT);
+}
+
+fn closed_finish() -> Finish {
+    let (mut finish, _) = Finish::new(SESSION, client());
+    let closed = event(
+        8,
+        EventKind::SessionClosed {
+            reason: CloseReason::Exited { status: text("0") },
+        },
+    );
+    assert_eq!(
+        finish.step(Input::History(and(
+            started(),
+            Vec::from([user(5), reply(6, "old summary"), done(7), closed]),
+        ))),
+        [
+            Effect::Emit(EventKind::FinishStarted),
+            Effect::Reply(CommandResult::Accepted),
+            Effect::ReadHome,
+        ]
+    );
+    let _ = finish.step(Input::Home(None));
+    finish
+}
+
+#[test]
+fn readiness_and_landing_failures_keep_the_closed_agents_summary_and_skip_push()
+{
+    let mut finish = closed_finish();
+    assert_eq!(
+        finish.step(Input::Ready(Err(text("diverged")))),
+        [note(Some("old summary"), 0)]
+    );
+    failed(&mut finish, "diverged");
+
+    let mut finish = closed_finish();
+    let _ = finish.step(Input::Ready(Ok(())));
+    assert_eq!(
+        finish.step(Input::Landed(Err(text("conflict")))),
+        [note(Some("old summary"), 0)]
+    );
+    failed(&mut finish, "conflict");
+}
+
+#[test]
+fn a_failed_push_still_notes_the_commits_that_landed() {
+    let mut finish = closed_finish();
+    let _ = finish.step(Input::Ready(Ok(())));
+    let _ = finish.step(Input::Landed(Ok(2)));
+    assert_eq!(
+        finish
+            .step(Input::Pushed(Some((text("origin"), Err(text("offline")))))),
+        [note(Some("old summary"), 2)]
+    );
+    last(
+        &mut finish,
+        Finished::Landed {
+            commits: 2,
+            kept: Kept::PushFailed {
+                reason: text("offline"),
+            },
+        },
     );
 }

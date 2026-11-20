@@ -89,8 +89,6 @@ pub enum Order {
     Effort(Effort, Models),
     /// Stops the agent between turns and removes the session's workspace.
     Remove,
-    /// Stops the agent between turns, for this reason.
-    Stop(String),
 }
 
 impl Order {
@@ -110,7 +108,6 @@ impl Order {
             Self::Start(offered) => Core::Start { offered },
             Self::Effort(effort, offered) => Core::Effort(effort, offered),
             Self::Remove => Core::Remove,
-            Self::Stop(reason) => Core::Stop(reason),
         }
     }
 }

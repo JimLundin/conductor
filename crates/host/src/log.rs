@@ -156,6 +156,18 @@ impl Log {
         &self.events
     }
 
+    /// Admission in the session actor also sees the changes it just staged
+    /// for a command whose receipt has yet to commit them.
+    #[must_use]
+    pub fn current_history(&self, session: SessionId) -> Vec<Event> {
+        self.events
+            .iter()
+            .chain(self.staged.iter().filter(|event| !live_only(&event.kind)))
+            .filter(|event| event.session == session)
+            .cloned()
+            .collect()
+    }
+
     #[must_use]
     pub fn welcome(
         &self,

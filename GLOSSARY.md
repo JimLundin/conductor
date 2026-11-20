@@ -7,3 +7,6 @@
   agent starts. It has no parent or turn to undo.
 - **Issue brief** is the first message a session on an issue tries to send
   to its agent. It gives the agent the issue's context.
+- **Summary turn** asks a running session's agent to describe its work
+  before closing the session and landing its branch. The reply becomes
+  a note on the issue.

@@ -7,8 +7,8 @@
 use alloc::format;
 
 use proto::{
-    CommandResult, Event, EventKind, FinishState, Finished, HostSeq, Rejection,
-    SessionId, Workspace,
+    ClientName, CommandResult, Event, EventKind, FinishState, Finished, Home,
+    HostSeq, IssueId, Rejection, SessionId, Workspace,
 };
 
 use crate::assignment::{Assigned, Assignment};
@@ -16,18 +16,18 @@ use crate::prelude::*;
 use crate::workspace::kept;
 
 /// What the agent of a session being finished is asked, as its last turn.
-pub const SUMMARY: &str = "Conductor is finishing this session. In a few sentences, sum up what you did on the issue and what is left, as a note for whoever picks it up next. Make no more changes.";
+const SUMMARY: &str = "Conductor is finishing this session. In a few sentences, sum up what you did on the issue and what is left, as a note for whoever picks it up next. Make no more changes.";
 
 /// Why the agent of a finished session stops.
-pub const FINISHED: &str = "the session was finished";
+const FINISHED: &str = "the session was finished";
 
 /// A session that can finish, as its log has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Finishing {
-    pub assignment: Assignment,
-    pub workspace: Workspace,
+struct Finishing {
+    assignment: Assignment,
+    workspace: Workspace,
     /// Its agent runs, so it is asked for a summary first.
-    pub running: bool,
+    running: bool,
 }
 
 /// Whether `session` can finish after `history`: it is on an issue, has a
@@ -37,7 +37,7 @@ pub struct Finishing {
 /// # Errors
 ///
 /// Why it can't.
-pub fn finishing(
+fn finishing(
     history: &[Event],
     session: SessionId,
 ) -> Result<Finishing, Rejection> {
@@ -91,7 +91,7 @@ pub fn finishing(
 /// `after`, the seq the summary turn started after, or its last reply of
 /// all when its agent had stopped.
 #[must_use]
-pub fn summary(
+fn summary(
     events: &[Event],
     session: SessionId,
     after: HostSeq,
@@ -109,7 +109,7 @@ pub fn summary(
 
 /// Whether the summary turn has ended, by the event the log stored.
 #[must_use]
-pub fn turn_ended(event: &Event, session: SessionId) -> bool {
+fn turn_ended(event: &Event, session: SessionId) -> bool {
     event.session == session
         && matches!(
             event.kind,
@@ -117,90 +117,10 @@ pub fn turn_ended(event: &Event, session: SessionId) -> bool {
         )
 }
 
-/// What `git merge-tree --write-tree --name-only --no-messages` gave: the
-/// merged tree, or why there is none.
-///
-/// # Errors
-///
-/// The files that conflict, or what Git said when it failed otherwise.
-pub fn merged(
-    success: bool,
-    output: &str,
-    error: &str,
-) -> Result<String, String> {
-    let mut lines = output.lines();
-    let tree = lines.next().unwrap_or_default();
-    match (success, error.trim()) {
-        (true, _) => Ok(String::from(tree)),
-        (false, "") => Err(format!(
-            "the session's branch conflicts with the issue's in {}; merge them by hand",
-            lines.collect::<Vec<&str>>().join(", ")
-        )),
-        (false, said) => {
-            Err(format!("the branches couldn't be merged: {said}"))
-        }
-    }
-}
-
-/// What the shell found of the session's and the issue's branches in the
-/// checkout.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Branches {
-    /// The commits on the session's branch the issue's lacks.
-    pub ahead: u64,
-    /// The issue's branch is an ancestor of the session's.
-    pub fast_forward: bool,
-    /// Where the issue's branch is checked out, if it is.
-    pub checked_out: Option<String>,
-}
-
-/// How the session's branch lands on the issue's.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Landing {
-    /// The issue's branch has it all already.
-    Nothing,
-    FastForward,
-    /// A merge commit of both, made without a worktree.
-    Merge,
-    Refuse(String),
-}
-
-impl Branches {
-    #[must_use]
-    pub fn landing(self) -> Landing {
-        match (self.checked_out, self.ahead, self.fast_forward) {
-            (Some(path), _, _) => Landing::Refuse(format!(
-                "the issue's branch is checked out at {path}, so it can't move under it; land the session's branch there"
-            )),
-            (None, 0, _) => Landing::Nothing,
-            (None, _, true) => Landing::FastForward,
-            (None, _, false) => Landing::Merge,
-        }
-    }
-}
-
-/// Where `branch`, a full ref, is checked out, from `git worktree list
-/// --porcelain`.
-#[must_use]
-pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
-    let wanted = format!("branch {branch}");
-    porcelain.split("\n\n").find_map(|record| {
-        let mut lines = record.lines();
-        let path = lines.next()?.strip_prefix("worktree ")?;
-        lines.any(|line| line == wanted).then(|| String::from(path))
-    })
-}
-
-/// The message of the merge commit that lands `session` on `issue`.
-#[must_use]
-pub fn merge_message(issue: &str, session: &str) -> String {
-    format!("Land {session} on {issue}")
-}
-
 /// What finishing did: the commits that landed, or why none did, and the
 /// push of the issue's branch.
 #[must_use]
-pub fn finished(
+fn finished(
     landed: Result<u64, String>,
     pushed: Option<(String, Result<(), String>)>,
 ) -> Finished {
@@ -215,7 +135,7 @@ pub fn finished(
 
 /// The commits that landed, for moving the issue on.
 #[must_use]
-pub const fn landed(finished: &Finished) -> u64 {
+const fn landed(finished: &Finished) -> u64 {
     match finished {
         Finished::Landed { commits, .. } => *commits,
         Finished::Failed { .. } => 0,
@@ -224,19 +144,16 @@ pub const fn landed(finished: &Finished) -> u64 {
 
 /// How long the agent has to sum up before finishing gives up, in
 /// seconds.
-pub const PATIENCE: u64 = 600;
+const PATIENCE: u64 = 600;
 
 /// Why finishing landed nothing when the summary turn didn't end in time.
-pub const IMPATIENT: &str =
+const IMPATIENT: &str =
     "the agent didn't sum up within 10 minutes, so it was interrupted";
 
 /// Why finishing landed nothing when the agent wasn't asked or stopped:
 /// a turn got in first.
 #[must_use]
-pub fn interrupted(
-    what: &str,
-    answer: Option<&CommandResult>,
-) -> Option<String> {
+fn interrupted(what: &str, answer: Option<&CommandResult>) -> Option<String> {
     match answer {
         Some(CommandResult::Accepted) => None,
         Some(CommandResult::Rejected(rejection)) => {
@@ -247,16 +164,312 @@ pub fn interrupted(
     }
 }
 
-/// Whether to wait for the summary turn to end: its message reached the
-/// agent, and the events `seen` since don't end it.
-#[must_use]
-pub fn waits(
-    answer: Option<&CommandResult>,
-    seen: &[Event],
+/// One finish, advanced by the session actor.
+#[derive(Debug)]
+pub struct Finish {
     session: SessionId,
-) -> bool {
-    matches!(answer, Some(CommandResult::Accepted))
-        && !seen.iter().any(|event| turn_ended(event, session))
+    stage: Stage,
+}
+
+#[derive(Debug)]
+enum Stage {
+    Checking(ClientName),
+    Asking(Assignment, Workspace, HostSeq),
+    Watching(Assignment, Workspace, HostSeq, Option<String>),
+    Stopping(Assignment, Workspace, Option<String>),
+    Interrupting(Assignment),
+    ReadingHome(Assignment, Workspace, Option<String>),
+    Readying(Assignment, Workspace, Option<String>, String),
+    Landing(Assignment, Workspace, Option<String>, String),
+    Pushing(Assignment, Option<String>, u64),
+    Noting(Finished),
+    Done,
+}
+
+/// An outcome of an effect or an event from the summary's subscription.
+#[derive(Debug)]
+pub enum Input {
+    History(Vec<Event>),
+    Ordered(Option<CommandResult>),
+    Events(Vec<Event>),
+    Lagged,
+    TimedOut,
+    RequestedAgain(Vec<Event>),
+    Home(Option<Home>),
+    Ready(Result<(), String>),
+    Landed(Result<u64, String>),
+    Pushed(Option<(String, Result<(), String>)>),
+    Noted,
+}
+
+/// Work the session actor performs in order.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Effect {
+    History,
+    Emit(EventKind),
+    Reply(CommandResult),
+    Order(crate::session::Order),
+    Watch {
+        after: HostSeq,
+        seconds: u64,
+    },
+    Replay(HostSeq),
+    NextEvent,
+    ReadHome,
+    Ready {
+        workspace: Workspace,
+        branch: String,
+    },
+    Land {
+        workspace: Workspace,
+        branch: String,
+    },
+    Push {
+        workspace: Workspace,
+        branch: String,
+    },
+    Note {
+        issue: IssueId,
+        summary: Option<String>,
+        by: ClientName,
+        commits: u64,
+    },
+}
+
+impl Finish {
+    #[must_use]
+    pub const fn new(session: SessionId, by: ClientName) -> (Self, Effect) {
+        (
+            Self {
+                session,
+                stage: Stage::Checking(by),
+            },
+            Effect::History,
+        )
+    }
+
+    #[must_use]
+    pub fn step(&mut self, input: Input) -> Vec<Effect> {
+        if let Input::RequestedAgain(history) = input {
+            let reason = finishing(&history, self.session)
+                .err()
+                .unwrap_or(Rejection::AlreadyFinished);
+            return Vec::from([
+                Effect::Reply(CommandResult::Rejected(reason)),
+                Effect::NextEvent,
+            ]);
+        }
+        let prior = core::mem::replace(&mut self.stage, Stage::Done);
+        match (prior, input) {
+            (Stage::Checking(by), Input::History(history)) => {
+                self.check(&history, by)
+            }
+            (
+                Stage::Asking(assignment, workspace, after),
+                Input::Ordered(answer),
+            ) => self.asked(assignment, workspace, after, answer.as_ref()),
+            (
+                Stage::Watching(assignment, workspace, after, last),
+                Input::Events(events),
+            ) => self.observe(assignment, workspace, after, last, &events),
+            (
+                Stage::Watching(assignment, workspace, after, _),
+                Input::Lagged,
+            ) => {
+                self.stage =
+                    Stage::Watching(assignment, workspace, after, None);
+                Vec::from([Effect::Replay(after)])
+            }
+            (Stage::Watching(assignment, ..), Input::TimedOut) => {
+                self.stage = Stage::Interrupting(assignment);
+                order(crate::session::Order::Interrupt)
+            }
+            (Stage::Interrupting(assignment), Input::Ordered(_)) => {
+                self.failed(&assignment, None, String::from(IMPATIENT))
+            }
+            (
+                Stage::Stopping(assignment, workspace, last),
+                Input::Ordered(answer),
+            ) => match interrupted("stopping the agent", answer.as_ref()) {
+                Some(reason) => self.failed(&assignment, None, reason),
+                None => self.read_home(assignment, workspace, last),
+            },
+            (
+                Stage::ReadingHome(assignment, workspace, last),
+                Input::Home(home),
+            ) => self.ready(assignment, workspace, last, home.as_ref()),
+            (
+                Stage::Readying(assignment, workspace, last, branch),
+                Input::Ready(Ok(())),
+            ) => {
+                self.stage = Stage::Landing(
+                    assignment,
+                    workspace.clone(),
+                    last,
+                    branch.clone(),
+                );
+                Vec::from([Effect::Land { workspace, branch }])
+            }
+            (
+                Stage::Readying(assignment, _, last, _),
+                Input::Ready(Err(reason)),
+            )
+            | (
+                Stage::Landing(assignment, _, last, _),
+                Input::Landed(Err(reason)),
+            ) => self.failed(&assignment, last, reason),
+            (
+                Stage::Landing(assignment, workspace, last, branch),
+                Input::Landed(Ok(commits)),
+            ) => {
+                self.stage = Stage::Pushing(assignment, last, commits);
+                Vec::from([Effect::Push { workspace, branch }])
+            }
+            (
+                Stage::Pushing(assignment, last, commits),
+                Input::Pushed(pushed),
+            ) => self.note(&assignment, last, finished(Ok(commits), pushed)),
+            (Stage::Noting(finished), Input::Noted) => {
+                Vec::from([Effect::Emit(EventKind::SessionFinished {
+                    finished,
+                })])
+            }
+            (stage, _) => {
+                self.stage = stage;
+                Vec::new()
+            }
+        }
+    }
+
+    fn check(&mut self, history: &[Event], by: ClientName) -> Vec<Effect> {
+        let Finishing {
+            assignment,
+            workspace,
+            running,
+        } = match finishing(history, self.session) {
+            Ok(finishing) => finishing,
+            Err(rejection) => {
+                return Vec::from([Effect::Reply(CommandResult::Rejected(
+                    rejection,
+                ))]);
+            }
+        };
+        let mut effects = Vec::from([
+            Effect::Emit(EventKind::FinishStarted),
+            Effect::Reply(CommandResult::Accepted),
+        ]);
+        if running {
+            let after = history.last().map_or(HostSeq(0), |event| event.seq);
+            self.stage = Stage::Asking(assignment, workspace, after);
+            effects.extend(order(crate::session::Order::Send {
+                text: String::from(SUMMARY),
+                by,
+            }));
+        } else {
+            let last = summary(history, self.session, HostSeq(0));
+            effects.extend(self.read_home(assignment, workspace, last));
+        }
+        effects
+    }
+
+    fn asked(
+        &mut self,
+        assignment: Assignment,
+        workspace: Workspace,
+        after: HostSeq,
+        answer: Option<&CommandResult>,
+    ) -> Vec<Effect> {
+        if let Some(reason) = interrupted("asking for a summary", answer) {
+            return self.failed(&assignment, None, reason);
+        }
+        self.stage = Stage::Watching(assignment, workspace, after, None);
+        Vec::from([Effect::Watch {
+            after,
+            seconds: PATIENCE,
+        }])
+    }
+
+    fn ready(
+        &mut self,
+        assignment: Assignment,
+        workspace: Workspace,
+        last: Option<String>,
+        home: Option<&Home>,
+    ) -> Vec<Effect> {
+        let branch = home::issue::branch(home, assignment.issue);
+        self.stage = Stage::Readying(
+            assignment,
+            workspace.clone(),
+            last,
+            branch.clone(),
+        );
+        Vec::from([Effect::Ready { workspace, branch }])
+    }
+
+    fn observe(
+        &mut self,
+        assignment: Assignment,
+        workspace: Workspace,
+        after: HostSeq,
+        mut last: Option<String>,
+        events: &[Event],
+    ) -> Vec<Effect> {
+        for event in events
+            .iter()
+            .filter(|event| event.session == self.session && event.seq > after)
+        {
+            if turn_ended(event, self.session) {
+                self.stage = Stage::Stopping(assignment, workspace, last);
+                return order(crate::session::Order::Stop(String::from(
+                    FINISHED,
+                )));
+            }
+            if let EventKind::AssistantMessage { text } = &event.kind {
+                last = (!text.trim().is_empty()).then(|| text.clone());
+            }
+        }
+        self.stage = Stage::Watching(assignment, workspace, after, last);
+        Vec::from([Effect::NextEvent])
+    }
+
+    fn read_home(
+        &mut self,
+        assignment: Assignment,
+        workspace: Workspace,
+        last: Option<String>,
+    ) -> Vec<Effect> {
+        self.stage = Stage::ReadingHome(assignment, workspace, last);
+        Vec::from([Effect::ReadHome])
+    }
+
+    fn failed(
+        &mut self,
+        assignment: &Assignment,
+        last: Option<String>,
+        reason: String,
+    ) -> Vec<Effect> {
+        self.note(assignment, last, finished(Err(reason), None))
+    }
+
+    fn note(
+        &mut self,
+        assignment: &Assignment,
+        summary: Option<String>,
+        finished: Finished,
+    ) -> Vec<Effect> {
+        let commits = landed(&finished);
+        self.stage = Stage::Noting(finished);
+        Vec::from([Effect::Note {
+            issue: assignment.issue,
+            summary,
+            by: assignment.signer(),
+            commits,
+        }])
+    }
+}
+
+fn order(order: crate::session::Order) -> Vec<Effect> {
+    Vec::from([Effect::Order(order)])
 }
 
 #[cfg(test)]

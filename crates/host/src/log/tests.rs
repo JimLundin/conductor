@@ -69,6 +69,21 @@ fn stored_events_take_the_next_seq_and_deltas_repeat_the_last() {
 }
 
 #[test]
+fn session_admission_sees_staged_events_while_replay_waits_for_the_receipt() {
+    let mut log = log();
+    let _ = log.append(SessionId(1), EventKind::SessionReady);
+    let _ = execute(&mut log, 1, Kind::Session);
+    let (started, _) = log.append(SessionId(1), EventKind::FinishStarted);
+    let _ = log.append(SessionId(1), delta("partial"));
+    let _ = log.append(SessionId(2), EventKind::SessionReady);
+    assert_eq!(
+        log.current_history(SessionId(1)),
+        [event(1, EventKind::SessionReady), started]
+    );
+    assert_eq!(log.replay(HostSeq(1)), Vec::<Event>::new());
+}
+
+#[test]
 fn the_welcome_names_the_head_and_a_subscription_needs_the_epoch() {
     let mut log = log();
     let _ = log.append(SessionId(1), EventKind::SessionReady);

@@ -522,3 +522,83 @@ pub fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
 
 #[cfg(test)]
 mod tests;
+
+/// What `git merge-tree --write-tree --name-only --no-messages` gave: the
+/// merged tree, or why there is none.
+///
+/// # Errors
+///
+/// The files that conflict, or what Git said when it failed otherwise.
+pub fn merged(
+    success: bool,
+    output: &str,
+    error: &str,
+) -> Result<String, String> {
+    let mut lines = output.lines();
+    let tree = lines.next().unwrap_or_default();
+    match (success, error.trim()) {
+        (true, _) => Ok(String::from(tree)),
+        (false, "") => Err(format!(
+            "the session's branch conflicts with the issue's in {}; merge them by hand",
+            lines.collect::<Vec<&str>>().join(", ")
+        )),
+        (false, said) => {
+            Err(format!("the branches couldn't be merged: {said}"))
+        }
+    }
+}
+
+/// What the shell found of the session's and the issue's branches in the
+/// checkout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branches {
+    /// The commits on the session's branch the issue's lacks.
+    pub ahead: u64,
+    /// The issue's branch is an ancestor of the session's.
+    pub fast_forward: bool,
+    /// Where the issue's branch is checked out, if it is.
+    pub checked_out: Option<String>,
+}
+
+/// How the session's branch lands on the issue's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Landing {
+    /// The issue's branch has it all already.
+    Nothing,
+    FastForward,
+    /// A merge commit of both, made without a worktree.
+    Merge,
+    Refuse(String),
+}
+
+impl Branches {
+    #[must_use]
+    pub fn landing(self) -> Landing {
+        match (self.checked_out, self.ahead, self.fast_forward) {
+            (Some(path), _, _) => Landing::Refuse(format!(
+                "the issue's branch is checked out at {path}, so it can't move under it; land the session's branch there"
+            )),
+            (None, 0, _) => Landing::Nothing,
+            (None, _, true) => Landing::FastForward,
+            (None, _, false) => Landing::Merge,
+        }
+    }
+}
+
+/// Where `branch`, a full ref, is checked out, from `git worktree list
+/// --porcelain`.
+#[must_use]
+pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
+    let wanted = format!("branch {branch}");
+    porcelain.split("\n\n").find_map(|record| {
+        let mut lines = record.lines();
+        let path = lines.next()?.strip_prefix("worktree ")?;
+        lines.any(|line| line == wanted).then(|| String::from(path))
+    })
+}
+
+/// The message of the merge commit that lands `session` on `issue`.
+#[must_use]
+pub fn merge_message(issue: &str, session: &str) -> String {
+    format!("Land {session} on {issue}")
+}

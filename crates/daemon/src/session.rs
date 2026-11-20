@@ -9,20 +9,25 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::fmt::Display;
+use std::path::Path;
+use std::time::Duration;
 
 use agents::Step;
 use agents::runtime::{Command, Event, Outcome, Start};
+use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
 pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    CheckpointId, CommandResult, HostPath, Models, SessionId, TaskId, Workspace,
+    CheckpointId, ClientName, CommandResult, HostPath, HostSeq, Models,
+    SessionId, TaskId, Workspace,
 };
 use runtime::Runtime;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::Instant;
 
 use crate::Stopped;
 use crate::home::HomeClone;
-use crate::log::Log;
+use crate::log::{Log, Subscription};
 use crate::workspace;
 
 /// What a performed effect hands back: the next input, after a call.
@@ -43,13 +48,25 @@ pub struct Session {
 
 #[derive(Debug)]
 struct SessionMsg {
-    order: Order,
+    request: Request,
     reply: oneshot::Sender<CommandResult>,
+}
+
+#[derive(Debug)]
+enum Request {
+    Order(Order),
+    Finish(ClientName),
+}
+
+#[derive(Default)]
+struct SummaryWatch {
+    subscription: Option<Subscription>,
+    until: Option<Instant>,
 }
 
 /// What the actor takes next.
 enum Happening {
-    Order(SessionMsg),
+    Request(SessionMsg),
     Agent(Event),
     /// Every handle was dropped, or the agent's runtime has gone.
     Closed,
@@ -89,7 +106,7 @@ impl Session {
             Self::restore(id, directory, choice, told, restored, history, log);
         let (reply, _) = oneshot::channel();
         let _ = session.inbox.try_send(SessionMsg {
-            order: Order::Start(offered),
+            request: Request::Order(Order::Start(offered)),
             reply,
         });
         session
@@ -130,9 +147,23 @@ impl Session {
     ///
     /// Fails if the session has stopped.
     pub async fn order(&self, order: Order) -> Result<CommandResult, Stopped> {
+        self.request(Request::Order(order)).await
+    }
+
+    pub(crate) async fn finish(
+        &self,
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        self.request(Request::Finish(by)).await
+    }
+
+    async fn request(
+        &self,
+        request: Request,
+    ) -> Result<CommandResult, Stopped> {
         let (reply, answer) = oneshot::channel();
         self.inbox
-            .send(SessionMsg { order, reply })
+            .send(SessionMsg { request, reply })
             .await
             .map_err(|_| Stopped {})?;
         answer.await.map_err(|_| Stopped {})
@@ -145,10 +176,23 @@ impl Actor {
         loop {
             let happening = tokio::select! {
                 biased;
-                msg = self.inbox.recv() => msg.map_or(Happening::Closed, Happening::Order),
+                msg = self.inbox.recv() => msg.map_or(Happening::Closed, Happening::Request),
                 event = self.runtime.events.recv() => event.map_or(Happening::Closed, Happening::Agent),
             };
-            now = self.on(now, happening).await?;
+            now = match happening {
+                Happening::Request(SessionMsg {
+                    request: Request::Finish(by),
+                    reply,
+                }) => {
+                    self.reply = Some(reply);
+                    let result = self.finish(now, by).await;
+                    if result.is_err() {
+                        tracing::warn!(session = ?self.id, "finishing stopped with the host");
+                    }
+                    result?
+                }
+                other => self.on(now, other).await?,
+            };
         }
     }
 
@@ -160,11 +204,25 @@ impl Actor {
         happening: Happening,
     ) -> Result<Core, Stopped> {
         let input = match happening {
-            Happening::Order(msg) => self.take(msg),
+            Happening::Request(SessionMsg { request, reply }) => {
+                let Request::Order(order) = request else {
+                    return Err(Stopped {});
+                };
+                self.reply = Some(reply);
+                Input::Order(order.session(uuid::Uuid::new_v4().to_string()))
+            }
             Happening::Agent(Event::Step(step)) => Input::Step(step),
             Happening::Agent(Event::Outcome(outcome)) => Input::Agent(outcome),
             Happening::Closed => return Err(Stopped {}),
         };
+        self.react(core, input).await
+    }
+
+    async fn react(
+        &mut self,
+        core: Core,
+        input: Input,
+    ) -> Result<Core, Stopped> {
         let mut now = self.drive(core, input).await?;
         while let Some(step) = self.held.pop_front() {
             now = self.drive(now, Input::Step(step)).await?;
@@ -172,10 +230,140 @@ impl Actor {
         Ok(now)
     }
 
-    fn take(&mut self, msg: SessionMsg) -> Input {
-        self.reply = Some(msg.reply);
-        // A conversation an undo forks gets a fresh id.
-        Input::Order(msg.order.session(uuid::Uuid::new_v4().to_string()))
+    async fn finish(
+        &mut self,
+        core: Core,
+        by: ClientName,
+    ) -> Result<Core, Stopped> {
+        let (mut finish, first) = Finish::new(self.id, by);
+        let mut effects = VecDeque::from([first]);
+        let mut now = core;
+        let mut watch = SummaryWatch::default();
+        while let Some(effect) = effects.pop_front() {
+            let (stepped, input) =
+                self.finish_effect(now, effect, &mut watch).await?;
+            now = stepped;
+            effects.extend(
+                input.into_iter().flat_map(|outcome| finish.step(outcome)),
+            );
+        }
+        Ok(now)
+    }
+
+    async fn finish_effect(
+        &mut self,
+        core: Core,
+        effect: FinishEffect,
+        watch: &mut SummaryWatch,
+    ) -> Result<(Core, Option<FinishInput>), Stopped> {
+        match effect {
+            FinishEffect::Order(order) => {
+                let (reply, mut answer) = oneshot::channel();
+                self.reply = Some(reply);
+                let stepped = self.react(core, Input::Order(order)).await?;
+                Ok((
+                    stepped,
+                    Some(FinishInput::Ordered(answer.try_recv().ok())),
+                ))
+            }
+            FinishEffect::NextEvent => {
+                let (stepped, input) = self.summary_event(core, watch).await?;
+                Ok((stepped, Some(input)))
+            }
+            other => Ok((core, self.perform_finish(other, watch).await?)),
+        }
+    }
+
+    async fn perform_finish(
+        &mut self,
+        effect: FinishEffect,
+        watch: &mut SummaryWatch,
+    ) -> Result<Option<FinishInput>, Stopped> {
+        let input = match effect {
+            FinishEffect::History => {
+                FinishInput::History(self.log.finish_history(self.id).await?)
+            }
+            FinishEffect::Emit(kind) => {
+                self.log.append(self.id, kind).await?;
+                return Ok(None);
+            }
+            FinishEffect::Reply(answer) => {
+                self.answer(answer);
+                return Ok(None);
+            }
+            FinishEffect::Watch { after, seconds } => {
+                watch.until =
+                    Some(Instant::now() + Duration::from_secs(seconds));
+                watch.subscribe(&self.log, after).await?
+            }
+            FinishEffect::Replay(after) => {
+                watch.subscribe(&self.log, after).await?
+            }
+            FinishEffect::ReadHome => FinishInput::Home(self.told.home.shown()),
+            FinishEffect::Ready { workspace, branch } => FinishInput::Ready(
+                crate::home::ready_issue_branch(
+                    Path::new(&workspace.repository.0),
+                    &branch,
+                )
+                .await,
+            ),
+            FinishEffect::Land { workspace, branch } => {
+                FinishInput::Landed(workspace::land(&workspace, &branch).await)
+            }
+            FinishEffect::Push { workspace, branch } => FinishInput::Pushed(
+                workspace::push_branch(&workspace, &branch).await,
+            ),
+            FinishEffect::Note {
+                issue,
+                summary,
+                by,
+                commits,
+            } => {
+                self.told.home.finished(issue, summary, by, commits).await?;
+                FinishInput::Noted
+            }
+            FinishEffect::Order(_) | FinishEffect::NextEvent => {
+                return Err(Stopped {});
+            }
+        };
+        Ok(Some(input))
+    }
+
+    // A concurrent command can stage summary events in its transaction.
+    // Keep taking orders so its receipt can publish those events.
+    async fn summary_event(
+        &mut self,
+        mut core: Core,
+        watch: &mut SummaryWatch,
+    ) -> Result<(Core, FinishInput), Stopped> {
+        loop {
+            let subscription = watch.subscription.as_mut().ok_or(Stopped {})?;
+            let until = watch.until.ok_or(Stopped {})?;
+            let happening = tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(until) => return Ok((core, FinishInput::TimedOut)),
+                next = subscription.live.recv() => return Ok((core, watched(next)?)),
+                msg = self.inbox.recv() => msg.map_or(Happening::Closed, Happening::Request),
+                event = self.runtime.events.recv() => event.map_or(Happening::Closed, Happening::Agent),
+            };
+            match happening {
+                Happening::Request(SessionMsg {
+                    request: Request::Finish(_),
+                    reply,
+                }) => {
+                    self.reply = Some(reply);
+                    let history = self.log.finish_history(self.id).await?;
+                    return Ok((core, FinishInput::RequestedAgain(history)));
+                }
+                other => core = self.on(core, other).await?,
+            }
+        }
+    }
+
+    fn answer(&mut self, result: CommandResult) {
+        if let Some(waiting) = self.reply.take() {
+            let _ = waiting.send(result);
+        }
     }
 
     /// Steps the session with `input`, and again with each call's outcome,
@@ -218,9 +406,7 @@ impl Actor {
                 Ok(None)
             }
             Effect::Reply(result) => {
-                if let Some(waiting) = self.reply.take() {
-                    let _ = waiting.send(result);
-                }
+                self.answer(result);
                 Ok(None)
             }
             Effect::Call(call) => self.call(call).await,
@@ -295,6 +481,35 @@ impl Actor {
                 Event::Step(step) => self.held.push_back(step),
             }
         }
+    }
+}
+
+impl SummaryWatch {
+    async fn subscribe(
+        &mut self,
+        log: &Log,
+        after: HostSeq,
+    ) -> Result<FinishInput, Stopped> {
+        let until = self.until.ok_or(Stopped {})?;
+        let Ok(result) =
+            tokio::time::timeout_at(until, log.subscribe(after)).await
+        else {
+            return Ok(FinishInput::TimedOut);
+        };
+        let mut subscription = result?;
+        let replay = std::mem::take(&mut subscription.replay);
+        self.subscription = Some(subscription);
+        Ok(FinishInput::Events(replay))
+    }
+}
+
+fn watched(
+    next: Result<proto::Event, broadcast::error::RecvError>,
+) -> Result<FinishInput, Stopped> {
+    match next {
+        Ok(event) => Ok(FinishInput::Events(Vec::from([event]))),
+        Err(broadcast::error::RecvError::Lagged(_)) => Ok(FinishInput::Lagged),
+        Err(broadcast::error::RecvError::Closed) => Err(Stopped {}),
     }
 }
 

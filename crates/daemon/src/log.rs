@@ -97,6 +97,10 @@ enum LogMsg {
     History {
         reply: oneshot::Sender<Vec<Event>>,
     },
+    CurrentHistory {
+        session: SessionId,
+        reply: oneshot::Sender<Vec<Event>>,
+    },
     SavedConversation {
         session: SessionId,
         reply: oneshot::Sender<Option<String>>,
@@ -254,6 +258,14 @@ impl Log {
         self.ask(|reply| LogMsg::History { reply }).await
     }
 
+    pub(crate) async fn finish_history(
+        &self,
+        session: SessionId,
+    ) -> Result<Vec<Event>, Stopped> {
+        self.ask(|reply| LogMsg::CurrentHistory { session, reply })
+            .await
+    }
+
     pub(crate) async fn saved_conversation(
         &self,
         session: SessionId,
@@ -380,6 +392,9 @@ impl LogActor {
             }
             LogMsg::History { reply } => {
                 let _ = reply.send(self.core.history().to_vec());
+            }
+            LogMsg::CurrentHistory { session, reply } => {
+                let _ = reply.send(self.core.current_history(session));
             }
             LogMsg::SavedConversation { session, reply } => {
                 let value = self
