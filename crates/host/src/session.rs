@@ -149,7 +149,7 @@ pub enum Order {
 }
 
 /// Why the agent of a session being removed stops.
-pub const REMOVED: &str = "the session was removed";
+const REMOVED: &str = "the session was removed";
 
 /// What happened, as the shell saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]

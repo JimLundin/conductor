@@ -16,11 +16,11 @@ use proto::{
 use crate::prelude::*;
 
 /// The most of Git's output the host reads, and the largest patch it sends.
-pub const PATCH_LIMIT: usize = 65536;
+const PATCH_LIMIT: usize = 65536;
 /// The most patch text one diff carries.
-pub const TOTAL_LIMIT: usize = 262_144;
+const TOTAL_LIMIT: usize = 262_144;
 /// The most files one diff lists.
-pub const FILE_LIMIT: usize = 100;
+const FILE_LIMIT: usize = 100;
 
 const BRANCHES: &str = "conductor/";
 
@@ -37,7 +37,7 @@ pub enum GitError {
 /// What one `git` run gave back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
-    /// Stdout, cut off just past [`PATCH_LIMIT`].
+    /// Stdout, cut off just past the per-file patch limit.
     pub bytes: Vec<u8>,
     pub success: bool,
     /// The start of stderr.
@@ -322,7 +322,7 @@ pub fn message(checkpoint: CheckpointId) -> String {
 }
 
 /// The files to patch from `git diff --name-status -z`, at most
-/// [`FILE_LIMIT`], and whether that is all of them.
+/// the file limit, and whether that is all of them.
 ///
 /// # Errors
 ///
@@ -401,7 +401,7 @@ pub fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
     })
 }
 
-/// Keeps the patches within [`TOTAL_LIMIT`], in order: a patch past it is
+/// Keeps the patches within the total patch budget, in order: a patch past it is
 /// sent as too large, and the diff as truncated.
 #[must_use]
 pub fn budget(

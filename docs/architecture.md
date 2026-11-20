@@ -1655,7 +1655,8 @@ ticket.
   host with its instances and *Forget this host*. A new session picks a host
   first, by default the host of the session shown last, else the first
   live one, then one of that host's instances. Where the app speaks of a
-  host it names it.
+  host it names it. The UI assigns each link state its visible label and
+  uses that same label in the `data-state` attribute.
 - **Pairing.** A join link (`#join=`) or a ticket pasted under *Add host*
   adds a host; pairing a host again gives it the new ticket and keeps its
   sessions. Forgetting the last host returns to the pairing screen. A Home

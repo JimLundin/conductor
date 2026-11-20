@@ -137,8 +137,15 @@ impl Host {
 
     pub fn status_line(&self) -> StatusLine {
         let shown = self.status.clone().unwrap_or_default();
+        let state = match shown.state {
+            LinkState::Disconnected => "Disconnected",
+            LinkState::Connecting => "Connecting",
+            LinkState::Authenticating => "Authenticating",
+            LinkState::CatchingUp => "CatchingUp",
+            LinkState::Live => "Live",
+        };
         StatusLine {
-            state: format!("{:?}", shown.state),
+            state: String::from(state),
             host: self.name(),
             error: shown.error,
         }
