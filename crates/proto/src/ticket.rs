@@ -178,4 +178,9 @@ mod tests {
     fn token_hides_in_debug() {
         assert_eq!(format!("{:?}", AuthToken([1; 16])), "AuthToken(..)");
     }
+    #[test]
+    fn only_the_same_token_checks() {
+        assert!(TOKEN.check(&AuthToken::from_bytes([1; 16])).is_ok());
+        assert!(TOKEN.check(&AuthToken::from_bytes([2; 16])).is_err());
+    }
 }
