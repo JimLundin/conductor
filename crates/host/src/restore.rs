@@ -288,10 +288,10 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Checkpoint, CheckpointId, ClientName, Event, EventKind, HistoryAnchor,
-        HostPath, HostSeq, InstanceId, Provider, RequestId, Resolution,
-        SessionId, ToolCallId, ToolKind, TurnOutcome, UndoAvailability,
-        Workspace,
+        Checkpoint, CheckpointId, ClientName, Effort, Event, EventKind,
+        HistoryAnchor, HostPath, HostSeq, InstanceId, ModelId, Provider,
+        RequestId, Resolution, SessionId, ToolCallId, ToolKind, TurnOutcome,
+        UndoAvailability, Workspace,
     };
 
     use super::{Created, Interrupted, Recovery, Step, created, events_of};
@@ -495,6 +495,100 @@ mod tests {
                         "interrupted turn checkpoint failed: git broke"
                     ),
                 },
+            ]
+        );
+    }
+
+    /// A running turn's files are checkpointed on top of the last
+    /// checkpoint, at the model the log last chose; a finished turn's
+    /// are not.
+    #[test]
+    fn a_restart_checkpoints_a_running_turn_and_leaves_a_finished_one() {
+        let user = EventKind::UserMessage {
+            text: String::from("edit"),
+            by: ClientName(String::from("phone")),
+        };
+        let running = Vec::from([
+            event(1, 1, started()),
+            event(
+                2,
+                1,
+                EventKind::WorkspaceCreated {
+                    workspace: turn().workspace,
+                },
+            ),
+            event(
+                3,
+                1,
+                EventKind::CheckpointCreated {
+                    checkpoint: Checkpoint {
+                        id: CheckpointId(0),
+                        parent: None,
+                        turn_start: None,
+                        commit: String::from("c0"),
+                        history: HistoryAnchor::Fresh,
+                        undo: UndoAvailability::Available,
+                    },
+                },
+            ),
+            event(4, 1, EventKind::SessionReady),
+            event(
+                5,
+                1,
+                EventKind::ModelChanged {
+                    model: Some(ModelId(String::from("small"))),
+                    effort: Some(Effort::Low),
+                    reason: String::from("not offered"),
+                },
+            ),
+            event(6, 1, user),
+        ]);
+        let finished = running
+            .iter()
+            .cloned()
+            .chain([event(
+                7,
+                1,
+                EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Completed,
+                },
+            )])
+            .collect::<Vec<Event>>();
+        let recovery = |checkpoint: Option<Interrupted>| Recovery {
+            choice: Choice {
+                model: Some(ModelId(String::from("small"))),
+                effort: Some(Effort::Low),
+            },
+            talked: true,
+            withdrawn: Vec::new(),
+            interrupted: checkpoint.is_some(),
+            checkpoint,
+            closed: true,
+        };
+        let none = Choice {
+            model: None,
+            effort: None,
+        };
+        assert_eq!(
+            [
+                Recovery::of(none.clone(), &running),
+                Recovery::of(none, &finished),
+            ],
+            [
+                recovery(Some(Interrupted {
+                    reserved: CheckpointId(1),
+                    base: Some(String::from("c0")),
+                    parent: Some(CheckpointId(0)),
+                    turn_start: Some(HostSeq(6)),
+                    history: HistoryAnchor::Unknown,
+                    undo: UndoAvailability::Unavailable {
+                        reason: String::from(
+                            "native turn boundary was not observed"
+                        ),
+                    },
+                    ..turn()
+                })),
+                recovery(None),
             ]
         );
     }
