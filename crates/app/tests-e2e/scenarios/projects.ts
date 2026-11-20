@@ -11,6 +11,28 @@ const projectOf =
 	(id: string): Locator =>
 		run.page.locator(`.project[data-project="${id}"]`);
 
+const blockedIssueStart = async (run: Run): Promise<void> => {
+	const { page, patience } = run;
+	const { back, check } = tools(run);
+	const beta = projectOf(run)("beta");
+	await beta.locator('input[name="issue-title"]').fill("Check beta");
+	await beta.getByRole("button", { name: "Open", exact: true }).click();
+	await page
+		.locator(".issue-pane")
+		.getByRole("button", { name: "Start a session" })
+		.click();
+	const form = page.locator(".new-session");
+	await form
+		.getByText("The issue's project is not checked out on this host.")
+		.waitFor({ timeout: patience });
+	check(
+		await form.getByRole("button", { name: "Start session" }).isDisabled(),
+		"Start is disabled for an issue without a checkout",
+	);
+	await back();
+	await page.getByRole("button", { name: "Projects", exact: true }).click();
+};
+
 /** The home's projects: alpha found in the search root, beta cloned. */
 const checkouts = async (run: Run): Promise<void> => {
 	const { page, out, dir, patience, log } = run;
@@ -34,6 +56,7 @@ const checkouts = async (run: Run): Promise<void> => {
 			.getAttribute("data-checkout")) === "missing",
 		"beta is not checked out",
 	);
+	await blockedIssueStart(run);
 	await page.getByRole("button", { name: "Clone beta on conductor" }).click();
 	await project("beta")
 		.locator('.checkout[data-checkout="checked-out"]')
@@ -110,7 +133,9 @@ const projectSession = async (run: Run): Promise<void> => {
 		(await page.locator('input[name="directory"]').count()) === 0,
 		"a picked project hides the directory",
 	);
-	await page.getByRole("button", { name: "Start session" }).click();
+	const start = page.getByRole("button", { name: "Start session" });
+	check(await start.isEnabled(), "Start is enabled for a checked-out project");
+	await start.click();
 	await pane
 		.locator('.composer textarea[placeholder="Message Claude Code"]')
 		.waitFor({ timeout: patience });

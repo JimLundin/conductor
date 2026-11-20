@@ -119,7 +119,12 @@ fn each_pick_marks_its_choice_and_an_earlier_pick_goes_back_to_default() {
                 Vec::from([true, false, false]),
                 Vec::from([false, true, false, false, false, false]),
             )),
-            Some(defaults.clone()),
+            Some((
+                Vec::from([true, false, false]),
+                Vec::from([true, false]),
+                Vec::from([true, false, false]),
+                Vec::from([false, true, false, false, false, false]),
+            )),
             Some(defaults),
         ]
     );
@@ -138,14 +143,18 @@ fn a_model_keeps_only_an_effort_it_offers() {
 }
 
 #[test]
-fn a_listed_project_is_enough_to_start_and_an_unlisted_one_is_ignored() {
+fn a_project_needs_a_checkout_before_it_can_start() {
     let place = |project: &str| {
         picked(Vec::from([FormIntent::PickProject(text(project))]))
             .map(|shown| (shown.directory_shown, shown.start_disabled))
     };
     assert_eq!(
-        [place("alpha"), place("zeta")],
-        [Some((false, false)), Some((true, true))]
+        [place("alpha"), place("beta"), place("zeta")],
+        [
+            Some((false, false)),
+            Some((false, true)),
+            Some((false, true))
+        ]
     );
 }
 

@@ -561,14 +561,21 @@ fn a_session_starts_in_a_checked_out_project_picked_in_the_form() {
 }
 
 #[test]
-fn a_project_the_host_no_longer_lists_falls_back_to_the_directory() {
-    let (gone, effects) = run(
+fn a_removed_project_stays_selected_until_the_directory_is_explicitly_chosen() {
+    let (picked, _) = run(
         paired(),
         Vec::from([
             welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
             connection(HOST, LinkState::Live, None),
             Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
             Intent::Form(FormIntent::PickProject(text("alpha"))),
+        ]),
+    );
+    assert_eq!(form(&picked).map(|drawn| drawn.start_disabled), Some(false));
+    let (gone, effects) = run(
+        picked,
+        Vec::from([
             Intent::Link(
                 HOST,
                 Update::Feed(Feed::Home(home(HomeSync::Synced, Vec::new()))),
@@ -580,20 +587,132 @@ fn a_project_the_host_no_longer_lists_falls_back_to_the_directory() {
         form(&gone).map(|drawn| (
             drawn.projects,
             drawn.directory_shown,
-            drawn.start_disabled
+            drawn.start_disabled,
+            drawn.error.map(|hint| hint.text),
         )),
         Some((
-            Some(Vec::from([crate::Choice {
-                value: String::new(),
-                label: text("A directory"),
-                selected: true,
-                disabled: false,
-            }])),
+            Some(Vec::from([
+                crate::Choice {
+                    value: String::new(),
+                    label: text("A directory"),
+                    selected: false,
+                    disabled: false,
+                },
+                crate::Choice {
+                    value: text("alpha"),
+                    label: text("alpha (no longer listed)"),
+                    selected: true,
+                    disabled: true,
+                },
+            ])),
+            false,
             true,
-            true
+            Some(text(
+                "The selected project is no longer listed on this host."
+            )),
         ))
     );
     assert_eq!(sent(&effects), []);
+    let (directory, _) = run(
+        gone,
+        Vec::from([Intent::Form(FormIntent::PickProject(String::new()))]),
+    );
+    assert_eq!(
+        form(&directory)
+            .map(|drawn| (drawn.directory_shown, drawn.start_disabled)),
+        Some((true, false)),
+    );
+    let (_, effects) =
+        run(directory, Vec::from([Intent::Form(FormIntent::Start)]));
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::StartSession {
+            instance: id("claude"),
+            at: StartAt::Directory(HostPath(text("/src/x"))),
+            model: None,
+            effort: None,
+        }]
+    );
+}
+
+#[test]
+fn a_project_stays_selected_across_hosts_and_needs_a_checkout_there() {
+    let (laptop, effects) = run(
+        two_homes(),
+        Vec::from([
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
+            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            Intent::Form(FormIntent::PickHost(OTHER.key())),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(sent(&effects), []);
+    assert_eq!(
+        form(&laptop).map(|drawn| (
+            drawn.projects.and_then(|choices| choices
+                .into_iter()
+                .find(|choice| choice.selected)),
+            drawn.directory_shown,
+            drawn.start_disabled,
+            drawn.error.map(|hint| hint.text),
+        )),
+        Some((
+            Some(crate::Choice {
+                value: text("alpha"),
+                label: text("Project alpha (not checked out)"),
+                selected: true,
+                disabled: true,
+            }),
+            false,
+            true,
+            Some(text(
+                "The selected project is not checked out on this host."
+            )),
+        ))
+    );
+    let (homeless, effects) = run(
+        laptop,
+        Vec::from([
+            welcomed(OTHER, "laptop", claude(signed_in()), None),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(sent(&effects), []);
+    assert_eq!(
+        form(&homeless).map(|drawn| (
+            drawn.projects.and_then(|choices| choices
+                .into_iter()
+                .find(|choice| choice.selected)),
+            drawn.start_disabled,
+            drawn.error.map(|hint| hint.text),
+        )),
+        Some((
+            Some(crate::Choice {
+                value: text("alpha"),
+                label: text("alpha (no longer listed)"),
+                selected: true,
+                disabled: true,
+            }),
+            true,
+            Some(text("This host has no home configured.")),
+        ))
+    );
+    let (ready, _) = run(
+        homeless,
+        Vec::from([Intent::Form(FormIntent::PickHost(HOST.key()))]),
+    );
+    assert_eq!(form(&ready).map(|drawn| drawn.start_disabled), Some(false));
+    let (_, effects) = run(ready, Vec::from([Intent::Form(FormIntent::Start)]));
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Send { host, body: CommandBody::StartSession { at: StartAt::Project(id), .. }, .. }
+        if *host == HOST && id.0 == "alpha"
+    )));
+}
+
+#[test]
+fn a_host_without_home_offers_a_directory_by_default() {
     let (homeless, _) = run(
         paired(),
         Vec::from([
@@ -686,13 +805,17 @@ fn issue(id: IssueId, title: &str, status: IssueStatus) -> Issue {
     }
 }
 
-/// desk, live, whose alpha has an open issue and a done one.
-fn with_issues() -> crate::State {
-    let mut alpha = project("alpha", Some("a"), Vec::new(), Cloning::Idle);
+fn issue_project(checkouts: Vec<Checkout>) -> Project {
+    let mut alpha = project("alpha", Some("a"), checkouts, Cloning::Idle);
     alpha.issues = Vec::from([
         issue(OPENED, "Sign in", IssueStatus::Open),
         issue(CLOSED, "Pair", IssueStatus::Done),
     ]);
+    alpha
+}
+
+fn with_issues() -> crate::State {
+    let alpha = issue_project(Vec::from([at(ALPHA, Origin::Found)]));
     let (shown, _) = run(
         paired(),
         Vec::from([
@@ -955,6 +1078,86 @@ fn an_issue_starts_a_session_on_it_and_lists_its_sessions() {
             Intent::Show(Place::Session(HOST, SESSION)),
         )]))
     );
+}
+
+#[test]
+fn an_issue_stays_selected_across_hosts_and_needs_its_project_checkout_there() {
+    let (laptop, effects) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Show(Place::AddHost),
+            Intent::Join(Ok(laptop())),
+            welcomed(OTHER, "laptop", claude(signed_in()), Some(desk_home())),
+            connection(OTHER, LinkState::Live, None),
+            Intent::StartOn(HOST, OPENED),
+            Intent::Form(FormIntent::PickHost(OTHER.key())),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    let readiness = |state: &crate::State| {
+        form(state).map(|drawn| {
+            (
+                drawn.issue,
+                drawn.start_disabled,
+                drawn.error.map(|hint| hint.text),
+            )
+        })
+    };
+    assert_eq!(sent(&effects), []);
+    assert_eq!(
+        readiness(&laptop),
+        Some((
+            Some(text("Sign in")),
+            true,
+            Some(text("The selected issue is no longer listed on this host."))
+        )),
+    );
+
+    let report = |checkouts| {
+        Intent::Link(
+            OTHER,
+            Update::Feed(Feed::Home(home(
+                HomeSync::Synced,
+                Vec::from([issue_project(checkouts)]),
+            ))),
+        )
+    };
+    let (missing, effects) = run(
+        laptop,
+        Vec::from([report(Vec::new()), Intent::Form(FormIntent::Start)]),
+    );
+    assert_eq!(sent(&effects), []);
+    assert_eq!(
+        readiness(&missing),
+        Some((
+            Some(text("Sign in")),
+            true,
+            Some(text("The issue's project is not checked out on this host."))
+        )),
+    );
+
+    let (ready, _) = run(
+        missing,
+        Vec::from([report(Vec::from([at("/src/alpha", Origin::Found)]))]),
+    );
+    assert_eq!(
+        readiness(&ready),
+        Some((Some(text("Sign in")), false, None))
+    );
+    let (_, effects) = run(ready, Vec::from([Intent::Form(FormIntent::Start)]));
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::StartSession {
+            instance: id("claude"),
+            at: StartAt::Issue(OPENED),
+            model: None,
+            effort: None,
+        }]
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Send { host, .. } if *host == OTHER
+    )));
 }
 
 #[test]

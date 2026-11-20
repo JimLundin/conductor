@@ -46,8 +46,8 @@ pub struct NewSessionForm {
     pub instance_hint: Option<Hint>,
     pub models: Vec<Choice>,
     pub efforts: Vec<Choice>,
-    /// A directory first, then each project the host's home lists; none
-    /// on a host with no home.
+    /// A directory first, followed by the host's projects and a retained
+    /// selection if it is no longer listed.
     pub projects: Option<Vec<Choice>>,
     /// The directory field shows unless a project is picked.
     pub directory_shown: bool,
@@ -159,7 +159,6 @@ impl Form {
                         instance: None,
                         model: None,
                         effort: None,
-                        project: None,
                         ..self
                     },
                     Vec::new(),
@@ -251,10 +250,7 @@ impl Form {
         if models.kept_effort(self.model.as_ref(), self.effort) != self.effort {
             return Err(StartBlocked::Effort);
         }
-        let at = self.place(known.fold.home.as_ref());
-        if matches!(&at, StartAt::Directory(path) if path.0.is_empty()) {
-            return Err(StartBlocked::Directory);
-        }
+        let at = self.place(known)?;
         Ok((
             host,
             CommandBody::StartSession {
@@ -298,31 +294,34 @@ impl Form {
             .copied()
     }
 
-    /// Where the session starts: the issue, else the project, else the
-    /// directory.
-    fn place(&self, home: Option<&Home>) -> StartAt {
-        self.issue.map_or_else(
-            || {
-                self.project(home).map_or_else(
-                    || {
-                        StartAt::Directory(HostPath(
-                            self.directory.trim().to_owned(),
-                        ))
-                    },
-                    |project| StartAt::Project(project.clone()),
-                )
-            },
-            StartAt::Issue,
-        )
-    }
-
-    /// The project a person picked, if the host's home still lists it.
-    fn project<'a>(&'a self, home: Option<&Home>) -> Option<&'a ProjectId> {
-        self.project.as_ref().filter(|id| {
-            home.is_some_and(|known| {
-                known.projects.iter().any(|project| &project.id == *id)
-            })
-        })
+    fn place(&self, host: &Host) -> Result<StartAt, StartBlocked> {
+        let home = host.fold.home.as_ref();
+        if let Some(issue) = self.issue {
+            home.ok_or(StartBlocked::NoHome)?;
+            let (project, _) = crate::issues::find(host, issue)
+                .ok_or(StartBlocked::MissingIssue)?;
+            if project.checkouts.is_empty() {
+                return Err(StartBlocked::IssueCheckout);
+            }
+            return Ok(StartAt::Issue(issue));
+        }
+        if let Some(id) = &self.project {
+            let known = home.ok_or(StartBlocked::NoHome)?;
+            let project = known
+                .projects
+                .iter()
+                .find(|project| &project.id == id)
+                .ok_or(StartBlocked::MissingProject)?;
+            if project.checkouts.is_empty() {
+                return Err(StartBlocked::ProjectCheckout);
+            }
+            return Ok(StartAt::Project(id.clone()));
+        }
+        let directory = self.directory.trim();
+        if directory.is_empty() {
+            return Err(StartBlocked::Directory);
+        }
+        Ok(StartAt::Directory(HostPath(directory.to_owned())))
     }
 
     /// The default is the first available instance, or the first listed.
@@ -380,7 +379,6 @@ impl Form {
             })
             .collect::<Vec<Suggestion>>();
         let home = chosen.and_then(|(_, host)| host.fold.home.as_ref());
-        let project = self.project(home);
         let issue = self.issue.map(|id| issue_title(hosts, id));
         let blocked = self.start(chosen).err();
         let start_label = if blocked == Some(StartBlocked::Pending) {
@@ -423,10 +421,10 @@ impl Form {
             ),
             efforts: self.effort_choices(&offered.efforts(self.model.as_ref())),
             models: self.model_choices(&offered),
-            projects: home
-                .filter(|_| issue.is_none())
-                .map(|known| project_choices(known, project)),
-            directory_shown: project.is_none() && issue.is_none(),
+            projects: (issue.is_none()
+                && (home.is_some() || self.project.is_some()))
+            .then(|| project_choices(home, self.project.as_ref())),
+            directory_shown: self.project.is_none() && issue.is_none(),
             issue,
             directory: self.directory.clone(),
             directory_invalid: directory_error.is_some(),
@@ -514,14 +512,21 @@ fn issue_title(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> String {
 
 /// A directory first, then each project the home lists; one with no
 /// checkout on the host says so and can't be picked.
-fn project_choices(home: &Home, picked: Option<&ProjectId>) -> Vec<Choice> {
+fn project_choices(
+    home: Option<&Home>,
+    picked: Option<&ProjectId>,
+) -> Vec<Choice> {
     let first = Choice {
         value: String::new(),
         label: String::from("A directory"),
         selected: picked.is_none(),
         disabled: false,
     };
-    let listed = home.projects.iter().map(|project| Choice {
+    let projects = home.into_iter().flat_map(|known| &known.projects);
+    let missing = picked
+        .filter(|id| !projects.clone().any(|project| &project.id == *id))
+        .map(|id| missing_choice(&id.0, "no longer listed"));
+    let listed = projects.map(|project| Choice {
         value: project.id.0.clone(),
         label: if project.checkouts.is_empty() {
             format!("{} (not checked out)", project.title)
@@ -531,7 +536,10 @@ fn project_choices(home: &Home, picked: Option<&ProjectId>) -> Vec<Choice> {
         selected: Some(&project.id) == picked,
         disabled: project.checkouts.is_empty(),
     });
-    core::iter::once(first).chain(listed).collect()
+    core::iter::once(first)
+        .chain(listed)
+        .chain(missing)
+        .collect()
 }
 
 fn host_choices(
@@ -627,6 +635,11 @@ enum StartBlocked {
     Model,
     Effort,
     Directory,
+    NoHome,
+    MissingProject,
+    ProjectCheckout,
+    MissingIssue,
+    IssueCheckout,
 }
 
 impl StartBlocked {
@@ -642,6 +655,19 @@ impl StartBlocked {
             Self::Model => Some("The selected model is no longer offered."),
             Self::Effort => Some("The selected effort is no longer offered."),
             Self::Directory => Some("Enter a directory path."),
+            Self::NoHome => Some("This host has no home configured."),
+            Self::ProjectCheckout => {
+                Some("The selected project is not checked out on this host.")
+            }
+            Self::MissingIssue => {
+                Some("The selected issue is no longer listed on this host.")
+            }
+            Self::IssueCheckout => {
+                Some("The issue's project is not checked out on this host.")
+            }
+            Self::MissingProject => {
+                Some("The selected project is no longer listed on this host.")
+            }
         }
     }
 }
