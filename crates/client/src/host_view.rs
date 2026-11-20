@@ -281,6 +281,29 @@ pub enum Attention {
     Requests(usize),
 }
 
+/// The session's latest turn. Its outcome and its checkpoint can arrive in
+/// either order, and neither is an earlier turn's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Turn<'view> {
+    /// The seq of the message that started it; a later turn's is later,
+    /// even after an undo.
+    pub started: HostSeq,
+    /// Its transcript, from that message on.
+    pub items: &'view [Item],
+    pub checkpoint: Option<CheckpointId>,
+}
+
+impl Turn<'_> {
+    /// How it ended, once it has.
+    #[must_use]
+    pub fn outcome(&self) -> Option<&TurnOutcome> {
+        self.items.iter().find_map(|item| match item {
+            Item::TurnCompleted(outcome) => Some(outcome),
+            _ => None,
+        })
+    }
+}
+
 impl HostView {
     #[must_use]
     pub const fn empty() -> Self {
@@ -465,6 +488,21 @@ impl SessionView {
             0 => Attention::Quiet,
             count => Attention::Requests(count),
         }
+    }
+
+    /// `None` until a message starts a turn.
+    #[must_use]
+    pub fn last_turn(&self) -> Option<Turn<'_>> {
+        let (started, start) = self.turn_starts.last_key_value()?;
+        Some(Turn {
+            started: *started,
+            items: self.items.get(*start..).unwrap_or_default(),
+            checkpoint: self
+                .checkpoints
+                .iter()
+                .find(|turn| turn.start == *start)
+                .map(|turn| turn.checkpoint),
+        })
     }
 
     fn apply(self, kind: EventKind, seq: HostSeq) -> Self {
@@ -2684,5 +2722,61 @@ mod tests {
             (9, UndoState::Undone)
         );
         Ok(())
+    }
+
+    fn last_turn(
+        kinds: Vec<EventKind>,
+    ) -> Option<(HostSeq, Option<TurnOutcome>, Option<proto::CheckpointId>)>
+    {
+        let view = numbered(kinds)
+            .into_iter()
+            .fold(HostView::empty(), HostView::apply);
+        view.sessions.get(&SessionId(1))?.last_turn().map(|turn| {
+            (turn.started, turn.outcome().cloned(), turn.checkpoint)
+        })
+    }
+
+    #[test]
+    fn the_last_turn_gets_its_own_outcome_and_checkpoint_in_either_order() {
+        let events = checkpoint_events();
+        let prefix =
+            |count: usize| events.iter().take(count).cloned().collect();
+        let checkpoint_first = events
+            .iter()
+            .take(8)
+            .cloned()
+            .chain([checkpoint(2, 7, 1)])
+            .collect();
+        let undone = events
+            .iter()
+            .cloned()
+            .chain([EventKind::TurnsUndone {
+                checkpoint: proto::CheckpointId(3),
+                restored: proto::CheckpointId(2),
+            }])
+            .collect();
+        let completed = Some(TurnOutcome::Completed);
+        assert_eq!(
+            [
+                last_turn(prefix(2)),
+                last_turn(prefix(4)),
+                last_turn(prefix(6)),
+                last_turn(prefix(9)),
+                last_turn(checkpoint_first),
+                last_turn(undone),
+            ],
+            [
+                None,
+                Some((HostSeq(3), None, None)),
+                Some((
+                    HostSeq(3),
+                    completed.clone(),
+                    Some(proto::CheckpointId(1))
+                )),
+                Some((HostSeq(7), completed.clone(), None)),
+                Some((HostSeq(7), None, Some(proto::CheckpointId(2)))),
+                Some((HostSeq(7), completed, Some(proto::CheckpointId(2)))),
+            ]
+        );
     }
 }

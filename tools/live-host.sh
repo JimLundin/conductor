@@ -48,7 +48,7 @@ esac
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 target=$(tools/target-dir)
 cargo build -q -p conductord
-cargo build -q -p client --example headless
+cargo build -q -p net --example headless
 
 scratch=$(mktemp -d /tmp/live-host-scratch.XXXXXX)
 logs=${1:-$(mktemp -d)}
