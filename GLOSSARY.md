@@ -12,3 +12,6 @@
   a note on the issue.
 - **Workspace plan** decides the Git and filesystem steps for a session's
   worktree. Each result determines the next step or completes the plan.
+- **Pending issue edit** is a home mutation kept on the host until its
+  upstream has accepted it. Replay can apply it to an updated issue file
+  or let a newer change to the same field stand.

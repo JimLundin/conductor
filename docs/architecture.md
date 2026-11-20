@@ -695,7 +695,10 @@ standards and issues, cloned on every host. Built so far are home steps
   A push the remote refuses, and a sync while changes are kept
   (`home::sync::Git::Replay`), fetch, reset the clone to the remote and
   apply the kept changes again on top (`Mode::Replay`), then push, so the
-  host never merges its own commits. A replayed field someone else
+  host never merges its own commits. The issue decision returns the file
+  and commit to write, the edit to keep in `home-edits.state`, and an
+  ordered delivery through the clone and its upstream. The daemon
+  performs those effects and feeds their outcomes back to the core. A replayed field someone else
   changed since stays theirs unless the change is newer than the file's
   last commit on the remote; a note or an item the file has already
   isn't added twice; a change whose issue is gone is dropped, and one
@@ -722,7 +725,7 @@ standards and issues, cloned on every host. Built so far are home steps
   its title, body, checklist and notes, the branch, and what to do when
   done; one that doesn't reach the agent leaves an `Error` in the session.
   The home actor then moves an `open` or `ready` issue to `in-progress`,
-  as the issue is then (`home::issue::started`). The fetch runs in the
+  as the issue is then (`home::issue::SessionUpdate`). The fetch runs in the
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
 - **Finishing** (home step 7). `FinishSession { session }`, for a session
@@ -750,7 +753,7 @@ standards and issues, cloned on every host. Built so far are home steps
   continue the issue. The summary becomes the issue's note, signed
   `<host> · <instance>`, and an `open`, `ready` or `in-progress` issue
   whose branch gained commits moves to `review`
-  (`home::issue::finished`). `SessionFinished { finished }` ends it: the
+  (`home::issue::SessionUpdate`). `SessionFinished { finished }` ends it: the
   commits that landed and where the branch went (`Kept`), or why nothing
   landed. The session stays, closed; *Remove* removes its workspace.
 

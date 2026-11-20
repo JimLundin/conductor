@@ -6042,10 +6042,13 @@ fn alpha_issues(home: &proto::Home) -> Vec<proto::Issue> {
         .map_or_else(Vec::new, |project| project.issues.clone())
 }
 
+fn issue_name(issue: proto::IssueId) -> String {
+    ulid::Ulid::from(issue.0).to_string().to_lowercase()
+}
+
 /// The issue's file as the home's remote has it.
 fn pushed_issue(land: &Homeland, issue: proto::IssueId) -> Fallible<String> {
-    let path =
-        format!("HEAD:projects/alpha/issues/{}.md", home::issue::name(issue));
+    let path = format!("HEAD:projects/alpha/issues/{}.md", issue_name(issue));
     git(&land.home_bare, &["show", &path])
 }
 
@@ -6068,7 +6071,7 @@ fn noted_by_hand(land: &Homeland, issue: proto::IssueId) -> Fallible {
     )?;
     let file = person
         .join("projects/alpha/issues")
-        .join(format!("{}.md", home::issue::name(issue)));
+        .join(format!("{}.md", issue_name(issue)));
     let text = std::fs::read_to_string(&file)?;
     std::fs::write(&file, format!("{text}\n## Notes\n- by hand\n"))?;
     git(&person, &["commit", "--quiet", "-am", "a note by hand"])?;
@@ -6298,7 +6301,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
         }),
         "the first message is the issue's brief: {brief:?}"
     );
-    let branch = format!("issue/{}", home::issue::name(issue));
+    let branch = format!("issue/{}", issue_name(issue));
     let session_branch = mine
         .iter()
         .find_map(|kind| match kind {
@@ -6375,7 +6378,7 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
             reason: String::from("the session was finished")
         }
     }));
-    let branch = format!("issue/{}", home::issue::name(issue));
+    let branch = format!("issue/{}", issue_name(issue));
     let pushed = git(
         Path::new(remote.trim().trim_start_matches("file://")),
         &["show", &format!("{branch}:changed.txt")],

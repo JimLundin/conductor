@@ -784,3 +784,231 @@ fn an_issues_branch_is_the_one_the_home_lists_for_it() {
     let listed = home(Vec::new(), Vec::from([other, mine]));
     assert_eq!(branch(Some(&listed), ID), "refs/heads/issue/mine");
 }
+
+fn unexpected_effect() -> Rejection {
+    Rejection::IssueNotSaved {
+        reason: text("unexpected record effect"),
+    }
+}
+
+#[test]
+fn opening_decides_the_file_commit_and_delivery() -> Result<(), Rejection> {
+    use super::{Context, Delivery, RecordEffect, Write};
+
+    let issues = BTreeMap::new();
+    let context = Context {
+        remote: Some("origin"),
+        issues: &issues,
+        host: "stone",
+        at: OPENED,
+    };
+    let request = context.open(&[project()], project(), ID, &wanted())?;
+    let target = request.read();
+    assert_eq!(target.path, file(&project(), ID));
+    let mut recorded = request.decide(None)?;
+    let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
+        return Err(unexpected_effect());
+    };
+    let mut failed = recorded.clone();
+    let reason = text("commit failed");
+    assert_eq!(
+        failed.next(Err(reason.clone())),
+        Err(Rejection::IssueNotSaved { reason })
+    );
+    assert_eq!(failed.next(Ok(()))?, None);
+    assert_eq!(commit.target, target);
+    assert!(
+        commit
+            .text
+            .contains(&format!("branch = \"issue/{}\"", name(ID)))
+    );
+    assert!(commit.message.starts_with("Open issue "));
+    assert_eq!(commit.author, "Conductor");
+    assert_eq!(commit.email, "conductor@localhost");
+    let Some(RecordEffect::Enqueue(edit)) = recorded.next(Ok(()))? else {
+        return Err(unexpected_effect());
+    };
+    assert_eq!(recorded.next(Ok(()))?, Some(RecordEffect::Persist));
+    assert_eq!(
+        recorded.next(Ok(()))?,
+        Some(RecordEffect::Deliver(Delivery::Push { retry: true }))
+    );
+    assert_eq!(
+        recorded.next(Err(text("offline")))?,
+        Some(RecordEffect::Scan)
+    );
+    assert_eq!(recorded.next(Ok(()))?, None);
+    assert_eq!(edit.replay(Some(&commit.text), OPENED), Write::Unchanged);
+    let existing = context.open(&[project()], project(), ID, &wanted())?;
+    let mut unchanged = existing.decide(Some(&commit.text))?;
+    assert!(matches!(
+        unchanged.next(Ok(()))?,
+        Some(RecordEffect::Enqueue(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn issue_changes_decide_each_commit_and_replay_against_the_file()
+-> Result<(), Rejection> {
+    use super::{Context, RecordEffect, Write};
+
+    let issues = BTreeMap::from([(project(), vec![issue()])]);
+    let context = Context {
+        remote: Some("origin"),
+        issues: &issues,
+        host: "stone",
+        at: OPENED,
+    };
+    let changes = [
+        (IssueChange::Title(text("New title")), "Retitle issue"),
+        (IssueChange::Body(text("New body")), "Describe issue"),
+        (IssueChange::Labels(vec![text("new")]), "Label issue"),
+        (IssueChange::Priority(Priority::Low), "Give issue"),
+        (IssueChange::Status(IssueStatus::Review), "Move issue"),
+        (IssueChange::AddItem(text("Test the change")), "Add an item"),
+        (
+            IssueChange::Check {
+                item: text("Test the change"),
+                done: true,
+            },
+            "Check off",
+        ),
+        (
+            IssueChange::RemoveItem(text("Test the change")),
+            "Remove an item",
+        ),
+        (IssueChange::Note(text("Summary")), "Note on issue"),
+    ];
+    let mut current = written();
+    for (change, message) in changes {
+        let request = context.edit(ID, change, "laptop")?;
+        let mut recorded = request.decide(Some(&current))?;
+        let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
+            return Err(unexpected_effect());
+        };
+        let Some(RecordEffect::Enqueue(edit)) = recorded.next(Ok(()))? else {
+            return Err(unexpected_effect());
+        };
+        assert!(commit.message.starts_with(message));
+        assert_eq!(
+            edit.replay(Some(&current), OPENED),
+            Write::Commit(commit.clone())
+        );
+        assert_eq!(edit.replay(Some(&commit.text), OPENED), Write::Unchanged);
+        assert_eq!(edit.replay(None, OPENED), Write::Dropped);
+        assert!(matches!(
+            edit.replay(Some("malformed"), OPENED),
+            Write::Waiting(_)
+        ));
+        current = commit.text;
+    }
+    assert!(current.contains("stone \u{b7} laptop: Summary"));
+    let request =
+        context.edit(ID, IssueChange::Title(text("Older edit")), "laptop")?;
+    let mut recorded = request.decide(Some(&written()))?;
+    assert!(matches!(
+        recorded.next(Ok(()))?,
+        Some(RecordEffect::Commit(_))
+    ));
+    let Some(RecordEffect::Enqueue(edit)) = recorded.next(Ok(()))? else {
+        return Err(unexpected_effect());
+    };
+    assert_eq!(edit.replay(Some(&current), OPENED + 1), Write::Unchanged);
+    assert!(matches!(
+        edit.replay(Some(&current), OPENED),
+        Write::Commit(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_session_updates_its_issue_using_the_listing_after_the_note() {
+    use super::SessionUpdate;
+
+    let mut known = issue();
+    known.status = IssueStatus::Open;
+    let open = BTreeMap::from([(project(), vec![known.clone()])]);
+    let mut start = SessionUpdate::Started;
+    assert_eq!(
+        start.next(&open, ID),
+        Some(IssueChange::Status(IssueStatus::InProgress))
+    );
+    assert_eq!(start.next(&open, ID), None);
+
+    let mut finish = SessionUpdate::Finished {
+        summary: Some(text("Summary")),
+        landed: 1,
+    };
+    assert_eq!(
+        finish.next(&open, ID),
+        Some(IssueChange::Note(text("Summary")))
+    );
+    known.status = IssueStatus::Done;
+    let closed = BTreeMap::from([(project(), vec![known])]);
+    assert_eq!(finish.next(&closed, ID), None);
+
+    let mut finish = SessionUpdate::Finished {
+        summary: None,
+        landed: 1,
+    };
+    assert_eq!(
+        finish.next(&open, ID),
+        Some(IssueChange::Status(IssueStatus::Review))
+    );
+    assert_eq!(finish.next(&open, ID), None);
+}
+
+#[test]
+fn a_failed_push_fetches_and_replays_before_acknowledging_edits() {
+    use super::Delivery::{
+        self, Done, Fetch, Landed, Persist, Push, Reset, Rewrite,
+    };
+
+    let push = Push { retry: true };
+    let retry = Push { retry: false };
+    assert_eq!(push.after(true), Landed);
+    assert_eq!(push.after(false), Fetch);
+    assert_eq!(Fetch.after(false), Done);
+    assert_eq!(Fetch.after(true), Reset);
+    assert_eq!(Delivery::replay(true), Reset);
+    assert_eq!(Delivery::replay(false), Done);
+    assert_eq!(Reset.after(false), Done);
+    assert_eq!(Reset.after(true), Rewrite);
+    assert_eq!(Rewrite.after(true), Persist);
+    assert_eq!(Persist.after(true), retry);
+    assert_eq!(retry.after(false), Done);
+    assert_eq!(retry.after(true), Landed);
+    assert_eq!(Landed.after(true), Done);
+}
+
+#[test]
+fn the_issue_branch_checks_origin_and_distinguishes_absence_from_failure() {
+    use super::RemoteProbe::{self, Fetch, Observed, Reachability, Tracking};
+
+    let branch = RemoteProbe::for_branch("refs/heads/issue/task");
+    let absent = Observed(Remote::Absent);
+    assert_eq!(branch.clone().after(Err(text("no origin"))), absent);
+    let fetch = branch.after(Ok(text("origin")));
+    let tracking = text("refs/remotes/origin/issue/task");
+    assert_eq!(
+        fetch,
+        Fetch {
+            refspec: format!("+refs/heads/issue/task:{tracking}"),
+            tracking: tracking.clone()
+        }
+    );
+    assert_eq!(fetch.clone().after(Err(text("fetch failed"))), Reachability);
+    assert_eq!(Reachability.after(Ok(text("origin reachable"))), absent);
+    assert_eq!(
+        Reachability.after(Err(text("offline"))),
+        Observed(Remote::Unreachable(text("offline")))
+    );
+    let read = fetch.after(Ok(String::new()));
+    assert_eq!(read, Tracking(tracking));
+    assert_eq!(read.clone().after(Err(text("unknown ref"))), absent);
+    assert_eq!(
+        read.after(Ok(text("abc"))),
+        Observed(Remote::At(text("abc")))
+    );
+}

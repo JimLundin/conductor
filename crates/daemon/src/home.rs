@@ -25,15 +25,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use home::checkout::{Probe, Root};
 use home::instructions::{Own, Sources};
-use home::issue::{Applied, Change, Edit, Mode};
+use home::issue::{
+    Commit, Context, Delivery, Edit, Listing, Record, RecordEffect,
+    RemoteProbe, SessionUpdate, Write,
+};
 use home::project::Project;
 use home::sync::{Git, Sync};
 use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
     Checkout, ClientName, Cloning, CommandResult, Home, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, IssueStatus, ProjectId, Rejection,
-    StartAt,
+    IssueChange, IssueFields, IssueId, ProjectId, Rejection, StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -262,16 +264,6 @@ struct Pending {
     written: bool,
 }
 
-/// What became of a change applied to the clone.
-enum Fate {
-    /// The clone's branch holds it.
-    Written,
-    /// Its issue is gone.
-    Dropped,
-    /// Its file doesn't read, for this reason.
-    Waiting(String),
-}
-
 struct Actor {
     host: String,
     data_dir: PathBuf,
@@ -387,10 +379,8 @@ impl Actor {
                 client,
                 reply,
             } => {
-                self.move_on(issue, &client, |status| {
-                    home::issue::started(status)
-                })
-                .await;
+                self.session_update(issue, &client, SessionUpdate::Started)
+                    .await;
                 let _ = reply.send(());
             }
             Msg::Finished {
@@ -400,53 +390,28 @@ impl Actor {
                 landed,
                 reply,
             } => {
-                self.note(issue, summary, &client).await;
-                self.move_on(issue, &client, |status| {
-                    home::issue::finished(status, landed)
-                })
+                self.session_update(
+                    issue,
+                    &client,
+                    SessionUpdate::Finished { summary, landed },
+                )
                 .await;
                 let _ = reply.send(());
             }
         }
     }
 
-    /// Moves the issue to what `next` makes of its status, as the home has
-    /// it now.
-    async fn move_on(
+    async fn session_update(
         &mut self,
         issue: IssueId,
         client: &ClientName,
-        next: impl Fn(IssueStatus) -> Option<IssueStatus>,
+        mut update: SessionUpdate,
     ) {
-        let status = self
-            .issues
-            .values()
-            .flatten()
-            .find(|known| known.id == issue)
-            .and_then(|known| next(known.status));
-        let Some(moved) = status else {
-            return;
-        };
-        let answer =
-            self.change(issue, IssueChange::Status(moved), client).await;
-        if answer != CommandResult::Accepted {
-            tracing::warn!(target: "home", ?answer, "an issue did not move on");
-        }
-    }
-
-    /// Adds a finished session's summary to the issue's notes.
-    async fn note(
-        &mut self,
-        issue: IssueId,
-        summary: Option<String>,
-        client: &ClientName,
-    ) {
-        let Some(text) = summary else {
-            return;
-        };
-        let answer = self.change(issue, IssueChange::Note(text), client).await;
-        if answer != CommandResult::Accepted {
-            tracing::warn!(target: "home", ?answer, "a session's summary was not noted");
+        while let Some(change) = update.next(&self.issues, issue) {
+            let answer = self.change(issue, change, client).await;
+            if answer != CommandResult::Accepted {
+                tracing::warn!(target: "home", ?answer, "a session's issue update was rejected");
+            }
         }
     }
 
@@ -499,7 +464,7 @@ impl Actor {
         read: Result<(), String>,
     ) -> Result<(), String> {
         read?;
-        self.replay().await
+        self.deliver(Delivery::replay(!self.edits.is_empty())).await
     }
 
     async fn create(
@@ -513,28 +478,13 @@ impl Actor {
             .iter()
             .map(|known| known.id.clone())
             .collect::<Vec<ProjectId>>();
-        match home::issue::opening(
-            self.remote.as_deref(),
-            &projects,
-            &project,
-            &wanted,
-        ) {
+        let issue = IssueId(ulid::Ulid::new().0);
+        let request = self
+            .issue_context()
+            .open(&projects, project, issue, &wanted);
+        match self.record(request).await {
+            Ok(()) => CommandResult::IssueCreated { issue },
             Err(rejection) => CommandResult::Rejected(rejection),
-            Ok(fields) => {
-                let issue = IssueId(ulid::Ulid::new().0);
-                let edit = Edit {
-                    project,
-                    issue,
-                    at: now(),
-                    by: self.host.clone(),
-                    change: Change::Create(fields),
-                    was: None,
-                };
-                match self.record(edit).await {
-                    Ok(()) => CommandResult::IssueCreated { issue },
-                    Err(rejection) => CommandResult::Rejected(rejection),
-                }
-            }
         }
     }
 
@@ -545,75 +495,77 @@ impl Actor {
         client: &ClientName,
     ) -> CommandResult {
         self.fresh().await;
-        let changing = home::issue::changing(
-            self.remote.as_deref(),
-            &self.issues,
-            issue,
-            change,
-        );
-        let recorded = match changing {
-            Err(rejection) => Err(rejection),
-            Ok((project, change)) => {
-                let edit = Edit {
-                    project,
-                    issue,
-                    at: now(),
-                    by: home::issue::signer(&self.host, &client.0),
-                    change: Change::Issue(change),
-                    was: None,
-                };
-                self.record(edit).await
-            }
-        };
-        home::answer(recorded)
+        let request = self.issue_context().edit(issue, change, &client.0);
+        home::answer(self.record(request).await)
     }
 
-    /// Writes and commits the change in the clone, keeps it until the
-    /// remote has it, and pushes.
-    async fn record(&mut self, made: Edit) -> Result<(), Rejection> {
-        let current = std::fs::read_to_string(self.path(&made)).ok();
-        let edit = Edit {
-            was: home::issue::was(current.as_deref(), made.issue, &made.change),
-            ..made
-        };
-        match self.write(&edit, Mode::Record).await {
-            Ok(Fate::Written) => {}
-            Ok(Fate::Dropped) => return Err(Rejection::UnknownIssue),
-            Ok(Fate::Waiting(reason)) | Err(reason) => {
-                return Err(Rejection::IssueNotSaved { reason });
-            }
+    fn issue_context(&self) -> Context<'_> {
+        Context {
+            remote: self.remote.as_deref(),
+            issues: &self.issues,
+            host: &self.host,
+            at: now(),
         }
-        self.edits.push(Pending {
-            edit,
-            written: true,
-        });
-        self.keep();
-        self.land().await;
-        self.scan().await;
+    }
+
+    async fn record(
+        &mut self,
+        decision: Result<Record, Rejection>,
+    ) -> Result<(), Rejection> {
+        let request = decision?;
+        let current =
+            std::fs::read_to_string(self.clone.join(request.read().path)).ok();
+        let mut recorded = request.decide(current.as_deref())?;
+        let mut outcome = Ok(());
+        while let Some(effect) = recorded.next(outcome)? {
+            outcome = match effect {
+                RecordEffect::Commit(commit) => self.commit(commit).await,
+                RecordEffect::Enqueue(edit) => {
+                    self.edits.push(Pending {
+                        edit,
+                        written: true,
+                    });
+                    Ok(())
+                }
+                RecordEffect::Persist => {
+                    self.keep();
+                    Ok(())
+                }
+                RecordEffect::Deliver(delivery) => self.deliver(delivery).await,
+                RecordEffect::Scan => {
+                    self.scan().await;
+                    Ok(())
+                }
+            };
+        }
         Ok(())
     }
 
-    /// Pushes the kept changes; when the remote refuses them, replays them
-    /// on top of it.
-    async fn land(&mut self) {
-        if push(&self.clone).await.is_ok() {
-            self.landed();
-        } else if fetch(&self.clone).await.is_ok() {
-            let _ = self.replay().await;
+    async fn deliver(&mut self, mut step: Delivery) -> Result<(), String> {
+        loop {
+            let outcome = match step {
+                Delivery::Push { .. } => push(&self.clone).await,
+                Delivery::Fetch => fetch(&self.clone).await,
+                Delivery::Reset => reset(&self.clone).await,
+                Delivery::Rewrite => {
+                    self.rewrite_all().await;
+                    Ok(())
+                }
+                Delivery::Persist => {
+                    self.keep();
+                    Ok(())
+                }
+                Delivery::Landed => {
+                    self.landed();
+                    Ok(())
+                }
+                Delivery::Done => return Ok(()),
+            };
+            step = step.after(outcome.is_ok());
+            if step == Delivery::Done {
+                return outcome;
+            }
         }
-    }
-
-    /// Resets the clone to the remote, applies the kept changes on top,
-    /// each its own commit, and pushes them; how the reset or the push
-    /// went.
-    async fn replay(&mut self) -> Result<(), String> {
-        if self.edits.is_empty() {
-            return Ok(());
-        }
-        reset(&self.clone).await?;
-        self.rewrite_all().await;
-        self.keep();
-        push(&self.clone).await.map(|()| self.landed())
     }
 
     async fn rewrite_all(&mut self) {
@@ -627,20 +579,25 @@ impl Actor {
     /// Applies a kept change again on top of the remote, and keeps it
     /// unless its issue is gone; one that can't be written waits.
     async fn rewrite(&self, edit: Edit) -> Option<Pending> {
-        let changed = changed_at(&self.clone, &relative(&edit)).await;
-        let fate = self.write(&edit, Mode::Replay { changed }).await;
-        let written = matches!(fate, Ok(Fate::Written));
-        match fate {
-            Ok(Fate::Dropped) => {
-                tracing::warn!(target: "home", issue = %home::issue::name(edit.issue), "dropped a change to an issue the home no longer has");
+        let read = edit.read();
+        let changed = changed_at(&self.clone, &read.path).await;
+        let current = std::fs::read_to_string(self.clone.join(&read.path)).ok();
+        let outcome = match edit.replay(current.as_deref(), changed) {
+            Write::Unchanged => Ok(()),
+            Write::Dropped => {
+                tracing::warn!(target: "home", issue = ?read.issue, "dropped a change to an issue the home no longer has");
                 return None;
             }
-            Ok(Fate::Waiting(reason)) | Err(reason) => {
-                tracing::warn!(target: "home", %reason, "an issue change waits");
-            }
-            Ok(Fate::Written) => {}
+            Write::Waiting(reason) => Err(reason),
+            Write::Commit(commit) => self.commit(commit).await,
+        };
+        if let Err(reason) = &outcome {
+            tracing::warn!(target: "home", %reason, "an issue change waits");
         }
-        Some(Pending { edit, written })
+        Some(Pending {
+            edit,
+            written: outcome.is_ok(),
+        })
     }
 
     /// The remote has every change written in the clone.
@@ -658,34 +615,13 @@ impl Actor {
         save(&self.edits_at, &edits, "the unpushed issue changes");
     }
 
-    fn path(&self, edit: &Edit) -> PathBuf {
-        self.clone.join(relative(edit))
-    }
-
-    /// Applies the change to the issue's file in the clone and commits it.
-    ///
-    /// # Errors
-    ///
-    /// When it can't be written or committed.
-    async fn write(&self, edit: &Edit, mode: Mode) -> Result<Fate, String> {
-        let path = self.path(edit);
-        let current = std::fs::read_to_string(&path).ok();
-        match home::issue::apply(current.as_deref(), edit, mode) {
-            Applied::Unchanged => Ok(Fate::Written),
-            Applied::Gone => Ok(Fate::Dropped),
-            Applied::Unreadable(reason) => Ok(Fate::Waiting(reason)),
-            Applied::Write(text) => {
-                if let Some(folder) = path.parent() {
-                    std::fs::create_dir_all(folder)
-                        .map_err(|err| err.to_string())?;
-                }
-                std::fs::write(&path, text).map_err(|err| err.to_string())?;
-                let message = home::issue::message(edit);
-                commit(&self.clone, &relative(edit), &message)
-                    .await
-                    .map(|()| Fate::Written)
-            }
+    async fn commit(&self, commit: Commit) -> Result<(), String> {
+        let path = self.clone.join(&commit.target.path);
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder).map_err(|err| err.to_string())?;
         }
+        std::fs::write(path, &commit.text).map_err(|err| err.to_string())?;
+        commit_file(&self.clone, &commit).await
     }
 
     async fn clone_project(&mut self, project: ProjectId) -> CommandResult {
@@ -713,11 +649,9 @@ impl Actor {
             .projects
             .iter()
             .map(|project| {
-                let folder = home::issue::folder(&project.id);
-                let (issues, problems) = home::issue::listed(
-                    &project.id,
-                    issue_files(&self.clone.join(folder)),
-                );
+                let listing = Listing::for_project(&project.id);
+                let files = issue_files(&self.clone.join(&listing.path));
+                let (issues, problems) = listing.decide(files);
                 for problem in &problems {
                     tracing::warn!(target: "home", %problem, "skipped an issue");
                 }
@@ -856,34 +790,27 @@ async fn branch_facts(
     })
 }
 
-/// The remote's copy of `branch`, fetched into the checkout's
-/// remote-tracking refs: absent when the checkout has no `origin` or
-/// `origin` has no such branch, unreachable when `origin` can't be read.
 async fn remote_branch(checkout: &Path, branch: &str) -> home::issue::Remote {
-    if run(checkout, &["remote", "get-url", "origin"])
-        .await
-        .is_err()
-    {
-        return home::issue::Remote::Absent;
-    }
-    let tracking = branch.replacen("refs/heads/", "refs/remotes/origin/", 1);
-    let wanted = format!("+{branch}:{tracking}");
-    if run(checkout, &["fetch", "--quiet", "origin", &wanted])
-        .await
-        .is_err()
-    {
-        return unfetched(checkout).await;
-    }
-    commit_of(checkout, &tracking)
-        .await
-        .map_or(home::issue::Remote::Absent, home::issue::Remote::At)
-}
-
-/// Why `origin` gave no branch: it has none, or it can't be read.
-async fn unfetched(checkout: &Path) -> home::issue::Remote {
-    match run(checkout, &["ls-remote", "--quiet", "origin"]).await {
-        Ok(()) => home::issue::Remote::Absent,
-        Err(reason) => home::issue::Remote::Unreachable(reason),
+    let mut probe = RemoteProbe::for_branch(branch);
+    loop {
+        let outcome = match &probe {
+            RemoteProbe::Origin { .. } => {
+                text(checkout, &["remote", "get-url", "origin"]).await
+            }
+            RemoteProbe::Fetch { refspec, .. } => {
+                text(checkout, &["fetch", "--quiet", "origin", refspec]).await
+            }
+            RemoteProbe::Tracking(tracking) => {
+                let wanted = format!("{tracking}^{{commit}}");
+                text(checkout, &["rev-parse", "--verify", "--quiet", &wanted])
+                    .await
+            }
+            RemoteProbe::Reachability => {
+                text(checkout, &["ls-remote", "--quiet", "origin"]).await
+            }
+            RemoteProbe::Observed(remote) => return remote.clone(),
+        };
+        probe = probe.after(outcome.map_err(|err| err.to_string()));
     }
 }
 
@@ -916,11 +843,6 @@ async fn ancestor(
     run(repository, &["merge-base", "--is-ancestor", first, then])
         .await
         .is_ok()
-}
-
-/// An issue's file, from the clone's root.
-fn relative(edit: &Edit) -> String {
-    home::issue::file(&edit.project, edit.issue)
 }
 
 async fn fetch(clone: &Path) -> Result<(), String> {
@@ -956,11 +878,8 @@ async fn changed_at(clone: &Path, relative: &str) -> u64 {
 }
 
 /// Commits the file at `relative` alone, as Conductor.
-async fn commit(
-    clone: &Path,
-    relative: &str,
-    message: &str,
-) -> Result<(), String> {
+async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
+    let relative = &commit.target.path;
     text(clone, &["add", "--", relative])
         .await
         .map_err(|err| err.to_string())?;
@@ -968,13 +887,13 @@ async fn commit(
         clone,
         &[
             "-c",
-            "user.name=Conductor",
+            &format!("user.name={}", commit.author),
             "-c",
-            "user.email=conductor@localhost",
+            &format!("user.email={}", commit.email),
             "commit",
             "--quiet",
             "-m",
-            message,
+            &commit.message,
             "--",
             relative,
         ],

@@ -8,7 +8,7 @@
 //!
 //! The host keeps each change as an [`Edit`] until the remote has it, and
 //! when the remote moved on it applies the edit again on top
-//! ([`Mode::Replay`]). Then a field someone else changed since stays theirs
+//! ([`Edit::replay`]). Then a field someone else changed since stays theirs
 //! unless the edit is newer, and a note or an item the file already has
 //! isn't added twice.
 
@@ -29,19 +29,19 @@ const NOTES: &str = "## Notes";
 
 /// The issue's id as its file and branch name it: a lower-case ULID.
 #[must_use]
-pub fn name(id: IssueId) -> String {
+fn name(id: IssueId) -> String {
     ulid::Ulid::from(id.0).to_string().to_lowercase()
 }
 
 /// The issue's file, from the home's root.
 #[must_use]
-pub fn file(project: &ProjectId, id: IssueId) -> String {
+fn file(project: &ProjectId, id: IssueId) -> String {
     format!("{}/{}.md", folder(project), name(id))
 }
 
 /// Where a project keeps its issues, from the home's root.
 #[must_use]
-pub fn folder(project: &ProjectId) -> String {
+fn folder(project: &ProjectId) -> String {
     format!("projects/{}/issues", project.0)
 }
 
@@ -218,7 +218,7 @@ fn comment(line: &str) -> &str {
 /// # Errors
 ///
 /// Why the file isn't an issue.
-pub fn parse(stem: &str, text: &str) -> Result<Issue, String> {
+fn parse(stem: &str, text: &str) -> Result<Issue, String> {
     let lines = Lines::of(text)?;
     let mut table = lines.table()?;
     let id = ulid::Ulid::from_string(stem)
@@ -372,7 +372,7 @@ fn labels_value(labels: &[String]) -> String {
 
 /// A new issue's file.
 #[must_use]
-pub fn render(issue: &Issue) -> String {
+fn render(issue: &Issue) -> String {
     let created = issue
         .created
         .parse::<toml::value::Datetime>()
@@ -404,7 +404,7 @@ pub fn render(issue: &Issue) -> String {
 /// The issues of `project` in its folder's files, each `.md` file by its
 /// name without the extension, by id; and why any file isn't one.
 #[must_use]
-pub fn listed(
+fn listed(
     project: &ProjectId,
     files: Vec<(String, Result<String, String>)>,
 ) -> (Vec<Issue>, Vec<String>) {
@@ -425,7 +425,7 @@ pub fn listed(
 
 /// The project whose issues include `id`.
 #[must_use]
-pub fn locate(
+fn locate(
     issues: &BTreeMap<ProjectId, Vec<Issue>>,
     id: IssueId,
 ) -> Option<ProjectId> {
@@ -442,7 +442,7 @@ pub fn locate(
 ///
 /// The host has no home, the home lists no such project, or the fields
 /// won't do.
-pub fn opening(
+fn opening(
     remote: Option<&str>,
     projects: &[ProjectId],
     project: &ProjectId,
@@ -462,7 +462,7 @@ pub fn opening(
 ///
 /// The host has no home, its home lists no such issue, or the change
 /// won't do.
-pub fn changing(
+fn changing(
     remote: Option<&str>,
     issues: &BTreeMap<ProjectId, Vec<Issue>>,
     id: IssueId,
@@ -508,7 +508,7 @@ fn needs(text: &str, what: &str) -> Result<String, String> {
 
 /// The message of the commit an edit makes in the home.
 #[must_use]
-pub fn message(edit: &Edit) -> String {
+fn message(edit: &Edit) -> String {
     let id = name(edit.issue);
     match &edit.change {
         Change::Create(fields) => {
@@ -543,34 +543,34 @@ pub fn message(edit: &Edit) -> String {
 
 /// Who signs a note: the host, and the client that sent it.
 #[must_use]
-pub fn signer(host: &str, client: &str) -> String {
+fn signer(host: &str, client: &str) -> String {
     format!("{host} · {client}")
 }
 
 /// A change a host made to an issue, kept until the remote has it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
-    pub project: ProjectId,
-    pub issue: IssueId,
+    project: ProjectId,
+    issue: IssueId,
     /// When the host took it, in seconds since the Unix epoch.
-    pub at: u64,
+    at: u64,
     /// Who signs a note it adds.
-    pub by: String,
-    pub change: Change,
+    by: String,
+    change: Change,
     /// The value the field it sets had when it was made, as [`was`] gives
     /// it, so a replay can tell whether someone else changed it since.
-    pub was: Option<String>,
+    was: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Change {
+enum Change {
     Create(IssueFields),
     Issue(IssueChange),
 }
 
 /// How an edit meets the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+enum Mode {
     /// The host makes the change now.
     Record,
     /// Again, on top of the remote, whose last change to the file was at
@@ -580,7 +580,7 @@ pub enum Mode {
 
 /// What an edit does to the issue's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Applied {
+enum Applied {
     Write(String),
     /// The file has it already, or a newer change replaced it.
     Unchanged,
@@ -593,11 +593,7 @@ pub enum Applied {
 /// The value the field `change` sets has in issue `id`'s file as it is
 /// now: what [`Edit::was`] keeps.
 #[must_use]
-pub fn was(
-    current: Option<&str>,
-    id: IssueId,
-    change: &Change,
-) -> Option<String> {
+fn was(current: Option<&str>, id: IssueId, change: &Change) -> Option<String> {
     let Change::Issue(sets) = change else {
         return None;
     };
@@ -623,7 +619,7 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
 /// The edit on top of the issue's file as it is now, `None` when there is
 /// none.
 #[must_use]
-pub fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
+fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     match (&edit.change, current) {
         (Change::Create(_), Some(_)) => Applied::Unchanged,
         (Change::Create(wanted), None) => fields(wanted)
@@ -778,7 +774,7 @@ fn opened(edit: &Edit, made: IssueFields) -> Issue {
 /// # Errors
 ///
 /// When the title is empty.
-pub fn fields(wanted: &IssueFields) -> Result<IssueFields, String> {
+fn fields(wanted: &IssueFields) -> Result<IssueFields, String> {
     let title = String::from(wanted.title.trim());
     if title.is_empty() {
         return Err(String::from("an issue needs a title"));
@@ -867,7 +863,7 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
 /// The status an issue moves to once a session on it has started: work
 /// on an `open` or `ready` one is in progress.
 #[must_use]
-pub const fn started(status: IssueStatus) -> Option<IssueStatus> {
+const fn started(status: IssueStatus) -> Option<IssueStatus> {
     match status {
         IssueStatus::Open | IssueStatus::Ready => Some(IssueStatus::InProgress),
         IssueStatus::InProgress
@@ -880,7 +876,7 @@ pub const fn started(status: IssueStatus) -> Option<IssueStatus> {
 /// The status an issue moves to once a session on it has finished: one
 /// still being worked on is up for review when its branch gained commits.
 #[must_use]
-pub const fn finished(status: IssueStatus, landed: u64) -> Option<IssueStatus> {
+const fn finished(status: IssueStatus, landed: u64) -> Option<IssueStatus> {
     match (status, landed) {
         (_, 0)
         | (IssueStatus::Review | IssueStatus::Done | IssueStatus::Dropped, _) => {
@@ -1021,3 +1017,6 @@ impl Branch {
 
 #[cfg(test)]
 mod tests;
+
+mod operation;
+pub use operation::*;
