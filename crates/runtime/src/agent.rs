@@ -9,7 +9,6 @@ use crate::{Runtime, log, pair};
 pub enum Performed<I> {
     Feedback(I),
     Report(Report),
-    Done,
 }
 
 pub trait Agent<I, E> {
@@ -70,7 +69,6 @@ where
     async fn perform(&mut self, effect: E) -> Result<Option<I>, End> {
         match self.agent.perform(effect).await {
             Performed::Feedback(input) => return Ok(Some(input)),
-            Performed::Done => {}
             Performed::Report(Report::Release) => self.agent.release(),
             Performed::Report(Report::Emit(event)) => {
                 let _ = self.plug.events.send(event).await;

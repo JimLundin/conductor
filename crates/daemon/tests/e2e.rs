@@ -2539,7 +2539,7 @@ const LISTED: &[&str] = &[
 ];
 
 /// What `codex-*-listed.jsonl` lists, with a Codex provider credential's
-/// model as the default (`Registry::models`).
+/// model as the default.
 fn codex_gateway() -> (Auth, Option<String>, Vec<String>) {
     (
         Auth::Stored {
@@ -2854,7 +2854,7 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
             &[("base_url", base_url), ("token", token)],
         ),
     };
-    let after_api = send(&link, set(GATEWAY, API_TOKEN)).await?;
+    let after_api = send(&link, set(GATEWAY, CLAUDE_TOKEN)).await?;
     let after_other = send(&link, set(OTHER, OTHER_TOKEN)).await?;
     let other_gateway = Availability::Available {
         auth: Auth::Stored {
@@ -2869,7 +2869,16 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
             status_of(&after_api, &other),
             status_of(&after_other, &other).map(|it| it.availability),
         ),
-        (Some(gateway(probed())), None, Some(other_gateway))
+        (Some(gateway(probed())), None, Some(other_gateway.clone()))
+    );
+    probe(&data, &claude_api, CLAUDE_MODELS)?;
+    let changed = send(&link, set(GATEWAY, API_TOKEN)).await?;
+    assert_eq!(
+        (
+            status_of(&changed, &claude_api).map(|it| it.availability),
+            status_of(&changed, &other).map(|it| it.availability),
+        ),
+        (Some(gateway(models())), Some(other_gateway))
     );
     let first = launch(&link, start_on(claude_api.clone(), &on_api)).await?;
     let api_events = events_until(&mut updates, Until::Ready).await?;
@@ -4037,6 +4046,98 @@ fn with_api_claude(availability: Availability) -> Instances {
         &api(Provider::Claude),
         availability,
     )
+}
+
+#[tokio::test]
+async fn unsupported_stored_credentials_are_refused_by_both_instances_and_can_be_replaced()
+-> Fallible {
+    let data = data_dir("unsupported-stored-credentials")?;
+    let accounts = Provider::ALL.map(api);
+    let roster = Roster(
+        accounts
+            .iter()
+            .map(|account| {
+                (
+                    account.clone(),
+                    proto::Instance {
+                        credential: Some(credential(
+                            "obsolete",
+                            &[("key", "private-value")],
+                        )),
+                        ..proto::Instance::default()
+                    },
+                )
+            })
+            .collect(),
+    );
+    disk::seed_roster(&data, &roster)?;
+    let claude = api(Provider::Claude);
+    probe(&data, &claude, PROBED)?;
+    codex_server(
+        &data,
+        &api(Provider::Codex),
+        "codex-two-threads-listed.jsonl",
+    )?;
+    let fx = serve(
+        endpoint().await?,
+        plugins(Some(fake_claude()), Some(fake_codex())),
+        &data,
+    )
+    .await?;
+    let (phone, _updates, welcomed) = live(&fx).await?;
+    let instances = welcomed.ok_or("missing instances in Welcome")?;
+    for account in accounts {
+        let Some(Availability::Unavailable { reason }) =
+            instances.availability(&account)
+        else {
+            return Err(format!(
+                "the stored credential for {account} was accepted"
+            )
+            .into());
+        };
+        assert!(reason.contains("refused the stored credential"));
+        assert!(!reason.contains("private-value"));
+    }
+    assert_eq!(
+        status_of(&send(&phone, claude_gateway()).await?, &claude)
+            .map(|status| status.availability),
+        Some(gateway(probed()))
+    );
+    assert_eq!(
+        codex_offer(send(&phone, codex_provider("replacement-key")).await?),
+        Some(codex_gateway())
+    );
+    phone.stop().await?;
+    fx.shutdown().await
+}
+
+#[tokio::test]
+async fn a_new_account_with_failed_discovery_stays_unavailable_until_a_successful_change()
+-> Fallible {
+    let data = data_dir("new-account-discovery")?;
+    standard_claude_probe(&data)?;
+    let account = api(Provider::Claude);
+    probe(
+        &data,
+        &account,
+        r#"{"fake":"fail","stderr":"gateway offline","status":1}"#,
+    )?;
+    let fx = plugin_host(&data).await?;
+    let (phone, _updates) = fx.connect().await?;
+    let failed = send(&phone, claude_gateway()).await?;
+    let Some(Availability::Unavailable { reason }) =
+        status_of(&failed, &account).map(|status| status.availability)
+    else {
+        return Err("the newly added account advertised an offer after discovery failed".into());
+    };
+    assert_ne!(reason, REFRESHING);
+    probe(&data, &account, PROBED)?;
+    assert_eq!(
+        send(&phone, claude_gateway()).await?,
+        CommandResult::Instances(with_api_claude(gateway(probed())))
+    );
+    phone.stop().await?;
+    fx.shutdown().await
 }
 
 #[tokio::test]

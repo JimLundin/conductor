@@ -371,6 +371,44 @@ async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
 }
 
 #[tokio::test]
+async fn configuring_a_codex_provider_lists_models_with_its_key_and_names_its_default()
+-> TestResult<()> {
+    let work =
+        fake_codex_dir(&fixture("../e2e/codex-two-threads-listed.jsonl"))?;
+    let plugin = codex_cli::plugin(runtime::Settings::default());
+    let instance = (plugin.instance)(runtime::Launch {
+        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        home: Home::private(&work, "gateway", &plugin.profile.config)?,
+        work: work.clone(),
+    });
+    let stored = proto::Credential {
+        kind: String::from("provider"),
+        values: [
+            ("name", "gateway"),
+            ("base_url", "https://gateway.example"),
+            ("key", "conductor-test-key"),
+            ("model", "gateway-model"),
+        ]
+        .map(|(key, value)| (String::from(key), String::from(value)))
+        .into(),
+    };
+    let configured = instance.configure(Some(stored)).await?;
+    assert_eq!(
+        configured.named,
+        Some(proto::ModelId(String::from("gateway-model")))
+    );
+    assert_eq!(
+        configured.models?.default,
+        Some(proto::ModelId(String::from("gpt-6.1-sol")))
+    );
+    assert!(
+        std::fs::read_to_string(work.join("env.txt"))?
+            .contains("CONDUCTOR_CODEX_KEY=conductor-test-key")
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     let mut rec = spawn("server1.jsonl").await?;
     let server = rec.server.clone();

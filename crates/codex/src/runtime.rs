@@ -12,15 +12,14 @@ use agents::Step;
 use agents::runtime::{
     Anchoring, Command, Event, Lifecycle, Outcome, Report, Start, Started,
 };
-use proto::{CloseReason, Effort, HistoryAnchor, ModelId, Models};
+use proto::{CloseReason, Effort, HistoryAnchor};
 
 use crate::hub::Routed;
 use crate::mapping::codex_note;
 use crate::prelude::*;
 use crate::{
-    ApprovalId, ApprovalPolicy, CodexCredential, Decision, Sandbox, ThreadId,
-    ThreadOptions, TurnId, codex_answer, codex_steps, credential,
-    default_model,
+    ApprovalId, ApprovalPolicy, Decision, Sandbox, ThreadId, ThreadOptions,
+    TurnId, codex_answer, codex_steps,
 };
 
 /// The thread to open: resumed from Codex's own history, or a new one.
@@ -68,10 +67,6 @@ pub enum Input {
     },
     /// The turns [`Effect::Turns`] listed.
     Listed(Result<Vec<TurnId>, String>),
-    /// What [`Effect::Models`] listed.
-    Models(Result<Models, String>),
-    /// How the [`Effect::Credential`] went.
-    Configured(Result<(), String>),
     /// The thread's next event, `None` once its events end.
     Event(Option<Routed>),
 }
@@ -89,19 +84,12 @@ pub enum Effect {
     },
     /// List the running thread's turns and report [`Input::Listed`].
     Turns,
-    /// List the app-server's models and report [`Input::Models`].
-    Models,
-    /// Run the hub's next app-server with this credential, and report
-    /// [`Input::Configured`].
-    Credential(Option<CodexCredential>),
     Runtime(Report),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Runtime {
     lifecycle: Lifecycle,
-    /// The default model of the credential being set.
-    configuring: Option<ModelId>,
 }
 
 impl From<Report> for Effect {
@@ -115,7 +103,6 @@ impl Runtime {
     pub const fn new() -> Self {
         Self {
             lifecycle: Lifecycle::new(),
-            configuring: None,
         }
     }
 
@@ -137,11 +124,6 @@ impl Runtime {
                     turns.into_iter().map(|turn| turn.0).collect()
                 })))
             }
-            Input::Models(listed) => Report::emit(Outcome::Models(listed)),
-            Input::Configured(taken) => {
-                let default = self.configuring.take();
-                Report::emit(Outcome::Configured(taken.map(|()| default)))
-            }
             Input::Event(Some(routed)) => self.routed(routed),
             Input::Event(None) => self.lifecycle.ended(),
         }
@@ -153,12 +135,6 @@ impl Runtime {
         }
         match command {
             Command::Start(start) => Vec::from([Effect::Open(open(start))]),
-            Command::Models => Vec::from([Effect::Models]),
-            Command::Credential(given) => {
-                let codex = credential(given.as_ref());
-                self.configuring = codex.as_ref().map(default_model);
-                Vec::from([Effect::Credential(codex)])
-            }
             Command::Shutdown => Vec::from([
                 self.lifecycle.release().into(),
                 Report::Emit(Event::Outcome(Outcome::ShutDown(Ok(())))).into(),
@@ -251,16 +227,16 @@ mod tests {
     };
     use agents::{NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClientName, CloseReason, Credential, Decision as Chosen, Effort,
-        HistoryAnchor, HostPath, ModelId, Provider, SessionId,
+        ClientName, CloseReason, Decision as Chosen, Effort, HistoryAnchor,
+        HostPath, ModelId, Provider, SessionId,
     };
     use serde_json::json;
 
     use super::{Call, Effect, Input, Open, Runtime, Then, resume};
     use crate::hub::Routed;
     use crate::{
-        ApprovalId, ApprovalPolicy, CodexCredential, CodexEvent, Decision,
-        Sandbox, ThreadEvent, ThreadId, ThreadOptions, TurnId,
+        ApprovalId, ApprovalPolicy, CodexEvent, Decision, Sandbox, ThreadEvent,
+        ThreadId, ThreadOptions, TurnId,
     };
 
     fn text(value: &str) -> String {
@@ -448,47 +424,6 @@ mod tests {
                 frame: text("{\"method\":\"x\"}"),
             })
             .into()],
-        );
-    }
-
-    #[test]
-    fn credentials_reach_the_hub_and_report_the_model_they_name() {
-        let gateway = CodexCredential::Provider {
-            name: text("gateway"),
-            base_url: text("https://gateway.example"),
-            key: text("secret"),
-            model: text("gw-model"),
-        };
-        let stored = Credential {
-            kind: text("provider"),
-            values: [
-                ("name", "gateway"),
-                ("base_url", "https://gateway.example"),
-                ("key", "secret"),
-                ("model", "gw-model"),
-            ]
-            .map(|(id, value)| (text(id), text(value)))
-            .into(),
-        };
-        let mut runtime = Runtime::new();
-        assert_eq!(
-            walk(
-                &mut runtime,
-                Vec::from([
-                    Input::Command(Command::Credential(Some(stored))),
-                    Input::Configured(Ok(())),
-                    Input::Command(Command::Credential(None)),
-                    Input::Configured(Ok(())),
-                ]),
-            ),
-            Vec::from([
-                Vec::from([Effect::Credential(Some(gateway))]),
-                outcome(Outcome::Configured(Ok(Some(ModelId(text(
-                    "gw-model"
-                )))))),
-                Vec::from([Effect::Credential(None)]),
-                outcome(Outcome::Configured(Ok(None))),
-            ])
         );
     }
 }

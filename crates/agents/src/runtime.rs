@@ -10,10 +10,7 @@ mod lifecycle;
 
 pub use lifecycle::{Lifecycle, NOT_RUNNING, Report};
 
-use proto::{
-    ClientName, Credential, Effort, HistoryAnchor, HostPath, ModelId, Models,
-    SessionId,
-};
+use proto::{ClientName, Effort, HistoryAnchor, HostPath, ModelId, SessionId};
 
 use crate::prelude::*;
 use crate::{NativeRequest, NativeTurn, Reply, Step};
@@ -56,11 +53,6 @@ pub enum Command {
     Turns,
     /// Discards this turn and every later one from the agent's history.
     Revert(String),
-    /// What the instance offers with its credential now.
-    Models,
-    /// The credential the instance's later agents start with; `None`
-    /// leaves the CLI's own sign-in.
-    Credential(Option<Credential>),
     /// Stops the agent.
     Shutdown,
 }
@@ -95,10 +87,6 @@ pub enum Outcome {
     Replied(Result<(), String>),
     Turns(Result<Vec<String>, String>),
     Reverted(Result<(), String>),
-    Models(Result<Models, String>),
-    /// The credentials took, and make this model the provider's default
-    /// when they name one.
-    Configured(Result<Option<ModelId>, String>),
     ShutDown(Result<(), String>),
 }
 
@@ -123,46 +111,13 @@ impl Command {
             Self::Reply { .. } => Outcome::Replied(Err(error)),
             Self::Turns => Outcome::Turns(Err(error)),
             Self::Revert(_) => Outcome::Reverted(Err(error)),
-            Self::Models => Outcome::Models(Err(error)),
-            Self::Credential(_) => Outcome::Configured(Err(error)),
             Self::Shutdown => Outcome::ShutDown(Err(error)),
         }
     }
 }
 
-impl Outcome {
-    /// The models a [`Command::Models`] listed.
-    ///
-    /// # Errors
-    /// Why the provider listed none, or that this answers another command.
-    pub fn models(self) -> Result<Models, String> {
-        match self {
-            Self::Models(listed) => listed,
-            other => Err(unexpected(&other)),
-        }
-    }
-
-    /// Whether a [`Command::Credential`] took, and the default model it
-    /// names.
-    ///
-    /// # Errors
-    /// Why the provider refused them, or that this answers another command.
-    pub fn configured(self) -> Result<Option<ModelId>, String> {
-        match self {
-            Self::Configured(taken) => taken,
-            other => Err(unexpected(&other)),
-        }
-    }
-}
-
-fn unexpected(outcome: &Outcome) -> String {
-    format!("the agent answered another command: {outcome:?}")
-}
-
 #[cfg(test)]
 mod tests {
-    use proto::Models;
-
     use super::{Command, Outcome};
     use crate::NativeTurn;
 
@@ -175,33 +130,13 @@ mod tests {
             [
                 failed(Command::Turns),
                 failed(Command::Interrupt(NativeTurn(String::from("t")))),
-                failed(Command::Credential(None)),
                 failed(Command::Shutdown),
             ],
             [
                 Outcome::Turns(Err(error())),
                 Outcome::Interrupted(Err(error())),
-                Outcome::Configured(Err(error())),
                 Outcome::ShutDown(Err(error())),
             ]
-        );
-    }
-
-    #[test]
-    fn an_outcome_reads_as_the_answer_it_is() {
-        assert_eq!(
-            (
-                Outcome::Models(Ok(Models::none())).models(),
-                Outcome::Configured(Ok(None)).configured(),
-                Outcome::ShutDown(Ok(())).configured(),
-            ),
-            (
-                Ok(Models::none()),
-                Ok(None),
-                Err(String::from(
-                    "the agent answered another command: ShutDown(Ok(()))"
-                )),
-            )
         );
     }
 }

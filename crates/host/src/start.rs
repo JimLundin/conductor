@@ -7,15 +7,17 @@
 //! none.
 //!
 //! `daemon` performs each [`Next`]: it installs, runs the probes and builds
-//! the provider's starter `S`. The CLI's path `P` is opaque here.
+//! the provider instance `S`. The CLI's path `P` is opaque here.
 
 use alloc::format;
+
+use agents::Configuration;
 
 use proto::{ModelId, Models, Provider};
 
 use crate::Note;
 use crate::prelude::*;
-use crate::registry::{Launcher, Offer, OwnSignIn};
+use crate::registry::{Launcher, OwnSignIn, offered};
 
 /// The provider the host's command line calls `name`.
 ///
@@ -44,15 +46,14 @@ pub fn setting(text: &str) -> Result<(Provider, String), String> {
 pub enum Next<P, S> {
     /// Install the pinned CLI, and hand its path to [`Installing::installed`].
     Install(Installing),
-    /// Build the starter for the CLI at `P`, run `P --version`, and hand
+    /// Build the instance for the CLI at `P`, run `P --version`, and hand
     /// both to [`Probing::probed`].
     Probe(P, Probing),
     /// Run the sign-in check of the CLI at `P`, and hand how it exited to
     /// [`Checking::checked`].
     CheckSignIn(P, Checking<S>),
-    /// Hand [`Listing::start`]'s agents the stored credentials and list
-    /// what it then offers, and hand both outcomes to [`Listing::listed`].
-    ListModels(Listing<S>),
+    /// Apply the instance's stored credential and discover its models.
+    Configure(Configuring<S>),
     /// Run the provider as the launcher says, after logging the notes.
     Done(Launcher<S>, Vec<Note>),
 }
@@ -138,7 +139,6 @@ pub struct Probing {
 }
 
 impl Probing {
-    /// `program`'s `--version` `ran`; `start` starts its agents.
     #[must_use]
     pub fn probed<P, S>(
         self,
@@ -170,7 +170,7 @@ impl Probing {
         if self.pinned {
             Next::CheckSignIn(path, Checking { cli })
         } else {
-            Next::ListModels(Listing {
+            Next::Configure(Configuring {
                 cli,
                 own: OwnSignIn::Unmanaged,
             })
@@ -202,65 +202,67 @@ impl<S> Checking<S> {
             Ok(exit) if succeeded(*exit) => OwnSignIn::SignedIn,
             Ok(_) | Err(_) => OwnSignIn::Missing,
         };
-        Next::ListModels(Listing { cli: self.cli, own })
+        Next::Configure(Configuring { cli: self.cli, own })
     }
 }
 
-/// The CLI is listing its models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Boot,
+    Change,
+}
+
 #[derive(Debug)]
-pub struct Listing<S> {
+pub struct Configuring<S> {
     cli: Cli<S>,
     own: OwnSignIn,
 }
 
-impl<S> Listing<S> {
+impl<S> Configuring<S> {
     #[must_use]
-    pub const fn start(&self) -> &S {
+    pub const fn instance(&self) -> &S {
         &self.cli.start
     }
 
-    /// The agents were `configured` with the stored credentials, which name
-    /// a default model or not, and the CLI offers what it then `listed`. One that
-    /// could not list them, for instance because it is not signed in yet,
-    /// offers only the default. Agents that refused the credentials can't
-    /// run.
     #[must_use]
-    pub fn listed<P>(
+    pub fn configured<P>(
         self,
-        configured: Result<Option<ModelId>, String>,
-        listed: Result<Models, String>,
+        result: Result<Configuration, String>,
+        mode: Mode,
     ) -> Next<P, S> {
         let Self { cli, own } = self;
-        let named = match configured {
-            Ok(model) => model,
-            Err(reason) => {
-                return unavailable(format!(
-                    "{} refused the stored credential: {reason}",
-                    cli.path
-                ));
-            }
-        };
-        let (models, mut notes) = match listed {
-            Ok(models) => (models, Vec::new()),
-            Err(reason) => {
-                (Models::none(), Vec::from([Note::NoModels { reason }]))
-            }
-        };
-        notes.push(Note::Ready {
-            path: cli.path,
-            version: cli.version,
-            own,
-            models: models.choices.len(),
+        let chosen = cli.chosen.map(ModelId);
+        let mut notes = Vec::new();
+        let models = result
+            .map_err(|reason| {
+                format!("{} refused the stored credential: {reason}", cli.path)
+            })
+            .and_then(|mut config| {
+                if mode == Mode::Boot
+                    && let Err(reason) = config.models
+                {
+                    notes.push(Note::NoModels { reason });
+                    config.models = Ok(Models::none());
+                }
+                offered(config, chosen.as_ref())
+            });
+        notes.push(match &models {
+            Ok(list) => Note::Ready {
+                path: cli.path,
+                version: cli.version,
+                own,
+                models: list.choices.len(),
+            },
+            Err(reason) => Note::Unavailable {
+                reason: reason.clone(),
+            },
         });
         Next::Done(
-            Launcher::Ready {
+            Launcher::Running {
                 start: cli.start,
                 own,
-                offer: Offer {
-                    listed: models,
-                    named,
-                    chosen: cli.chosen.map(ModelId),
-                },
+                chosen,
+                models,
             },
             notes,
         )
@@ -278,9 +280,9 @@ fn unavailable<P, S>(reason: String) -> Next<P, S> {
 mod tests {
     use proto::{Effort, ModelChoice, ModelId, Models, Provider};
 
-    use super::{Next, Output, setting, signed_in, start};
+    use super::{Mode, Next, Output, setting, signed_in, start};
     use crate::Note;
-    use crate::registry::{Launcher, Offer, OwnSignIn};
+    use crate::registry::{Launcher, OwnSignIn};
 
     type Step = Next<&'static str, &'static str>;
 
@@ -364,24 +366,30 @@ mod tests {
                     seen.push("check");
                     checking.checked(&probes.check)
                 }
-                Next::ListModels(listing) => {
-                    seen.push(listing.start());
-                    listing.listed(probes.named.clone(), probes.models.clone())
+                Next::Configure(listing) => {
+                    seen.push(listing.instance());
+                    listing.configured(
+                        probes.named.clone().map(|named| {
+                            agents::Configuration {
+                                named,
+                                models: probes.models.clone(),
+                            }
+                        }),
+                        Mode::Boot,
+                    )
                 }
                 Next::Done(launcher, notes) => break (seen, launcher, notes),
             }
         }
     }
 
-    fn ready(own: OwnSignIn, listed: Models) -> Launcher<&'static str> {
-        Launcher::Ready {
+    fn ready(own: OwnSignIn, mut listed: Models) -> Launcher<&'static str> {
+        listed.default = Some(ModelId(String::from("named")));
+        Launcher::Running {
             start: "start",
             own,
-            offer: Offer {
-                listed,
-                named: Some(ModelId(String::from("named"))),
-                chosen: Some(ModelId(String::from("haiku"))),
-            },
+            chosen: Some(ModelId(String::from("haiku"))),
+            models: Ok(listed),
         }
     }
 
@@ -436,9 +444,14 @@ mod tests {
         );
         assert_eq!(
             launcher,
-            Launcher::Unavailable(String::from(
-                "/given refused the stored credential: bad key"
-            ))
+            Launcher::Running {
+                start: "start",
+                own: OwnSignIn::Unmanaged,
+                chosen: Some(ModelId(String::from("haiku"))),
+                models: Err(String::from(
+                    "/given refused the stored credential: bad key"
+                )),
+            }
         );
     }
 

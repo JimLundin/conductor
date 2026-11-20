@@ -114,14 +114,13 @@ pub fn account(auth: &str) -> Option<String> {
         .filter(|account| !account.is_empty())
 }
 
-/// An instance's credential as Codex's, if it is of a kind Codex takes.
-#[must_use]
-pub fn credential(credential: Option<&Credential>) -> Option<CodexCredential> {
-    credential.and_then(read)
-}
-
-fn read(credential: &Credential) -> Option<CodexCredential> {
-    (credential.kind == PROVIDER).then(|| CodexCredential::Provider {
+/// Reads a stored credential using this provider's form.
+///
+/// # Errors
+/// The form is unknown or its values are invalid.
+pub fn credential(credential: &Credential) -> Result<CodexCredential, String> {
+    info().check(credential)?;
+    Ok(CodexCredential::Provider {
         name: String::from(credential.value(NAME)),
         base_url: String::from(credential.value(BASE_URL)),
         key: String::from(credential.value(KEY)),
@@ -187,18 +186,18 @@ mod tests {
         let stored = provider("provider");
         assert_eq!(
             (
-                credential(Some(&stored)),
-                credential(Some(&provider("gateway"))),
+                credential(&stored),
+                credential(&provider("gateway")),
                 info().check(&stored),
             ),
             (
-                Some(CodexCredential::Provider {
+                Ok(CodexCredential::Provider {
                     name: String::from("Gateway"),
                     base_url: String::from("https://g.example/v1"),
                     key: String::from("k"),
                     model: String::from("gpt-6"),
                 }),
-                None,
+                Err(String::from(r#"Codex takes no "gateway" credential"#)),
                 Ok(()),
             )
         );

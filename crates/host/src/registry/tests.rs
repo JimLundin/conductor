@@ -1,3 +1,5 @@
+use agents::Configuration;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow::{Break, Continue};
 
@@ -10,10 +12,10 @@ use proto::{
 };
 
 use super::{
-    Change, Effect, Job, Launch, Launcher, Listing, Offer, OwnSignIn,
-    Refreshed, Registry, StartDecision, StartEffect, StartEnd, StartReport,
-    StartSession, StartStep, Started, Starting, Stored, defaults, dir, picked,
-    running, signed_in_as,
+    Change, Effect, Job, Launch, Launcher, OwnSignIn, Refreshed, Registry,
+    StartDecision, StartEffect, StartEnd, StartReport, StartSession, StartStep,
+    Started, Starting, Stored, defaults, dir, offered, picked, running,
+    signed_in_as,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -54,14 +56,11 @@ fn listed() -> Models {
 }
 
 fn ready(start: &'static str, own: OwnSignIn) -> Launcher<&'static str> {
-    Launcher::Ready {
+    Launcher::Running {
         start,
         own,
-        offer: Offer {
-            listed: listed(),
-            named: None,
-            chosen: None,
-        },
+        chosen: None,
+        models: Ok(listed()),
     }
 }
 
@@ -220,25 +219,24 @@ fn job(
         instance: id.clone(),
         start,
         credential,
-        signs_in: Ok(()),
     }
 }
 
 fn refreshed(
     number: u64,
     id: &InstanceId,
-    listing: Result<Listing, String>,
+    configured: Result<Configuration, String>,
 ) -> Refreshed {
     Refreshed {
         id: number,
         instance: id.clone(),
-        listing,
+        configured,
     }
 }
 
-fn listing() -> Listing {
-    Listing {
-        models: listed(),
+fn listing() -> Configuration {
+    Configuration {
+        models: Ok(listed()),
         named: None,
     }
 }
@@ -825,8 +823,8 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
             Some(unavailable("refreshing the instance's models")),
         )
     );
-    let offered = Listing {
-        models: Models::none(),
+    let offered = Configuration {
+        models: Ok(Models::none()),
         named: Some(model("gw")),
     };
     assert_eq!(
@@ -1001,13 +999,15 @@ fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
 #[test]
 fn the_default_is_the_credential_s_model_then_the_chosen_then_the_cli_s() {
     let offer = |named: Option<&str>, chosen: Option<&str>| {
-        Offer {
-            listed: listed(),
-            named: named.map(model),
-            chosen: chosen.map(model),
-        }
-        .models()
-        .default
+        offered(
+            Configuration {
+                models: Ok(listed()),
+                named: named.map(model),
+            },
+            chosen.map(model).as_ref(),
+        )
+        .ok()
+        .and_then(|models| models.default)
     };
     assert_eq!(
         [

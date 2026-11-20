@@ -1,19 +1,17 @@
 //! The handle a session holds on its agent, whichever provider runs it: a
 //! channel pair that speaks the `agents::runtime` protocol. Each provider's
 //! shell (`claude-cli`, `codex-cli`) runs a task on the other end, and
-//! hands the host a [`Plugin`] whose [`Starter`] starts its agents.
+//! hands the host a [`Plugin`] whose [`Instance`] configures an account and starts its agents.
 
 pub mod agent;
 mod plugin;
 
-pub use plugin::{Launch, Plugin, Settings};
-
-use std::fmt;
-use std::sync::Arc;
+pub use plugin::{
+    Configuring, Instance, Launch, Plugin, ProviderInstance, Settings,
+};
 
 use agents::Note;
-use agents::runtime::{Command, Event, Outcome};
-use proto::Models;
+use agents::runtime::{Command, Event};
 use tokio::sync::mpsc;
 
 /// One agent as its session sees it: where the session sends commands, and
@@ -46,9 +44,6 @@ fn pair() -> (Runtime, Plug) {
     )
 }
 
-/// Why a command fails once the agent's task has gone.
-const GONE: &str = "the agent's runtime has stopped";
-
 impl Runtime {
     /// A runtime whose every command fails for `reason`: the host can't run
     /// its provider.
@@ -58,55 +53,12 @@ impl Runtime {
         tokio::spawn(refuse(plug, reason));
         runtime
     }
-
-    /// Sends `command` and waits for its outcome, passing over the steps
-    /// before it.
-    pub async fn ask(&mut self, command: Command) -> Outcome {
-        let unanswered = command.failed(GONE);
-        let _ = self.commands.send(command).await;
-        loop {
-            match self.events.recv().await {
-                Some(Event::Outcome(outcome)) => break outcome,
-                Some(Event::Step(_)) => {}
-                None => break unanswered,
-            }
-        }
-    }
 }
 
 async fn refuse(mut plug: Plug, reason: String) {
     while let Some(command) = plug.commands.recv().await {
         let refused = Event::Outcome(command.failed(&reason));
         let _ = plug.events.send(refused).await;
-    }
-}
-
-/// Starts one of a provider's agents. Clone it freely.
-#[derive(Clone)]
-pub struct Starter(Arc<dyn Fn() -> Runtime + Send + Sync>);
-
-impl Starter {
-    pub fn new(start: impl Fn() -> Runtime + Send + Sync + 'static) -> Self {
-        Self(Arc::new(start))
-    }
-
-    #[must_use]
-    pub fn start(&self) -> Runtime {
-        (self.0)()
-    }
-
-    /// What the provider offers with its credential now.
-    ///
-    /// # Errors
-    /// Why it listed none.
-    pub async fn models(&self) -> Result<Models, String> {
-        self.start().ask(Command::Models).await.models()
-    }
-}
-
-impl fmt::Debug for Starter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Starter")
     }
 }
 

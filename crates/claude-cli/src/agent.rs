@@ -1,81 +1,76 @@
 //! Claude's runtime: one task per session's agent runs the
 //! [`claude::runtime`] machine on a [`Runtime`]'s far end, starting the CLI
-//! and making the calls it decides on. The agents of one [`starter`], one
-//! instance's, share the credential the latest [`Command::Credential`] set.
-//!
-//! [`Command::Credential`]: agents::runtime::Command::Credential
+//! and making the calls it decides on.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agents::Configuration;
 use agents::runtime::NOT_RUNNING;
 use claude::ClaudeCredential;
 use claude::runtime::{Call, Effect, Input, Refusal, Spawn};
 use claude::{
     ClaudeEvent, PermissionMode, Resume, SettingSource, VersionPolicy,
 };
-use install::Home;
-use proto::Models;
+use proto::{Credential, Models};
 use runtime::agent::{self, Agent, Performed};
-use runtime::{Runtime, Starter};
+use runtime::{Configuring, Instance, Launch, ProviderInstance, Runtime};
 use tokio::sync::{mpsc, watch};
 
 use crate::{ClaudeOptions, ClaudeSession, Error, sandbox};
 
-/// How the host runs Claude.
-#[derive(Debug, Clone)]
-pub struct ClaudeLaunch {
-    pub claude_path: PathBuf,
-    pub home: Home,
-    /// The credential agents start with until another is set; `None`
-    /// leaves the home's own sign-in.
-    pub credential: Option<ClaudeCredential>,
-    /// Where the CLI starts to list its models.
-    pub probe: PathBuf,
-}
-
-/// What every agent of one starter shares.
-struct Shared {
-    launch: ClaudeLaunch,
+#[derive(Debug)]
+struct ClaudeInstance {
+    launch: Launch,
     sandbox: claude::Sandbox,
     credential: watch::Sender<Option<ClaudeCredential>>,
 }
 
-/// Starts Claude agents with `launch`.
-#[must_use]
-pub fn starter(launch: ClaudeLaunch) -> Starter {
-    let sandbox = sandbox();
-    if let Some(note) = claude::unprotected(launch.credential.as_ref(), sandbox)
-    {
-        runtime::log(&note);
-    }
-    let (credential, _) = watch::channel(launch.credential.clone());
-    let shared = Arc::new(Shared {
+pub fn instance(launch: Launch) -> Instance {
+    Arc::new(ClaudeInstance {
         launch,
-        sandbox,
-        credential,
-    });
-    Starter::new(move || start(&shared))
+        sandbox: sandbox(),
+        credential: watch::channel(None).0,
+    })
 }
 
-fn start(shared: &Arc<Shared>) -> Runtime {
-    let mut machine = claude::runtime::Runtime::new(shared.sandbox);
-    agent::start(
-        Task {
-            shared: Arc::clone(shared),
-            agent: None,
-        },
-        move |input| machine.step(input),
-        Input::Command,
-        Input::Event,
-    )
+impl ProviderInstance for ClaudeInstance {
+    fn configure(&self, given: Option<Credential>) -> Configuring<'_> {
+        Box::pin(async move {
+            let credential =
+                given.as_ref().map(claude::credential).transpose()?;
+            if let Some(note) =
+                claude::unprotected(credential.as_ref(), self.sandbox)
+            {
+                runtime::log(&note);
+            }
+            self.credential.send_replace(credential.clone());
+            Ok(Configuration {
+                named: None,
+                models: probe(&self.launch, credential).await,
+            })
+        })
+    }
+
+    fn start(self: Arc<Self>) -> Runtime {
+        let mut machine = claude::runtime::Runtime::new();
+        agent::start(
+            Task {
+                shared: self,
+                agent: None,
+            },
+            move |input| machine.step(input),
+            Input::Command,
+            Input::Event,
+        )
+    }
 }
 
 /// The running CLI and its events.
 type Session = (ClaudeSession, mpsc::Receiver<ClaudeEvent>);
 
 struct Task {
-    shared: Arc<Shared>,
+    shared: Arc<ClaudeInstance>,
     agent: Option<Session>,
 }
 
@@ -99,11 +94,6 @@ impl Agent<Input, Effect> for Task {
             },
             Effect::Shutdown => {
                 Input::ShutDown(shutdown(self.agent.take()).await)
-            }
-            Effect::Probe => Input::Probed(probe(&self.shared).await),
-            Effect::Credential(credential) => {
-                self.shared.credential.send_replace(credential);
-                return Performed::Done;
             }
             Effect::Runtime(report) => return Performed::Report(report),
         };
@@ -145,9 +135,9 @@ impl Task {
 /// How a session's CLI starts. The user level of its settings is the
 /// host's private home (§6.2), and its transcripts go under the session's
 /// own project directory.
-fn options(shared: &Shared, spawn: Spawn) -> ClaudeOptions {
+fn options(shared: &ClaudeInstance, spawn: Spawn) -> ClaudeOptions {
     ClaudeOptions {
-        claude_path: shared.launch.claude_path.clone(),
+        claude_path: shared.launch.path.clone(),
         home: shared.launch.home.clone(),
         credential: shared.credential.borrow().clone(),
         cwd: PathBuf::from(spawn.directory.0),
@@ -192,13 +182,15 @@ async fn shutdown(agent: Option<Session>) -> Result<(), String> {
 
 /// What a Claude session offers, from its `initialize` response: the CLI
 /// is started in the probe directory and stopped again.
-async fn probe(shared: &Shared) -> Result<Models, String> {
-    let directory = &shared.launch.probe;
+async fn probe(
+    launch: &Launch,
+    credential: Option<ClaudeCredential>,
+) -> Result<Models, String> {
+    let directory = &launch.work;
     std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    let credential = shared.credential.borrow().clone();
     let (session, _events) = ClaudeSession::spawn(ClaudeOptions {
-        claude_path: shared.launch.claude_path.clone(),
-        home: shared.launch.home.clone(),
+        claude_path: launch.path.clone(),
+        home: launch.home.clone(),
         credential,
         cwd: directory.clone(),
         model: None,

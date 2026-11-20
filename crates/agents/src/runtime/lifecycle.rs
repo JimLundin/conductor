@@ -52,10 +52,7 @@ impl Lifecycle {
             | Command::Revert(_) => {
                 Some(Report::emit(command.failed(NOT_RUNNING)))
             }
-            Command::Start(_)
-            | Command::Credential(_)
-            | Command::Models
-            | Command::Shutdown => None,
+            Command::Start(_) | Command::Shutdown => None,
         }
     }
 
@@ -136,7 +133,6 @@ mod tests {
             Outcome::Interrupted(Err(String::from("the agent is not running"))),
         ))]);
         assert_eq!(lifecycle.refusal::<Report>(&call), refused);
-        assert_eq!(lifecycle.refusal::<Report>(&Command::Models), None);
         assert_eq!(lifecycle.refusal::<Report>(&Command::Shutdown), None);
 
         start(&mut lifecycle);

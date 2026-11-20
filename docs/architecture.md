@@ -303,7 +303,7 @@ Every piece of state has one owner task. Handles talk to it over channels.
 A session asks one interface for its agent, whichever provider runs it:
 the runtime protocol `agents::runtime`. The session sends a `Command`
 (start or resume at a history anchor, send, interrupt, reply, list or
-revert turns, list models, set credentials, shut down) and waits for its
+revert turns, shut down) and waits for its
 `Outcome`; meanwhile the agent reports `Step`s. The handle is
 `runtime::Runtime`, a channel pair.
 
@@ -318,9 +318,9 @@ in a `daemon::Plugins` map keyed by `Provider`.
   `--version`, sign-in check and `login` runs as `agents::Invocation`s.
 - `settings: runtime::Settings`: the CLI path and the model the command
   line gave it.
-- `starter: fn(runtime::Launch) -> runtime::Starter`: the provider's
-  runner, started on the CLI that passed its probe, in an instance's
-  private home, with the instance's work dir.
+- `instance: fn(runtime::Launch) -> runtime::Instance` builds the account's
+  provider instance with its CLI path, private home and work directory.
+  It configures that account and starts its conversation runtimes.
 - `account: fn(&str) -> Option<String>`: reads the account a signed-in
   home is from what the CLI reports where the profile's `account`
   (`agents::Reported`) says: Claude's `auth status` JSON (`email`), Codex's
@@ -367,8 +367,8 @@ and nothing to mint. A CLI given on the command line runs its own instance
 signed in however it is; an account's instance without a credential on
 such a CLI counts as signed in, since only a sign-in names one.
 
-Each instance gets its own starter, built from its provider's plugin with
-its own `Launch`: its private home `<data>/home/<dir>` and its work dir
+The host builds each instance through its provider's plugin, passing
+its own `Launch` with its private home `<data>/home/<dir>` and its work dir
 `<data>/work/<dir>`, where Claude lists its models and Codex's app-server
 runs. `<dir>` is `host::registry::dir`: the provider's name for its own
 instance, and otherwise `<provider>-` and the first 16 hex digits of the
@@ -391,11 +391,14 @@ stopping a running agent on someone's behalf would lose its turn. The
 instance's closed sessions stay and can't continue, and its home stays,
 since their transcripts live in it. A provider's own instance stays.
 
-The starter's agents start with no credential. The host hands them the
-instance's credential with `Command::Credential` at start, as it does after
-each change, and the `Outcome::Configured` answer names the default model
-the credential implies. So each provider's core reads its own credential
-and decides what it becomes; the daemon only carries the generic values.
+At startup and after a credential change, the host configures the instance
+with its stored credential or the CLI's own sign-in. Each adapter applies
+its provider's credential and discovers the models it offers. Claude probes
+with a fresh CLI process, and Codex lists models on the account's app-server.
+The instance reports credential refusal separately from discovery failure.
+At boot, a discovery failure still allows the default model. After a change,
+the instance stays unavailable until a refresh succeeds. The host chooses
+the credential's named model, then its configured model, then the CLI default.
 The daemon makes each private home from the profile (§6.2), runs the
 probes and installs as `host::start` decides, and sends the plugins'
 `ProviderInfo` to clients as `Welcome.catalog`.
@@ -417,7 +420,7 @@ probes and installs as `host::start` decides, and sends the plugins'
   live in `claude::runtime`: a missing conversation with no message seen
   starts fresh, and an undo's fork whose target exists resumes the target.
   Pure `no_std`; they log nothing themselves.
-- `runtime`: the shell's handle type, the starter, `Plugin`, and the agent
+- `runtime`: the session handle, provider instance, `Plugin`, and the agent
   task that feeds commands and provider events into the runtime machine.
 - `claude-cli` and `codex-cli`: supply each CLI's handshake, driver and
   stderr policy to the process runner, perform each agent's provider calls,

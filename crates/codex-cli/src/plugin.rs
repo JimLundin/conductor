@@ -1,8 +1,10 @@
 //! Codex as a host runs it.
 
-use runtime::{Launch, Plugin, Settings, Starter};
+use std::sync::Arc;
 
-use crate::{Hub, ServerOptions, starter};
+use runtime::{Instance, Launch, Plugin, Settings};
+
+use crate::{Hub, ServerOptions};
 
 /// Codex, run as `settings` say.
 #[must_use]
@@ -10,7 +12,7 @@ pub fn plugin(settings: Settings) -> Plugin {
     Plugin {
         profile: codex::profile(),
         settings,
-        starter: launched,
+        instance,
         account: codex::account,
     }
 }
@@ -19,8 +21,8 @@ pub fn plugin(settings: Settings) -> Plugin {
 /// environment holds the instance's key. The server's working directory
 /// is the instance's work dir; each thread runs in its session's
 /// directory.
-fn launched(launch: Launch) -> Starter {
-    starter(Hub::spawn(ServerOptions {
+fn instance(launch: Launch) -> Instance {
+    Arc::new(Hub::spawn(ServerOptions {
         codex_path: launch.path,
         home: launch.home,
         credential: None,

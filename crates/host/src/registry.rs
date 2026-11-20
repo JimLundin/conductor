@@ -18,17 +18,18 @@
 //!
 //! `daemon` runs it: it owns the store, the sessions' tasks and the
 //! instances' agents. It asks the registry, performs each [`Effect`] in
-//! order, and reports how each went. The registry holds each instance's
-//! starter `S`, each session's handle `H` and each answer's reply `R` as
+//! order, and reports how each went. The registry holds each provider
+//! instance `S`, each session's handle `H` and each answer's reply `R` as
 //! opaque values; it knows no provider by name.
 //!
-//! A credential change refreshes its instance: the instance's agents take
-//! the new credential and list what they offer with it. Until that ends
+//! A credential change refreshes its instance, which applies the
+//! credential and discovers its models. Until that ends
 //! the instance is unavailable. One refresh per instance runs at a time;
 //! changes made meanwhile coalesce into one more, and every change waiting
 //! gets the answer of the last. An added instance is unavailable until its
 //! CLI has started.
 
+use agents::Configuration;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 
@@ -72,33 +73,18 @@ const NO_CREDENTIAL: &str = "no credential configured";
 const REFRESHING: &str = "refreshing the instance's models";
 const STARTING: &str = "starting the instance's CLI";
 
-/// What an instance offers, and the model a session gets when it names
-/// none.
-///
-/// That is the one the credential names, as its gateway serves that one,
-/// then `chosen` (the instance's, else `--model <provider>=<model>`), then
-/// the CLI's own.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Offer {
-    /// What the CLI lists with the current credential.
-    pub listed: Models,
-    /// The model the current credential names.
-    pub named: Option<ModelId>,
-    pub chosen: Option<ModelId>,
-}
-
-impl Offer {
-    #[must_use]
-    pub fn models(&self) -> Models {
-        Models {
-            default: self
-                .named
-                .clone()
-                .or_else(|| self.chosen.clone())
-                .or_else(|| self.listed.default.clone()),
-            choices: self.listed.choices.clone(),
-        }
-    }
+/// A session defaults to the credential's model, then the configured
+/// model, then the CLI's default.
+pub(crate) fn offered(
+    configured: Configuration,
+    chosen: Option<&ModelId>,
+) -> Result<Models, String> {
+    let mut models = configured.models?;
+    models.default = configured
+        .named
+        .or_else(|| chosen.cloned())
+        .or(models.default);
+    Ok(models)
 }
 
 /// How the host runs an instance.
@@ -106,10 +92,11 @@ impl Offer {
 pub enum Launcher<S> {
     /// The CLI runs, `start` starts its agents, and it signs in as `own`
     /// says when the host stores no credential for it.
-    Ready {
+    Running {
         start: S,
         own: OwnSignIn,
-        offer: Offer,
+        chosen: Option<ModelId>,
+        models: Result<Models, String>,
     },
     /// The host can't run this instance's sessions, for this reason.
     Unavailable(String),
@@ -290,22 +277,13 @@ fn unbriefed(answer: Option<&CommandResult>) -> Option<String> {
     ))
 }
 
-/// An instance's refresh: its agents take `credential`, and, if the
-/// instance then `signs_in`, list what they offer.
+/// A scheduled configuration of one provider instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job<S> {
     pub id: u64,
     pub instance: InstanceId,
     pub start: S,
     pub credential: Option<Credential>,
-    pub signs_in: Result<(), String>,
-}
-
-/// What a refresh listed: the models, and the one the credential names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Listing {
-    pub models: Models,
-    pub named: Option<ModelId>,
 }
 
 /// How the refresh `id` of `instance` ended.
@@ -313,7 +291,7 @@ pub struct Listing {
 pub struct Refreshed {
     pub id: u64,
     pub instance: InstanceId,
-    pub listing: Result<Listing, String>,
+    pub configured: Result<Configuration, String>,
 }
 
 /// An added instance to start: its provider's CLI, in its own home, as
@@ -385,10 +363,7 @@ struct Launch<S> {
 enum Refresh<S, R> {
     /// The latest job, which runs once the one running has ended unless it
     /// is that one, and the changes waiting for it.
-    Pending {
-        latest: Job<S>,
-        replies: Vec<R>,
-    },
+    Pending { latest: Job<S>, replies: Vec<R> },
     /// An added instance's CLI is starting with `credential`, and these
     /// changes wait for it.
     Starting {
@@ -396,7 +371,6 @@ enum Refresh<S, R> {
         credential: Option<Credential>,
         replies: Vec<R>,
     },
-    Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -490,8 +464,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             return Err(Rejection::UnknownInstance);
         }
         let provider = instance.provider;
-        let (start, _) = self.ready(instance).map_err(unavailable)?;
-        let offered = self.models(instance);
+        let (start, _, offered) = self.ready(instance).map_err(unavailable)?;
         let choice = choose(&offered, model, effort)
             .map_err(|reason| Rejection::NotOffered { reason })?;
         Ok(Launch {
@@ -527,7 +500,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             .get(&session)
             .ok_or(Rejection::UnknownSession)?;
         self.ready(instance)
-            .map(|_| (handle.clone(), self.models(instance)))
+            .map(|(_, _, models)| (handle.clone(), models))
             .map_err(unavailable)
     }
 
@@ -546,7 +519,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// Why the host can't run the instance at all.
     pub fn launcher(&self, instance: &InstanceId) -> Result<S, String> {
         match self.launcher_of(instance)? {
-            Launcher::Ready { start, .. } => Ok(start.clone()),
+            Launcher::Running { start, .. } => Ok(start.clone()),
             Launcher::Unavailable(reason) => Err(reason.clone()),
         }
     }
@@ -576,7 +549,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             let change = Change::SignedIn { from: instance, to };
             return self.save(roster, change, reply);
         }
-        if let Some(Launcher::Ready { own, .. }) =
+        if let Some(Launcher::Running { own, .. }) =
             self.launchers.get_mut(&instance)
         {
             *own = OwnSignIn::SignedIn;
@@ -736,11 +709,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let Refreshed {
             id,
             instance,
-            listing,
+            configured,
         } = refreshed;
         match self.refreshes.remove(&instance) {
             Some(Refresh::Pending { latest, replies }) if latest.id == id => {
-                let logged = self.listed(&instance, listing);
+                let logged = self.configured(&instance, configured);
                 logged.into_iter().chain(self.answers(replies)).collect()
             }
             Some(Refresh::Pending { latest, replies }) => {
@@ -814,7 +787,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 Refresh::Pending { replies, .. }
                 | Refresh::Starting { replies, .. },
             ) => replies,
-            Some(Refresh::Failed(_)) | None => Vec::new(),
+            None => Vec::new(),
         }
     }
 
@@ -853,32 +826,23 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// Takes what the latest refresh listed, or keeps why it failed.
-    fn listed(
+    fn configured(
         &mut self,
         instance: &InstanceId,
-        listing: Result<Listing, String>,
+        result: Result<Configuration, String>,
     ) -> Option<Effect<S, R>> {
-        match listing {
-            Ok(Listing { models, named }) => {
-                if let Some(Launcher::Ready { offer, .. }) =
-                    self.launchers.get_mut(instance)
-                {
-                    offer.listed = models;
-                    offer.named = named;
-                }
-                None
-            }
-            Err(reason) => {
-                let note = Note::RefreshFailed {
-                    instance: instance.clone(),
-                    reason: reason.clone(),
-                };
-                self.refreshes
-                    .insert(instance.clone(), Refresh::Failed(reason));
-                Some(Effect::Log(note))
-            }
-        }
+        let Launcher::Running { chosen, models, .. } =
+            self.launchers.get_mut(instance)?
+        else {
+            return None;
+        };
+        *models = result.and_then(|config| offered(config, chosen.as_ref()));
+        models.as_ref().err().map(|reason| {
+            Effect::Log(Note::RefreshFailed {
+                instance: instance.clone(),
+                reason: reason.clone(),
+            })
+        })
     }
 
     /// Refreshes `instance` with its credential, or, while a refresh
@@ -895,7 +859,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             replies.extend(asked);
             return Vec::new();
         }
-        let Some(Launcher::Ready { start, own, .. }) =
+        let Some(Launcher::Running { start, .. }) =
             self.launchers.get(&instance)
         else {
             return self.answers(asked);
@@ -906,9 +870,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             id: self.jobs,
             instance: instance.clone(),
             start: start.clone(),
-            signs_in: self
-                .signs_in(&instance, credential.as_ref(), *own)
-                .map(drop),
             credential,
         };
         let (replies, run) = match self.refreshes.remove(&instance) {
@@ -916,7 +877,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 replies.extend(asked);
                 (replies, None)
             }
-            Some(Refresh::Failed(_) | Refresh::Starting { .. }) | None => {
+            Some(Refresh::Starting { .. }) | None => {
                 (asked, Some(Effect::Refresh(latest.clone())))
             }
         };
@@ -946,18 +907,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
 
     fn availability(&self, instance: &InstanceId) -> Availability {
         match self.ready(instance) {
-            Ok((_, auth)) => Availability::Available {
-                auth,
-                models: self.models(instance),
-            },
+            Ok((_, auth, models)) => Availability::Available { auth, models },
             Err(reason) => Availability::Unavailable { reason },
-        }
-    }
-
-    fn models(&self, instance: &InstanceId) -> Models {
-        match self.launchers.get(instance) {
-            Some(Launcher::Ready { offer, .. }) => offer.models(),
-            Some(Launcher::Unavailable(_)) | None => Models::none(),
         }
     }
 
@@ -965,19 +916,32 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// can't. A stored credential comes first, then the CLI's own sign-in.
     /// A store that doesn't open may hold a credential, so it never falls
     /// back to the sign-in.
-    fn ready(&self, instance: &InstanceId) -> Result<(S, Auth), String> {
+    fn ready(
+        &self,
+        instance: &InstanceId,
+    ) -> Result<(S, Auth, Models), String> {
         match self.refreshes.get(instance) {
             None => Ok(()),
             Some(Refresh::Pending { .. }) => Err(String::from(REFRESHING)),
             Some(Refresh::Starting { .. }) => Err(String::from(STARTING)),
-            Some(Refresh::Failed(reason)) => Err(reason.clone()),
         }?;
         match (self.launcher_of(instance)?, &self.unreadable) {
             (Launcher::Unavailable(reason), _)
-            | (Launcher::Ready { .. }, Some(reason)) => Err(reason.clone()),
-            (Launcher::Ready { start, own, .. }, None) => self
-                .signs_in(instance, self.credential(instance).as_ref(), *own)
-                .map(|auth| (start.clone(), auth)),
+            | (Launcher::Running { .. }, Some(reason)) => Err(reason.clone()),
+            (
+                Launcher::Running {
+                    start, own, models, ..
+                },
+                None,
+            ) => {
+                let offered = models.clone()?;
+                let auth = self.signs_in(
+                    instance,
+                    self.credential(instance).as_ref(),
+                    *own,
+                )?;
+                Ok((start.clone(), auth, offered))
+            }
         }
     }
 

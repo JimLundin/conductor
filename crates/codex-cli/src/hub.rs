@@ -1,4 +1,4 @@
-//! The hub's task, which shares the host's one `codex app-server` among
+//! The hub's task, which shares one instance's `codex app-server` among
 //! every Codex thread. [`Hub`] is a handle to it. The task alone owns the
 //! server and the hub's state machine ([`codex::hub::Hub`]): it turns each
 //! command and server event into the machine's inputs and performs its

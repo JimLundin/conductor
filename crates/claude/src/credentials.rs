@@ -71,14 +71,13 @@ pub fn account(status: &str) -> Option<String> {
         .map(String::from)
 }
 
-/// An instance's credential as Claude's, if it is of a kind Claude takes.
-#[must_use]
-pub fn credential(credential: Option<&Credential>) -> Option<ClaudeCredential> {
-    credential.and_then(read)
-}
-
-fn read(credential: &Credential) -> Option<ClaudeCredential> {
-    (credential.kind == GATEWAY).then(|| ClaudeCredential::Gateway {
+/// Reads a stored credential using this provider's form.
+///
+/// # Errors
+/// The form is unknown or its values are invalid.
+pub fn credential(credential: &Credential) -> Result<ClaudeCredential, String> {
+    info().check(credential)?;
+    Ok(ClaudeCredential::Gateway {
         base_url: String::from(credential.value(BASE_URL)),
         token: String::from(credential.value(TOKEN)),
     })
@@ -120,18 +119,16 @@ mod tests {
         let stored = gateway("gateway");
         assert_eq!(
             (
-                credential(Some(&stored)),
-                credential(Some(&gateway("key"))),
-                credential(None),
+                credential(&stored),
+                credential(&gateway("key")),
                 info().check(&stored),
             ),
             (
-                Some(ClaudeCredential::Gateway {
+                Ok(ClaudeCredential::Gateway {
                     base_url: String::from("https://g.example"),
                     token: String::from("t"),
                 }),
-                None,
-                None,
+                Err(String::from(r#"Claude Code takes no "key" credential"#)),
                 Ok(()),
             )
         );

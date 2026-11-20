@@ -2,34 +2,52 @@
 //! [`codex::runtime`] machine on a [`Runtime`]'s far end, opening its thread
 //! on the hub's shared app-server and making the requests it decides on.
 
+use std::sync::Arc;
+
+use agents::Configuration;
 use agents::runtime::NOT_RUNNING;
 use codex::hub::Routed;
 use codex::runtime::{Call, Effect, Input, Open};
 use codex::{ThreadId, TurnId};
+use proto::Credential;
 use runtime::agent::{self, Agent, Performed};
-use runtime::{Runtime, Starter};
+use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::mpsc;
 
 use crate::{Hub, Thread};
 
-/// Starts Codex agents, each a thread on `hub`'s app-server.
-#[must_use]
-pub fn starter(hub: Hub) -> Starter {
-    Starter::new(move || start(hub.clone()))
-}
+impl ProviderInstance for Hub {
+    fn configure(&self, given: Option<Credential>) -> Configuring<'_> {
+        Box::pin(async move {
+            let credential =
+                given.as_ref().map(codex::credential).transpose()?;
+            let named = credential.as_ref().map(codex::default_model);
+            self.set_credential(credential)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(Configuration {
+                named,
+                models: self.models().await.map_err(|error| error.to_string()),
+            })
+        })
+    }
 
-fn start(hub: Hub) -> Runtime {
-    let mut machine = codex::runtime::Runtime::new();
-    agent::start(
-        Task { hub, thread: None },
-        move |input| machine.step(input),
-        Input::Command,
-        Input::Event,
-    )
+    fn start(self: Arc<Self>) -> Runtime {
+        let mut machine = codex::runtime::Runtime::new();
+        agent::start(
+            Task {
+                hub: self,
+                thread: None,
+            },
+            move |input| machine.step(input),
+            Input::Command,
+            Input::Event,
+        )
+    }
 }
 
 struct Task {
-    hub: Hub,
+    hub: Arc<Hub>,
     thread: Option<Thread>,
 }
 
@@ -52,15 +70,6 @@ impl Agent<Input, Effect> for Task {
                 outcome: self.call(call).await,
             },
             Effect::Turns => Input::Listed(self.turns().await),
-            Effect::Models => Input::Models(
-                self.hub.models().await.map_err(|error| error.to_string()),
-            ),
-            Effect::Credential(credential) => Input::Configured(
-                self.hub
-                    .set_credential(credential)
-                    .await
-                    .map_err(|error| error.to_string()),
-            ),
             Effect::Runtime(report) => return Performed::Report(report),
         };
         Performed::Feedback(feedback)

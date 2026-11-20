@@ -9,21 +9,21 @@
 use std::convert::Infallible;
 use std::ops::ControlFlow::{Break, Continue};
 
-use agents::runtime::Command;
 use host::registry::{
-    Change, Job, Listing, Refreshed, StartDecision, StartEffect, StartEnd,
-    StartOutcome, StartReport, StartRequest, StartSession, StartStep, Started,
-    Starting, brief_sent,
+    Change, Job, Refreshed, StartDecision, StartEffect, StartEnd, StartOutcome,
+    StartReport, StartRequest, StartSession, StartStep, Started, Starting,
+    brief_sent,
 };
 use host::restore::{Created, Recovery, Step, events_of};
 use host::serve::{Configure, SignInOrder};
 use host::sign_in::{Effect as SignInEffect, Key, SignIns};
+use host::start::Mode;
 use proto::{
-    Catalog, ClientName, CommandResult, Credential, Effort, Event, EventKind,
-    InstanceId, Instances, ModelId, Models, Provider, Rejection, SessionId,
-    SignIn, StartAt,
+    Catalog, ClientName, CommandResult, Effort, Event, EventKind, InstanceId,
+    Instances, ModelId, Models, Provider, Rejection, SessionId, SignIn,
+    StartAt,
 };
-use runtime::{Runtime, Starter};
+use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinSet;
 
@@ -41,15 +41,15 @@ const SIGN_IN_BUFFER: usize = 64;
 /// The sign-ins running now, and the steps they take from then on.
 pub type Watch = (Vec<SignIn>, broadcast::Receiver<SignIn>);
 
-pub type Launcher = host::registry::Launcher<Starter>;
+pub type Launcher = host::registry::Launcher<Instance>;
 
 type Reply = oneshot::Sender<CommandResult>;
-type Core = host::registry::Registry<Starter, Session, Reply>;
-type Effect = host::registry::Effect<Starter, Reply>;
+type Core = host::registry::Registry<Instance, Session, Reply>;
+type Effect = host::registry::Effect<Instance, Reply>;
 type StartReply = oneshot::Sender<StartOutcome>;
 
 struct BranchReady {
-    next: StartSession<Starter, Session>,
+    next: StartSession<Instance, Session>,
     report: StartReport<Session>,
     reply: StartReply,
 }
@@ -62,7 +62,7 @@ pub struct Registry {
 
 enum RegistryMsg {
     Refreshed(Refreshed),
-    Started(Started<Starter>),
+    Started(Started<Instance>),
     Start {
         request: StartRequest,
         placed: Box<Result<Placement, Rejection>>,
@@ -101,7 +101,7 @@ struct RegistryActor {
     providers: Providers,
     home: HomeClone,
     refreshes: JoinSet<Refreshed>,
-    starts: JoinSet<Started<Starter>>,
+    starts: JoinSet<Started<Instance>>,
     branches: JoinSet<BranchReady>,
     sign_ins: SignIns,
     runs: Runs,
@@ -119,7 +119,7 @@ impl Registry {
         let core = Core::new(stored, providers.catalog());
         let mut actor = RegistryActor::new(log, store, core, providers, home);
         for starting in actor.core.boot() {
-            let started = start(&actor.providers, starting).await;
+            let started = start(&actor.providers, starting, Mode::Boot).await;
             let effects = actor.core.started(started);
             actor.perform(effects);
         }
@@ -484,8 +484,9 @@ impl RegistryActor {
             }
             Effect::Start(starting) => {
                 let providers = self.providers.clone();
-                self.starts
-                    .spawn(async move { start(&providers, starting).await });
+                self.starts.spawn(async move {
+                    start(&providers, starting, Mode::Change).await
+                });
                 Vec::new()
             }
             Effect::Log(note) => {
@@ -524,7 +525,7 @@ impl RegistryActor {
         let runtime = self
             .core
             .launcher(&instance)
-            .map_or_else(Runtime::refusing, |start| start.start());
+            .map_or_else(Runtime::refusing, runtime::ProviderInstance::start);
         let told = self.told(provider);
         let session = Session::restore(
             id,
@@ -577,7 +578,7 @@ impl RegistryActor {
     fn ready_branch(
         &mut self,
         branch: home::issue::Start,
-        next: StartSession<Starter, Session>,
+        next: StartSession<Instance, Session>,
         reply: StartReply,
     ) {
         let home = self.home.clone();
@@ -596,7 +597,7 @@ impl RegistryActor {
 
     async fn run_start(
         &mut self,
-        mut decision: StartDecision<Starter, Session>,
+        mut decision: StartDecision<Instance, Session>,
         reply: StartReply,
     ) -> Result<(), Stopped> {
         loop {
@@ -693,43 +694,30 @@ impl RegistryActor {
     }
 }
 
-/// The instance's agents take the credential, and then it lists what it
-/// offers with it, if it then signs in.
-async fn refresh(job: Job<Starter>) -> Refreshed {
+async fn refresh(job: Job<Instance>) -> Refreshed {
     Refreshed {
         id: job.id,
         instance: job.instance,
-        listing: listing(job.start, job.credential, job.signs_in).await,
+        configured: job.start.configure(job.credential).await,
     }
 }
 
-async fn start(providers: &Providers, starting: Starting) -> Started<Starter> {
+async fn start(
+    providers: &Providers,
+    starting: Starting,
+    mode: Mode,
+) -> Started<Instance> {
     let Starting {
         id,
         instance,
         settings,
     } = starting;
-    let launcher = providers.launch(&instance, settings).await;
+    let launcher = providers.launch(&instance, settings, mode).await;
     Started {
         id,
         instance,
         launcher,
     }
-}
-
-async fn listing(
-    start: Starter,
-    credential: Option<Credential>,
-    signs_in: Result<(), String>,
-) -> Result<Listing, String> {
-    let mut runtime = start.start();
-    let named = runtime
-        .ask(Command::Credential(credential))
-        .await
-        .configured()?;
-    signs_in?;
-    let models = runtime.ask(Command::Models).await.models()?;
-    Ok(Listing { models, named })
 }
 
 /// Sends a session on an issue the issue's brief, once its agent has

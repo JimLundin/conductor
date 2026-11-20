@@ -12,9 +12,8 @@ use crate::log::Log;
 use crate::registry::{Launcher, Registry};
 use crate::serve::Conductor;
 use crate::sign_in::Signing;
-use agents::runtime::Command;
 use anyhow::Context;
-use host::start::{Next, Output};
+use host::start::{Mode, Next, Output};
 use install::process::command;
 use install::{Home, install};
 use iroh::endpoint::presets;
@@ -83,11 +82,12 @@ impl Providers {
         &self,
         id: &InstanceId,
         instance: Instance,
+        mode: Mode,
     ) -> Launcher {
         let span = tracing::info_span!("instance", id = %id);
         match prepare(&self.plugins, &self.data_dir, id, &instance) {
             Ok(prepared) => {
-                run(prepared, &self.data_dir, instance)
+                run(prepared, &self.data_dir, instance, mode)
                     .instrument(span)
                     .await
             }
@@ -347,6 +347,7 @@ async fn run(
     prepared: Prepared,
     data_dir: &Path,
     instance: Instance,
+    mode: Mode,
 ) -> Launcher {
     let Prepared {
         plugin,
@@ -368,7 +369,7 @@ async fn run(
                     .map_err(|err| err.to_string()),
             ),
             Next::Probe(path, probing) => {
-                let start = (plugin.starter)(Launch {
+                let start = (plugin.instance)(Launch {
                     path: path.clone(),
                     home: home.clone(),
                     work: work.clone(),
@@ -384,14 +385,12 @@ async fn run(
                     .await
                     .map(|(code, _)| code),
             ),
-            Next::ListModels(listing) => {
-                let mut runtime = listing.start().start();
-                let named = runtime
-                    .ask(Command::Credential(instance.credential.clone()))
-                    .await
-                    .configured();
-                let listed = runtime.ask(Command::Models).await.models();
-                listing.listed(named, listed)
+            Next::Configure(listing) => {
+                let configured = listing
+                    .instance()
+                    .configure(instance.credential.clone())
+                    .await;
+                listing.configured(configured, mode)
             }
             Next::Done(launcher, notes) => {
                 notes.iter().for_each(crate::log_note);

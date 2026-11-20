@@ -29,3 +29,11 @@ pub use sign_in::{Failure, Pick, Shown, SignIn, Word, plain};
 pub use step::{
     NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
 };
+
+/// The credential took. Discovery may still fail, in which case the host
+/// decides whether the credential's named model can be offered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Configuration {
+    pub named: Option<proto::ModelId>,
+    pub models: Result<proto::Models, alloc::string::String>,
+}

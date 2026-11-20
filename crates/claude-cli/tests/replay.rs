@@ -676,11 +676,32 @@ async fn a_subagent_runs_inside_the_session_from_start_to_end() -> TestResult<()
 }
 
 #[tokio::test]
-async fn initialize_lists_the_models_and_their_efforts() -> TestResult<()> {
+async fn configuring_a_claude_gateway_lists_its_models_and_efforts()
+-> TestResult<()> {
     let path = fixture("session4-chosen-killed.jsonl");
-    let (session, _events) =
-        ClaudeSession::spawn(options(&fake_claude("models", &path)?)).await?;
-    let models = session.models();
+    let fake = fake_claude("models", &path)?;
+    let plugin = claude_cli::plugin(runtime::Settings::default());
+    let instance = (plugin.instance)(runtime::Launch {
+        path: options(&fake).claude_path,
+        home: Home::User,
+        work: fake.dir.clone(),
+    });
+    let credential = proto::Credential {
+        kind: String::from("gateway"),
+        values: [
+            ("base_url", "https://gateway.example"),
+            ("token", "conductor-test-token"),
+        ]
+        .map(|(key, value)| (String::from(key), String::from(value)))
+        .into(),
+    };
+    let configured = instance.configure(Some(credential)).await?;
+    let models = configured.models?;
+    assert_eq!(configured.named, None);
+    assert!(
+        std::fs::read_to_string(fake.dir.join("env.txt"))?
+            .contains("ANTHROPIC_AUTH_TOKEN=conductor-test-token")
+    );
     assert_eq!(
         (
             models

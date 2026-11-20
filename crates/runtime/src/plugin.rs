@@ -1,12 +1,17 @@
 //! A provider as the host runs it. The host knows each provider only by its
-//! [`Plugin`]: data, and the one function only the provider can supply.
+//! [`Plugin`], which supplies the provider's profile and account adapters.
 
+use std::fmt::Debug;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 
-use agents::Profile;
+use agents::{Configuration, Profile};
 use install::Home;
+use proto::Credential;
 
-use crate::Starter;
+use crate::Runtime;
 
 /// What the host's command line sets for one provider: the defaults of
 /// each of its instances.
@@ -19,11 +24,7 @@ pub struct Settings {
     pub model: Option<String>,
 }
 
-/// Where one instance's agents run.
-///
-/// The work dir is the instance's own, beside its home, for what its CLI
-/// needs there. The agents start with no credential; the host hands them
-/// the instance's with `Command::Credential`, as it does each change.
+/// The CLI and private directories of one provider account.
 #[derive(Debug, Clone)]
 pub struct Launch {
     pub path: PathBuf,
@@ -31,14 +32,24 @@ pub struct Launch {
     pub work: PathBuf,
 }
 
-/// The profile and settings are data; the starter is the provider's
-/// runner, which speaks `agents::runtime` and so holds everything else a
-/// provider decides, such as what its credentials become.
+/// The outer error is a credential refusal. A configured instance reports
+/// model discovery separately in its configuration.
+pub type Configuring<'a> =
+    Pin<Box<dyn Future<Output = Result<Configuration, String>> + Send + 'a>>;
+
+pub trait ProviderInstance: Send + Sync + Debug {
+    fn configure(&self, credential: Option<Credential>) -> Configuring<'_>;
+    fn start(self: Arc<Self>) -> Runtime;
+}
+
+pub type Instance = Arc<dyn ProviderInstance>;
+
+/// A provider's description and the instance it builds for each account.
 #[derive(Debug, Clone)]
 pub struct Plugin {
     pub profile: Profile,
     pub settings: Settings,
-    pub starter: fn(Launch) -> Starter,
+    pub instance: fn(Launch) -> Instance,
     /// The account a signed-in home is, from what the CLI reports where
     /// the profile's `account` says.
     pub account: fn(&str) -> Option<String>,

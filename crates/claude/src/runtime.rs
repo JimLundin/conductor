@@ -12,15 +12,12 @@ use agents::Note;
 use agents::runtime::{
     Anchoring, Command, Lifecycle, Outcome, Report, Start, Started,
 };
-use proto::{
-    Effort, HistoryAnchor, HostPath, Models, Provider, SessionId as Session,
-};
+use proto::{Effort, HistoryAnchor, HostPath, Provider, SessionId as Session};
 
 use crate::prelude::*;
 use crate::{
-    ClaudeCredential, ClaudeEvent, MessageId, PermissionDecision,
-    PermissionRequestId, Resume, Sandbox, SessionId, claude_answer,
-    claude_steps, credential, unprotected,
+    ClaudeEvent, MessageId, PermissionDecision, PermissionRequestId, Resume,
+    SessionId, claude_answer, claude_steps,
 };
 
 /// Why the CLI did not start, and the conversation it found missing if
@@ -77,8 +74,6 @@ pub enum Input {
     },
     /// How the [`Effect::Shutdown`] went.
     ShutDown(Result<(), String>),
-    /// What the [`Effect::Probe`] listed.
-    Probed(Result<Models, String>),
     /// The running CLI's next event, `None` once its events end.
     Event(Option<ClaudeEvent>),
 }
@@ -96,11 +91,6 @@ pub enum Effect {
     },
     /// Stop the running CLI and report [`Input::ShutDown`].
     Shutdown,
-    /// List the models a CLI offers in a directory of its own, and report
-    /// [`Input::Probed`].
-    Probe,
-    /// Later CLIs start with this credential.
-    Credential(Option<ClaudeCredential>),
     Runtime(Report),
 }
 
@@ -112,9 +102,8 @@ struct Starting {
     rest: Vec<Resume>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Runtime {
-    sandbox: Sandbox,
     lifecycle: Lifecycle,
     starting: Option<Starting>,
 }
@@ -126,12 +115,9 @@ impl From<Report> for Effect {
 }
 
 impl Runtime {
-    /// A runtime with no CLI running yet, on a host where Claude's sandbox
-    /// is `sandbox`.
     #[must_use]
-    pub const fn new(sandbox: Sandbox) -> Self {
+    pub const fn new() -> Self {
         Self {
-            sandbox,
             lifecycle: Lifecycle::new(),
             starting: None,
         }
@@ -143,7 +129,6 @@ impl Runtime {
             Input::Spawned(spawned) => self.spawned(spawned),
             Input::Called { then, outcome } => called(then, outcome),
             Input::ShutDown(outcome) => self.lifecycle.shut_down(outcome),
-            Input::Probed(listed) => Report::emit(Outcome::Models(listed)),
             Input::Event(Some(event)) => self.event(event),
             Input::Event(None) => self.lifecycle.ended(),
         }
@@ -157,15 +142,6 @@ impl Runtime {
         }
         match command {
             Command::Start(start) => self.start(start),
-            Command::Models => Vec::from([Effect::Probe]),
-            Command::Credential(given) => {
-                let claude = credential(given.as_ref());
-                let note = unprotected(claude.as_ref(), self.sandbox);
-                core::iter::once(Effect::Credential(claude))
-                    .chain(note.map(Report::Log).map(Effect::from))
-                    .chain(Report::emit(Outcome::Configured(Ok(None))))
-                    .collect()
-            }
             Command::Shutdown if self.lifecycle.running() => {
                 Vec::from([Effect::Shutdown])
             }
@@ -349,16 +325,15 @@ mod tests {
     use agents::runtime::{
         Anchoring, Command, Event, Outcome, Report, Start, Started,
     };
-    use agents::{NativeRequest, NativeTurn, Note, Reply};
+    use agents::{NativeRequest, NativeTurn, Reply};
     use proto::{
-        ClientName, Credential, Decision, Effort, HistoryAnchor, HostPath,
-        ModelId, Provider, SessionId as Session,
+        ClientName, Decision, Effort, HistoryAnchor, HostPath, ModelId,
+        SessionId as Session,
     };
 
     use super::{Call, Effect, Input, Refusal, Runtime, Spawn, Then, attempts};
     use crate::{
-        ClaudeCredential, MessageId, PermissionDecision, PermissionRequestId,
-        Resume, Sandbox, SessionId,
+        MessageId, PermissionDecision, PermissionRequestId, Resume, SessionId,
     };
 
     fn id(text: &str) -> SessionId {
@@ -418,7 +393,7 @@ mod tests {
     }
 
     fn running() -> Runtime {
-        let mut runtime = Runtime::new(Sandbox::Available);
+        let mut runtime = Runtime::new();
         let _ = walk(
             &mut runtime,
             Vec::from([start(None), Input::Spawned(Ok(id("saved")))]),
@@ -428,7 +403,7 @@ mod tests {
 
     #[test]
     fn a_missing_conversation_with_no_message_seen_starts_fresh() {
-        let mut runtime = Runtime::new(Sandbox::Available);
+        let mut runtime = Runtime::new();
         let seen = walk(
             &mut runtime,
             Vec::from([
@@ -452,7 +427,7 @@ mod tests {
 
     #[test]
     fn a_fork_whose_target_exists_resumes_the_target_and_else_forks() {
-        let mut runtime = Runtime::new(Sandbox::Available);
+        let mut runtime = Runtime::new();
         let fork = Resume::Fork {
             session: id("source"),
             through: MessageId(text("boundary")),
@@ -597,38 +572,6 @@ mod tests {
                 )))),
                 Vec::from([Effect::Shutdown]),
             ],
-        );
-    }
-
-    #[test]
-    fn credentials_reach_later_clis_and_an_unsandboxed_gateway_is_warned() {
-        let gateway = ClaudeCredential::Gateway {
-            base_url: text("https://gateway.example"),
-            token: text("secret"),
-        };
-        let stored = Credential {
-            kind: text("gateway"),
-            values: [
-                ("base_url", "https://gateway.example"),
-                ("token", "secret"),
-            ]
-            .map(|(id, value)| (text(id), text(value)))
-            .into(),
-        };
-        let mut runtime = Runtime::new(Sandbox::Missing);
-        let seen =
-            runtime.step(Input::Command(Command::Credential(Some(stored))));
-        assert_eq!(
-            seen,
-            Vec::from([
-                Effect::Credential(Some(gateway)),
-                Report::Log(Note::GatewayExposed {
-                    provider: Provider::Claude
-                })
-                .into(),
-                Report::Emit(Event::Outcome(Outcome::Configured(Ok(None))))
-                    .into(),
-            ])
         );
     }
 }
