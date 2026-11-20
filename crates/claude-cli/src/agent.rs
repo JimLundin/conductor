@@ -17,7 +17,7 @@ use runtime::agent::{self, Agent, Performed};
 use runtime::{Configuring, Instance, Launch, ProviderInstance, Runtime};
 use tokio::sync::{mpsc, watch};
 
-use crate::{ClaudeOptions, ClaudeSession, Error, sandbox};
+use crate::session::{ClaudeOptions, ClaudeSession, Error, sandbox};
 
 #[derive(Debug)]
 struct ClaudeInstance {

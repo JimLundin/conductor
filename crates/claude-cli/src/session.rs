@@ -1,5 +1,6 @@
 //! The Claude handle and handshake over the shared line-JSON process runner.
 
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -14,10 +15,9 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use claude::{
-    Applied, CallRequest, ClaudeEvent, ControlCall, Failure, Launch,
-    PermissionDecision, PermissionMode, PermissionRequestId, Problem, Resume,
-    Sandbox, Session, SessionId, SettingSource, UnsupportedVersion,
-    VersionPolicy, applied, models,
+    CallRequest, ClaudeEvent, ControlCall, Failure, Launch, PermissionDecision,
+    PermissionMode, PermissionRequestId, Problem, Resume, Sandbox, Session,
+    SessionId, SettingSource, UnsupportedVersion, VersionPolicy, models,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -110,7 +110,6 @@ pub struct ClaudeSession {
     id: SessionId,
     /// What the `initialize` response lists.
     models: Models,
-    pid: Option<u32>,
 }
 
 /// A session whose process runs, before it has answered `initialize`.
@@ -152,21 +151,6 @@ impl ClaudeSession {
         &self.id
     }
 
-    /// The CLI's process id, while it runs.
-    #[must_use]
-    pub const fn pid(&self) -> Option<u32> {
-        self.pid
-    }
-
-    /// The model and effort the CLI runs with (`get_settings`).
-    ///
-    /// # Errors
-    /// Fails when the CLI has exited, does not answer in time or rejects
-    /// the request.
-    pub async fn applied(&self) -> Result<Applied, Error> {
-        Ok(applied(self.control(ControlCall::GetSettings).await?)?)
-    }
-
     /// Changes the effort of the CLI's later API requests, in this process
     /// (`apply_flag_settings`); `applied` reports it back.
     ///
@@ -196,17 +180,6 @@ impl ClaudeSession {
     /// the request.
     pub async fn interrupt(&self) -> Result<(), Error> {
         let _ = self.control(ControlCall::Interrupt).await?;
-        Ok(())
-    }
-
-    /// # Errors
-    /// Fails when the CLI has exited, does not answer in time or rejects
-    /// the mode.
-    pub async fn set_permission_mode(
-        &self,
-        mode: PermissionMode,
-    ) -> Result<(), Error> {
-        let _ = self.control(ControlCall::SetPermissionMode(mode)).await?;
         Ok(())
     }
 
@@ -255,7 +228,7 @@ fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
     let stdout_log = line_json::stdout_log(opts.stdout_log.as_deref())?;
     let mut driver = Session::default();
     let started = line_json::start(
-        command(opts, &id),
+        command(opts, &id, sandbox()),
         Options {
             stdout_log,
             stderr: StderrPolicy::Last,
@@ -271,7 +244,6 @@ fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
             commands: started.handle,
             id,
             models: Models::none(),
-            pid: started.pid,
         },
         events: started.events,
         last_stderr: started.stderr,
@@ -354,14 +326,18 @@ async fn reason(
 #[must_use]
 pub fn sandbox() -> Sandbox {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let dirs = std::env::split_paths(&path).collect::<Vec<PathBuf>>();
+    sandbox_at(std::env::consts::OS, &path)
+}
+
+fn sandbox_at(os: &str, path: &OsStr) -> Sandbox {
+    let dirs = std::env::split_paths(path).collect::<Vec<PathBuf>>();
     let tools = claude::SANDBOX_TOOLS
         .iter()
         .all(|tool| dirs.iter().any(|dir| dir.join(tool).is_file()));
-    claude::sandbox(std::env::consts::OS, tools)
+    claude::sandbox(os, tools)
 }
 
-fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
+fn command(opts: &ClaudeOptions, id: &SessionId, sandbox: Sandbox) -> Command {
     let launch = Launch {
         home: opts.home.kind(),
         credential: opts.credential.clone(),
@@ -373,7 +349,7 @@ fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
         effort: opts.effort,
         setting_sources: opts.setting_sources.clone(),
         instructions: opts.instructions.clone(),
-        sandbox: sandbox(),
+        sandbox,
     };
     let mut cmd = install::process::command(
         &opts.claude_path,
@@ -391,8 +367,8 @@ mod tests {
     use proto::Effort;
 
     use super::{
-        ClaudeOptions, PermissionMode, Resume, SessionId, SettingSource,
-        VersionPolicy, command,
+        ClaudeOptions, PermissionMode, Resume, Sandbox, SessionId,
+        SettingSource, VersionPolicy, command,
     };
     use install::Home;
 
@@ -420,6 +396,7 @@ mod tests {
                 versions: VersionPolicy::SupportedOnly,
             },
             &SessionId(String::from("new-session")),
+            Sandbox::Missing,
         );
         let args = cmd
             .as_std()
@@ -511,6 +488,7 @@ mod tests {
                 versions: VersionPolicy::SupportedOnly,
             },
             &SessionId(String::from("0b1c")),
+            Sandbox::Missing,
         );
         let std = cmd.as_std();
         let args = std
@@ -567,3 +545,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod replay;

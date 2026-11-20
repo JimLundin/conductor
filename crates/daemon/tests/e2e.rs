@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use claude_cli::Sandbox;
 use client::host_fold::HostFold;
 use client::host_view::{
     Approval, HostView, Item, ReplyState, RequestState, StatusLabel, Subagent,
@@ -2270,7 +2269,6 @@ fn captured(path: &Path) -> Fallible<String> {
 const GATEWAY: &str = "https://conductor-test.invalid/gateway";
 const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
 const NO_CREDENTIAL: &str = "no credential configured";
-const UNPROTECTED: &str = "the CLI's commands can read the gateway token; install bubblewrap and socat to sandbox them provider=Claude";
 
 fn read(path: &Path) -> Fallible<String> {
     Ok(std::fs::read_to_string(path)?)
@@ -2434,14 +2432,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
     let events = legacy_events_until(&mut updates, Until::Ready).await?;
     assert_eq!(
         read(&dir.join("env.txt"))?,
-        format!(
-            "ANTHROPIC_AUTH_TOKEN={CLAUDE_TOKEN}\nANTHROPIC_BASE_URL={GATEWAY}\n{}CLAUDE_CONFIG_DIR={}\n",
-            match claude_cli::sandbox() {
-                Sandbox::Available => "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\n",
-                Sandbox::Missing => "",
-            },
-            dir_of(&data, "home", &claude_api).display()
-        )
+        gateway_env(CLAUDE_TOKEN, GATEWAY, &dir_of(&data, "home", &claude_api))
     );
     assert_eq!(count(&data.join("credentials"), CLAUDE_TOKEN)?, 0);
     link.stop().await?;
@@ -2479,18 +2470,8 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
             logged.matches("added an instance").count(),
             logged.matches(CLAUDE_TOKEN).count(),
             format!("{events:?}").matches(CLAUDE_TOKEN).count(),
-            logged.matches(UNPROTECTED).count(),
         ),
-        (
-            1,
-            0,
-            0,
-            // Once when the gateway is set, once when the restart finds it.
-            match claude_cli::sandbox() {
-                Sandbox::Available => 0,
-                Sandbox::Missing => 2,
-            }
-        )
+        (1, 0, 0)
     );
     Ok(())
 }
@@ -2821,11 +2802,7 @@ fn created_on(events: &[Event]) -> Vec<(SessionId, InstanceId)> {
 /// in the home `home`.
 fn gateway_env(token: &str, base_url: &str, home: &Path) -> String {
     format!(
-        "ANTHROPIC_AUTH_TOKEN={token}\nANTHROPIC_BASE_URL={base_url}\n{}CLAUDE_CONFIG_DIR={}\n",
-        match claude_cli::sandbox() {
-            Sandbox::Available => "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1\n",
-            Sandbox::Missing => "",
-        },
+        "ANTHROPIC_AUTH_TOKEN={token}\nANTHROPIC_BASE_URL={base_url}\nCLAUDE_CONFIG_DIR={}\n",
         home.display()
     )
 }

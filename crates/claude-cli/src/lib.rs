@@ -10,6 +10,4 @@ mod agent;
 mod plugin;
 mod session;
 
-pub use claude::Sandbox;
 pub use plugin::plugin;
-pub use session::{ClaudeOptions, ClaudeSession, Error, sandbox};

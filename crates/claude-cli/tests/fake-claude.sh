@@ -9,4 +9,4 @@
 # line, for tests of what a host passes its CLI.
 # The arguments name the variables it records (fixtures/fake-cli.py).
 exec /usr/bin/python3 -I "$(dirname "$0")/../../../fixtures/fake-cli.py" \
-  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SUBPROCESS_ENV_SCRUB CLAUDE_CONFIG_DIR -- "$@"
+  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CONFIG_DIR -- "$@"

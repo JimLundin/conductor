@@ -1,72 +1,35 @@
-#![cfg(test)]
-
 //! Replays recorded `claude` stdout (fixtures/claude) through a real
 //! `ClaudeSession`. A stand-in process prints the recording and then swallows
 //! stdin, so the actor, the boundary mapping and the exactly-once permission
 //! bookkeeping all run against the CLI's real bytes.
-#![cfg(unix)]
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::{ClaudeOptions, ClaudeSession, Error};
 use claude::{
     AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionMode,
     PermissionRequestId, Role, SettingSource, VersionPolicy,
 };
-use claude_cli::{ClaudeOptions, ClaudeSession};
 use install::Home;
 use n0_future::StreamExt;
-use proto::{Effort, ModelId, TaskStatus};
+use proto::{Effort, TaskStatus};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+#[path = "../../tests/support/mod.rs"]
+mod support;
 
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/claude")
-        .join(name)
-}
+use support::{TestResult, fake_claude, fake_cli_path, fixture, test_dir};
 
-/// A working directory for `tests/fake-claude.sh`, which prints the
-/// recording found there and logs what it reads. The script is committed, not
-/// written here: executing a file another test thread may have just written
-/// fails with "Text file busy" when a concurrent fork still holds it open.
-struct FakeClaude {
-    dir: PathBuf,
-    /// Every line the session wrote to the stand-in's stdin.
-    stdin_log: PathBuf,
-}
-
-fn test_dir(name: &str) -> TestResult<PathBuf> {
-    let dir = std::env::current_exe()?
-        .ancestors()
-        .nth(3)
-        .ok_or("the test binary is not under target/<profile>/deps")?
-        .join("tmp")
-        .join(format!("agents-replay-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-fn fake_claude(name: &str, stdout: &Path) -> TestResult<FakeClaude> {
-    let dir = test_dir(name)?;
-    std::fs::copy(stdout, dir.join("stdout.jsonl"))?;
-    Ok(FakeClaude {
-        stdin_log: dir.join("stdin.jsonl"),
-        dir,
-    })
-}
-
-fn options(claude: &FakeClaude) -> ClaudeOptions {
+fn options(dir: &Path) -> ClaudeOptions {
     ClaudeOptions {
-        claude_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fake-claude.sh"),
+        claude_path: fake_cli_path(),
         home: Home::User,
         credential: None,
-        cwd: claude.dir.clone(),
+        cwd: dir.to_path_buf(),
         model: None,
         effort: None,
         permission_mode: PermissionMode::Default,
@@ -322,6 +285,7 @@ struct Replayed {
     events: Vec<String>,
     unknown: BTreeMap<String, usize>,
     second: Vec<String>,
+    replies: Vec<Value>,
 }
 
 async fn answer_again(
@@ -339,8 +303,8 @@ async fn replay(
     decisions: Vec<PermissionDecision>,
 ) -> TestResult<Replayed> {
     let path = fixture(name);
-    let (session, events) =
-        ClaudeSession::spawn(options(&fake_claude(name, &path)?)).await?;
+    let fake = fake_claude(name, &path)?;
+    let (session, events) = ClaudeSession::spawn(options(&fake)).await?;
 
     let recording = std::fs::read_to_string(&path)?;
     let results = recording
@@ -367,7 +331,48 @@ async fn replay(
         events: played.seen,
         unknown: played.unknown,
         second,
+        replies: permission_replies(&fake.join("stdin.jsonl"))?,
     })
+}
+
+fn permission_replies(stdin_log: &Path) -> TestResult<Vec<Value>> {
+    Ok(std::fs::read_to_string(stdin_log)?
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<Value>, _>>()?
+        .into_iter()
+        .filter(|line| line["type"] == "control_response")
+        .collect())
+}
+
+fn approve_then_deny_replies() -> [Value; 2] {
+    [
+        serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": "ef41e4d8-de15-458b-88d0-f46aa4286c9a",
+                "response": {
+                    "behavior": "allow",
+                    "updatedInput": {
+                        "file_path": "/tmp/s1-scratch/a.txt",
+                        "content": "hello from s1"
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": "0a710d2a-6061-4dba-96f1-3dc74607c276",
+                "response": {
+                    "behavior": "deny",
+                    "message": "no"
+                }
+            }
+        }),
+    ]
 }
 
 #[tokio::test]
@@ -383,6 +388,7 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
         ]),
     )
     .await?;
+    assert_eq!(replayed.replies, approve_then_deny_replies());
     assert_eq!(
         replayed.events,
         [
@@ -599,13 +605,16 @@ async fn the_effort_is_set_in_the_running_process() -> TestResult<()> {
     let claude = fake_claude("set-effort", &stdout)?;
     let (session, _events) = ClaudeSession::spawn(options(&claude)).await?;
     let set = session.set_effort(Effort::Low).await;
-    let applied = session.applied().await.map(|applied| applied.effort);
+    let applied = claude::applied(
+        session.control(claude::ControlCall::GetSettings).await?,
+    )
+    .map(|settings| settings.effort);
     let _ = session.shutdown().await?;
     assert_eq!(
         (
             set.map_err(|err| err.to_string()),
             applied.map_err(|err| err.to_string()),
-            std::fs::read_to_string(claude.stdin_log)?
+            std::fs::read_to_string(claude.join("stdin.jsonl"))?
                 .lines()
                 .nth(1)
                 .map(serde_json::from_str::<Value>)
@@ -670,65 +679,6 @@ async fn a_subagent_runs_inside_the_session_from_start_to_end() -> TestResult<()
             ]),
             0,
             None,
-        )
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn configuring_a_claude_gateway_lists_its_models_and_efforts()
--> TestResult<()> {
-    let path = fixture("session4-chosen-killed.jsonl");
-    let fake = fake_claude("models", &path)?;
-    let plugin = claude_cli::plugin(runtime::Settings::default());
-    let instance = (plugin.instance)(runtime::Launch {
-        path: options(&fake).claude_path,
-        home: Home::User,
-        work: fake.dir.clone(),
-    });
-    let credential = proto::Credential {
-        kind: String::from("gateway"),
-        values: [
-            ("base_url", "https://gateway.example"),
-            ("token", "conductor-test-token"),
-        ]
-        .map(|(key, value)| (String::from(key), String::from(value)))
-        .into(),
-    };
-    let configured = instance.configure(Some(credential)).await?;
-    let models = configured.models?;
-    assert_eq!(configured.named, None);
-    assert!(
-        std::fs::read_to_string(fake.dir.join("env.txt"))?
-            .contains("ANTHROPIC_AUTH_TOKEN=conductor-test-token")
-    );
-    assert_eq!(
-        (
-            models
-                .choices
-                .iter()
-                .map(|choice| (choice.id.0.as_str(), choice.name.as_str()))
-                .collect::<Vec<(&str, &str)>>(),
-            &models.default,
-            models
-                .find(&ModelId(String::from("haiku")))
-                .map(|haiku| &haiku.efforts),
-        ),
-        (
-            Vec::from([
-                ("opus", "Opus"),
-                ("claude-fable-5[1m]", "Fable"),
-                ("sonnet", "Sonnet"),
-                ("haiku", "Haiku"),
-            ]),
-            &Some(ModelId(String::from("opus"))),
-            Some(&Vec::from([
-                Effort::Low,
-                Effort::Medium,
-                Effort::High,
-                Effort::XHigh,
-                Effort::Max
-            ])),
         )
     );
     Ok(())
@@ -831,7 +781,7 @@ async fn unknown_control_request_gets_an_error_reply() -> TestResult<()> {
         played.unknown,
         BTreeMap::from([("brand_new_frame/-".to_owned(), 1)])
     );
-    let written = std::fs::read_to_string(claude.stdin_log)?
+    let written = std::fs::read_to_string(claude.join("stdin.jsonl"))?
         .lines()
         .map(serde_json::from_str::<Value>)
         .collect::<Result<Vec<Value>, _>>()?;
@@ -866,15 +816,14 @@ async fn a_resume_with_no_transcript_fails_with_the_clis_reason()
         ],
     )?;
     let claude = fake_claude("resume-missing", &stdout)?;
-    let refused = ClaudeSession::spawn(options(&claude))
+    let error = ClaudeSession::spawn(options(&claude))
         .await
         .err()
-        .map(|e| e.to_string());
+        .ok_or("expected a refusal")?;
+    assert!(matches!(error, Error::Refused(_)));
     assert_eq!(
-        refused.as_deref(),
-        Some(
-            "claude exited: No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10"
-        )
+        error.to_string(),
+        "claude exited: No conversation found with session ID: 5b0b7a52-1c9e-4d1e-9a4e-3f2f8c1d6a10"
     );
     Ok(())
 }
@@ -905,7 +854,7 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error()
     );
     assert_eq!(
         match error {
-            claude_cli::Error::MissingSession(missing) => Some(missing),
+            Error::MissingSession(missing) => Some(missing),
             _ => None,
         },
         Some(id)
@@ -1122,10 +1071,6 @@ async fn drive_boundary(
 async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
 -> TestResult<()> {
     let dir = test_dir("native-boundaries")?;
-    let fake = FakeClaude {
-        stdin_log: dir.join("stdin.jsonl"),
-        dir: dir.clone(),
-    };
     let recording = Vec::from([
         INITIALIZED,
         r#"{"fake":"await","match":{"type":"user"}}"#,
@@ -1140,7 +1085,7 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
         r#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":"native"}"#,
     ]).join("\n");
     std::fs::write(dir.join("stdout.jsonl"), recording)?;
-    let (session, mut events) = ClaudeSession::spawn(options(&fake)).await?;
+    let (session, mut events) = ClaudeSession::spawn(options(&dir)).await?;
     session.send_user(String::from("first")).await?;
     let first = drive_boundary(&mut events).await?;
     session.send_user(String::from("second")).await?;
@@ -1157,5 +1102,45 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
     );
     let _ = session.shutdown().await?;
     std::fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
+-> TestResult<()> {
+    let dir = test_dir("sandbox-tools")?;
+    let mut options = options(&dir);
+    let credential = proto::Credential {
+        kind: String::from("gateway"),
+        values: [
+            ("base_url", "https://gateway.example"),
+            ("token", "conductor-test-token"),
+        ]
+        .map(|(key, value)| (String::from(key), String::from(value)))
+        .into(),
+    };
+    options.credential = Some(claude::credential(&credential)?);
+
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&tools)?;
+    std::fs::write(tools.join("bwrap"), "")?;
+    let id = claude::SessionId(String::from("sandbox"));
+    let command = |tools: &Path| {
+        super::command(
+            &options,
+            &id,
+            super::sandbox_at("linux", tools.as_os_str()),
+        )
+    };
+    let missing = command(&tools);
+    std::fs::write(tools.join("socat"), "")?;
+    let supported = command(&tools);
+    let scrub = |command: &tokio::process::Command| {
+        command.as_std().get_envs().any(|(key, value)| {
+            key == "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+                && value == Some(std::ffi::OsStr::new("1"))
+        })
+    };
+    assert_eq!((scrub(&missing), scrub(&supported)), (false, true));
     Ok(())
 }
