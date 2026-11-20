@@ -1,0 +1,4 @@
+{"fake":"await","match":{"type":"control_request"}}
+{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{"claude_code_version":"2.1.316","models":[]}}}
+{"fake":"release","file":"exit-now"}
+{"fake":"exit"}

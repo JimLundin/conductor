@@ -57,7 +57,10 @@ Home Screen. The design is in
   profile, its sign-in (`agents::SignIn`) and credential forms as data
   (`claude::profile`, `codex::profile`) plus its starter, built by
   `claude_cli::plugin` and
-  `codex_cli::plugin`. Credentials are generic form values
+  `codex_cli::plugin`. `daemon::start` takes a bound endpoint, those plugins
+  and the host's options. `daemon::serve` uses the same entry point for
+  `conductord host`. Instances in the stored roster and those added during
+  a run use the same plugin launch path. Credentials are generic form values
   (`proto::Credential`); each provider's core reads its own. Only the
   binary, `crates/conductord`, wires the providers in. Its flags are
   `conductord host --cli <provider>=<path> --model <provider>=<model>`

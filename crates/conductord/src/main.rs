@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use daemon::start::{Hosting, Plugins};
+use daemon::{Hosting, Plugins};
 use proto::Provider;
 use runtime::Settings;
 
@@ -95,17 +95,12 @@ async fn main() -> anyhow::Result<()> {
                 home: args.home,
                 projects: args.projects,
             };
-            daemon::start::serve(hosting, plugins(args.clis, args.models)).await
+            daemon::serve(hosting, plugins(args.clis, args.models)).await
         }
         Cmd::Login(args) => {
             let plugins = plugins(Vec::new(), Vec::new());
-            daemon::start::login(
-                args.data_dir,
-                plugins,
-                args.provider,
-                args.account,
-            )
-            .await
+            daemon::login(args.data_dir, plugins, args.provider, args.account)
+                .await
         }
     }
 }

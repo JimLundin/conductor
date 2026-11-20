@@ -256,7 +256,15 @@ that is enough for this app's text-sized traffic.
 
 ### 5.1 Actors
 
-Every piece of state has one owner task; handles talk to it over channels.
+`daemon::start` takes a bound iroh endpoint, the provider plugins and the
+host's options, including its data directory. It opens the credential store
+and durable log, starts the home and registry tasks, and serves the protocol
+on the endpoint. It returns a `Hosted` handle with the client's connection
+target and a shutdown operation. `daemon::serve` binds the production
+endpoint with the host's persistent key, calls `start`, prints the ticket
+and QR code, and shuts the host down on Ctrl-C.
+
+Every piece of state has one owner task. Handles talk to it over channels.
 
 - **Log** assigns each durable event its seq, keeps the events, and hands a
   new subscriber its replay and the live broadcast in one turn, so nothing
@@ -271,7 +279,10 @@ Every piece of state has one owner task; handles talk to it over channels.
   refreshing, and reports a failure if discovery fails. Per-instance
   ordering also prevents older Codex reconfiguration from running after a
   newer one. An added instance stays unavailable until its CLI has
-  started, which runs beside registry requests the same way.
+  started, which runs beside registry requests the same way. Instances in
+  the stored roster take the same launch path before the registry restores
+  sessions. The registry derives launch settings, sign-in and the instruction
+  file a CLI reads from its plugin.
 - **Session** owns one agent's runtime (§5.2), its turn and its open
   requests. An interrupt that arrives before the agent began the turn is
   held until it does. An open request is withdrawn when the turn ends. It
@@ -290,8 +301,7 @@ revert turns, list models, set credentials, shut down) and waits for its
 `runtime::Runtime`, a channel pair.
 
 The daemon knows each provider only by the `runtime::Plugin` it is handed,
-in a `daemon::start::Plugins` map keyed by `Provider`. A plugin is data
-plus one function:
+in a `daemon::Plugins` map keyed by `Provider`.
 
 - `profile: agents::Profile`, data from the provider's core
   (`claude::profile`, `codex::profile`): the `Provider`; its
@@ -403,7 +413,7 @@ probes and installs as `host::start` decides, and sends the plugins'
   agent's runtime task, with their replay tests, and build their plugins
   (`claude_cli::plugin`, `codex_cli::plugin`). All logging happens here.
 - `daemon`: the host behind `conductord`, a library that takes the
-  plugins.
+  plugins and exposes its start, serve and login functions.
 - `conductord`: the binary, the one place that names the providers. It
   parses the command line, builds each provider's plugin with its
   settings and calls into `daemon`. Its flags are generic:
@@ -1702,9 +1712,11 @@ client catches up from its cursors.
 - **Replay tests** (`crates/claude-cli/tests`, `crates/codex-cli/tests`):
   recorded CLI sessions through the
   parsers, asserting exact events.
-- **Daemon e2e** (`crates/daemon/tests/e2e.rs`): the real daemon with fake
-  CLIs and native `HostLink`s on loopback: approvals, interrupts, reconnects,
-  epochs, two Codex sessions on one server.
+- **Daemon e2e** (`crates/daemon/tests/e2e.rs`) runs the real daemon with
+  fake CLIs and native `HostLink`s on loopback. It calls `daemon::start` with the
+  production plugins configured to run the fakes. Its scenarios include
+  approvals, interrupts, reconnects, epochs and two Codex sessions on one
+  server. It checks rendered session state through the client's `HostView`.
 - **Browser e2e** (`tools/e2e-browser.sh`): the web app in Chromium and
   WebKit against the real daemon and the fake CLIs, with screenshots in
   `docs/p1/screens/`.

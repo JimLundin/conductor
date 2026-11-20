@@ -4,15 +4,14 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::credentials::{Store, Stored};
 use crate::home::{HomeClone, Homing};
 use crate::log::Log;
-use crate::registry::{
-    Builder, Instructor, Launcher, Launchers, Registry, Setup,
-};
+use crate::registry::{Launcher, Registry};
 use crate::serve::Conductor;
-use crate::sign_in::{Signer, Signing};
+use crate::sign_in::Signing;
 use agents::runtime::Command;
 use anyhow::Context;
 use host::start::{Next, Output};
@@ -21,6 +20,7 @@ use install::{Home, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
+use net::Target;
 use proto::{Account, Catalog, Instance, InstanceId, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
@@ -29,23 +29,23 @@ use tracing::Instrument;
 
 /// The providers a host runs, each by its plugin.
 #[derive(Debug, Clone, Default)]
-pub struct Plugins(BTreeMap<Provider, Plugin>);
+pub struct Plugins(Arc<BTreeMap<Provider, Plugin>>);
 
 impl FromIterator<Plugin> for Plugins {
     fn from_iter<I: IntoIterator<Item = Plugin>>(plugins: I) -> Self {
-        Self(
+        Self(Arc::new(
             plugins
                 .into_iter()
                 .map(|plugin| (plugin.profile.provider, plugin))
                 .collect(),
-        )
+        ))
     }
 }
 
 impl Plugins {
     /// How each provider presents itself, as its plugin says.
     #[must_use]
-    pub fn catalog(&self) -> Catalog {
+    fn catalog(&self) -> Catalog {
         Catalog(
             self.0
                 .iter()
@@ -57,77 +57,71 @@ impl Plugins {
     }
 }
 
-/// Starts the CLIs of the instances the app adds while the host runs.
-#[must_use]
-pub fn builder(plugins: Plugins, data_dir: PathBuf) -> Builder {
-    Builder::new(move |id, instance| {
-        let each = plugins.clone();
-        let data = data_dir.clone();
-        async move { launcher(&each, &data, id, instance).await }
-    })
+#[derive(Debug, Clone)]
+pub struct Providers {
+    plugins: Plugins,
+    data_dir: PathBuf,
 }
 
-/// Says how each instance signs in from the app, by its plugin.
-#[must_use]
-pub fn signer(plugins: Plugins, data_dir: PathBuf) -> Signer {
-    Signer::new(move |id, instance| {
-        let each = plugins.clone();
-        let data = data_dir.clone();
-        async move { signing(&each, &data, &id, &instance).await }
-    })
-}
+impl Providers {
+    pub const fn new(plugins: Plugins, data_dir: PathBuf) -> Self {
+        Self { plugins, data_dir }
+    }
 
-/// How `instance` signs in: the CLI its settings give, or else the pinned
-/// one, installed if it isn't, in the instance's home, as its plugin
-/// describes.
-///
-/// # Errors
-///
-/// No plugin runs its provider, or its home or CLI can't be had.
-pub async fn signing(
-    plugins: &Plugins,
-    data_dir: &Path,
-    id: &InstanceId,
-    instance: &Instance,
-) -> Result<Signing, String> {
-    let Prepared {
-        plugin,
-        settings,
-        home,
-        work: _,
-    } = prepare(plugins, data_dir, id, instance)?;
-    let profile = plugin.profile;
-    let program = match settings.path {
-        Some(given) => given,
-        None => install(profile.pin, data_dir)
-            .await
-            .map_err(|err| err.to_string())?,
-    };
-    Ok(Signing {
-        program,
-        home,
-        flow: profile.sign_in,
-        check: profile.status,
-        account: profile.account,
-        read: plugin.account,
-    })
-}
+    pub fn catalog(&self) -> Catalog {
+        self.plugins.catalog()
+    }
 
-/// A session's instructions from the home, leaving out the file its
-/// provider's CLI reads by itself, as its plugin says.
-fn instructor(plugins: &Plugins, home: HomeClone) -> Instructor {
-    let files = plugins
-        .0
-        .iter()
-        .map(|(provider, plugin)| {
-            (*provider, plugin.profile.instructions_file.clone())
-        })
-        .collect::<BTreeMap<Provider, String>>();
-    Instructor::new(move |created, runs_in, provider| {
-        files
+    pub fn instructions_file(&self, provider: Provider) -> Option<String> {
+        self.plugins
+            .0
             .get(&provider)
-            .and_then(|file| home.instructions(created, runs_in, file))
-    })
+            .map(|plugin| plugin.profile.instructions_file.clone())
+    }
+
+    pub async fn launch(
+        &self,
+        id: &InstanceId,
+        instance: Instance,
+    ) -> Launcher {
+        let span = tracing::info_span!("instance", id = %id);
+        match prepare(&self.plugins, &self.data_dir, id, &instance) {
+            Ok(prepared) => {
+                run(prepared, &self.data_dir, instance)
+                    .instrument(span)
+                    .await
+            }
+            Err(reason) => Launcher::Unavailable(reason),
+        }
+    }
+
+    pub async fn signing(
+        &self,
+        id: &InstanceId,
+        instance: &Instance,
+    ) -> Result<Signing, String> {
+        let Prepared {
+            plugin,
+            settings,
+            home,
+            work: _,
+        } = prepare(&self.plugins, &self.data_dir, id, instance)?;
+        let profile = plugin.profile;
+        let program = match settings.path {
+            Some(given) => given,
+            None => install(profile.pin, &self.data_dir)
+                .await
+                .map_err(|err| err.to_string())?,
+        };
+        Ok(Signing {
+            program,
+            home,
+            flow: profile.sign_in,
+            check: profile.status,
+            account: profile.account,
+            read: plugin.account,
+        })
+    }
 }
 
 /// How `conductord host` serves.
@@ -162,56 +156,145 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         projects,
     } = hosting;
     let data_dir = data_dir_or_default(given)?;
-    let (store, stored) = Store::open(&data_dir)?;
-    let catalog = plugins.catalog();
-    let mut launchers = Launchers::new();
-    for (id, instance) in stored.roster(&catalog).0 {
-        let started = launcher(&plugins, &data_dir, id.clone(), instance);
-        launchers.insert(id, started.await);
+    let endpoint = Endpoint::builder(presets::N0)
+        .relay_mode(RelayMode::Custom(n0_relays()))
+        .secret_key(crate::load_or_create_key(&data_dir)?)
+        .bind()
+        .await?;
+    endpoint.online().await;
+    let relay = endpoint
+        .addr()
+        .relay_urls()
+        .next()
+        .cloned()
+        .context("online, but no home relay")?;
+    let hosted = start(
+        endpoint,
+        plugins,
+        HostOptions {
+            data_dir: data_dir.clone(),
+            name,
+            home: remote,
+            projects,
+        },
+    )
+    .await?;
+    let target = hosted.target();
+    let ticket = Ticket {
+        host: *target.addr.id.as_bytes(),
+        relay: relay.to_string(),
+        token: target.token,
+    };
+    let ended = match announce(&data_dir, &web_url, &ticket) {
+        Ok(()) => tokio::select! {
+            result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
+            () = hosted.log.stopped() => Err(anyhow::Error::from(crate::Stopped {})),
+        },
+        Err(error) => Err(error),
+    };
+    hosted.shutdown().await?;
+    ended
+}
+
+/// Settings for a host on an already bound endpoint.
+#[derive(Debug, Clone)]
+pub struct HostOptions {
+    /// Directory for this host's database, credentials and instance homes.
+    pub data_dir: PathBuf,
+    /// Name shown to clients.
+    pub name: String,
+    /// Home remote, or `None` to use the stored remote.
+    pub home: Option<String>,
+    /// Directories scanned for project checkouts.
+    pub projects: Vec<PathBuf>,
+}
+
+/// A running host.
+pub struct Hosted {
+    router: Router,
+    log: Log,
+    token: proto::AuthToken,
+}
+
+impl Hosted {
+    /// Address and authentication token for clients.
+    #[must_use]
+    pub fn target(&self) -> Target {
+        Target {
+            addr: self.router.endpoint().addr(),
+            token: self.token,
+        }
     }
+
+    /// Stops accepting connections, closes the endpoint and closes the event log.
+    ///
+    /// # Errors
+    ///
+    /// The router or event log failed to shut down.
+    pub async fn shutdown(self) -> anyhow::Result<()> {
+        let Self { router, log, .. } = self;
+        let stopped = router.shutdown().await;
+        drop(router);
+        log.shutdown().await?;
+        stopped?;
+        Ok(())
+    }
+}
+
+/// Starts the daemon on `endpoint`, using the given provider plugins.
+///
+/// # Errors
+///
+/// The host's persistent state could not be opened or recovered.
+pub async fn start(
+    endpoint: Endpoint,
+    plugins: Plugins,
+    options: HostOptions,
+) -> anyhow::Result<Hosted> {
+    let started = assemble(plugins, options).await;
+    match started {
+        Ok((conductor, log, token)) => {
+            let router = Router::builder(endpoint)
+                .accept(proto::ALPN, conductor)
+                .spawn();
+            Ok(Hosted { router, log, token })
+        }
+        Err(error) => {
+            endpoint.close().await;
+            Err(error)
+        }
+    }
+}
+
+async fn assemble(
+    plugins: Plugins,
+    options: HostOptions,
+) -> anyhow::Result<(Conductor, Log, proto::AuthToken)> {
+    let HostOptions {
+        data_dir,
+        name,
+        home: remote,
+        projects,
+    } = options;
+    let token = crate::load_or_create_token(&data_dir)?;
+    let (store, stored) = Store::open(&data_dir)?;
+    let log = Log::open(name.clone(), &data_dir.join("conductor.redb"))?;
     let home = HomeClone::spawn(Homing {
-        host: name.clone(),
+        host: name,
         data_dir: data_dir.clone(),
         remote,
         roots: projects,
     });
-    let setup = Setup {
-        launchers,
+    let registry = Registry::spawn(
+        log.clone(),
         store,
-        stored,
-        catalog,
-        builder: builder(plugins.clone(), data_dir.clone()),
-        instructor: instructor(&plugins, home.clone()),
-        signer: signer(plugins, data_dir.clone()),
-    };
-    let Hosted { router, log } =
-        listen(data_dir, web_url, (name, home), setup).await?;
-    let ended = tokio::select! {
-        result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
-        () = log.stopped() => Err(anyhow::Error::from(crate::Stopped {})),
-    };
-    router.shutdown().await?;
-    drop(router);
-    ended?;
-    Ok(())
-}
-
-/// How the host runs `instance`: its provider's plugin, in its own home
-/// and work dir, with its credential. A CLI that can't start leaves it
-/// unavailable, for the reason.
-pub async fn launcher(
-    plugins: &Plugins,
-    data_dir: &Path,
-    id: InstanceId,
-    instance: Instance,
-) -> Launcher {
-    let span = tracing::info_span!("instance", id = %id);
-    match prepare(plugins, data_dir, &id, &instance) {
-        Ok(prepared) => {
-            run(prepared, data_dir, instance).instrument(span).await
-        }
-        Err(reason) => Launcher::Unavailable(reason),
-    }
+        &stored,
+        Providers::new(plugins, data_dir),
+        home.clone(),
+    )
+    .await?;
+    let conductor = Conductor::new(log.clone(), registry, home, token);
+    Ok((conductor, log, token))
 }
 
 /// An instance's plugin, home and work dir, and its settings over the
@@ -346,7 +429,9 @@ pub async fn login(
     let settings = roster
         .of(&instance)
         .with_context(|| format!("this host has no instance {instance}"))?;
-    let signing = signing(&plugins, &data_dir, &instance, settings)
+    let providers = Providers::new(plugins, data_dir);
+    let signing = providers
+        .signing(&instance, settings)
         .await
         .map_err(anyhow::Error::msg)?;
     let status =
@@ -369,7 +454,7 @@ pub async fn login(
             "signed in, but the store doesn't open to keep {to}: {reason}"
         );
     }
-    move_instance(&data_dir, &instance, &to)?;
+    move_instance(&providers.data_dir, &instance, &to)?;
     store.save(&next)?;
     tracing::info!(target: "host", instance = %to, "signed in");
     Ok(())
@@ -437,7 +522,7 @@ const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// How the CLI's own sign-in check against its private home exited, and
 /// what it printed, if it ran to the end within `SIGN_IN_CHECK`.
-pub(crate) async fn sign_in_check(
+pub async fn sign_in_check(
     mut status: tokio::process::Command,
 ) -> Result<(Option<i32>, String), String> {
     status.kill_on_drop(true);
@@ -451,49 +536,6 @@ pub(crate) async fn sign_in_check(
             )
         })
         .map_err(|err| err.to_string())
-}
-
-struct Hosted {
-    router: Router,
-    log: Log,
-}
-
-async fn listen(
-    data_dir: PathBuf,
-    web_url: String,
-    (name, home): (String, HomeClone),
-    setup: Setup,
-) -> anyhow::Result<Hosted> {
-    let endpoint = Endpoint::builder(presets::N0)
-        .relay_mode(RelayMode::Custom(n0_relays()))
-        .secret_key(crate::load_or_create_key(&data_dir)?)
-        .bind()
-        .await?;
-    endpoint.online().await;
-    let relay = endpoint
-        .addr()
-        .relay_urls()
-        .next()
-        .cloned()
-        .context("online, but no home relay")?;
-    let token = crate::load_or_create_token(&data_dir)?;
-    let log = Log::open(name, &data_dir.join("conductor.redb"))?;
-    let conductor = Conductor::new(
-        log.clone(),
-        Registry::spawn(log.clone(), setup),
-        home,
-        token,
-    );
-    let ticket = Ticket {
-        host: *endpoint.id().as_bytes(),
-        relay: relay.to_string(),
-        token,
-    };
-    let router = Router::builder(endpoint)
-        .accept(proto::ALPN, conductor)
-        .spawn();
-    announce(&data_dir, &web_url, &ticket)?;
-    Ok(Hosted { router, log })
 }
 
 /// How the CLI's `--version` run exited.

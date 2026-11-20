@@ -13,7 +13,7 @@ use std::path::Path;
 
 use host::log::{Begun, Effect, Kind, Log as Core, Ticket};
 use proto::{
-    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
+    Catalog, CommandId, CommandResult, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -43,12 +43,12 @@ struct CommandStart {
     reply: oneshot::Sender<BeginCommand>,
 }
 
-pub(crate) enum BeginCommand {
+pub enum BeginCommand {
     Cached(CommandResult),
     Execute(CommandLease),
 }
 
-pub(crate) struct CommandLease {
+pub struct CommandLease {
     log: Log,
     key: CommandId,
 }
@@ -137,8 +137,9 @@ struct LogActor {
 }
 
 impl Log {
+    #[cfg(test)]
     #[must_use]
-    pub fn spawn(name: String, epoch: Epoch) -> Self {
+    pub fn spawn(name: String, epoch: proto::Epoch) -> Self {
         Self::start(Core::new(name, epoch, Vec::new()), None)
     }
 
@@ -541,7 +542,7 @@ mod tests {
     #[tokio::test]
     async fn deltas_go_live_with_the_last_seq_and_are_never_replayed()
     -> Result<(), Box<dyn std::error::Error>> {
-        let log = Log::spawn(String::from("test"), Epoch(5));
+        let log = Log::spawn(String::from("test"), proto::Epoch(5));
         let mut live = log.subscribe(HostSeq(0)).await?.live;
         log.append(SessionId(1), EventKind::SessionReady).await?;
         log.append(SessionId(1), delta("a")).await?;
