@@ -14,8 +14,8 @@ pub struct Undo {
 }
 
 /// The pending undo, as planned, and its phase.
-#[derive(Debug, Clone)]
-enum Recovery {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recovery {
     Native(Undo),
     Files(Undo),
 }
@@ -27,8 +27,7 @@ pub enum UndoPlan {
         workspace: Workspace,
         commit: String,
     },
-    Native(Undo),
-    Files(Undo),
+    Resume(Recovery),
 }
 
 #[derive(Debug, Clone)]
@@ -110,7 +109,7 @@ impl Book {
         }
     }
 
-    fn apply(&mut self, event: &Event) {
+    pub fn apply(&mut self, event: &Event) {
         match &event.kind {
             EventKind::UserMessage { .. } => self.accept_message(event.seq),
             kind => self.apply_kind(kind),
@@ -198,7 +197,7 @@ impl Book {
         }
         let workspace = self.workspace.as_ref()?;
         let snapshot = self.snapshot.as_ref()?;
-        let previous = self.last();
+        let previous = self.active_checkpoint();
         Some(SnapshotPlan {
             workspace: workspace.clone(),
             reserved: self.next_reservation(),
@@ -234,11 +233,10 @@ impl Book {
         turn_running: bool,
     ) -> Result<UndoPlan, Rejection> {
         match &self.recovery {
-            Some(Recovery::Native(undo)) if undo.selected == selected => {
-                Ok(UndoPlan::Native(undo.clone()))
-            }
-            Some(Recovery::Files(undo)) if undo.selected == selected => {
-                Ok(UndoPlan::Files(undo.clone()))
+            Some(phase @ (Recovery::Native(undo) | Recovery::Files(undo)))
+                if undo.selected == selected =>
+            {
+                Ok(UndoPlan::Resume(phase.clone()))
             }
             Some(_) => Err(Rejection::UndoInProgress),
             None if turn_running => Err(Rejection::TurnInProgress),
@@ -315,14 +313,14 @@ impl Book {
                         "retained native turn prefix contains an unobserved boundary",
                     ),
                 },
-                None => availability(self.last(), history),
+                None => availability(self.active_checkpoint(), history),
             },
-            _ => availability(self.last(), history),
+            _ => availability(self.active_checkpoint(), history),
         }
     }
 
     #[must_use]
-    fn last(&self) -> Option<&Checkpoint> {
+    pub fn active_checkpoint(&self) -> Option<&Checkpoint> {
         self.active.last().and_then(|id| self.checkpoints.get(id))
     }
 }
@@ -406,7 +404,7 @@ fn undo_history(
 
 #[cfg(test)]
 mod tests {
-    use super::{Book, UndoPlan};
+    use super::{Book, Recovery, UndoPlan};
     use proto::{
         Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor, HostSeq,
         Rejection, SessionId, UndoAvailability,
@@ -486,13 +484,21 @@ mod tests {
                     },
                 }),
                 checkpoint(2),
+                event(EventKind::NativeTurnStarted {
+                    history: HistoryAnchor::Turns {
+                        conversation: String::from("native"),
+                        turn: Some(String::from("later")),
+                    },
+                    turn_start: Some(HostSeq(3)),
+                }),
             ])
             .collect::<Vec<Event>>();
         assert_eq!(
-            Book::replay(&unknown).availability(&HistoryAnchor::Turns {
-                conversation: String::from("native"),
-                turn: Some(String::from("later"))
-            }),
+            Book::replay(&unknown)
+                .plan_snapshot()
+                .ok_or("later turn has no pending snapshot")?
+                .checkpoint(String::from("later"))
+                .undo,
             UndoAvailability::Unavailable {
                 reason: String::from(
                     "retained native turn prefix contains an unobserved boundary"
@@ -503,13 +509,12 @@ mod tests {
     }
 
     #[test]
-    fn failed_snapshot_retains_the_completed_native_boundary_for_retry()
-    -> Result<(), &'static str> {
+    fn failed_snapshot_retains_the_completed_native_boundary_for_retry() {
         let history = HistoryAnchor::Messages {
             conversation: String::from("native"),
             message: Some(String::from("finished")),
         };
-        let events = Vec::from([
+        let events = [
             workspace(),
             checkpoint(0),
             Event {
@@ -538,45 +543,100 @@ mod tests {
             event(EventKind::TurnCompleted {
                 outcome: proto::TurnOutcome::Completed,
             }),
-        ]);
-        assert_live_matches_replay(&events);
-        let live = Book::replay(&events);
-        let retry = live
-            .plan_snapshot()
-            .ok_or("retry has no pending snapshot")?;
-        assert_eq!(retry.reserved, CheckpointId(2));
-        assert_eq!(retry.base.as_deref(), Some("0"));
-        let saved_checkpoint = retry.checkpoint(String::from("retry"));
-        assert_eq!(saved_checkpoint.history, history);
-        assert_eq!(saved_checkpoint.turn_start, Some(HostSeq(5)));
-        assert_eq!(saved_checkpoint.undo, UndoAvailability::Available);
-        let saved = events
-            .into_iter()
-            .chain([event(EventKind::CheckpointCreated {
-                checkpoint: saved_checkpoint,
-            })])
-            .collect::<Vec<Event>>();
-        assert_live_matches_replay(&saved);
-        assert_eq!(Book::replay(&saved).plan_snapshot(), None);
-        Ok(())
+            event(EventKind::CheckpointReserved {
+                checkpoint: CheckpointId(2),
+            }),
+            event(EventKind::CheckpointCreated {
+                checkpoint: Checkpoint {
+                    id: CheckpointId(2),
+                    parent: Some(CheckpointId(0)),
+                    turn_start: Some(HostSeq(5)),
+                    commit: String::from("retry"),
+                    history: history.clone(),
+                    undo: UndoAvailability::Available,
+                },
+            }),
+        ];
+        let started = HistoryAnchor::Messages {
+            conversation: String::from("native"),
+            message: None,
+        };
+        let expected = [
+            (None, 1, None),
+            (None, 1, None),
+            (Some(HistoryAnchor::Unknown), 1, None),
+            (Some(started.clone()), 1, Some(started)),
+            (Some(history.clone()), 1, Some(history.clone())),
+            (Some(history.clone()), 2, Some(history.clone())),
+            (Some(history.clone()), 2, Some(history.clone())),
+            (Some(history.clone()), 2, Some(history.clone())),
+            (Some(history.clone()), 3, Some(history.clone())),
+            (None, 3, Some(history)),
+        ];
+        let mut live = Book::default();
+        for (index, (boundary, reservation, resume)) in
+            expected.into_iter().enumerate()
+        {
+            live.apply(&events[index]);
+            for book in [&live, &Book::replay(&events[..=index])] {
+                assert_eq!(book.next_reservation(), CheckpointId(reservation));
+                assert_eq!(book.resume(true), resume);
+                assert_turn_checkpoints(book, index);
+                assert_snapshot(book, boundary.as_ref(), reservation);
+            }
+        }
     }
 
-    fn assert_live_matches_replay(events: &[Event]) {
-        let mut live = Book::default();
-        for (index, event) in events.iter().enumerate() {
-            match &event.kind {
-                EventKind::UserMessage { .. } => live.accept_message(event.seq),
-                kind => live.apply_kind(kind),
+    fn assert_turn_checkpoints(book: &Book, index: usize) {
+        assert_eq!(
+            book.active_checkpoint().map(|checkpoint| checkpoint.id),
+            match index {
+                0 => None,
+                9 => Some(CheckpointId(2)),
+                _ => Some(CheckpointId(0)),
             }
-            let reopened = Book::replay(&events[..=index]);
-            assert_eq!(live.plan_snapshot(), reopened.plan_snapshot());
-            assert_eq!(live.next_reservation(), reopened.next_reservation());
-            assert_eq!(live.last(), reopened.last());
-            assert_eq!(live.resume(true), reopened.resume(true));
+        );
+        let diff = book.diff(CheckpointId(2));
+        let plan = book.plan_undo(CheckpointId(2), "fork", false);
+        if index == 9 {
             assert_eq!(
-                live.diff(CheckpointId(2)),
-                reopened.diff(CheckpointId(2))
+                diff.map(|compared| (
+                    compared.checkpoint.commit,
+                    compared.parent.commit
+                )),
+                Some((String::from("retry"), String::from("0")))
             );
+            assert!(matches!(plan, Ok(UndoPlan::Start { undo, commit, .. })
+                if undo.restored == CheckpointId(0) && commit == "0"));
+        } else {
+            assert_eq!(diff, None);
+            assert_eq!(plan, Err(Rejection::CheckpointUnavailable));
+        }
+    }
+
+    fn assert_snapshot(
+        book: &Book,
+        boundary: Option<&HistoryAnchor>,
+        reservation: u64,
+    ) {
+        let pending = book.plan_snapshot();
+        assert_eq!(pending.is_some(), boundary.is_some());
+        if let Some(plan) = pending {
+            assert_eq!(plan.reserved, CheckpointId(reservation));
+            assert_eq!(plan.base.as_deref(), Some("0"));
+            let checkpoint = plan.checkpoint(String::from("retry"));
+            assert_eq!(Some(&checkpoint.history), boundary);
+            assert_eq!(checkpoint.parent, Some(CheckpointId(0)));
+            assert_eq!(checkpoint.turn_start, Some(HostSeq(5)));
+            if matches!(
+                boundary,
+                Some(HistoryAnchor::Messages {
+                    message: Some(_),
+                    ..
+                })
+            ) {
+                assert_eq!(checkpoint.undo, UndoAvailability::Available);
+            }
         }
     }
 
@@ -617,67 +677,91 @@ mod tests {
         ];
         let mut live = Book::default();
         for (index, event) in events.iter().enumerate() {
-            live.apply_kind(&event.kind);
-            let replay = Book::replay(&events[..=index]);
-            let plan = live.plan_undo(selected, "fork", false);
-            assert_eq!(plan, replay.plan_undo(selected, "fork", false));
-            assert_eq!(live.next_reservation(), replay.next_reservation());
-            assert_eq!(
-                live.next_reservation(),
-                CheckpointId(match index {
-                    0 | 1 => 1,
-                    2 => 2,
-                    3 => 3,
-                    _ => 4,
-                }),
-            );
-            let parent = live.last().map(|checkpoint| checkpoint.id);
-            assert_eq!(parent, replay.last().map(|checkpoint| checkpoint.id));
-            assert_eq!(
-                parent,
-                match index {
-                    0 => None,
-                    1 | 9 => Some(restored),
-                    2 => Some(selected),
-                    _ => Some(CheckpointId(2)),
-                },
-            );
-            assert_eq!(
-                live.diff(CheckpointId(2)),
-                replay.diff(CheckpointId(2))
-            );
-            match index {
-                0 | 1 | 9 => {
-                    assert_eq!(plan, Err(Rejection::CheckpointUnavailable));
-                }
-                2..=4 => assert!(
-                    matches!(plan, Ok(UndoPlan::Start { undo, commit, .. })
-                    if undo.restored == restored && undo.history == HistoryAnchor::Fresh && commit == "0")
-                ),
-                5 | 6 => assert!(matches!(plan, Ok(UndoPlan::Native(undo))
-                    if undo.selected == selected && undo.history == HistoryAnchor::Fresh)),
-                7 | 8 => assert!(matches!(plan, Ok(UndoPlan::Files(undo))
-                    if undo.selected == selected && undo.restored == restored)),
-                _ => return Err("unexpected prefix"),
-            }
-            if (5..=8).contains(&index) {
-                assert_eq!(
-                    live.plan_undo(CheckpointId(2), "another fork", false),
-                    Err(Rejection::UndoInProgress)
-                );
-            } else {
-                assert_eq!(
-                    live.plan_undo(restored, "fork", false),
-                    Err(Rejection::CheckpointUnavailable)
-                );
+            live.apply(event);
+            for book in [&live, &Book::replay(&events[..=index])] {
+                assert_undo_prefix(book, index)?;
             }
         }
-        assert_eq!(live.diff(restored), None);
-        let discarded = live
-            .diff(CheckpointId(2))
-            .ok_or("undo lost the immutable diff")?;
-        assert_eq!(discarded.checkpoint.commit, "2");
-        assert_eq!(discarded.parent.commit, "1");
+        let mut after_undo = Vec::from(events);
+        after_undo.push(event(EventKind::UserMessage {
+            text: String::from("edit again"),
+            by: proto::ClientName(String::from("phone")),
+        }));
+        let book = Book::replay(&after_undo);
+        let next = book.plan_snapshot().ok_or("missing post-undo snapshot")?;
+        assert_eq!(next.reserved, CheckpointId(4));
+        assert_eq!(next.base.as_deref(), Some("0"));
+        Ok(())
+    }
+
+    fn assert_undo_prefix(
+        book: &Book,
+        index: usize,
+    ) -> Result<(), &'static str> {
+        let selected = CheckpointId(1);
+        let restored = CheckpointId(0);
+        let plan = book.plan_undo(selected, "fork", false);
+        assert_eq!(
+            book.next_reservation(),
+            CheckpointId(match index {
+                0 | 1 => 1,
+                2 => 2,
+                3 => 3,
+                _ => 4,
+            }),
+        );
+        assert_eq!(
+            book.active_checkpoint().map(|checkpoint| checkpoint.id),
+            match index {
+                0 => None,
+                1 | 9 => Some(restored),
+                2 => Some(selected),
+                _ => Some(CheckpointId(2)),
+            }
+        );
+        assert_eq!(book.undo_pending(), (5..=8).contains(&index));
+        assert_eq!(
+            book.resume(true),
+            (index >= 7).then_some(HistoryAnchor::Fresh)
+        );
+        assert_eq!(
+            book.diff(CheckpointId(2)).map(|compared| (
+                compared.checkpoint.commit,
+                compared.parent.commit
+            )),
+            (index >= 3).then(|| (String::from("2"), String::from("1")))
+        );
+        match index {
+            0 | 1 | 9 => {
+                assert_eq!(plan, Err(Rejection::CheckpointUnavailable));
+            }
+            2..=4 => {
+                assert!(
+                    matches!(plan, Ok(UndoPlan::Start { undo, commit, .. })
+                if undo.restored == restored && undo.history == HistoryAnchor::Fresh && commit == "0")
+                );
+            }
+            5 | 6 => assert!(
+                matches!(plan, Ok(UndoPlan::Resume(Recovery::Native(undo)))
+                if undo.selected == selected && undo.history == HistoryAnchor::Fresh)
+            ),
+            7 | 8 => assert!(
+                matches!(plan, Ok(UndoPlan::Resume(Recovery::Files(undo)))
+                if undo.selected == selected && undo.restored == restored)
+            ),
+            _ => return Err("unexpected prefix"),
+        }
+        if (5..=8).contains(&index) {
+            assert_eq!(
+                book.plan_undo(CheckpointId(2), "another fork", false),
+                Err(Rejection::UndoInProgress)
+            );
+        } else {
+            assert_eq!(
+                book.plan_undo(restored, "fork", false),
+                Err(Rejection::CheckpointUnavailable)
+            );
+        }
         Ok(())
     }
 
@@ -691,16 +775,13 @@ mod tests {
             text: String::from("edit again"),
             by: proto::ClientName(String::from("phone")),
         });
-        let mut live = Book::default();
-        live.apply_kind(&restored.kind);
-        assert_eq!(live.resume(true), Some(HistoryAnchor::Fresh));
-        live.accept_message(accepted.seq);
         assert_eq!(
-            live.resume(true),
-            Book::replay(&[restored, accepted]).resume(true)
+            Book::replay(core::slice::from_ref(&restored)).resume(true),
+            Some(HistoryAnchor::Fresh)
         );
-        assert_eq!(live.resume(true), None);
-        assert_eq!(live.resume(false), Some(HistoryAnchor::Fresh));
+        let book = Book::replay(&[restored, accepted]);
+        assert_eq!(book.resume(true), None);
+        assert_eq!(book.resume(false), Some(HistoryAnchor::Fresh));
     }
 
     #[test]

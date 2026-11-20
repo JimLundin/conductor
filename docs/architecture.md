@@ -592,9 +592,9 @@ until someone re-records them by hand (§6.2).
   to. The index follows the branch, so what the agent staged apart from
   its files, such as a file `.gitignore` names but it added, isn't kept. Durable reservations prevent
   checkpoint id reuse after undo or a failed snapshot. A failed snapshot
-  retains its native turn boundary and retries before Send or a closed
-  session's Continue; an unsuccessful retry rejects that command before
-  another turn can change the files. This preserves per-turn diff parents.
+  retains its native turn boundary. Send and Continue retry the snapshot
+  between turns, even if the agent is already running. An unsuccessful retry
+  rejects the command. This preserves per-turn diff parents.
 - **Removal (built):** `RemoveSession` is refused while a turn runs. It
   stops a running agent (`SessionClosed`), then follows
   the workspace removal plan: commit the worktree's untracked and changed

@@ -1300,6 +1300,7 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (sent(), Vec::from([saved(), accepted()])),
+            (start(), Vec::from([accepted()])),
             (
                 turn_started(),
                 Vec::from([
@@ -1313,6 +1314,7 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
                     }),
                 ]),
             ),
+            (start(), Vec::from([accepted()])),
             (
                 turn_ended(),
                 Vec::from([
@@ -1335,6 +1337,26 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
                     }),
                     completed(),
                 ]),
+            ),
+            (
+                start(),
+                Vec::from([
+                    Effect::Emit(EventKind::CheckpointReserved {
+                        checkpoint: CheckpointId(2),
+                    }),
+                    Effect::Barrier,
+                    Effect::Call(Call::Snapshot {
+                        workspace: workspace(),
+                        checkpoint: CheckpointId(2),
+                        previous: Some(text("c0")),
+                    }),
+                ]),
+            ),
+            (
+                Input::Snapshotted(Err(text("disk full"))),
+                Vec::from([rejected(Rejection::WorkspaceFailure {
+                    reason: text("disk full"),
+                })]),
             ),
         ]),
     );

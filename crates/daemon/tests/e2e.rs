@@ -5223,6 +5223,15 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
         kind,
         EventKind::TurnsUndone { .. }
     )));
+    assert_ne!(
+        undo_failure(send(&phone, undo.clone()).await?)?.find("index.lock"),
+        None
+    );
+    let live_retry = events_until(&mut updates, Until::UndoFailure).await?;
+    assert!(!any_event(&live_retry, |kind| matches!(
+        kind,
+        EventKind::UndoStarted { .. } | EventKind::UndoHistoryRestored { .. }
+    )));
     assert_undo_blocks(&phone, continued(session)).await?;
     let second = restart(first, &data, address, &phone, &mut updates).await?;
     assert_undo_blocks(&phone, message(session, "blocked after restart"))
@@ -5385,7 +5394,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
 }
 
 #[tokio::test]
-async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
+async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_message()
 -> Fallible {
     let source = scratch("snapshot-retry", "claude-worktrees.jsonl")?;
     let host = host().await?;
@@ -5417,15 +5426,14 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
         .iter()
         .filter(|event| matches!(event.kind, EventKind::UserMessage { .. }))
         .count();
-    let rejected =
-        send(&phone, message(session, "must not enter native history")).await?;
-    assert_ne!(
-        Some(rejected).filter(|result| matches!(
-            result,
-            CommandResult::Rejected(Rejection::WorkspaceFailure { .. })
-        )),
-        None
-    );
+    assert!(matches!(
+        send(&phone, message(session, "must not enter native history")).await?,
+        CommandResult::Rejected(Rejection::WorkspaceFailure { .. })
+    ));
+    assert!(matches!(
+        send(&phone, continued(session)).await?,
+        CommandResult::Rejected(Rejection::WorkspaceFailure { .. })
+    ));
     let still = host.history().await?;
     assert_eq!(
         still
@@ -5442,6 +5450,9 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
             &format!("refs/heads/{}", managed.branch),
         ],
     )?;
+    accepted(&phone, continued(session)).await?;
+    accepted(&phone, continued(session)).await?;
+    let recovered = checkpoint(&host.history().await?, proto::CheckpointId(5))?;
     accepted(&phone, message(session, "turn three")).await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
     let checkpoints = after
@@ -5453,8 +5464,12 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
             _ => None,
         })
         .collect::<Vec<proto::Checkpoint>>();
+    assert!(!any_event(&after, |kind| matches!(
+        kind,
+        EventKind::SessionReady | EventKind::SessionClosed { .. }
+    )));
     assert_eq!(checkpoints.len(), 2);
-    let recovered = checkpoints.first().ok_or("expected a value")?;
+    assert_eq!(checkpoints.first(), Some(&recovered));
     let latest = checkpoints.last().ok_or("expected a value")?;
     assert_eq!(recovered.parent, Some(retained.id));
     let boundary = failed
@@ -5466,7 +5481,7 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
         .ok_or("failed snapshot did not record the native boundary")?;
     assert_eq!(&recovered.history, boundary);
     assert_eq!(latest.parent, Some(recovered.id));
-    assert!(recovered.id > proto::CheckpointId(2));
+    assert_eq!(latest.id, proto::CheckpointId(6));
     let diff = get_diff(&phone, session, latest.id).await?;
     assert_eq!(
         diff.files

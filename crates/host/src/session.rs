@@ -20,7 +20,7 @@
 use core::mem;
 
 pub use crate::checkpoints::Compared;
-use crate::checkpoints::{Book, SnapshotPlan, Undo, UndoPlan};
+use crate::checkpoints::{Book, Recovery, SnapshotPlan, Undo, UndoPlan};
 use crate::prelude::*;
 use crate::tasks;
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
@@ -343,6 +343,7 @@ struct Saving {
 /// What a snapshot was taken for.
 enum Saved {
     Start(Models),
+    Continue,
     Send(String, ClientName),
     TurnEnded(TurnOutcome),
     Closed(CloseReason),
@@ -546,9 +547,6 @@ impl Session {
                 Turn::Starting(_) | Turn::Running(_),
                 _,
             ) => rejected(Rejection::TurnInProgress),
-            (Order::Stop(_), Turn::Idle, Agent::Down) => {
-                answer(CommandResult::Accepted)
-            }
             (Order::Stop(reason), Turn::Idle, Agent::Up { .. }) => {
                 self.flow = Flow::Halting(reason);
                 Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
@@ -561,8 +559,13 @@ impl Session {
             (Order::Start { offered }, _, Agent::Down) => {
                 self.save(Saved::Start(offered))
             }
-            // Continue is idempotent: the agent already runs.
-            (Order::Start { .. }, _, _) => answer(CommandResult::Accepted),
+            (Order::Start { .. }, Turn::Idle, Agent::Up { .. }) => {
+                self.save(Saved::Continue)
+            }
+            (Order::Start { .. }, _, Agent::Up { .. })
+            | (Order::Stop(_), Turn::Idle, Agent::Down) => {
+                answer(CommandResult::Accepted)
+            }
             // A closed session takes it too: `Continue` starts at it.
             (Order::Effort(effort, offered), _, _) => {
                 self.set_effort(effort, &offered)
@@ -1098,15 +1101,17 @@ impl Session {
                 let directory = self.directory.clone();
                 join(changed, self.start(directory, at, Launched::Ready))
             }
+            (Saved::Continue, Ok(())) => answer(CommandResult::Accepted),
             (Saved::Send(text, by), Ok(())) => {
                 self.flow = Flow::Recording(text.clone());
                 Vec::from([Effect::Call(Call::Record(
                     EventKind::UserMessage { text, by },
                 ))])
             }
-            (Saved::Start(..) | Saved::Send(..), Err(reason)) => {
-                rejected(Rejection::WorkspaceFailure { reason })
-            }
+            (
+                Saved::Start(..) | Saved::Continue | Saved::Send(..),
+                Err(reason),
+            ) => rejected(Rejection::WorkspaceFailure { reason }),
             (Saved::TurnEnded(outcome), taken) => {
                 join(checkpoint_failed(taken), self.turn_ended(outcome))
             }
@@ -1226,8 +1231,12 @@ impl Session {
                 self.flow = Flow::Preflighting(undo);
                 Vec::from([Effect::Call(Call::Preflight { workspace, commit })])
             }
-            Ok(UndoPlan::Native(undo)) => self.restore_native(undo),
-            Ok(UndoPlan::Files(undo)) => self.restore_files(Undoing { undo }),
+            Ok(UndoPlan::Resume(Recovery::Native(undo))) => {
+                self.restore_native(undo)
+            }
+            Ok(UndoPlan::Resume(Recovery::Files(undo))) => {
+                self.restore_files(Undoing { undo })
+            }
         }
     }
 
