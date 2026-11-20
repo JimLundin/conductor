@@ -533,7 +533,7 @@ fn sessions(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> Vec<IssueSession> {
                             catalog
                         ),
                         host.name(),
-                        view.status.word()
+                        crate::session::status_text(view.status_label())
                     ),
                     open: Intent::Show(Place::Session(host_id, session)),
                 })

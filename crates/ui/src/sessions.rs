@@ -5,7 +5,7 @@
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::host_view::{Attention, SessionView, UndoState};
+use client::host_view::{ListStatus, SessionView, StatusLabel};
 use proto::{Catalog, HostPath, Instances, Project, SessionId};
 
 use crate::Place;
@@ -97,26 +97,21 @@ fn row(
     place: Place,
     (known, project): ((Option<&Instances>, &Catalog), Option<&Project>),
 ) -> SessionRow {
-    let (status, text, badge) = match (&session.undo, session.attention()) {
-        (UndoState::Undoing(_), _) => (
-            String::from("undoing"),
-            String::from("undoing"),
-            String::new(),
-        ),
-        (UndoState::Failed { .. }, _) => (
-            String::from("recovering"),
-            String::from("recovery needed"),
-            String::new(),
-        ),
-        (_, Attention::Quiet) => {
-            (session.status.word(), session.status.word(), String::new())
+    let (status, text, badge) = match session.list_status() {
+        ListStatus::Session(label) => {
+            let text = crate::session::status_text(label);
+            let status = match label {
+                StatusLabel::RecoveryNeeded => "recovering",
+                _ => text,
+            };
+            (String::from(status), String::from(text), String::new())
         }
-        (_, Attention::Requests(1)) => (
+        ListStatus::Requests(1) => (
             String::from("approval"),
             String::from("needs you"),
             String::from("1"),
         ),
-        (_, Attention::Requests(open)) => (
+        ListStatus::Requests(open) => (
             String::from("approval"),
             format!("{open} requests need you"),
             format!("{open}"),

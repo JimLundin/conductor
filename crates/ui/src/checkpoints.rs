@@ -2,7 +2,7 @@
 //! pane holds only which diffs are open.
 
 use crate::prelude::*;
-use client::host_view::{Composer, TurnCheckpoint, UndoState};
+use client::host_view::{Composer, TurnCheckpoint};
 use proto::{
     Change, CheckpointDiff, CheckpointId, CommandResult, DiffExtent, FilePatch,
     UndoAvailability,
@@ -80,14 +80,14 @@ pub fn changes(
     turn: &TurnCheckpoint,
     diff: Option<&DiffState>,
     composer: Composer,
-    undo: &UndoState,
+    can_view_changes: bool,
 ) -> TurnChanges {
     let loading = matches!(diff, Some(DiffState::Loading(_)));
     TurnChanges {
         key: format!("checkpoint-{}", turn.checkpoint.0),
         checkpoint: turn.checkpoint,
         button: changes_id(turn.checkpoint),
-        button_disabled: matches!(undo, UndoState::Undoing(_)) || loading,
+        button_disabled: !can_view_changes || loading,
         panel: match diff {
             None | Some(DiffState::Hidden) => DiffPanel::Hidden,
             Some(DiffState::Loading(_)) => DiffPanel::Loading,
