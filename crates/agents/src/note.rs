@@ -58,3 +58,21 @@ pub enum Note {
     /// they can read its token.
     GatewayExposed { provider: Provider },
 }
+
+impl Note {
+    #[must_use]
+    pub fn unmapped(
+        provider: Provider,
+        frame: String,
+        on_thread: Option<String>,
+    ) -> Self {
+        match on_thread {
+            Some(thread) => Self::UnmappedOnThread {
+                provider,
+                thread,
+                frame,
+            },
+            None => Self::Unmapped { provider, frame },
+        }
+    }
+}

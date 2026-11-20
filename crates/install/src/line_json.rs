@@ -15,6 +15,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use crate::process;
+use crate::runner::{self, End};
 
 pub type Reply<E> = oneshot::Sender<Result<Value, E>>;
 type Waiter = oneshot::Sender<Exit>;
@@ -177,7 +178,7 @@ where
         closing,
         interrupted: false,
     };
-    tokio::spawn(runner.run(step));
+    tokio::spawn(runner::run(runner, step));
     Ok(Started {
         handle: Handle {
             mailbox: mailbox_tx,
@@ -253,31 +254,18 @@ struct Runner<C, V> {
     interrupted: bool,
 }
 
-impl<C, V> Runner<C, V> {
-    async fn run<E, T, A, P>(
-        mut self,
-        mut step: impl FnMut(Event<C, T, A>) -> Vec<Action<V, E, T, A, P>>,
-    ) where
-        E: From<Failure<io::Error, P>>,
-    {
-        loop {
-            let input = self.next_input().await;
-            let mut effects = step(input);
-            effects.reverse();
-            while let Some(effect) = effects.pop() {
-                match self.perform(effect).await {
-                    Ok(Some(feedback)) => {
-                        effects.extend(step(feedback).into_iter().rev());
-                    }
-                    Ok(None) => {}
-                    Err(End) => return,
-                }
-            }
-        }
-    }
-
-    async fn next_input<T, A>(&mut self) -> Event<C, T, A> {
-        tokio::select! {
+impl<C, V, E, T, A, P> runner::Runner<Event<C, T, A>, Action<V, E, T, A, P>>
+    for Runner<C, V>
+where
+    C: Send,
+    V: Send,
+    E: From<Failure<io::Error, P>> + Send,
+    T: Send,
+    A: Send,
+    P: Send,
+{
+    async fn next(&mut self) -> Option<Event<C, T, A>> {
+        Some(tokio::select! {
             biased;
             line = read(self.process.as_mut()), if !self.interrupted => Input::Read(line),
             command = self.mailbox.recv() => match command {
@@ -288,16 +276,13 @@ impl<C, V> Runner<C, V> {
                 Some(shutdown) => Input::Command(shutdown),
                 None => Input::Closed,
             },
-        }
+        })
     }
 
-    async fn perform<E, T, A, P>(
+    async fn perform(
         &mut self,
         effect: Action<V, E, T, A, P>,
-    ) -> Result<Option<Event<C, T, A>>, End>
-    where
-        E: From<Failure<io::Error, P>>,
-    {
+    ) -> Result<Option<Event<C, T, A>>, End> {
         match effect {
             Effect::Write { line, then } => {
                 let outcome = self.write(&line).await;
@@ -331,7 +316,9 @@ impl<C, V> Runner<C, V> {
             Effect::End => Err(End),
         }
     }
+}
 
+impl<C, V> Runner<C, V> {
     async fn write(&mut self, line: &str) -> io::Result<()> {
         let process = self.process.as_mut().ok_or(io::ErrorKind::BrokenPipe)?;
         if self.interrupted {
@@ -349,8 +336,6 @@ impl<C, V> Runner<C, V> {
         }
     }
 }
-
-struct End;
 
 #[cfg(all(test, unix))]
 mod tests;

@@ -27,7 +27,7 @@ pub use launch::{
     Edit, History, KEY_VAR, Paging, app_server, cli, config_edits, login,
     login_status, profile, version,
 };
-pub use mapping::{codex_answer, codex_note, codex_steps};
+pub use mapping::{codex_answer, codex_steps};
 pub use protocol::{
     AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call,
     CodexEvent, Decision, INITIALIZE, Inbound, Outbound, PermissionAsk,

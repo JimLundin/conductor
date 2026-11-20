@@ -404,7 +404,8 @@ probes and installs as `host::start` decides, and sends the plugins'
 
 - `agents`: the provider-agnostic API: the runtime protocol, `Step`,
   `Reply`, the native request and turn ids, `PlanStep`, `Exit`, the
-  `Note`s a core logs through its shell, a provider's `Profile`, and
+  `Note`s a core logs through its shell, a provider's `Profile`, the
+  runtime lifecycle that gates calls and releases closed agents, and
   the command, input, effect and failure types for CLI drivers
   (`agents::driver`). Pure `no_std`.
 - `claude` and `codex`: each provider's wire (stream-json, JSON-RPC), its
@@ -416,9 +417,10 @@ probes and installs as `host::start` decides, and sends the plugins'
   live in `claude::runtime`: a missing conversation with no message seen
   starts fresh, and an undo's fork whose target exists resumes the target.
   Pure `no_std`; they log nothing themselves.
-- `runtime`: the shell's handle type, the starter, and `Plugin`.
+- `runtime`: the shell's handle type, the starter, `Plugin`, and the agent
+  task that feeds commands and provider events into the runtime machine.
 - `claude-cli` and `codex-cli`: supply each CLI's handshake, driver and
-  stderr policy to the process runner, run each agent's runtime task,
+  stderr policy to the process runner, perform each agent's provider calls,
   and build their plugins (`claude_cli::plugin`, `codex_cli::plugin`).
   Their replay tests exercise the driver with a fake process.
 - `daemon`: the host behind `conductord`, a library that takes the
@@ -439,8 +441,10 @@ probes and installs as `host::start` decides, and sends the plugins'
 - `install`: the shared pinned installs, CLI homes, sign-in over pipes
   (`install::process`), and the line-JSON process runner
   (`install::line_json`). The runner owns each child's pipes and executes
-  its driver's effects in order. Shutdown interrupts a blocked stdin
-  write and closes the pipe without writing any further frames. Claude's
+  its driver's effects in order. The agent task reuses the same loop to
+  process each effect's feedback before the next effect. Shutdown
+  interrupts a blocked stdin write and closes the pipe without writing
+  any further frames. Claude's
   handshake can read the last stderr line on failure. Codex's driver gets
   the last nonempty stderr line with the exit status.
 

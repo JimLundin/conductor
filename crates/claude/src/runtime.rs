@@ -8,11 +8,12 @@
 //! `claude-cli` runs it: it turns each command, call outcome and Claude
 //! event into an [`Input`], and performs each [`Effect`] in order.
 
-use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
-use agents::{Note, Step};
+use agents::Note;
+use agents::runtime::{
+    Anchoring, Command, Lifecycle, Outcome, Report, Start, Started,
+};
 use proto::{
-    CloseReason, Effort, HistoryAnchor, HostPath, Models, Provider,
-    SessionId as Session,
+    Effort, HistoryAnchor, HostPath, Models, Provider, SessionId as Session,
 };
 
 use crate::prelude::*;
@@ -100,10 +101,7 @@ pub enum Effect {
     Probe,
     /// Later CLIs start with this credential.
     Credential(Option<ClaudeCredential>),
-    /// Drop the CLI: its process has gone.
-    Release,
-    Emit(Event),
-    Log(Note),
+    Runtime(Report),
 }
 
 /// The start in flight: the resume it tries and those left if it finds
@@ -117,11 +115,15 @@ struct Starting {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Runtime {
     sandbox: Sandbox,
-    running: bool,
+    lifecycle: Lifecycle,
     starting: Option<Starting>,
 }
 
-const NOT_RUNNING: &str = "the agent is not running";
+impl From<Report> for Effect {
+    fn from(report: Report) -> Self {
+        Self::Runtime(report)
+    }
+}
 
 impl Runtime {
     /// A runtime with no CLI running yet, on a host where Claude's sandbox
@@ -130,7 +132,7 @@ impl Runtime {
     pub const fn new(sandbox: Sandbox) -> Self {
         Self {
             sandbox,
-            running: false,
+            lifecycle: Lifecycle::new(),
             starting: None,
         }
     }
@@ -140,55 +142,49 @@ impl Runtime {
             Input::Command(command) => self.command(command),
             Input::Spawned(spawned) => self.spawned(spawned),
             Input::Called { then, outcome } => called(then, outcome),
-            Input::ShutDown(outcome) => {
-                self.running = false;
-                emit(Outcome::ShutDown(outcome))
-            }
-            Input::Probed(listed) => emit(Outcome::Models(listed)),
+            Input::ShutDown(outcome) => self.lifecycle.shut_down(outcome),
+            Input::Probed(listed) => Report::emit(Outcome::Models(listed)),
             Input::Event(Some(event)) => self.event(event),
-            Input::Event(None) => self.ended(),
+            Input::Event(None) => self.lifecycle.ended(),
         }
     }
 
     fn command(&mut self, command: Command) -> Vec<Effect> {
-        match (command, self.running) {
-            (Command::Start(start), _) => self.start(start),
-            (Command::Models, _) => Vec::from([Effect::Probe]),
-            (Command::Credential(given), _) => {
+        if !matches!(command, Command::Turns | Command::Revert(_))
+            && let Some(refused) = self.lifecycle.refusal(&command)
+        {
+            return refused;
+        }
+        match command {
+            Command::Start(start) => self.start(start),
+            Command::Models => Vec::from([Effect::Probe]),
+            Command::Credential(given) => {
                 let claude = credential(given.as_ref());
                 let note = unprotected(claude.as_ref(), self.sandbox);
                 core::iter::once(Effect::Credential(claude))
-                    .chain(note.map(Effect::Log))
-                    .chain(emit(Outcome::Configured(Ok(None))))
+                    .chain(note.map(Report::Log).map(Effect::from))
+                    .chain(Report::emit(Outcome::Configured(Ok(None))))
                     .collect()
             }
-            (Command::Shutdown, true) => Vec::from([Effect::Shutdown]),
-            (Command::Shutdown, false) => emit(Outcome::ShutDown(Ok(()))),
-            (Command::Send { text, effort }, true) => {
-                Vec::from([send(text, effort)])
+            Command::Shutdown if self.lifecycle.running() => {
+                Vec::from([Effect::Shutdown])
             }
-            (Command::Interrupt(_), true) => Vec::from([Effect::Call {
+            Command::Shutdown => Report::emit(Outcome::ShutDown(Ok(()))),
+            Command::Send { text, effort } => Vec::from([send(text, effort)]),
+            Command::Interrupt(_) => Vec::from([Effect::Call {
                 call: Call::Interrupt,
                 then: Then::Interrupted,
             }]),
-            (Command::Reply { native, reply, by }, true) => {
-                Vec::from([Effect::Call {
-                    call: Call::Respond {
-                        id: PermissionRequestId(native.0),
-                        decision: claude_answer(reply, &by),
-                    },
-                    then: Then::Replied,
-                }])
+            Command::Reply { native, reply, by } => Vec::from([Effect::Call {
+                call: Call::Respond {
+                    id: PermissionRequestId(native.0),
+                    decision: claude_answer(reply, &by),
+                },
+                then: Then::Replied,
+            }]),
+            refused @ (Command::Turns | Command::Revert(_)) => {
+                Report::emit(refused.failed("Claude keeps no turns to revert"))
             }
-            (refused @ (Command::Turns | Command::Revert(_)), _) => {
-                emit(refused.failed("Claude keeps no turns to revert"))
-            }
-            (
-                idle @ (Command::Send { .. }
-                | Command::Interrupt(_)
-                | Command::Reply { .. }),
-                false,
-            ) => emit(idle.failed(NOT_RUNNING)),
         }
     }
 
@@ -223,13 +219,10 @@ impl Runtime {
     fn spawned(&mut self, spawned: Result<SessionId, Refusal>) -> Vec<Effect> {
         let starting = self.starting.take();
         match (spawned, starting) {
-            (Ok(id), _) => {
-                self.running = true;
-                emit(Outcome::Started(Ok(Started {
-                    conversation: id.0,
-                    anchoring: Anchoring::Messages,
-                })))
-            }
+            (Ok(id), _) => self.lifecycle.started(Started {
+                conversation: id.0,
+                anchoring: Anchoring::Messages,
+            }),
             (Err(refusal), Some(Starting { spawn, rest }))
                 if refusal.missing.is_some() && !rest.is_empty() =>
             {
@@ -244,44 +237,20 @@ impl Runtime {
                 });
                 Vec::from([Effect::Spawn(next)])
             }
-            (Err(refusal), _) => emit(Outcome::Started(Err(refusal.message))),
+            (Err(refusal), _) => {
+                Report::emit(Outcome::Started(Err(refusal.message)))
+            }
         }
     }
 
-    /// Each event's steps, and the CLI's exit ends it.
     fn event(&mut self, event: ClaudeEvent) -> Vec<Effect> {
-        let gone = matches!(event, ClaudeEvent::Exited { .. });
         let note = match &event {
-            ClaudeEvent::Unknown(frame) => Some(Effect::Log(Note::Unmapped {
-                provider: Provider::Claude,
-                frame: frame.to_string(),
-            })),
+            ClaudeEvent::Unknown(frame) => {
+                Some(Note::unmapped(Provider::Claude, frame.to_string(), None))
+            }
             _ => None,
         };
-        let steps = claude_steps(event)
-            .into_iter()
-            .map(|step| Effect::Emit(Event::Step(step)));
-        let released = gone.then(|| self.release());
-        note.into_iter().chain(steps).chain(released).collect()
-    }
-
-    /// Events that end without the CLI's exit end it too.
-    fn ended(&mut self) -> Vec<Effect> {
-        if self.running {
-            Vec::from([
-                Effect::Emit(Event::Step(Step::Closed(CloseReason::Exited {
-                    status: String::from("the agent's events ended"),
-                }))),
-                self.release(),
-            ])
-        } else {
-            Vec::new()
-        }
-    }
-
-    const fn release(&mut self) -> Effect {
-        self.running = false;
-        Effect::Release
+        self.lifecycle.steps(claude_steps(event), note)
     }
 }
 
@@ -303,17 +272,15 @@ const fn send(text: String, effort: Option<Effort>) -> Effect {
 fn called(then: Then, outcome: Result<(), String>) -> Vec<Effect> {
     match (then, outcome) {
         (Then::Retuned(text), Ok(())) => Vec::from([send(text, None)]),
-        (Then::Retuned(_), Err(error)) => emit(Outcome::Sent(Err(error))),
-        (Then::Sent, sent) => emit(Outcome::Sent(sent)),
-        (Then::Interrupted, interrupted) => {
-            emit(Outcome::Interrupted(interrupted))
+        (Then::Retuned(_), Err(error)) => {
+            Report::emit(Outcome::Sent(Err(error)))
         }
-        (Then::Replied, replied) => emit(Outcome::Replied(replied)),
+        (Then::Sent, sent) => Report::emit(Outcome::Sent(sent)),
+        (Then::Interrupted, interrupted) => {
+            Report::emit(Outcome::Interrupted(interrupted))
+        }
+        (Then::Replied, replied) => Report::emit(Outcome::Replied(replied)),
     }
-}
-
-fn emit(outcome: Outcome) -> Vec<Effect> {
-    Vec::from([Effect::Emit(Event::Outcome(outcome))])
 }
 
 /// The resumes to try in turn when starting at `history`, else on the
@@ -379,18 +346,19 @@ fn resume(
 
 #[cfg(test)]
 mod tests {
-    use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
-    use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
-    use proto::{
-        ClientName, CloseReason, Credential, Decision, Effort, HistoryAnchor,
-        HostPath, ModelId, Provider, SessionId as Session,
+    use agents::runtime::{
+        Anchoring, Command, Event, Outcome, Report, Start, Started,
     };
-    use serde_json::json;
+    use agents::{NativeRequest, NativeTurn, Note, Reply};
+    use proto::{
+        ClientName, Credential, Decision, Effort, HistoryAnchor, HostPath,
+        ModelId, Provider, SessionId as Session,
+    };
 
     use super::{Call, Effect, Input, Refusal, Runtime, Spawn, Then, attempts};
     use crate::{
-        ClaudeCredential, ClaudeEvent, MessageId, PermissionDecision,
-        PermissionRequestId, Resume, Sandbox, SessionId,
+        ClaudeCredential, MessageId, PermissionDecision, PermissionRequestId,
+        Resume, Sandbox, SessionId,
     };
 
     fn id(text: &str) -> SessionId {
@@ -409,7 +377,7 @@ mod tests {
     }
 
     fn outcome(outcome: Outcome) -> Vec<Effect> {
-        Vec::from([Effect::Emit(Event::Outcome(outcome))])
+        Vec::from([Report::Emit(Event::Outcome(outcome)).into()])
     }
 
     fn start(history: Option<HistoryAnchor>) -> Input {
@@ -594,100 +562,41 @@ mod tests {
     }
 
     #[test]
-    fn calls_reach_the_running_cli_and_fail_without_one() {
-        let interrupt = || Command::Interrupt(NativeTurn(text("saved")));
-        let reply = || Command::Reply {
-            native: NativeRequest(text("perm-1")),
-            reply: Reply::Decide(Decision::Approve),
-            by: ClientName(text("phone")),
-        };
-        let mut idle = Runtime::new(Sandbox::Available);
+    fn commands_become_calls_on_the_running_cli() {
         let mut runtime = running();
-        let not_running = text("the agent is not running");
         assert_eq!(
-            (
-                walk(
-                    &mut idle,
-                    Vec::from([
-                        Input::Command(interrupt()),
-                        Input::Command(Command::Shutdown),
-                    ])
-                ),
-                walk(
-                    &mut runtime,
-                    Vec::from([
-                        Input::Command(interrupt()),
-                        Input::Command(reply()),
-                        Input::Command(Command::Turns),
-                        Input::Command(Command::Shutdown),
-                        Input::ShutDown(Ok(())),
-                        Input::Command(reply()),
-                    ])
-                ),
-            ),
-            (
+            walk(
+                &mut runtime,
                 Vec::from([
-                    outcome(Outcome::Interrupted(Err(not_running.clone()))),
-                    outcome(Outcome::ShutDown(Ok(()))),
-                ]),
-                Vec::from([
-                    Vec::from([Effect::Call {
-                        call: Call::Interrupt,
-                        then: Then::Interrupted,
-                    }]),
-                    Vec::from([Effect::Call {
-                        call: Call::Respond {
-                            id: PermissionRequestId(text("perm-1")),
-                            decision: PermissionDecision::Allow,
-                        },
-                        then: Then::Replied,
-                    }]),
-                    outcome(Outcome::Turns(Err(text(
-                        "Claude keeps no turns to revert"
+                    Input::Command(Command::Interrupt(NativeTurn(text(
+                        "saved"
                     )))),
-                    Vec::from([Effect::Shutdown]),
-                    outcome(Outcome::ShutDown(Ok(()))),
-                    outcome(Outcome::Replied(Err(not_running))),
+                    Input::Command(Command::Reply {
+                        native: NativeRequest(text("perm-1")),
+                        reply: Reply::Decide(Decision::Approve),
+                        by: ClientName(text("phone")),
+                    }),
+                    Input::Command(Command::Turns),
+                    Input::Command(Command::Shutdown),
                 ]),
-            )
-        );
-    }
-
-    #[test]
-    fn events_become_steps_and_the_exit_releases_the_cli() {
-        let mut runtime = running();
-        let closed = |status: &str| {
-            Effect::Emit(Event::Step(Step::Closed(CloseReason::Exited {
-                status: text(status),
-            })))
-        };
-        let seen = walk(
-            &mut runtime,
-            Vec::from([
-                Input::Event(Some(ClaudeEvent::Unknown(json!("x")))),
-                Input::Event(Some(ClaudeEvent::Exited {
-                    status: Exit::Status(text("exit status: 1")),
-                })),
-                Input::Event(None),
-            ]),
-        );
-        let mut again = running();
-        assert_eq!(
-            (seen, again.step(Input::Event(None))),
-            (
-                Vec::from([
-                    Vec::from([Effect::Log(Note::Unmapped {
-                        provider: Provider::Claude,
-                        frame: text("\"x\""),
-                    })]),
-                    Vec::from([closed("exit status: 1"), Effect::Release]),
-                    Vec::new(),
-                ]),
-                Vec::from([
-                    closed("the agent's events ended"),
-                    Effect::Release
-                ]),
-            )
+            ),
+            [
+                Vec::from([Effect::Call {
+                    call: Call::Interrupt,
+                    then: Then::Interrupted,
+                }]),
+                Vec::from([Effect::Call {
+                    call: Call::Respond {
+                        id: PermissionRequestId(text("perm-1")),
+                        decision: PermissionDecision::Allow,
+                    },
+                    then: Then::Replied,
+                }]),
+                outcome(Outcome::Turns(Err(text(
+                    "Claude keeps no turns to revert"
+                )))),
+                Vec::from([Effect::Shutdown]),
+            ],
         );
     }
 
@@ -713,10 +622,12 @@ mod tests {
             seen,
             Vec::from([
                 Effect::Credential(Some(gateway)),
-                Effect::Log(Note::GatewayExposed {
+                Report::Log(Note::GatewayExposed {
                     provider: Provider::Claude
-                }),
-                Effect::Emit(Event::Outcome(Outcome::Configured(Ok(None)))),
+                })
+                .into(),
+                Report::Emit(Event::Outcome(Outcome::Configured(Ok(None))))
+                    .into(),
             ])
         );
     }
