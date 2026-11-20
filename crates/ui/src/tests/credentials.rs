@@ -1,0 +1,134 @@
+//! The credentials screen: what each field takes, what a sign-in forgets
+//! when it runs again, and what the host's answers say.
+
+use proto::{CommandResult, Provider, SignInStep};
+
+use super::{
+    HOST, claude, claude_forms, id, paired, pane_of, reply, run, sign_in,
+    sign_in_of, signed_in, signing, status, text, two_claudes,
+};
+use crate::credentials::{Done, Subject};
+use crate::{CredentialIntent, Intent, Place, ReplyTo, State};
+
+#[test]
+fn each_field_takes_its_kind_of_input_and_an_empty_form_doesnt_save() {
+    let (shown, _) = run(
+        paired(),
+        Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
+    );
+    let fields = pane_of(&shown).map(|pane| {
+        pane.add
+            .into_iter()
+            .flat_map(|forms| forms.forms)
+            .flat_map(|form| form.fields)
+            .map(|field| (field.field, field.input, field.autocomplete))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        (fields, claude_forms(&shown).map(|forms| forms.0)),
+        (
+            Some(Vec::from([
+                (text("base_url"), "url", "off"),
+                (text("token"), "password", "new-password"),
+                (text("name"), "text", "off"),
+                (text("base_url"), "url", "off"),
+                (text("model"), "text", "off"),
+                (text("key"), "password", "new-password"),
+            ])),
+            Some(true),
+        )
+    );
+}
+
+#[test]
+fn only_a_sign_in_takes_accepted_for_an_answer() {
+    let (answered, _) = run(
+        paired(),
+        Vec::from([
+            status(claude(signed_in())),
+            Intent::Show(Place::Credentials),
+            Intent::Replied(
+                reply(ReplyTo::Instance(
+                    Subject::Add(Provider::Claude),
+                    Done::Stored,
+                )),
+                Ok(CommandResult::Accepted),
+            ),
+        ]),
+    );
+    assert_eq!(
+        claude_forms(&answered).map(|forms| forms.1),
+        Some(Some(text("desk gave an unexpected answer.")))
+    );
+}
+
+#[test]
+fn a_removal_says_so_once_the_instance_has_left_the_list() {
+    let api = || id("https://gw.example");
+    let (answered, _) = run(
+        paired(),
+        Vec::from([
+            status(two_claudes()),
+            Intent::Show(Place::Credentials),
+            Intent::Credential(HOST, CredentialIntent::Remove(api())),
+            Intent::Replied(
+                reply(ReplyTo::Instance(
+                    Subject::Instance(api()),
+                    Done::Removed,
+                )),
+                Ok(CommandResult::Instances(claude(signed_in()))),
+            ),
+        ]),
+    );
+    let (gone, _) =
+        run(answered.clone(), Vec::from([status(claude(signed_in()))]));
+    let removed = |state: &State| {
+        pane_of(state)
+            .and_then(|pane| pane.removed)
+            .map(|hint| hint.text)
+    };
+    assert_eq!(
+        (removed(&answered), removed(&gone)),
+        (None, Some(text("Removed from desk.")))
+    );
+}
+
+#[test]
+fn starting_or_cancelling_a_sign_in_forgets_the_code_typed_and_copied() {
+    let open = signing(Some(SignInStep::Open {
+        url: text("https://sign.example/device"),
+        code: Some(text("ABCD-12345")),
+        paste: true,
+    }));
+    let (typed, _) = run(
+        open,
+        Vec::from([
+            sign_in(CredentialIntent::TypeSignInCode(
+                id("claude"),
+                text("abc"),
+            )),
+            sign_in(CredentialIntent::CopySignInCode(
+                id("claude"),
+                text("ABCD-12345"),
+            )),
+        ]),
+    );
+    let after = |intent| run(typed.clone(), Vec::from([sign_in(intent)])).0;
+    let kept = |state: &State| {
+        sign_in_of(state)
+            .and_then(|view| view.paste.zip(view.code))
+            .map(|(paste, code)| (paste.value, code.copy))
+    };
+    assert_eq!(
+        [
+            kept(&typed),
+            kept(&after(CredentialIntent::StartSignIn(id("claude")))),
+            kept(&after(CredentialIntent::CancelSignIn(id("claude")))),
+        ],
+        [
+            Some((text("abc"), text("Copied"))),
+            Some((String::new(), text("Copy"))),
+            Some((String::new(), text("Copy"))),
+        ]
+    );
+}
