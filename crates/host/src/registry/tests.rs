@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow::{Break, Continue};
 
 use proto::{
     Account, Auth, Availability, Catalog, ClientName, CloseReason,
@@ -10,8 +11,9 @@ use proto::{
 
 use super::{
     Change, Effect, Job, Launch, Launcher, Listing, Offer, OwnSignIn,
-    Refreshed, Registry, Started, Starting, Stored, defaults, dir, picked,
-    running, signed_in_as, unprepared,
+    Refreshed, Registry, StartDecision, StartEffect, StartEnd, StartReport,
+    StartSession, StartStep, Started, Starting, Stored, defaults, dir, picked,
+    running, signed_in_as,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -281,11 +283,11 @@ fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
     let claude = own(Provider::Claude);
     assert_eq!(
         [
-            registry.start(&claude, false, None, None),
-            registry.start(&api(), true, None, None),
-            registry.start(&own(Provider::Codex), true, None, None),
-            registry.start(&claude, true, Some(model("tiny")), None),
-            registry.start(&claude, true, None, Some(Effort::Max)),
+            registry.launch_session(&claude, false, None, None),
+            registry.launch_session(&api(), true, None, None),
+            registry.launch_session(&own(Provider::Codex), true, None, None),
+            registry.launch_session(&claude, true, Some(model("tiny")), None),
+            registry.launch_session(&claude, true, None, Some(Effort::Max)),
         ],
         [
             Err(Rejection::NoSuchDirectory),
@@ -302,7 +304,7 @@ fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
         ]
     );
     assert_eq!(
-        registry.start(&claude, true, None, Some(Effort::High)),
+        registry.launch_session(&claude, true, None, Some(Effort::High)),
         Ok(Launch {
             start: "claude",
             choice: Choice {
@@ -407,13 +409,13 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
         ]
     );
     assert_eq!(
-        missing.start(&own(Provider::Claude), true, None, None),
+        missing.launch_session(&own(Provider::Claude), true, None, None),
         Err(Rejection::InstanceUnavailable {
             reason: text("no credential configured")
         })
     );
     assert_eq!(
-        Registry::<&str, u8, &str>::new(&opened(), catalog()).start(
+        Registry::<&str, u8, &str>::new(&opened(), catalog()).launch_session(
             &own(Provider::Claude),
             true,
             None,
@@ -500,7 +502,7 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
     );
     let started = |registry: &Test, id: &InstanceId| {
         registry
-            .start(id, true, None, None)
+            .launch_session(id, true, None, None)
             .map(|launch| (launch.start, launch.provider))
     };
     assert_eq!(
@@ -536,11 +538,11 @@ fn each_codex_instance_refreshes_its_own_app_server() {
     assert_eq!(
         (
             registry
-                .start(&own(Provider::Codex), true, None, None)
+                .launch_session(&own(Provider::Codex), true, None, None)
                 .map(|launch| launch.start),
             registry.relaunch(SessionId(1)),
             registry
-                .start(&codex_api, true, None, None)
+                .launch_session(&codex_api, true, None, None)
                 .map(|launch| launch.start),
         ),
         (
@@ -989,7 +991,7 @@ fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
         ])
     );
     assert_eq!(
-        registry.start(&codex, true, None, None),
+        registry.launch_session(&codex, true, None, None),
         Err(Rejection::InstanceUnavailable {
             reason: text("no codex")
         })
@@ -1014,22 +1016,6 @@ fn the_default_is_the_credential_s_model_then_the_chosen_then_the_cli_s() {
             offer(None, None),
         ],
         [Some(model("gw")), Some(model("flag")), Some(model("big"))]
-    );
-}
-
-#[test]
-fn a_directory_outside_git_is_refused_as_such() {
-    assert_eq!(
-        [
-            unprepared(GitError::NotRepository),
-            unprepared(GitError::Failed(text("git worktree add: exit 128"))),
-        ],
-        [
-            Rejection::NotGitRepository,
-            Rejection::WorkspaceFailure {
-                reason: text("git worktree add: exit 128")
-            },
-        ]
     );
 }
 
@@ -1210,7 +1196,12 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
         event(1, EventKind::OnIssue { issue }),
         created(2, other.clone()),
     ]);
-    assert_eq!(super::on_issue(&history, issue, &own), Some(SessionId(1)));
+    assert_refused(
+        start_request().placed(Ok(placement(true)), &history),
+        Rejection::IssueTaken {
+            session: SessionId(1),
+        },
+    );
     assert_eq!(super::on_issue(&history, issue, &other), None);
     assert_eq!(super::on_issue(&history, proto::IssueId(6), &own), None);
     let removed = [
@@ -1218,22 +1209,388 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
         Vec::from([event(1, EventKind::SessionRemoved { kept: None })]),
     ]
     .concat();
-    assert_eq!(super::on_issue(&removed, issue, &own), None);
+    assert!(matches!(
+        start_request().placed::<&str, u8>(Ok(placement(true)), &removed),
+        Continue(StartStep {
+            effect: StartEffect::ReadyBranch(_),
+            ..
+        })
+    ));
 }
 
 #[test]
 fn a_brief_that_did_not_reach_the_agent_says_why() {
-    assert_eq!(super::unbriefed(Some(&CommandResult::Accepted)), None);
+    assert_eq!(super::brief_sent(Some(&CommandResult::Accepted)), None);
     assert_eq!(
-        super::unbriefed(Some(&CommandResult::Rejected(
+        super::brief_sent(Some(&CommandResult::Rejected(
             Rejection::SessionClosed
         ))),
-        Some(String::from(
-            "The issue's brief was not sent: the session has closed. Send it again from the issue."
-        ))
+        Some(EventKind::Error {
+            message: text(
+                "The issue's brief was not sent: the session has closed. Send it again from the issue.",
+            ),
+        })
     );
-    assert!(
-        super::unbriefed(None)
-            .is_some_and(|message| message.contains("stopped"))
+    for answer in [
+        None,
+        Some(&CommandResult::Started {
+            session: SessionId(1),
+        }),
+    ] {
+        assert!(matches!(
+            super::brief_sent(answer),
+            Some(EventKind::Error { .. })
+        ));
+    }
+}
+
+fn start_request() -> super::StartRequest {
+    super::StartRequest {
+        instance: own(Provider::Claude),
+        model: None,
+        effort: None,
+        by: ClientName(text("phone")),
+    }
+}
+
+fn placement(on_issue: bool) -> home::Placement {
+    let directory = HostPath(text("/src"));
+    home::Placement {
+        directory: directory.clone(),
+        on: on_issue.then(|| home::issue::Start {
+            issue: proto::IssueId(5),
+            checkout: directory,
+            branch: text("refs/heads/issue/5"),
+            brief: text("Implement the issue"),
+        }),
+    }
+}
+
+fn start_workspace() -> proto::Workspace {
+    proto::Workspace {
+        repository: HostPath(text("/src")),
+        original: HostPath(text("/src")),
+        worktree: HostPath(text("/worktrees/1")),
+        directory: HostPath(text("/worktrees/1")),
+        branch: text("refs/heads/session/1"),
+    }
+}
+
+type Decision = StartDecision<&'static str, u8>;
+type Workflow = StartSession<&'static str, u8>;
+
+fn assert_refused(decision: Decision, reason: Rejection) {
+    assert!(matches!(decision, Break(StartEnd::Finished(outcome))
+        if outcome.result == CommandResult::Rejected(reason) && outcome.progress.is_none()));
+}
+
+fn at_directory(
+    request: super::StartRequest,
+    registry: &mut Test,
+) -> Result<Workflow, &'static str> {
+    let placed = placement(true);
+    let Continue(StartStep {
+        effect: StartEffect::ReadyBranch(branch),
+        next,
+    }) = request.placed(Ok(placed.clone()), &[])
+    else {
+        return Err("expected branch readiness");
+    };
+    assert_eq!(Some(branch), placed.on);
+    let Continue(StartStep {
+        effect: StartEffect::CheckDirectory(path),
+        next: check,
+    }) = next.report(registry, StartReport::Branch(Ok(())))
+    else {
+        return Err("expected a directory check");
+    };
+    assert_eq!(path, placed.directory);
+    Ok(check)
+}
+
+fn at_workspace(registry: &mut Test) -> Result<Workflow, &'static str> {
+    let check = at_directory(start_request(), registry)?;
+    let Continue(StartStep {
+        effect: StartEffect::CreateWorkspace { directory, base },
+        next,
+    }) = check.report(registry, StartReport::Directory(true))
+    else {
+        return Err("expected workspace creation");
+    };
+    assert_eq!(directory, HostPath(text("/src")));
+    assert_eq!(base.as_deref(), Some("refs/heads/issue/5"));
+    Ok(next)
+}
+
+fn at_snapshot(
+    registry: &mut Test,
+    session: SessionId,
+) -> Result<Workflow, &'static str> {
+    let workspace = start_workspace();
+    let prepare = at_workspace(registry)?;
+    let Continue(StartStep {
+        effect:
+            StartEffect::Snapshot {
+                session: id,
+                workspace: worktree,
+                id: checkpoint,
+            },
+        next,
+    }) = prepare.report(
+        registry,
+        StartReport::Workspace(session, Ok(workspace.clone())),
+    )
+    else {
+        return Err("expected a workspace snapshot");
+    };
+    assert_eq!(
+        (id, worktree, checkpoint),
+        (session, workspace, proto::CheckpointId(0))
     );
+    Ok(next)
+}
+
+#[test]
+fn placement_and_branch_failures_end_the_start() -> Result<(), &'static str> {
+    let mut registry = registry(OwnSignIn::SignedIn, &opened());
+    assert_refused(
+        start_request().placed(Err(Rejection::NoHome), &[]),
+        Rejection::NoHome,
+    );
+    let Continue(StartStep {
+        effect: StartEffect::ReadyBranch(_),
+        next,
+    }) = start_request().placed(Ok(placement(true)), &[])
+    else {
+        return Err("expected branch readiness");
+    };
+    let reason = Rejection::WorkspaceFailure {
+        reason: text("issue branches diverged"),
+    };
+    assert_refused(
+        next.report(&mut registry, StartReport::Branch(Err(reason.clone()))),
+        reason,
+    );
+    Ok(())
+}
+
+#[test]
+fn a_start_checks_the_directory_and_instance_after_branch_readiness()
+-> Result<(), &'static str> {
+    let mut registry = registry(OwnSignIn::SignedIn, &opened());
+    let unknown = super::StartRequest {
+        instance: InstanceId::named(Provider::Claude, "unknown"),
+        ..start_request()
+    };
+    for (exists, reason) in [
+        (false, Rejection::NoSuchDirectory),
+        (true, Rejection::UnknownInstance),
+    ] {
+        let check = at_directory(unknown.clone(), &mut registry)?;
+        assert_refused(
+            check.report(&mut registry, StartReport::Directory(exists)),
+            reason,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn workspace_and_snapshot_failures_stop_before_opening_records()
+-> Result<(), &'static str> {
+    let mut registry = registry(OwnSignIn::SignedIn, &opened());
+    let session = SessionId(1);
+    let reason = Rejection::WorkspaceFailure {
+        reason: text("git failed"),
+    };
+    for (error, rejection) in [
+        (GitError::NotRepository, Rejection::NotGitRepository),
+        (GitError::Failed(text("git failed")), reason.clone()),
+    ] {
+        let prepare = at_workspace(&mut registry)?;
+        assert_refused(
+            prepare.report(
+                &mut registry,
+                StartReport::Workspace(session, Err(error)),
+            ),
+            rejection,
+        );
+    }
+    let snapshot = at_snapshot(&mut registry, session)?;
+    assert_refused(
+        snapshot.report(
+            &mut registry,
+            StartReport::Snapshot(Err(GitError::Failed(text("git failed")))),
+        ),
+        reason,
+    );
+    Ok(())
+}
+
+fn recorded(session: SessionId, seed: [EventKind; 2]) -> [Event; 2] {
+    let [workspace, checkpoint] = seed;
+    [workspace, checkpoint].map(|kind| Event {
+        seq: HostSeq(1),
+        session,
+        kind,
+    })
+}
+
+fn initial_seed() -> [EventKind; 2] {
+    [
+        EventKind::WorkspaceCreated {
+            workspace: start_workspace(),
+        },
+        EventKind::CheckpointCreated {
+            checkpoint: proto::Checkpoint {
+                id: proto::CheckpointId(0),
+                parent: None,
+                turn_start: None,
+                commit: text("initial commit"),
+                history: proto::HistoryAnchor::Fresh,
+                undo: proto::UndoAvailability::Unavailable {
+                    reason: text("initial checkpoint has no turn"),
+                },
+            },
+        },
+    ]
+}
+
+#[test]
+fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
+-> Result<(), &'static str> {
+    let mut registry = registry(OwnSignIn::SignedIn, &opened());
+    let session = SessionId(1);
+    let snapshot = at_snapshot(&mut registry, session)?;
+    let Continue(StartStep {
+        effect:
+            StartEffect::Record {
+                session: id,
+                before,
+                seed,
+            },
+        next: opening,
+    }) = snapshot.report(
+        &mut registry,
+        StartReport::Snapshot(Ok(text("initial commit"))),
+    )
+    else {
+        return Err("expected opening records");
+    };
+    assert_eq!(id, session);
+    assert_eq!(
+        before,
+        [
+            EventKind::SessionCreated {
+                instance: start_request().instance,
+                provider: Provider::Claude,
+                directory: HostPath(text("/src")),
+                by: ClientName(text("phone")),
+                model: Some(model("big")),
+                effort: None,
+            },
+            EventKind::OnIssue {
+                issue: proto::IssueId(5)
+            },
+        ]
+    );
+    assert_eq!(*seed, initial_seed());
+    let records = recorded(session, *seed);
+    let Continue(StartStep {
+        effect:
+            StartEffect::Spawn {
+                session: id,
+                history,
+                ..
+            },
+        next: spawn,
+    }) = opening.report(
+        &mut registry,
+        StartReport::Recorded(Box::new(records.clone())),
+    )
+    else {
+        return Err("expected spawn");
+    };
+    assert_eq!((id, *history), (session, records));
+    let Continue(StartStep {
+        effect:
+            StartEffect::Brief {
+                session: id,
+                handle,
+                text: brief,
+                by,
+            },
+        next: briefing,
+    }) = spawn.report(&mut registry, StartReport::Spawned(7))
+    else {
+        return Err("expected issue brief");
+    };
+    assert_eq!(
+        (id, handle, brief, by),
+        (
+            session,
+            7,
+            text("Implement the issue"),
+            ClientName(text("phone"))
+        )
+    );
+    let Break(StartEnd::Finished(done)) =
+        briefing.report(&mut registry, StartReport::BriefQueued)
+    else {
+        return Err("expected completion");
+    };
+    assert_eq!(registry.find(session), Some(7));
+    assert_eq!(done.result, CommandResult::Started { session });
+    assert_eq!(
+        done.progress,
+        Some((proto::IssueId(5), ClientName(text("phone"))))
+    );
+    Ok(())
+}
+
+#[test]
+fn lost_opening_records_stop_the_start() -> Result<(), &'static str> {
+    let mut registry = registry(OwnSignIn::SignedIn, &opened());
+    let session = SessionId(1);
+    let snapshot = at_snapshot(&mut registry, session)?;
+    let Continue(StartStep {
+        effect: StartEffect::Record { .. },
+        next: opening,
+    }) = snapshot
+        .report(&mut registry, StartReport::Snapshot(Ok(text("commit"))))
+    else {
+        return Err("expected opening records");
+    };
+    assert!(matches!(
+        opening.report(&mut registry, StartReport::Stopped),
+        Break(StartEnd::Stopped)
+    ));
+    assert_eq!(registry.find(session), None);
+    Ok(())
+}
+
+#[test]
+fn a_plain_start_checks_its_directory_without_an_issue_branch()
+-> Result<(), &'static str> {
+    let mut registry = registry(OwnSignIn::SignedIn, &opened());
+    let Continue(StartStep {
+        effect: StartEffect::CheckDirectory(path),
+        next,
+    }) = start_request().placed(Ok(placement(false)), &[])
+    else {
+        return Err("expected a directory check");
+    };
+    let Continue(StartStep {
+        effect:
+            StartEffect::CreateWorkspace {
+                directory,
+                base: None,
+            },
+        ..
+    }) = next.report(&mut registry, StartReport::Directory(true))
+    else {
+        return Err("expected a workspace without an issue base");
+    };
+    assert_eq!(path, directory);
+    Ok(())
 }

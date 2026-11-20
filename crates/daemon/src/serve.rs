@@ -10,14 +10,14 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandResult, Effort, Event, EventKind,
-    Feed as Frame, HelloReply, Home, HostSeq, InstanceId, ModelId, Open,
-    Rejection, SessionId, SignIn, StartAt, Subscribe, Welcome,
+    AuthToken, ClientName, Command, CommandResult, Event, EventKind,
+    Feed as Frame, HelloReply, Home, HostSeq, Open, Rejection, SessionId,
+    SignIn, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, watch};
 
 use crate::Stopped;
-use crate::home::{HomeClone, Placement};
+use crate::home::HomeClone;
 use crate::log::{BeginCommand, Log};
 use crate::registry::Registry;
 
@@ -234,7 +234,7 @@ impl Conductor {
                 at,
                 choice,
                 by,
-            } => self.start(instance, at, choice, by).await,
+            } => self.registry.start(instance, at, choice, by).await,
             Route::Configure(configure) => {
                 self.registry.configure(configure).await
             }
@@ -242,65 +242,6 @@ impl Conductor {
             Route::Home(order) => self.home.order(order).await,
             Route::Finish(session, by) => self.finish(session, by).await,
         }
-    }
-
-    /// Starts a session in a directory, or in a project's checkout.
-    async fn start(
-        &self,
-        instance: InstanceId,
-        at: StartAt,
-        choice: (Option<ModelId>, Option<Effort>),
-        by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
-        match self.home.place(at).await? {
-            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok(placed) => self.start_placed(instance, placed, choice, by).await,
-        }
-    }
-
-    /// Starts a session where it was placed. One on an issue first needs
-    /// the instance to have no session on it and the issue's branch to be
-    /// ready, and then moves the issue on.
-    async fn start_placed(
-        &self,
-        instance: InstanceId,
-        placed: Placement,
-        choice: (Option<ModelId>, Option<Effort>),
-        by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
-        let issue = placed.on.as_ref().map(|on| on.issue);
-        if let Some(refused) =
-            self.unready(&instance, placed.on.as_ref()).await?
-        {
-            return Ok(CommandResult::Rejected(refused));
-        }
-        let started = self
-            .registry
-            .start(instance, placed, choice, by.clone())
-            .await?;
-        if let (CommandResult::Started { .. }, Some(on)) = (&started, issue) {
-            self.home.started(on, by).await?;
-        }
-        Ok(started)
-    }
-
-    /// Why a session on the issue can't start yet: the instance has one on
-    /// it, or the issue's branch can't be readied.
-    async fn unready(
-        &self,
-        instance: &InstanceId,
-        on: Option<&home::issue::Start>,
-    ) -> Result<Option<Rejection>, Stopped> {
-        let Some(start) = on else {
-            return Ok(None);
-        };
-        let history = self.log.history().await?;
-        if let Some(session) =
-            host::registry::on_issue(&history, start.issue, instance)
-        {
-            return Ok(Some(Rejection::IssueTaken { session }));
-        }
-        Ok(self.home.ready(start.clone()).await?.err())
     }
 
     /// Finishes the session in a task of its own, once it can: the

@@ -2033,6 +2033,7 @@ version = "0.1.0"
 dependencies = [
  "agents",
  "data-encoding",
+ "home",
  "proto",
  "sha2",
  "thiserror 2.0.21",
