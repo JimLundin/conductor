@@ -10,20 +10,18 @@
 //! a printed line goes to the core, and a code to the CLI's stdin.
 
 use std::collections::BTreeMap;
-use std::fmt;
-use std::future::Future;
 use std::io;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::process::ExitStatus;
-use std::sync::Arc;
 
 use agents::{Invocation, Reported, SignIn as Flow};
 use host::sign_in::{Key, LIMIT};
 use install::Home;
 use install::process::{SignInRun, command, sign_in, write_line};
-use proto::{CommandResult, Instance, InstanceId, SignInCode};
+use proto::{CommandResult, Instance, SignInCode};
 use tokio::process::ChildStdin;
+
+use crate::start::Providers;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 
@@ -54,32 +52,6 @@ impl Signing {
             }
             (Reported::File(_), Home::User) => None,
         }
-    }
-}
-
-type Resolving = Pin<Box<dyn Future<Output = Result<Signing, String>> + Send>>;
-
-/// Says how an instance, as its settings are, signs in, installing its
-/// pinned CLI if it has to.
-#[derive(Clone)]
-pub struct Signer(Arc<dyn Fn(InstanceId, Instance) -> Resolving + Send + Sync>);
-
-impl Signer {
-    pub fn new<F>(
-        resolve: impl Fn(InstanceId, Instance) -> F + Send + Sync + 'static,
-    ) -> Self
-    where
-        F: Future<Output = Result<Signing, String>> + Send + 'static,
-    {
-        Self(Arc::new(move |id, instance| {
-            Box::pin(resolve(id, instance))
-        }))
-    }
-}
-
-impl fmt::Debug for Signer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Signer")
     }
 }
 
@@ -132,13 +104,18 @@ impl Runs {
 
     /// Starts the sign-in `key` of an instance whose settings are
     /// `settings`. What earlier runs of the instance left goes.
-    pub fn spawn(&mut self, key: Key, signer: Signer, settings: Instance) {
+    pub fn spawn(
+        &mut self,
+        key: Key,
+        providers: Providers,
+        settings: Instance,
+    ) {
         while self.tasks.try_join_next().is_some() {}
         let other = |kept: &Key| kept.instance != key.instance;
         self.aborts.retain(|kept, _| other(kept));
         self.stdins.retain(|kept, _| other(kept));
         self.checks.retain(|kept, _| other(kept));
-        let task = run(key.clone(), signer, settings, self.sender.clone());
+        let task = run(key.clone(), providers, settings, self.sender.clone());
         self.aborts.insert(key, self.tasks.spawn(task));
     }
 
@@ -217,14 +194,14 @@ impl Runs {
 /// started, each line it prints and how it ended.
 async fn run(
     key: Key,
-    signer: Signer,
+    providers: Providers,
     settings: Instance,
     sender: mpsc::UnboundedSender<(Key, Report)>,
 ) {
     let report = |report| {
         let _ = sender.send((key.clone(), report));
     };
-    match started(&signer, &key, settings).await {
+    match started(&providers, &key, settings).await {
         Err(reason) => report(Report::Spawned(Err(reason))),
         Ok((signing, process, stdin)) => {
             report(Report::Spawned(Ok(Box::new(Spawned { signing, stdin }))));
@@ -236,11 +213,11 @@ async fn run(
 }
 
 async fn started(
-    signer: &Signer,
+    providers: &Providers,
     key: &Key,
     settings: Instance,
 ) -> Result<(Signing, SignInRun, ChildStdin), String> {
-    let signing = (signer.0)(key.instance.clone(), settings).await?;
+    let signing = providers.signing(&key.instance, &settings).await?;
     let (process, stdin) =
         sign_in(&signing.program, &signing.home, signing.flow.run.clone())
             .map_err(|err| {

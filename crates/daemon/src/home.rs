@@ -818,7 +818,7 @@ async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
 /// # Errors
 ///
 /// When the remote can't be read for a new branch, or both have moved on.
-pub(crate) async fn ready_issue_branch(
+pub async fn ready_issue_branch(
     checkout: &Path,
     branch: &str,
 ) -> Result<(), String> {

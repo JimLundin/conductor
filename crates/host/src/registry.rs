@@ -415,14 +415,9 @@ pub struct Registry<S, H, R> {
 
 impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// A registry with no session yet. `stored` is what the store held
-    /// when it opened, and `launchers` run the instances
-    /// [`Stored::roster`] gives.
+    /// when it opened.
     #[must_use]
-    pub fn new(
-        launchers: BTreeMap<InstanceId, Launcher<S>>,
-        stored: &Stored,
-        catalog: Catalog,
-    ) -> Self {
+    pub fn new(stored: &Stored, catalog: Catalog) -> Self {
         let unreadable = match stored {
             Stored::Unreadable(reason) => Some(reason.clone()),
             Stored::Opened(_) | Stored::Fresh => None,
@@ -430,12 +425,23 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         Self {
             roster: stored.roster(&catalog),
             unreadable,
-            launchers,
+            launchers: BTreeMap::new(),
             catalog,
             refreshes: BTreeMap::new(),
             sessions: BTreeMap::new(),
             jobs: 0,
         }
+    }
+
+    /// Starts the instances already in the roster.
+    pub fn boot(&mut self) -> Vec<Starting> {
+        let roster = self.roster.0.clone();
+        roster
+            .into_iter()
+            .map(|(instance, settings)| {
+                self.starting(instance, settings, Vec::new())
+            })
+            .collect()
     }
 
     /// What `Welcome` tells a client of each provider that never changes.
@@ -822,6 +828,15 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let Some(settings) = self.roster.of(&instance).cloned() else {
             return self.answers(replies);
         };
+        Vec::from([Effect::Start(self.starting(instance, settings, replies))])
+    }
+
+    fn starting(
+        &mut self,
+        instance: InstanceId,
+        settings: Instance,
+        replies: Vec<R>,
+    ) -> Starting {
         self.jobs = self.jobs.saturating_add(1);
         self.refreshes.insert(
             instance.clone(),
@@ -831,11 +846,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 replies,
             },
         );
-        Vec::from([Effect::Start(Starting {
+        Starting {
             id: self.jobs,
             instance,
             settings,
-        })])
+        }
     }
 
     /// Takes what the latest refresh listed, or keeps why it failed.

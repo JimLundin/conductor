@@ -144,11 +144,11 @@ impl Conductor {
         let started = Instant::now();
         let peer = conn.remote_id();
         let connection = conn.stable_id();
-        let instances = self.registry.instances().await?;
+        let (instances, catalog) = self.registry.instances().await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome instances ready");
         let welcome = self
             .log
-            .welcome(instances, self.registry.catalog(), self.home.shown())
+            .welcome(instances, catalog, self.home.shown())
             .await?;
         tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome log ready");
         Ok(welcome)

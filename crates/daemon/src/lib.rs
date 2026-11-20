@@ -2,17 +2,19 @@
 //! sessions over iroh, and runs each instance through its provider's
 //! [`runtime::Plugin`], knowing no provider by name.
 
-pub mod credentials;
-pub mod home;
-pub mod log;
-pub mod progress;
-pub mod registry;
-pub mod serve;
-pub mod session;
-pub mod sign_in;
-pub mod start;
+mod credentials;
+mod home;
+mod log;
+mod progress;
+mod registry;
+mod serve;
+mod session;
+mod sign_in;
+mod start;
 mod storage;
 mod workspace;
+
+pub use start::{HostOptions, Hosted, Hosting, Plugins, login, serve, start};
 
 use std::io::{ErrorKind, Write};
 use std::path::Path;
@@ -26,7 +28,7 @@ use proto::{AuthToken, Epoch};
 /// The actor stopped: nobody can reach it any more.
 #[derive(Debug, thiserror::Error)]
 #[error("the actor has stopped")]
-pub struct Stopped {}
+pub(crate) struct Stopped {}
 
 /// Loads the host's iroh key from `<data_dir>/host.key`, creating it on first
 /// run. The key's public half is the host's address, so it must persist.
@@ -34,7 +36,7 @@ pub struct Stopped {}
 /// # Errors
 ///
 /// Fails if the key file can't be read, parsed or created.
-pub fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
+fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from_bytes(&load_or_create_secret(
         data_dir, "host.key",
     )?))
@@ -46,7 +48,7 @@ pub fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
 /// # Errors
 ///
 /// Fails if the token file can't be read, parsed or created.
-pub fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
+fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
     let secret = load_or_create_secret(data_dir, "auth.key")?;
     let (bytes, _) = secret
         .split_at_checked(16)
@@ -160,16 +162,7 @@ fn random_key() -> anyhow::Result<[u8; 32]> {
 /// # Errors
 ///
 /// Fails if the OS has no random source.
-pub fn random_token() -> anyhow::Result<AuthToken> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).context("no random source")?;
-    Ok(AuthToken::from_bytes(bytes))
-}
-
-/// # Errors
-///
-/// Fails if the OS has no random source.
-pub fn random_epoch() -> anyhow::Result<Epoch> {
+fn random_epoch() -> anyhow::Result<Epoch> {
     Ok(Epoch(getrandom::u64().context("no random source")?))
 }
 

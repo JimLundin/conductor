@@ -8,60 +8,31 @@
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::fmt::{self, Display};
-use std::sync::Arc;
+use std::fmt::Display;
 
 use agents::Step;
 use agents::runtime::{Command, Event, Outcome, Start};
 pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    CheckpointId, CommandResult, HostPath, Models, Provider, SessionId, TaskId,
-    Workspace,
+    CheckpointId, CommandResult, HostPath, Models, SessionId, TaskId, Workspace,
 };
 use runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Stopped;
+use crate::home::HomeClone;
 use crate::log::Log;
 use crate::workspace;
 
 /// What a performed effect hands back: the next input, after a call.
 type Performed = Result<Option<Input>, Stopped>;
 
-type Compose =
-    dyn Fn(&HostPath, &HostPath, Provider) -> Option<String> + Send + Sync;
-
-/// What the host tells a session's agent beside its CLI's own
-/// instructions (docs/home.md §5), for a session created in a directory,
-/// whose agent runs in another, with a provider's CLI.
-#[derive(Clone)]
-pub struct Instructor(Arc<Compose>);
-
-impl Instructor {
-    pub fn new(
-        compose: impl Fn(&HostPath, &HostPath, Provider) -> Option<String>
-        + Send
-        + Sync
-        + 'static,
-    ) -> Self {
-        Self(Arc::new(compose))
-    }
-}
-
-impl fmt::Debug for Instructor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Instructor")
-    }
-}
-
-/// How the host composes a session's instructions each time its agent
-/// starts, so they follow the home as it is then, and the provider whose
-/// CLI runs it.
+/// The home and the instruction file already read by this session's CLI.
 #[derive(Debug, Clone)]
 pub struct Told {
-    pub instructor: Instructor,
-    pub provider: Provider,
+    pub home: HomeClone,
+    pub instructions_file: Option<String>,
 }
 
 /// A handle to one session's task. Clone it freely.
@@ -300,10 +271,14 @@ impl Actor {
     fn instructed(&self, command: Command) -> Command {
         match command {
             Command::Start(start) => Command::Start(Start {
-                instructions: (self.told.instructor.0)(
-                    &self.created,
-                    &start.directory,
-                    self.told.provider,
+                instructions: self.told.instructions_file.as_deref().and_then(
+                    |file| {
+                        self.told.home.instructions(
+                            &self.created,
+                            &start.directory,
+                            file,
+                        )
+                    },
                 ),
                 ..start
             }),

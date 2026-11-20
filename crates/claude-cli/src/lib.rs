@@ -11,5 +11,6 @@ mod plugin;
 mod session;
 
 pub use agent::{ClaudeLaunch, starter};
+pub use claude::Sandbox;
 pub use plugin::plugin;
 pub use session::{ClaudeOptions, ClaudeSession, Error, sandbox};
