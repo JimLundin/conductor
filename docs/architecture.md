@@ -1624,6 +1624,9 @@ The owner settled these on 2026-11-12.
   interrupt button may do. It has no UI types and is unit-tested.
 - Both compile to wasm32 for the app. A native build exists only as
   the harness for the daemon's e2e tests and the headless example.
+  `tools/live-host.sh` runs the example from `net` against a live host.
+  The example reads session controls, requests and turn checkpoints from
+  `HostView` to drive its scripted checks.
 
 ## 8. The app (`crates/app`)
 

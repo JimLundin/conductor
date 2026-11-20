@@ -87,6 +87,14 @@ pub struct TurnCheckpoint {
     pub undo: UndoAvailability,
 }
 
+/// A user turn's transcript, with its checkpoint once the host has saved it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompletedTurn<'a> {
+    pub items: &'a [Item],
+    pub outcome: &'a TurnOutcome,
+    pub checkpoint: Option<CheckpointId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UndoState {
     Ready,
@@ -465,6 +473,39 @@ impl SessionView {
             0 => Attention::Quiet,
             count => Attention::Requests(count),
         }
+    }
+
+    #[must_use]
+    pub fn completed_turn_since(
+        &self,
+        since: usize,
+    ) -> Option<CompletedTurn<'_>> {
+        let pending = self.items.get(since..)?;
+        let start = pending
+            .iter()
+            .position(|item| matches!(item, Item::User { .. }))?;
+        let items = pending.get(start..)?;
+        let (end, outcome) = items
+            .iter()
+            .enumerate()
+            .skip(1)
+            .take_while(|(_, item)| {
+                !matches!(item, Item::User { .. } | Item::Continued(_))
+            })
+            .find_map(|(index, item)| match item {
+                Item::TurnCompleted(outcome) => Some((index, outcome)),
+                _ => None,
+            })?;
+        let checkpoint = self
+            .checkpoints
+            .iter()
+            .find(|turn| turn.start == since.saturating_add(start))
+            .map(|turn| turn.checkpoint);
+        Some(CompletedTurn {
+            items: items.get(..end)?,
+            outcome,
+            checkpoint,
+        })
     }
 
     fn apply(self, kind: EventKind, seq: HostSeq) -> Self {
@@ -2261,6 +2302,75 @@ mod tests {
             },
             checkpoint(3, 11, 2),
         ])
+    }
+
+    #[test]
+    fn a_completed_user_turn_gets_only_its_own_checkpoint_in_either_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut events = checkpoint_events();
+        events.truncate(10);
+        let suffix = events.split_off(8);
+        let prefix = numbered(events)
+            .into_iter()
+            .fold(HostView::empty(), HostView::apply);
+        let [completion, checkpoint] = suffix.as_slice() else {
+            return Err("expected completion and checkpoint".into());
+        };
+        for [first, last] in
+            [[completion, checkpoint], [checkpoint, completion]]
+        {
+            let event = |kind: &EventKind, seq| Event {
+                seq: HostSeq(seq),
+                session: SessionId(1),
+                kind: kind.clone(),
+            };
+            let partial = prefix.clone().apply(event(first, 9));
+            let partial_view = partial
+                .sessions
+                .get(&SessionId(1))
+                .ok_or("expected a session")?;
+            assert_eq!(
+                partial_view
+                    .completed_turn_since(3)
+                    .and_then(|turn| turn.checkpoint),
+                None
+            );
+            let complete = partial.apply(event(last, 10));
+            let view = complete
+                .sessions
+                .get(&SessionId(1))
+                .ok_or("expected a session")?;
+            let turn = view
+                .completed_turn_since(3)
+                .ok_or("expected a completed turn")?;
+            assert_eq!(
+                (turn.outcome, turn.checkpoint),
+                (&TurnOutcome::Completed, Some(proto::CheckpointId(2)))
+            );
+            assert_eq!(turn.items.len(), 2);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_later_user_turn_does_not_complete_an_abandoned_one()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let events = checkpoint_events()
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| !matches!(index, 4 | 5))
+            .map(|(_, kind)| kind)
+            .collect();
+        let host = numbered(events)
+            .into_iter()
+            .fold(HostView::empty(), HostView::apply);
+        let view = host
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a session")?;
+        assert!(view.completed_turn_since(0).is_none());
+        assert!(view.completed_turn_since(2).is_some());
+        Ok(())
     }
 
     fn numbered(kinds: Vec<EventKind>) -> Vec<Event> {
