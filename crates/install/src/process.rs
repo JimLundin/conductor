@@ -39,7 +39,7 @@ fn set(cmd: &mut Command, var: Var, home: &Home) {
 /// opening a console window for each agent process.
 #[cfg(not(unix))]
 #[must_use]
-pub fn no_window(mut cmd: Command) -> Command {
+fn no_window(mut cmd: Command) -> Command {
     use std::os::windows::process::CommandExt;
     /// `CREATE_NO_WINDOW` from the Win32 process creation flags.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -49,12 +49,12 @@ pub fn no_window(mut cmd: Command) -> Command {
 
 #[cfg(unix)]
 #[must_use]
-pub const fn no_window(cmd: Command) -> Command {
+const fn no_window(cmd: Command) -> Command {
     cmd
 }
 
 /// Closes stdin, waits briefly for a clean exit, then kills.
-pub async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
+pub(crate) async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
     drop(stdin);
     let graceful = tokio::time::timeout(EXIT_GRACE, child.wait())
         .await
@@ -101,7 +101,14 @@ pub fn sign_in(
     home: &Home,
     run: Invocation,
 ) -> io::Result<(SignInRun, ChildStdin)> {
-    let mut cmd = no_window(command(program, home, run));
+    let (child, stdin, out, err) = piped(command(program, home, run))?;
+    Ok((SignInRun { child, out, err }, stdin))
+}
+
+pub(crate) fn piped(
+    command: Command,
+) -> io::Result<(Child, ChildStdin, ChildStdout, ChildStderr)> {
+    let mut cmd = no_window(command);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -110,11 +117,11 @@ pub fn sign_in(
     let stdin = child.stdin.take().ok_or_else(|| unpiped("stdin"))?;
     let out = child.stdout.take().ok_or_else(|| unpiped("stdout"))?;
     let err = child.stderr.take().ok_or_else(|| unpiped("stderr"))?;
-    Ok((SignInRun { child, out, err }, stdin))
+    Ok((child, stdin, out, err))
 }
 
 fn unpiped(stream: &str) -> io::Error {
-    io::Error::other(format!("the sign-in's {stream} is not a pipe"))
+    io::Error::other(format!("the child's {stream} is not a pipe"))
 }
 
 impl SignInRun {
@@ -153,6 +160,7 @@ async fn lines(stream: impl AsyncRead + Unpin, printed: &impl Fn(String)) {
 ///
 /// Why the write failed, for instance because the CLI has exited.
 pub async fn write_line(stdin: &mut ChildStdin, line: &str) -> io::Result<()> {
-    stdin.write_all(format!("{line}\n").as_bytes()).await?;
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
     stdin.flush().await
 }

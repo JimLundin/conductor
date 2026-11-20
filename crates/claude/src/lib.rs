@@ -19,7 +19,7 @@ pub mod runtime;
 mod sign_in;
 
 pub use credentials::{ClaudeCredential, account, credential, info};
-pub use driver::{After, Command, Effect, Failure, Input, Session, Then};
+pub use driver::{CallRequest, Effect, Failure, Input, Problem, Session, Then};
 pub use launch::{
     Launch, Resume, SANDBOX_TOOLS, Sandbox, SettingSource, VersionPolicy,
     admit, auth_status, cli, login, profile, reported_refusal, sandbox,

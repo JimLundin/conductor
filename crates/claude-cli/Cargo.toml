@@ -12,7 +12,6 @@ layer = "shell"
 agents = { path = "../agents" }
 claude = { path = "../claude" }
 install = { path = "../install" }
-n0-future.workspace = true
 proto = { path = "../proto" }
 runtime = { path = "../runtime" }
 serde_json = { workspace = true, features = ["std"] }
@@ -21,6 +20,9 @@ tokio.workspace = true
 tracing.workspace = true
 ulid = "1.2"
 uuid.workspace = true
+
+[dev-dependencies]
+n0-future.workspace = true
 
 [lints]
 workspace = true

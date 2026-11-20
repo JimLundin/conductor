@@ -15,3 +15,7 @@
 - **Pending issue edit** is a home mutation kept on the host until its
   upstream has accepted it. Replay can apply it to an updated issue file
   or let a newer change to the same field stand.
+- **Line-JSON process runner** owns a CLI child and its pipes. It delivers
+  stdout lines and I/O outcomes to the protocol driver and runs its effects.
+- **Protocol driver** translates CLI frames and handle commands into
+  ordered effects and tracks replies that are waiting on the CLI.

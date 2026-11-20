@@ -1,13 +1,10 @@
 //! The decisions of the actor that owns one `claude` process, as a state
 //! machine.
 //!
-//! `claude-cli` owns the process: it turns each stdout line and each
-//! handle's command into an [`Input`], and performs each [`Effect`]. A
-//! reply's channel is the opaque `R` and a shutdown's the opaque `S`, which
-//! the machine hands back with the answer; `E` is why a write failed.
-
+use core::convert::Infallible;
 use core::fmt;
 
+use agents::driver::{self, Command, FailureText};
 use agents::{Exit, Note};
 use proto::Provider;
 use serde_json::Value;
@@ -22,7 +19,7 @@ use crate::{
 
 /// What a handle asks of the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command<R, S> {
+pub enum CallRequest<R> {
     SendUser {
         text: String,
         reply: R,
@@ -35,29 +32,6 @@ pub enum Command<R, S> {
         id: PermissionRequestId,
         decision: PermissionDecision,
         reply: R,
-    },
-    /// Closes stdin, waits briefly for a clean exit, then kills.
-    Shutdown(S),
-}
-
-/// What happened, as the shell saw it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Input<R, S, E> {
-    /// A stdout line, `Ok(None)` once stdout closes, or why reading it
-    /// failed.
-    Read(Result<Option<String>, String>),
-    Command(Command<R, S>),
-    /// Every handle is gone.
-    Closed,
-    /// How the [`Effect::Write`] for `then` went.
-    Wrote {
-        then: Then<R>,
-        outcome: Result<(), E>,
-    },
-    /// The process [`Effect::Stop`] stopped has exited.
-    Stopped {
-        exit: Exit,
-        then: After<S>,
     },
 }
 
@@ -77,78 +51,22 @@ pub enum Then<R> {
     },
 }
 
-/// What follows once the process has stopped.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum After<S> {
-    Nothing,
-    Shutdown(S),
-    /// Every handle is gone, so the actor ends.
-    End,
-}
+type After<S> = driver::After<S, Infallible>;
+pub type Input<R, S, E> =
+    driver::Input<CallRequest<R>, Then<R>, S, Infallible, E>;
+pub type Effect<R, S, E> =
+    driver::Effect<ClaudeEvent, R, S, Then<R>, Infallible, Failure<E>>;
+pub type Failure<E> = driver::Failure<E, Problem>;
 
-/// What the shell does next, in order.
-#[derive(Debug, PartialEq)]
-pub enum Effect<R, S, E> {
-    /// Write `line` to stdin, then report how it went as [`Input::Wrote`].
-    Write {
-        line: String,
-        then: Then<R>,
-    },
-    Emit(ClaudeEvent),
-    Log(Note),
-    /// Answer a handle's command; a command with no value answers `Null`.
-    Reply(R, Result<Value, Failure<E>>),
-    /// Answer a shutdown with how the process ended.
-    Report(S, Exit),
-    /// Stop the process, then report its exit as [`Input::Stopped`].
-    Stop(After<S>),
-    /// End the actor.
-    End,
-}
-
-/// Why a command failed.
-#[derive(Debug)]
-pub enum Failure<E> {
-    Exited,
-    Io(E),
-    Encode(serde_json::Error),
+#[derive(Debug, PartialEq, Eq)]
+pub enum Problem {
     Control { subtype: String, message: String },
     UnknownPermissionRequest(PermissionRequestId),
 }
 
-/// An encoding failure equals another with the same description.
-impl<E: PartialEq> PartialEq for Failure<E> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Exited, Self::Exited) => true,
-            (Self::Io(left), Self::Io(right)) => left == right,
-            (Self::Encode(left), Self::Encode(right)) => {
-                left.to_string() == right.to_string()
-            }
-            (
-                Self::Control { subtype, message },
-                Self::Control {
-                    subtype: other_subtype,
-                    message: other_message,
-                },
-            ) => subtype == other_subtype && message == other_message,
-            (
-                Self::UnknownPermissionRequest(left),
-                Self::UnknownPermissionRequest(right),
-            ) => left == right,
-            _ => false,
-        }
-    }
-}
-
-impl<E: fmt::Display> fmt::Display for Failure<E> {
+impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Exited => f.write_str("the claude process has exited"),
-            Self::Io(error) => write!(f, "claude i/o: {error}"),
-            Self::Encode(error) => {
-                write!(f, "could not encode a message for claude: {error}")
-            }
             Self::Control { subtype, message } => {
                 write!(f, "claude rejected {subtype}: {message}")
             }
@@ -158,6 +76,12 @@ impl<E: fmt::Display> fmt::Display for Failure<E> {
         }
     }
 }
+
+const FAILURE_TEXT: FailureText = FailureText {
+    exited: "the claude process has exited",
+    io: "claude i/o",
+    json: "could not encode a message for claude",
+};
 
 /// The session's state: our control requests awaiting a `control_response`,
 /// the `can_use_tool` requests not yet answered, the last message of the
@@ -206,10 +130,13 @@ impl<R> Session<R> {
                 effects.extend(self.stop(After::Nothing));
                 effects
             }
-            Input::Command(command) => self.command(command),
+            Input::Command(Command::Call(call)) => self.command(call),
+            Input::Command(Command::Shutdown(waiter)) => {
+                self.stop(After::Shutdown(waiter))
+            }
             Input::Closed => self.stop(After::End),
             Input::Wrote { then, outcome } => self.wrote(then, outcome),
-            Input::Stopped { exit, then } => self.stopped(&exit, then),
+            Input::Stopped { exit, then, .. } => self.stopped(&exit, then),
         }
     }
 
@@ -341,9 +268,11 @@ impl<R> Session<R> {
             |(call, reply)| {
                 Vec::from([Effect::Reply(
                     reply,
-                    outcome.map_err(|message| Failure::Control {
-                        subtype: String::from(call.subtype()),
-                        message,
+                    outcome.map_err(|message| {
+                        Failure::Protocol(Problem::Control {
+                            subtype: String::from(call.subtype()),
+                            message,
+                        })
                     }),
                 )])
             },
@@ -352,13 +281,13 @@ impl<R> Session<R> {
 
     fn command<S, E: fmt::Display>(
         &mut self,
-        command: Command<R, S>,
+        command: CallRequest<R>,
     ) -> Vec<Effect<R, S, E>> {
         match command {
-            Command::SendUser { text, reply } => {
+            CallRequest::SendUser { text, reply } => {
                 self.write(Outbound::User(text), Then::User(reply))
             }
-            Command::Control { call, reply } => {
+            CallRequest::Control { call, reply } => {
                 self.next_request = self.next_request.saturating_add(1);
                 let request_id = format!("req_{}", self.next_request);
                 self.write(
@@ -373,21 +302,22 @@ impl<R> Session<R> {
                     },
                 )
             }
-            Command::Respond {
+            CallRequest::Respond {
                 id,
                 decision,
                 reply,
             } => match self.open.remove(&id) {
                 None => Vec::from([Effect::Reply(
                     reply,
-                    Err(Failure::UnknownPermissionRequest(id)),
+                    Err(Failure::Protocol(Problem::UnknownPermissionRequest(
+                        id,
+                    ))),
                 )]),
                 Some(open) => self.write(
                     Outbound::Permission { id, decision, open },
                     Then::Answer(reply),
                 ),
             },
-            Command::Shutdown(waiter) => self.stop(After::Shutdown(waiter)),
         }
     }
 
@@ -398,11 +328,8 @@ impl<R> Session<R> {
     ) -> Vec<Effect<R, S, E>> {
         match (&self.exited, encode(msg)) {
             (Some(_), _) => failed(then, Failure::Exited),
-            (None, Ok(line)) => Vec::from([Effect::Write {
-                line: format!("{line}\n"),
-                then,
-            }]),
-            (None, Err(error)) => failed(then, Failure::Encode(error)),
+            (None, Ok(line)) => Vec::from([Effect::Write { line, then }]),
+            (None, Err(error)) => failed(then, Failure::Json(error)),
         }
     }
 
@@ -436,10 +363,10 @@ impl<R> Session<R> {
     }
 
     fn stop<S, E>(&self, then: After<S>) -> Vec<Effect<R, S, E>> {
-        match &self.exited {
-            None => Vec::from([Effect::Stop(then)]),
-            Some(exit) => after(then, exit),
-        }
+        then.stop(self.exited.as_ref())
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// Fails everything still waiting on the process.
@@ -457,18 +384,8 @@ impl<R> Session<R> {
             .chain([Effect::Emit(ClaudeEvent::Exited {
                 status: exit.clone(),
             })])
-            .chain(after(then, exit))
+            .chain(then.complete(exit).into_iter().flatten())
             .collect()
-    }
-}
-
-fn after<R, S, E>(then: After<S>, exit: &Exit) -> Vec<Effect<R, S, E>> {
-    match then {
-        After::Nothing => Vec::new(),
-        After::Shutdown(waiter) => {
-            Vec::from([Effect::Report(waiter, exit.clone())])
-        }
-        After::End => Vec::from([Effect::End]),
     }
 }
 
@@ -487,7 +404,7 @@ fn failed<R, S, E: fmt::Display>(
             Vec::from([Effect::Log(Note::Unwritten {
                 provider: Provider::Claude,
                 writing: format!("refusing {subtype}"),
-                error: failure.to_string(),
+                error: failure.describe(&FAILURE_TEXT),
             })])
         }
     }
@@ -499,7 +416,10 @@ mod tests {
     use proto::Provider;
     use serde_json::{Value, json};
 
-    use super::{After, Command, Effect, Failure, Input, Session, Then};
+    use super::{
+        After, CallRequest, Command, Effect, FAILURE_TEXT, Failure, Input,
+        Problem, Session, Then,
+    };
     use crate::{
         ClaudeEvent, ControlCall, MessageId, Outbound, PermissionDecision,
         PermissionRequestId, encode,
@@ -567,8 +487,7 @@ mod tests {
 
     fn written(msg: Outbound, then: Then<u8>) -> Step {
         Effect::Write {
-            line: encode(msg)
-                .map_or_else(|error| error.to_string(), |line| line + "\n"),
+            line: encode(msg).unwrap_or_else(|error| error.to_string()),
             then,
         }
     }
@@ -585,10 +504,10 @@ mod tests {
     }
 
     fn control(reply: u8) -> Input<u8, char, &'static str> {
-        Input::Command(Command::Control {
+        Input::Command(Command::Call(CallRequest::Control {
             call: ControlCall::Interrupt,
             reply,
-        })
+        }))
     }
 
     fn sent(request_id: &str, reply: u8) -> Then<u8> {
@@ -662,10 +581,10 @@ mod tests {
                 Vec::new(),
                 Vec::from([Effect::Reply(
                     2,
-                    Err(Failure::Control {
+                    Err(Failure::Protocol(Problem::Control {
                         subtype: String::from("interrupt"),
                         message: String::from("busy"),
-                    })
+                    }))
                 )]),
                 Vec::from([Effect::Reply(1, Ok(json!({ "ok": true })))]),
                 Vec::from([Effect::Log(Note::UnknownResponse {
@@ -745,11 +664,11 @@ mod tests {
     fn a_permission_is_answered_once_and_a_withdrawn_one_not_at_all() {
         let mut session = Session::default();
         let respond = |id: &str, reply| {
-            Input::Command(Command::Respond {
+            Input::Command(Command::Call(CallRequest::Respond {
                 id: PermissionRequestId(String::from(id)),
                 decision: PermissionDecision::Allow,
                 reply,
-            })
+            }))
         };
         let seen = walk(
             &mut session,
@@ -768,8 +687,8 @@ mod tests {
         let unknown = |id: &str, reply| {
             Vec::from([Effect::Reply(
                 reply,
-                Err(Failure::UnknownPermissionRequest(PermissionRequestId(
-                    String::from(id),
+                Err(Failure::Protocol(Problem::UnknownPermissionRequest(
+                    PermissionRequestId(String::from(id)),
                 ))),
             )])
         };
@@ -865,19 +784,20 @@ mod tests {
                 },
                 Input::Command(Command::Shutdown('a')),
                 Input::Stopped {
+                    stderr: None,
                     exit: exit(),
                     then: After::Shutdown('a'),
                 },
                 Input::Command(Command::Shutdown('b')),
-                Input::Command(Command::SendUser {
+                Input::Command(Command::Call(CallRequest::SendUser {
                     text: String::from("hi"),
                     reply: 2,
-                }),
-                Input::Command(Command::Respond {
+                })),
+                Input::Command(Command::Call(CallRequest::Respond {
                     id: PermissionRequestId(String::from("perm_1")),
                     decision: PermissionDecision::Allow,
                     reply: 3,
-                }),
+                })),
                 Input::Closed,
             ]),
         );
@@ -894,9 +814,9 @@ mod tests {
                 Vec::from([Effect::Reply(2, Err(Failure::Exited))]),
                 Vec::from([Effect::Reply(
                     3,
-                    Err(Failure::UnknownPermissionRequest(
+                    Err(Failure::Protocol(Problem::UnknownPermissionRequest(
                         PermissionRequestId(String::from("perm_1"))
-                    ))
+                    )))
                 )]),
                 Vec::from([Effect::End]),
             ]
@@ -913,6 +833,7 @@ mod tests {
                 Input::Read(Err(String::from("reset"))),
                 Input::Closed,
                 Input::Stopped {
+                    stderr: None,
                     exit: exit(),
                     then: After::End,
                 },
@@ -943,16 +864,16 @@ mod tests {
         let failures: [Failure<&str>; 4] = [
             Failure::Exited,
             Failure::Io("broken pipe"),
-            Failure::Control {
+            Failure::Protocol(Problem::Control {
                 subtype: String::from("interrupt"),
                 message: String::from("busy"),
-            },
-            Failure::UnknownPermissionRequest(PermissionRequestId(
-                String::from("perm_1"),
+            }),
+            Failure::Protocol(Problem::UnknownPermissionRequest(
+                PermissionRequestId(String::from("perm_1")),
             )),
         ];
         assert_eq!(
-            failures.map(|failure| failure.to_string()),
+            failures.map(|failure| failure.describe(&FAILURE_TEXT)),
             [
                 "the claude process has exited",
                 "claude i/o: broken pipe",
@@ -966,18 +887,18 @@ mod tests {
     fn failures_are_equal_only_in_kind_and_contents() {
         type Failed = Failure<&'static str>;
         let encode = |text: &str| {
-            serde_json::from_str::<Value>(text)
-                .err()
-                .map(Failed::Encode)
+            serde_json::from_str::<Value>(text).err().map(Failed::Json)
         };
-        let control = |subtype: &str, message: &str| Failed::Control {
-            subtype: String::from(subtype),
-            message: String::from(message),
+        let control = |subtype: &str, message: &str| {
+            Failed::Protocol(Problem::Control {
+                subtype: String::from(subtype),
+                message: String::from(message),
+            })
         };
         let unknown = |id: &str| {
-            Failed::UnknownPermissionRequest(PermissionRequestId(String::from(
-                id,
-            )))
+            Failed::Protocol(Problem::UnknownPermissionRequest(
+                PermissionRequestId(String::from(id)),
+            ))
         };
         assert_eq!(Failed::Exited, Failed::Exited);
         assert_ne!(Failed::Exited, Failed::Io("broken pipe"));

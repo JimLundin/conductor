@@ -8,6 +8,7 @@
 
 extern crate alloc;
 
+pub mod driver;
 mod exit;
 mod note;
 pub mod pin;
