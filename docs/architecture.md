@@ -431,8 +431,8 @@ probes and installs as `host::start` decides, and sends the plugins'
   task that feeds commands and provider events into the runtime machine.
 - `claude-cli` and `codex-cli`: supply each CLI's handshake, driver and
   stderr policy to the process runner, perform each agent's provider calls,
-  and build their plugins (`claude_cli::plugin`, `codex_cli::plugin`).
-  Their replay tests exercise the driver with a fake process.
+  and expose their plugin constructors (`claude_cli::plugin`,
+  `codex_cli::plugin`).
 - `daemon`: the host behind `conductord`, a library that takes the
   plugins and exposes its start, serve and login functions.
 - `conductord`: the binary, the one place that names the providers. It
@@ -442,12 +442,10 @@ probes and installs as `host::start` decides, and sends the plugins'
   <provider>=<model>]...`, parsed in `host::start`, and `conductord login
   <provider> [--account <account>]`, which picks the instance of that
   account, or without one the provider's own (`host::registry::picked`).
-- The Codex hub, `codex_cli::Hub`, is the one task that owns a Codex
-  instance's `codex app-server` and routes each thread's events to its
-  agent's runtime; its decisions are the state machine `codex::hub`. Each
-  Codex instance has its own hub, since the key is fixed in its server's
-  environment. It is internal to the Codex runtime: a session never sees
-  the shared server.
+- The private Codex hub owns its instance's `codex app-server` and
+  routes each thread's events to its agent's runtime. The state machine
+  `codex::hub` makes the routing decisions. Each instance has its own
+  hub because the key is fixed in its server's environment.
 - `install`: the shared pinned installs, CLI homes, sign-in over pipes
   (`install::process`), and the line-JSON process runner
   (`install::line_json`). The runner owns each child's pipes and executes
@@ -1762,9 +1760,13 @@ client catches up from its cursors.
 
 ## 9. Testing
 
-- **Replay tests** (`crates/claude-cli/tests`, `crates/codex-cli/tests`):
-  recorded CLI sessions through the
-  parsers, asserting exact events.
+- **Replay tests** run with `cargo test -p claude-cli -p codex-cli`. The
+  private replays beside the Claude session driver and Codex server
+  (`crates/claude-cli/src/session/replay.rs`,
+  `crates/codex-cli/src/server/replay.rs`) assert native frames, ordering
+  and errors over real pipes. Integration tests in each shell's `tests/`
+  directory enter through the plugin and observe shared runtime events.
+  Both use the fake CLIs and recorded fixtures.
 - **Daemon e2e** (`crates/daemon/tests/e2e.rs`) runs the real daemon with
   fake CLIs and native `HostLink`s on loopback. It calls `daemon::start` with the
   production plugins configured to run the fakes. Its scenarios include

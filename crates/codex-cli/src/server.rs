@@ -17,8 +17,8 @@ use tokio::sync::mpsc;
 use super::config;
 use codex::{
     ApprovalId, Call, CallRequest, CodexEvent, Decision, Failure, History,
-    Paging, Problem, Server, ThreadId, ThreadOptions, ThreadSettings, TurnId,
-    history_page, models, thread_started, turn_id, user_agent,
+    Paging, Problem, Server, ThreadId, ThreadOptions, TurnId, history_page,
+    models, thread_started, turn_id, user_agent,
 };
 
 const STDERR_TIMEOUT: Duration = Duration::from_secs(5);
@@ -35,8 +35,6 @@ pub struct ServerOptions {
     pub credential: Option<CodexCredential>,
     /// The app-server's own working directory; each thread sets its `cwd`.
     pub cwd: PathBuf,
-    /// Append every raw stdout line to this file.
-    pub stdout_log: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -98,7 +96,6 @@ type CommandMsg = CallRequest<line_json::Reply<Error>>;
 pub struct CodexServer {
     commands: Handle<CommandMsg>,
     user_agent: String,
-    pid: Option<u32>,
 }
 
 /// A thread on a [`CodexServer`]. Its events arrive on the server's event
@@ -106,7 +103,8 @@ pub struct CodexServer {
 #[derive(Clone)]
 pub struct CodexThread {
     pub id: ThreadId,
-    pub settings: ThreadSettings,
+    #[cfg(all(test, unix))]
+    settings: codex::ThreadSettings,
     server: CodexServer,
 }
 
@@ -123,34 +121,20 @@ impl CodexServer {
         Self::open(opts).await
     }
 
-    pub(crate) async fn open(
+    pub async fn open(
         opts: ServerOptions,
     ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
         let line_json::Started {
             handle: commands,
             events,
-            pid,
             ..
         } = start(&opts)?;
         let initialize = request(&commands, Call::Initialize).await?;
         let server = Self {
             commands,
             user_agent: user_agent(initialize)?,
-            pid,
         };
         Ok((server, events))
-    }
-
-    #[must_use]
-    pub const fn pid(&self) -> Option<u32> {
-        self.pid
-    }
-
-    /// `userAgent` from the handshake. Its first segment carries the Codex
-    /// version, as in `conductor/0.166.0 (...)`.
-    #[must_use]
-    pub fn user_agent(&self) -> &str {
-        &self.user_agent
     }
 
     #[must_use]
@@ -165,29 +149,6 @@ impl CodexServer {
         Ok(models(request(&self.commands, Call::ModelList).await?)?)
     }
 
-    /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
-    pub async fn start_thread(
-        &self,
-        opts: ThreadOptions,
-    ) -> Result<CodexThread, Error> {
-        self.open_thread(opts, None).await
-    }
-
-    /// Loads a thread from Codex's own history; works in a new process.
-    ///
-    /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
-    pub async fn resume_thread(
-        &self,
-        id: ThreadId,
-        opts: ThreadOptions,
-    ) -> Result<CodexThread, Error> {
-        self.open_thread(opts, Some(id)).await
-    }
-
     /// Resumes `resume` if given, or else starts a thread.
     ///
     /// # Errors
@@ -198,10 +159,15 @@ impl CodexServer {
         opts: ThreadOptions,
         resume: Option<ThreadId>,
     ) -> Result<CodexThread, Error> {
-        let (id, settings) = thread_started(
+        let started = thread_started(
             request(&self.commands, Call::open(opts, resume)).await?,
         )?;
-        Ok(self.thread(id, settings))
+        Ok(CodexThread {
+            id: started.0,
+            #[cfg(all(test, unix))]
+            settings: started.1,
+            server: self.clone(),
+        })
     }
 
     /// Answers an open approval or user-input request exactly once.
@@ -209,7 +175,7 @@ impl CodexServer {
     /// # Errors
     /// Fails when Codex has exited, no approval with `id` is open, or
     /// `decision` does not fit it.
-    pub async fn respond(
+    async fn respond(
         &self,
         id: ApprovalId,
         decision: Decision,
@@ -232,14 +198,6 @@ impl CodexServer {
     /// Fails when the server's actor has already stopped.
     pub async fn shutdown(&self) -> Result<Exit, Error> {
         self.commands.shutdown().await.map_err(|_| Error::Exited)
-    }
-
-    fn thread(&self, id: ThreadId, settings: ThreadSettings) -> CodexThread {
-        CodexThread {
-            id,
-            settings,
-            server: self.clone(),
-        }
     }
 }
 
@@ -361,12 +319,11 @@ fn command(opts: &ServerOptions) -> Command {
 fn start(
     opts: &ServerOptions,
 ) -> Result<line_json::Started<CommandMsg, CodexEvent>, Error> {
-    let stdout_log = line_json::stdout_log(opts.stdout_log.as_deref())?;
     let mut driver = Server::default();
     Ok(line_json::start(
         command(opts),
         Options {
-            stdout_log,
+            stdout_log: None,
             stderr: StderrPolicy::LastNonempty(STDERR_TIMEOUT),
             log_stderr: |line| tracing::debug!(target: "codex::stderr", "{line}"),
             log_note: runtime::log,
@@ -390,7 +347,6 @@ mod tests {
             home: Home::User,
             credential: None,
             cwd: "/tmp".into(),
-            stdout_log: None,
         });
         let std = cmd.as_std();
         let args = std
@@ -404,3 +360,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod replay;

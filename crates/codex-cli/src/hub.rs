@@ -13,7 +13,7 @@ use codex::{CodexEvent, ThreadId, ThreadOptions};
 use proto::Models;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{CodexServer, CodexThread, Error, ServerOptions};
+use super::server::{CodexServer, CodexThread, Error, ServerOptions};
 
 /// A thread, and its events, which end with the server's exit or stop.
 pub type Thread = (CodexThread, mpsc::Receiver<Routed>);

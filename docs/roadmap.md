@@ -54,7 +54,9 @@ What is built and what comes next. Update it in the commit that changes it.
   machine, Claude's resume fallbacks included, and `host::session` and the
   daemon's session know no provider. Logging moved out of the cores into
   the shell, and the shell code bent to the old complexity measure is
-  plain `async fn` and `select!` again.
+  plain `async fn` and `select!` again. Each shell package exposes its
+  plugin constructor. Recorded replays cover Codex session routing and
+  approval replies through the shared runtime.
 
 - **Managed CLIs** (#1) (§6.2). `conductord` installs the pinned Claude
   Code and Codex into its data dir, checks their hashes and runs only those,

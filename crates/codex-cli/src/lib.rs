@@ -12,6 +12,9 @@ mod hub;
 mod plugin;
 mod server;
 
-pub use hub::{Hub, Thread};
+#[cfg(test)]
+#[cfg(unix)]
+#[path = "../tests/support/mod.rs"]
+mod replay_support;
+
 pub use plugin::plugin;
-pub use server::{CodexServer, CodexThread, Error, ServerOptions};

@@ -14,7 +14,7 @@ use runtime::agent::{self, Agent, Performed};
 use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::mpsc;
 
-use crate::{Hub, Thread};
+use super::hub::{Hub, Thread};
 
 impl ProviderInstance for Hub {
     fn configure(&self, given: Option<Credential>) -> Configuring<'_> {
