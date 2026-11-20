@@ -81,7 +81,10 @@ What is built and what comes next. Update it in the commit that changes it.
   and conversation history to before a selected turn. Durable native-first
   phases support retry after failure or restart; legacy sessions continue
   in their original directory. Claude uses UUID prefix forks, Codex uses
-  verified `thread/revert` prefixes.
+  verified `thread/revert` prefixes. One checkpoint history applies the
+  same recorded transitions during live execution and replay. It plans
+  snapshot retries and chooses the next undo phase while keeping discarded
+  checkpoints available for diffs.
 
 - **Single CLI pin source** (#28). `tools/pin` writes only
   `crates/agents/src/pin/pins.rs`, including upstream verification notes.

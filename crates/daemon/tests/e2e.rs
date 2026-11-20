@@ -5227,6 +5227,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
     let second = restart(first, &data, address, &phone, &mut updates).await?;
     assert_undo_blocks(&phone, message(session, "blocked after restart"))
         .await?;
+    assert_undo_blocks(&phone, undo_turn(session, retained.id)).await?;
     std::fs::remove_file(&lock)?;
     accepted(&phone, undo).await?;
     let recovered = events_until(&mut updates, Until::Undone).await?;

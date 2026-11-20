@@ -1378,14 +1378,14 @@ fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
         ],
         Some("target"),
     );
-    assert_eq!(forked.book.resume, Some(fork));
+    assert_eq!(forked.book.resume(true), Some(fork));
     assert_eq!(forked.conversation, Some(text("target")));
     let fresh = event(EventKind::UndoHistoryRestored {
         checkpoint: CheckpointId(2),
         history: HistoryAnchor::Fresh,
     });
     let unsent = restored(&[created.clone(), fresh.clone()], Some("new-id"));
-    assert_eq!(unsent.book.resume, Some(HistoryAnchor::Fresh));
+    assert_eq!(unsent.book.resume(true), Some(HistoryAnchor::Fresh));
     let _ = expect(
         restored(&[created, fresh, user, unknown], Some("new-id")),
         Vec::from([(

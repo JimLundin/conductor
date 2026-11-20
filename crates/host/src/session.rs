@@ -20,7 +20,7 @@
 use core::mem;
 
 pub use crate::checkpoints::Compared;
-use crate::checkpoints::{Book, Recovery, SnapshotPlan, Undo};
+use crate::checkpoints::{Book, SnapshotPlan, Undo, UndoPlan};
 use crate::prelude::*;
 use crate::tasks;
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
@@ -33,7 +33,7 @@ use proto::{
     Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq, Kept,
     ModelId, Models, Rejection, RequestId, Resolution, SessionId,
     SubagentActivity, SubagentEvent, SubagentId, Task, TaskId, ToolCallId,
-    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -316,7 +316,7 @@ enum Flow {
     Diffing,
     /// The agent is starting, for this.
     Starting(Launched),
-    Preflighting(UndoOrder),
+    Preflighting(Undo),
     /// Finding the directory to restore the agent's history in.
     Locating(Undoing, HistoryAnchor),
     /// The agent stops, to start again at the history.
@@ -326,7 +326,7 @@ enum Flow {
     Checking(Revert),
     /// The agent restored in another directory stops.
     Leaving(Undoing, HistoryAnchor),
-    Retasking(Undoing, HistoryAnchor),
+    Retasking(Undoing),
     Restoring(Undoing),
     /// The agent stops, for the session to be removed.
     Stopping,
@@ -354,11 +354,6 @@ enum Launched {
     Revert(Revert),
     Restart(Undoing, HostPath, HistoryAnchor),
     Complete(Undoing),
-}
-
-struct UndoOrder {
-    checkpoint: CheckpointId,
-    fork: String,
 }
 
 struct Undoing {
@@ -406,13 +401,11 @@ impl Session {
         conversation: Option<String>,
         history: &[Event],
     ) -> Self {
-        let mut book = Book::replay(history);
-        book.resume = resumed(&book, conversation.as_ref(), history);
+        let book = Book::replay(history);
         Self {
             id,
             directory: book
-                .workspace
-                .as_ref()
+                .workspace()
                 .map_or(directory, |workspace| workspace.directory.clone()),
             choice,
             agent: Agent::Down,
@@ -475,7 +468,7 @@ impl Session {
                 self.started(then, started)
             }
             (Flow::Preflighting(order), Input::Done(checked)) => {
-                self.preflighted(&order, checked)
+                self.preflighted(order, checked)
             }
             (Flow::Locating(undoing, history), Input::Exists(exists)) => {
                 self.located(undoing, history, exists)
@@ -498,8 +491,8 @@ impl Session {
                 Flow::Leaving(undoing, history),
                 Input::Agent(Outcome::ShutDown(left)),
             ) => self.history_restored(undoing, left.map(|()| history)),
-            (Flow::Retasking(undoing, history), Input::History(events)) => {
-                self.retasked(undoing, history, &events)
+            (Flow::Retasking(undoing), Input::History(events)) => {
+                self.retasked(undoing, &events)
             }
             (Flow::Restoring(undoing), Input::Done(restored)) => {
                 self.files_restored(undoing, restored)
@@ -538,13 +531,11 @@ impl Session {
         }
         match order {
             Order::Diff(checkpoint) => self.diff(checkpoint),
-            Order::Undo { checkpoint, fork } => {
-                self.undo(UndoOrder { checkpoint, fork })
+            Order::Undo { checkpoint, fork } => self.undo(checkpoint, &fork),
+            _ if self.book.undo_pending() => {
+                rejected(Rejection::UndoInProgress)
             }
-            other => match &self.book.recovery {
-                Some(_) => rejected(Rejection::UndoInProgress),
-                None => self.normal_order(other),
-            },
+            other => self.normal_order(other),
         }
     }
 
@@ -945,7 +936,7 @@ impl Session {
         };
         self.conversation = self.agent.conversation();
         let saved = self.conversation.clone().map(Effect::Conversation);
-        let materialized = match (&self.book.workspace, &self.agent) {
+        let materialized = match (self.book.workspace(), &self.agent) {
             (
                 Some(_),
                 Agent::Up {
@@ -960,7 +951,7 @@ impl Session {
             }
             _ => None,
         };
-        let started = self.book.workspace.is_some().then(|| {
+        let started = self.book.workspace().is_some().then(|| {
             let history = self.anchor(Some(&native), None);
             self.checkpoint_event(EventKind::NativeTurnStarted {
                 history,
@@ -989,7 +980,7 @@ impl Session {
     /// Removes the closed session's workspace, once what the log staged is
     /// committed; a session without one is removed at once.
     fn clean(&mut self) -> Vec<Effect> {
-        match self.book.workspace.clone() {
+        match self.book.workspace().cloned() {
             Some(workspace) => {
                 self.flow = Flow::Removing;
                 Vec::from([
@@ -1044,9 +1035,10 @@ impl Session {
                 conversation: conversation.clone(),
                 turn: native.map(|turn| turn.0.clone()),
             },
-            Agent::Down => {
-                self.book.resume.clone().unwrap_or(HistoryAnchor::Fresh)
-            }
+            Agent::Down => self
+                .book
+                .resume(self.conversation.is_some())
+                .unwrap_or(HistoryAnchor::Fresh),
         }
     }
 
@@ -1099,7 +1091,10 @@ impl Session {
         match (then, saved) {
             (Saved::Start(offered), Ok(())) => {
                 let changed = self.offered(&offered);
-                let at = (self.book.resume.clone(), self.conversation.clone());
+                let at = (
+                    self.book.resume(self.conversation.is_some()),
+                    self.conversation.clone(),
+                );
                 let directory = self.directory.clone();
                 join(changed, self.start(directory, at, Launched::Ready))
             }
@@ -1216,135 +1211,48 @@ impl Session {
         }
     }
 
-    fn plan(
-        &self,
-        selected: CheckpointId,
-        fork: &str,
-    ) -> Result<Undo, Rejection> {
-        match (&self.book.recovery, &self.turn) {
-            (Some(Recovery::Native(undo) | Recovery::Files(undo)), _)
-                if undo.selected == selected =>
-            {
-                Ok(undo.clone())
-            }
-            (Some(_), _) => Err(Rejection::UndoInProgress),
-            (None, Turn::Idle) => self.fresh_plan(selected, fork),
-            (None, Turn::Starting(_) | Turn::Running(_)) => {
-                Err(Rejection::TurnInProgress)
-            }
-        }
-    }
-
-    fn fresh_plan(
-        &self,
-        selected: CheckpointId,
-        fork: &str,
-    ) -> Result<Undo, Rejection> {
-        let checkpoint = self
-            .book
-            .active
-            .contains(&selected)
-            .then(|| self.book.checkpoints.get(&selected))
-            .flatten()
-            .ok_or(Rejection::CheckpointUnavailable)?;
-        let parent = match &checkpoint.undo {
-            UndoAvailability::Unavailable { .. } => None,
-            UndoAvailability::Available => checkpoint
-                .parent
-                .and_then(|id| self.book.checkpoints.get(&id)),
-        }
-        .ok_or(Rejection::CheckpointUnavailable)?;
-        Ok(Undo {
-            selected,
-            restored: parent.id,
-            history: undo_history(&parent.history, &checkpoint.history, fork)?,
-        })
-    }
-
-    /// The workspace and the commit of checkpoint `restored`.
-    fn restore_point(
-        &self,
-        restored: CheckpointId,
-    ) -> Option<(Workspace, String)> {
-        self.book
-            .workspace
-            .clone()
-            .zip(self.book.checkpoints.get(&restored))
-            .map(|(workspace, checkpoint)| {
-                (workspace, checkpoint.commit.clone())
-            })
-    }
-
-    fn undo(&mut self, order: UndoOrder) -> Vec<Effect> {
-        match self.plan(order.checkpoint, &order.fork) {
+    fn undo(&mut self, checkpoint: CheckpointId, fork: &str) -> Vec<Effect> {
+        match self.book.plan_undo(
+            checkpoint,
+            fork,
+            !matches!(self.turn, Turn::Idle),
+        ) {
             Err(reason) => rejected(reason),
-            Ok(undo) => {
-                match (&self.book.recovery, self.restore_point(undo.restored)) {
-                    (Some(_), _) => self.execute_undo(&order),
-                    (None, Some((workspace, commit))) => {
-                        self.flow = Flow::Preflighting(order);
-                        Vec::from([Effect::Call(Call::Preflight {
-                            workspace,
-                            commit,
-                        })])
-                    }
-                    (None, None) => rejected(Rejection::CheckpointUnavailable),
-                }
+            Ok(UndoPlan::Start {
+                undo,
+                workspace,
+                commit,
+            }) => {
+                self.flow = Flow::Preflighting(undo);
+                Vec::from([Effect::Call(Call::Preflight { workspace, commit })])
             }
+            Ok(UndoPlan::Native(undo)) => self.restore_native(undo),
+            Ok(UndoPlan::Files(undo)) => self.restore_files(Undoing { undo }),
         }
     }
 
     fn preflighted(
         &mut self,
-        order: &UndoOrder,
+        undo: Undo,
         checked: Result<(), String>,
     ) -> Vec<Effect> {
         match checked {
-            Ok(()) => self.execute_undo(order),
+            Ok(()) => {
+                let started = self.checkpoint_event(EventKind::UndoStarted {
+                    checkpoint: undo.selected,
+                    restore: undo.restored,
+                    history: undo.history.clone(),
+                });
+                join([started, Effect::Barrier], self.restore_native(undo))
+            }
             Err(reason) => rejected(Rejection::WorkspaceFailure { reason }),
         }
     }
 
-    fn execute_undo(&mut self, order: &UndoOrder) -> Vec<Effect> {
-        match self.plan(order.checkpoint, &order.fork) {
-            Err(reason) => rejected(reason),
-            Ok(undo) => {
-                let begun = self.begin_undo(&undo);
-                let undoing = Undoing { undo };
-                join(begun, self.recover(undoing))
-            }
-        }
-    }
-
-    fn begin_undo(&mut self, undo: &Undo) -> Vec<Effect> {
-        if self.book.recovery.is_some() {
-            return Vec::new();
-        }
-        self.book.recovery = Some(Recovery::Native(undo.clone()));
-        Vec::from([
-            Effect::Emit(EventKind::UndoStarted {
-                checkpoint: undo.selected,
-                restore: undo.restored,
-                history: undo.history.clone(),
-            }),
-            Effect::Barrier,
-        ])
-    }
-
-    fn recover(&mut self, undoing: Undoing) -> Vec<Effect> {
-        match self.book.recovery.clone() {
-            Some(Recovery::Native(plan)) => {
-                self.flow = Flow::Locating(undoing, plan.history);
-                Vec::from([Effect::Call(Call::Exists(self.directory.clone()))])
-            }
-            Some(Recovery::Files(plan)) => {
-                self.history_restored(undoing, Ok(plan.history))
-            }
-            None => self.history_restored(
-                undoing,
-                Err(String::from("undo has no durable plan")),
-            ),
-        }
+    fn restore_native(&mut self, undo: Undo) -> Vec<Effect> {
+        let history = undo.history.clone();
+        self.flow = Flow::Locating(Undoing { undo }, history);
+        Vec::from([Effect::Call(Call::Exists(self.directory.clone()))])
     }
 
     /// The agent's history is restored in the session's directory, or in
@@ -1355,7 +1263,7 @@ impl Session {
         history: HistoryAnchor,
         exists: bool,
     ) -> Vec<Effect> {
-        let directory = match (exists, &self.book.workspace) {
+        let directory = match (exists, self.book.workspace()) {
             (false, Some(workspace)) => workspace.worktree.clone(),
             _ => self.directory.clone(),
         };
@@ -1470,7 +1378,7 @@ impl Session {
         revert: Revert,
         listed: Result<Vec<String>, String>,
     ) -> Vec<Effect> {
-        let desired = self.kept_turns(revert.undoing.undo.restored);
+        let desired = self.book.retained_turns(revert.undoing.undo.restored);
         let history = listed.and_then(|after| {
             (after == desired)
                 .then(|| HistoryAnchor::Turns {
@@ -1484,21 +1392,6 @@ impl Session {
                 })
         });
         self.restored(revert.undoing, &revert.directory, history)
-    }
-
-    fn kept_turns(&self, restored: CheckpointId) -> Vec<String> {
-        self.book
-            .active
-            .iter()
-            .filter(|id| id <= &&restored)
-            .filter_map(|id| self.book.checkpoints.get(id))
-            .filter_map(|checkpoint| match &checkpoint.history {
-                HistoryAnchor::Turns {
-                    turn: Some(kept), ..
-                } => Some(kept.clone()),
-                _ => None,
-            })
-            .collect()
     }
 
     /// An agent restored outside the session's directory stops, so the
@@ -1524,37 +1417,30 @@ impl Session {
         undoing: Undoing,
         restored: Result<HistoryAnchor, String>,
     ) -> Vec<Effect> {
-        match (restored, &self.book.recovery) {
-            (Err(reason), _) => self.undo_failed(undoing.undo.selected, reason),
-            (Ok(history), Some(Recovery::Native(_))) => {
-                let event = EventKind::UndoHistoryRestored {
-                    checkpoint: undoing.undo.selected,
-                    history: history.clone(),
-                };
-                self.flow = Flow::Retasking(undoing, history);
-                Vec::from([Effect::Emit(event), Effect::Call(Call::History)])
+        match restored {
+            Err(reason) => self.undo_failed(undoing.undo.selected, reason),
+            Ok(history) => {
+                let restored =
+                    self.checkpoint_event(EventKind::UndoHistoryRestored {
+                        checkpoint: undoing.undo.selected,
+                        history,
+                    });
+                self.flow = Flow::Retasking(undoing);
+                Vec::from([restored, Effect::Call(Call::History)])
             }
-            (Ok(_), _) => self.restore_files(undoing),
         }
     }
 
     /// The tasks go back to how they were when the restored checkpoint was
     /// taken, and the undo's native phase is durable.
-    fn retasked(
-        &mut self,
-        undoing: Undoing,
-        history: HistoryAnchor,
-        events: &[Event],
-    ) -> Vec<Effect> {
+    fn retasked(&mut self, undoing: Undoing, events: &[Event]) -> Vec<Effect> {
         let tasks =
             self.retask(tasks_before(events, self.id, undoing.undo.restored));
-        self.book.resume = Some(history);
-        self.book.recovery = Some(Recovery::Files(undoing.undo.clone()));
         join(join(tasks, [Effect::Barrier]), self.restore_files(undoing))
     }
 
     fn restore_files(&mut self, undoing: Undoing) -> Vec<Effect> {
-        match self.restore_point(undoing.undo.restored) {
+        match self.book.restore_point(undoing.undo.restored) {
             Some((workspace, commit)) => {
                 self.flow = Flow::Restoring(undoing);
                 Vec::from([Effect::Call(Call::Restore { workspace, commit })])
@@ -1574,7 +1460,10 @@ impl Session {
         match (restored, &self.agent) {
             (Err(reason), _) => self.undo_failed(undoing.undo.selected, reason),
             (Ok(()), Agent::Down) => {
-                let at = (self.book.resume.clone(), self.conversation.clone());
+                let at = (
+                    self.book.resume(self.conversation.is_some()),
+                    self.conversation.clone(),
+                );
                 let directory = self.directory.clone();
                 self.start(directory, at, Launched::Complete(undoing))
             }
@@ -1670,69 +1559,6 @@ fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
 /// another than `wanted`.
 fn changed(wanted: Option<Effort>, running: Option<Effort>) -> Option<Effort> {
     wanted.filter(|&effort| running != Some(effort))
-}
-
-/// What an undo restores the agent's history to: a fresh conversation, a
-/// fork through the parent's last message, or the turns before the
-/// checkpoint's.
-fn undo_history(
-    parent: &HistoryAnchor,
-    checkpoint: &HistoryAnchor,
-    fork: &str,
-) -> Result<HistoryAnchor, Rejection> {
-    match (parent, checkpoint) {
-        (HistoryAnchor::Fresh, _) => Ok(HistoryAnchor::Fresh),
-        (
-            HistoryAnchor::Messages {
-                conversation,
-                message: Some(message),
-            },
-            _,
-        ) => Ok(HistoryAnchor::Fork {
-            source: conversation.clone(),
-            through: message.clone(),
-            target: String::from(fork),
-        }),
-        (
-            _,
-            HistoryAnchor::Turns {
-                conversation,
-                turn: Some(turn),
-            },
-        ) => Ok(HistoryAnchor::Turns {
-            conversation: conversation.clone(),
-            turn: Some(turn.clone()),
-        }),
-        _ => Err(Rejection::CheckpointUnavailable),
-    }
-}
-
-/// Where a restored session resumes. A fresh restart that took a message
-/// has no history to restore yet: it resumes the conversation the host
-/// saved for it.
-fn resumed(
-    replayed: &Book,
-    conversation: Option<&String>,
-    history: &[Event],
-) -> Option<HistoryAnchor> {
-    let last = history.iter().rev().find(|event| {
-        matches!(
-            event.kind,
-            EventKind::UserMessage { .. }
-                | EventKind::UndoHistoryRestored { .. }
-        )
-    });
-    match (&replayed.resume, conversation, last) {
-        (
-            Some(HistoryAnchor::Fresh),
-            Some(_),
-            Some(Event {
-                kind: EventKind::UserMessage { .. },
-                ..
-            }),
-        ) => None,
-        _ => replayed.resume.clone(),
-    }
 }
 
 /// The resolved requests. One left open is unknown, which a reply takes as
