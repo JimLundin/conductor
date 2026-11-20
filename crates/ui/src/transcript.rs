@@ -4,7 +4,6 @@
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::answers::Draft;
 use client::host_view::{
     Approval, Item, ReplyState, RequestState, Subagent, SubagentStatus,
     ToolState,
@@ -14,7 +13,7 @@ use proto::{
     Selection, SubagentOutcome, ToolKind, TurnOutcome,
 };
 
-use crate::session::closed;
+use crate::session::{Draft, closed};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {

@@ -5,13 +5,10 @@
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::new_session::{
-    Attempt, ProviderNote, Refusal, default_label, efforts, kept_effort,
-    models, note,
-};
 use proto::{
     Availability, CommandBody, CommandResult, Effort, Home, HostPath,
-    InstanceId, Instances, IssueId, ModelId, ProjectId, StartAt,
+    InstanceId, Instances, IssueId, ModelId, Models, ProjectId, ProviderNote,
+    Rejection, StartAt,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -178,17 +175,14 @@ impl Form {
                 Vec::new(),
             ),
             FormIntent::PickModel(id) => {
-                let offered =
-                    models(availability(instances, self.chosen(instances)));
+                let offered = availability(instances, self.chosen(instances))
+                    .map_or_else(Models::none, Availability::models);
                 let picked =
                     offered.find(&ModelId(id)).map(|choice| choice.id.clone());
                 (
                     Self {
-                        effort: kept_effort(
-                            &offered,
-                            picked.as_ref(),
-                            self.effort,
-                        ),
+                        effort: offered
+                            .kept_effort(picked.as_ref(), self.effort),
                         model: picked,
                         ..self
                     },
@@ -339,7 +333,7 @@ impl Form {
         };
         let picked = self.chosen(instances);
         let available = availability(instances, picked);
-        let offered = models(available);
+        let offered = available.map_or_else(Models::none, Availability::models);
         let suggestions = chosen
             .map_or_default(|(_, host)| host.fold.view.directories())
             .iter()
@@ -384,7 +378,10 @@ impl Form {
             }),
             instance_hint: instance_hint(
                 instance_error,
-                note(picked.and_then(|it| catalog.of(it.provider)), available),
+                Availability::note(
+                    picked.and_then(|it| catalog.of(it.provider)),
+                    available,
+                ),
                 (
                     &picked.map_or_else(
                         || String::from("That instance"),
@@ -393,8 +390,7 @@ impl Form {
                     &name,
                 ),
             ),
-            efforts: self
-                .effort_choices(&efforts(&offered, self.model.as_ref())),
+            efforts: self.effort_choices(&offered.efforts(self.model.as_ref())),
             models: self.model_choices(&offered),
             projects: home
                 .filter(|_| issue.is_none())
@@ -413,10 +409,10 @@ impl Form {
 
     /// The default first, which sends no model, then each model the host
     /// lists.
-    fn model_choices(&self, offered: &proto::Models) -> Vec<Choice> {
+    fn model_choices(&self, offered: &Models) -> Vec<Choice> {
         let first = Choice {
             value: String::new(),
-            label: default_label(offered),
+            label: offered.default_label(),
             selected: self.model.is_none(),
             disabled: false,
         };
@@ -543,5 +539,76 @@ const fn word(availability: Option<&Availability>) -> &'static str {
         Some(Availability::Available { .. }) => "available",
         Some(Availability::Unavailable { .. }) => "unavailable",
         None => "unknown",
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Attempt {
+    Editing,
+    Starting,
+    Refused(Refusal),
+}
+
+/// Where the form shows a refusal: under the field it is about, or under
+/// the whole form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Refusal {
+    Directory,
+    Instance(String),
+    Other(String),
+}
+
+impl Attempt {
+    /// The host's answer to `StartSession`, or the reason it never arrived.
+    fn answered(answer: Result<CommandResult, String>) -> Self {
+        match answer {
+            Ok(
+                CommandResult::Accepted
+                | CommandResult::Started { .. }
+                | CommandResult::Instances(_)
+                | CommandResult::Diff(_)
+                | CommandResult::IssueCreated { .. },
+            ) => Self::Editing,
+            Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
+                Self::Refused(Refusal::Directory)
+            }
+            Ok(CommandResult::Rejected(Rejection::InstanceUnavailable {
+                reason,
+            })) => Self::Refused(Refusal::Instance(reason)),
+            Ok(CommandResult::Rejected(rejection)) => {
+                Self::Refused(Refusal::Other(rejection.label()))
+            }
+            Err(error) => Self::Refused(Refusal::Other(error)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proto::{CommandResult, Rejection};
+
+    use super::{Attempt, Refusal};
+
+    #[test]
+    fn a_refusal_lands_under_its_field() {
+        assert_eq!(
+            [
+                Rejection::NoSuchDirectory,
+                Rejection::InstanceUnavailable {
+                    reason: String::from("no codex"),
+                },
+                Rejection::TurnInProgress,
+            ]
+            .map(|rejection| Attempt::answered(Ok(
+                CommandResult::Rejected(rejection)
+            ))),
+            [
+                Attempt::Refused(Refusal::Directory),
+                Attempt::Refused(Refusal::Instance(String::from("no codex"))),
+                Attempt::Refused(Refusal::Other(String::from(
+                    "a turn is already running"
+                ))),
+            ]
+        );
     }
 }

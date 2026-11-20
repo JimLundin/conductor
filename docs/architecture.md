@@ -1705,6 +1705,10 @@ ticket.
   live one, then one of that host's instances. Where the app speaks of a
   host it names it. The UI assigns each link state its visible label and
   uses that same label in the `data-state` attribute.
+- **Session forms and drafts.** The new-session form in `ui` handles start
+  refusals, and the session pane keeps the answers being edited for open
+  question cards. The form and pane read the advertised models and efforts
+  through `proto::Availability` and `proto::Models`.
 - **Pairing.** A join link (`#join=`) or a ticket pasted under *Add host*
   adds a host; pairing a host again gives it the new ticket and keeps its
   sessions. Forgetting the last host returns to the pairing screen. A Home
