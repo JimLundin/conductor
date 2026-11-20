@@ -179,6 +179,47 @@ pub enum Availability {
     },
 }
 
+/// The note to show for an instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderNote {
+    Nothing,
+    /// The host can't run it, for this reason.
+    Unavailable(String),
+    /// What the provider's plugin says of it, such as what its agent does
+    /// without asking.
+    Says(String),
+}
+
+impl Availability {
+    /// `info` and `availability` are `None` until the host has said.
+    #[must_use]
+    pub fn note(
+        info: Option<&ProviderInfo>,
+        availability: Option<&Self>,
+    ) -> ProviderNote {
+        match (availability, info.and_then(|known| known.note.clone())) {
+            (Some(Self::Unavailable { reason }), _) => {
+                ProviderNote::Unavailable(reason.clone())
+            }
+            (Some(Self::Available { .. }) | None, Some(text)) => {
+                ProviderNote::Says(text)
+            }
+            (Some(Self::Available { .. }) | None, None) => {
+                ProviderNote::Nothing
+            }
+        }
+    }
+
+    /// The models the host offers when it can run the instance.
+    #[must_use]
+    pub fn models(&self) -> Models {
+        match self {
+            Self::Available { models, .. } => models.clone(),
+            Self::Unavailable { .. } => Models::none(),
+        }
+    }
+}
+
 /// The models a provider's CLI offers on this host, as the CLI lists them
 /// when the host starts, and the one a session gets when it names none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,6 +282,41 @@ impl Effort {
 }
 
 impl Models {
+    /// The label of the model picker's first entry, which sends no model.
+    #[must_use]
+    pub fn default_label(&self) -> String {
+        self.default.as_ref().map_or_else(
+            || String::from("Default"),
+            |id| {
+                format!(
+                    "Default ({})",
+                    self.find(id)
+                        .map_or(id.0.as_str(), |choice| choice.name.as_str())
+                )
+            },
+        )
+    }
+
+    /// The efforts `model` takes (`None`: the default model), lowest first.
+    #[must_use]
+    pub fn efforts(&self, model: Option<&ModelId>) -> Vec<Effort> {
+        model
+            .or(self.default.as_ref())
+            .and_then(|id| self.find(id))
+            .map_or(Vec::new(), |choice| choice.efforts.clone())
+    }
+
+    /// The effort to keep when the model changes to `model`: `effort` if the
+    /// model takes it, else the model's default.
+    #[must_use]
+    pub fn kept_effort(
+        &self,
+        model: Option<&ModelId>,
+        effort: Option<Effort>,
+    ) -> Option<Effort> {
+        effort.filter(|kept| self.efforts(model).contains(kept))
+    }
+
     #[must_use]
     pub const fn none() -> Self {
         Self {
@@ -1147,6 +1223,90 @@ pub enum CloseReason {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        Auth, Availability, Effort, ModelChoice, ModelId, Models, ProviderInfo,
+        ProviderNote,
+    };
+
+    #[test]
+    fn the_form_says_why_a_provider_is_unavailable_else_its_plugin_s_note() {
+        let unavailable = Availability::Unavailable {
+            reason: String::from("not on PATH"),
+        };
+        let available = Availability::Available {
+            auth: Auth::SignedIn,
+            models: Models::none(),
+        };
+        let info = |note: Option<&str>| ProviderInfo {
+            label: String::from("Agent"),
+            note: note.map(String::from),
+            credentials: Vec::new(),
+        };
+        let noted = info(Some("writes unasked"));
+        let quiet = info(None);
+        assert_eq!(
+            [
+                (Some(&noted), Some(&unavailable)),
+                (Some(&quiet), Some(&unavailable)),
+                (Some(&noted), Some(&available)),
+                (Some(&noted), None),
+                (Some(&quiet), Some(&available)),
+                (None, None),
+            ]
+            .map(|(info, availability)| Availability::note(info, availability)),
+            [
+                ProviderNote::Unavailable(String::from("not on PATH")),
+                ProviderNote::Unavailable(String::from("not on PATH")),
+                ProviderNote::Says(String::from("writes unasked")),
+                ProviderNote::Says(String::from("writes unasked")),
+                ProviderNote::Nothing,
+                ProviderNote::Nothing,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_pickers_offer_the_default_then_the_models_and_their_efforts() {
+        let models = Models {
+            choices: Vec::from([
+                ModelChoice {
+                    id: ModelId(String::from("opus")),
+                    name: String::from("Opus"),
+                    description: String::from("best"),
+                    efforts: Vec::from([Effort::Low, Effort::Max]),
+                },
+                ModelChoice {
+                    id: ModelId(String::from("haiku")),
+                    name: String::from("Haiku"),
+                    description: String::from("fast"),
+                    efforts: Vec::from([Effort::High]),
+                },
+            ]),
+            default: Some(ModelId(String::from("opus"))),
+        };
+        let haiku = ModelId(String::from("haiku"));
+        assert_eq!(
+            (
+                models.default_label(),
+                Models::none().default_label(),
+                models.efforts(None),
+                models.efforts(Some(&haiku)),
+                Models::none().efforts(None),
+                models.kept_effort(Some(&haiku), Some(Effort::Max)),
+                models.kept_effort(Some(&haiku), Some(Effort::High)),
+            ),
+            (
+                String::from("Default (Opus)"),
+                String::from("Default"),
+                Vec::from([Effort::Low, Effort::Max]),
+                Vec::from([Effort::High]),
+                Vec::new(),
+                None,
+                Some(Effort::High),
+            )
+        );
+    }
+
     #[test]
     fn constant_cursor_saturates_without_wrapping() {
         const LAST: super::HostSeq = super::HostSeq(u64::MAX).next();
