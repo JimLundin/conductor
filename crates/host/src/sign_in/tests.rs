@@ -4,7 +4,7 @@ use proto::{
     Rejection, SignIn, SignInCode, SignInStep,
 };
 
-use super::{Effect, Key, Run, SignIns};
+use super::{Effect, Key, Login, Run, SignIns};
 
 fn id() -> InstanceId {
     InstanceId::own(Provider::ALL[0])
@@ -108,8 +108,7 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
     let exited = sign_ins.exited(&key(1), Some(0), "exit status: 0");
     let checked = sign_ins.checked(
         &key(1),
-        &Ok(Some(0)),
-        Some(String::from("me@example.com")),
+        Ok(Some(Account::Named(String::from("me@example.com")))),
     );
     let listed = sign_ins
         .listed(&key(1), CommandResult::Instances(Instances::default()));
@@ -157,7 +156,10 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
                 ])
             ),
             (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
-            Vec::from([Effect::Check(key(1)), step(SignInStep::Finishing)]),
+            Vec::from([
+                Effect::Check(key(1), Login(())),
+                step(SignInStep::Finishing)
+            ]),
             Vec::from([Effect::Refresh(
                 key(1),
                 Some(Account::Named(String::from("me@example.com")))
@@ -185,7 +187,10 @@ fn a_device_code_is_shown_with_its_link_and_no_code_is_taken() {
                 step: open(Some("WXYZ-1234"), false),
             }]),
             (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
-            Vec::from([Effect::Check(key(1)), step(SignInStep::Finishing)]),
+            Vec::from([
+                Effect::Check(key(1), Login(())),
+                step(SignInStep::Finishing)
+            ]),
         )
     );
 }
@@ -247,8 +252,7 @@ fn a_cancelled_run_is_killed_and_its_later_reports_are_dropped() {
             sign_ins.exited(&key(1), Some(0), "exit status: 0"),
             sign_ins.checked(
                 &key(1),
-                &Ok(Some(0)),
-                Some(String::from("me@example.com"))
+                Ok(Some(Account::Named(String::from("me@example.com")))),
             ),
             sign_ins.listed(
                 &key(1),
@@ -291,7 +295,12 @@ fn a_run_that_doesnt_start_runs_too_long_or_leaves_the_home_signed_out_fails() {
         [
             unstarted.spawned(&key(1), Err(String::from("no such file"))),
             slow.expired(&key(1)),
-            unchecked.checked(&key(1), &Ok(Some(1)), None),
+            unchecked.checked(
+                &key(1),
+                Err(String::from(
+                    "the sign-in ended, but the CLI's sign-in check still fails",
+                )),
+            ),
             unlisted.listed(&key(1), CommandResult::Accepted),
         ],
         [
@@ -359,5 +368,21 @@ fn output_before_the_link_is_kept_only_so_far() {
     assert_eq!(
         sign_ins.printed(&key(1), "https://sign.example/in?state=1"),
         Vec::new()
+    );
+}
+
+#[test]
+fn a_sign_in_succeeds_only_when_it_exits_zero() {
+    assert_eq!(
+        [
+            Login::exited(Some(0), "exit status: 0"),
+            Login::exited(Some(1), "exit status: 1"),
+            Login::exited(None, "signal: 9"),
+        ],
+        [
+            Ok(Login(())),
+            Err(String::from("the sign-in exited with exit status: 1")),
+            Err(String::from("the sign-in exited with signal: 9")),
+        ]
     );
 }

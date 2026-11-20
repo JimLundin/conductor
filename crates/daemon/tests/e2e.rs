@@ -5811,17 +5811,239 @@ async fn sign_in_until(
     instance: &InstanceId,
     done: impl Fn(&proto::SignInStep) -> bool,
 ) -> Fallible<proto::SignInStep> {
-    loop {
-        let _ = next(updates).await?;
-        if let Some(step) = updates
-            .host
-            .sign_ins
-            .get(instance)
-            .filter(|step| done(step))
-        {
-            break Ok(step.clone());
+    tokio::time::timeout(STEP * 3, async {
+        loop {
+            let update =
+                updates.incoming.recv().await.ok_or("the link stopped")?;
+            updates.host.apply(update);
+            if let Some(step) = updates
+                .host
+                .sign_ins
+                .get(instance)
+                .filter(|step| done(step))
+            {
+                break Ok(step.clone());
+            }
         }
+    })
+    .await
+    .map_err(|_| "no sign-in update within the step timeout")?
+}
+
+async fn app_sign_in(
+    link: &HostLink,
+    updates: &mut Updates,
+    id: &InstanceId,
+) -> Fallible<proto::SignInStep> {
+    let started = send(
+        link,
+        CommandBody::StartSignIn {
+            instance: id.clone(),
+        },
+    )
+    .await?;
+    assert_eq!(started, CommandResult::Accepted);
+    let _ = sign_in_until(updates, id, |step| {
+        matches!(step, proto::SignInStep::Open { .. })
+    })
+    .await?;
+    let submitted = send(
+        link,
+        CommandBody::SubmitSignInCode {
+            instance: id.clone(),
+            code: proto::SignInCode(String::from(SIGN_IN_CODE)),
+        },
+    )
+    .await?;
+    assert_eq!(submitted, CommandResult::Accepted);
+    sign_in_until(updates, id, |step| {
+        matches!(
+            step,
+            proto::SignInStep::SignedIn { .. }
+                | proto::SignInStep::Failed { .. }
+        )
+    })
+    .await
+}
+
+fn sign_in_home(data: &Path, id: &InstanceId) -> Fallible<PathBuf> {
+    install_fake(data, agents::pin::Cli::Claude, &fake_claude())?;
+    let home = dir_of(data, "home", id);
+    std::fs::create_dir_all(&home)?;
+    probe(data, id, PROBED)?;
+    Ok(home)
+}
+
+fn sign_in_plugins() -> Plugins {
+    plugins(None, Some(PathBuf::from(REFUSING_CLI)))
+}
+
+async fn terminal_sign_in(data: &Path, id: &InstanceId) -> Fallible {
+    let home = dir_of(data, "home", id);
+    let approval = home.join(".fake-approve");
+    std::fs::write(approval, "")?;
+    let name = match &id.account {
+        proto::Account::Own => None,
+        proto::Account::Named(name) => Some(name.clone()),
+    };
+    Ok(daemon::login(
+        Some(data.to_path_buf()),
+        sign_in_plugins(),
+        id.provider,
+        name,
+    )
+    .await?)
+}
+
+#[tokio::test]
+async fn app_and_terminal_sign_in_keep_ownership_when_the_status_probe_fails()
+-> Fallible {
+    let own = instance(Provider::Claude);
+    for status in ["nonzero", "signal", "timeout"] {
+        let app = data_dir(&format!("app-sign-in-{status}"))?;
+        let terminal = data_dir(&format!("terminal-sign-in-{status}"))?;
+        for data in [&app, &terminal] {
+            let home = sign_in_home(data, &own)?;
+            std::fs::write(home.join(".fake-status"), status)?;
+        }
+        let fx = serve(endpoint().await?, sign_in_plugins(), &app).await?;
+        let (link, mut updates) = fx.connect().await?;
+        let (app_result, terminal_result) = tokio::join!(
+            app_sign_in(&link, &mut updates, &own),
+            terminal_sign_in(&terminal, &own),
+        );
+
+        let Err(error) = terminal_result else {
+            return Err(format!(
+                "the terminal probe should fail with {status}"
+            )
+            .into());
+        };
+        assert_eq!(
+            app_result?,
+            proto::SignInStep::Failed {
+                reason: error.to_string(),
+            },
+            "{status}"
+        );
+        for data in [&app, &terminal] {
+            let named = InstanceId::named(
+                Provider::Claude,
+                "conductor-test@example.invalid",
+            );
+            assert_eq!(
+                (
+                    data.join("credentials").exists(),
+                    dir_of(data, "home", &own).join(".fake-signed-in").exists(),
+                    dir_of(data, "home", &named).exists(),
+                    dir_of(data, "work", &own).join("stdout.jsonl").exists(),
+                    dir_of(data, "work", &named).exists(),
+                ),
+                (false, true, false, true, false),
+                "{status} at {}",
+                data.display(),
+            );
+        }
+        link.stop().await?;
+        fx.shutdown().await?;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_refresh_and_terminal_restart_show_the_same_signed_in_instance()
+-> Fallible {
+    let own = instance(Provider::Claude);
+    let named =
+        InstanceId::named(Provider::Claude, "conductor-test@example.invalid");
+    for (case, source, target) in [
+        ("no-account", &own, &own),
+        ("same-account", &named, &named),
+        ("new-account", &own, &named),
+    ] {
+        let app = data_dir(&format!("app-sign-in-{case}"))?;
+        let terminal = data_dir(&format!("terminal-sign-in-{case}"))?;
+        for data in [&app, &terminal] {
+            sign_in_home(data, &own)?;
+            if source == &named {
+                terminal_sign_in(data, &own).await?;
+                let home = dir_of(data, "home", source);
+                std::fs::remove_file(home.join(".fake-approve"))?;
+                std::fs::remove_file(home.join(".fake-signed-in"))?;
+            }
+            let home = dir_of(data, "home", source);
+            if target == &own {
+                std::fs::write(home.join(".fake-account"), "")?;
+            }
+            std::fs::write(home.join("sign-in-home"), case)?;
+            std::fs::write(
+                dir_of(data, "work", source).join("sign-in-work"),
+                case,
+            )?;
+        }
+        let fx = serve(endpoint().await?, sign_in_plugins(), &app).await?;
+        let (link, mut updates) = fx.connect().await?;
+        let app_instances =
+            match app_sign_in(&link, &mut updates, source).await? {
+                proto::SignInStep::SignedIn { instances } => instances,
+                other => {
+                    return Err(format!("app sign-in failed: {other:?}").into());
+                }
+            };
+        terminal_sign_in(&terminal, source).await?;
+        let reopened =
+            serve(endpoint().await?, sign_in_plugins(), &terminal).await?;
+        let (terminal_link, mut terminal_updates) = reopened.connect().await?;
+        wait_for_offer(&mut terminal_updates, target).await?;
+        let terminal_instances = terminal_updates
+            .host
+            .instances
+            .as_ref()
+            .ok_or("the reopened host did not publish its instances")?;
+
+        for (data, instances) in
+            [(&app, &app_instances), (&terminal, terminal_instances)]
+        {
+            assert_eq!(
+                (
+                    instances.of(&own).is_some(),
+                    instances.of(&named).is_some(),
+                    instances.availability(target),
+                    std::fs::read_to_string(
+                        dir_of(data, "home", target).join("sign-in-home")
+                    )?,
+                    std::fs::read_to_string(
+                        dir_of(data, "work", target).join("sign-in-work")
+                    )?,
+                ),
+                (
+                    true,
+                    target == &named,
+                    Some(&Availability::Available {
+                        auth: Auth::SignedIn,
+                        models: probed(),
+                    }),
+                    String::from(case),
+                    String::from(case)
+                ),
+                "{case} at {}",
+                data.display(),
+            );
+            if source != target {
+                assert!(
+                    !dir_of(data, "home", source).join("sign-in-home").exists()
+                        && !dir_of(data, "work", source)
+                            .join("sign-in-work")
+                            .exists()
+                );
+            }
+        }
+        link.stop().await?;
+        fx.shutdown().await?;
+        terminal_link.stop().await?;
+        reopened.shutdown().await?;
+    }
+    Ok(())
 }
 
 /// Every file under `dir` that holds `text`.
@@ -5962,6 +6184,11 @@ fn assert_no_code_kept(log_path: &Path, data: &Path) -> Fallible {
         (false, 2, 1, Vec::new(), Vec::new()),
         "{logged}"
     );
+    for live_only in ["Opening browser to sign in", "code_challenge=CHALLENGE"]
+    {
+        assert!(!logged.contains(live_only));
+        assert_eq!(holding(data, live_only)?, Vec::<PathBuf>::new());
+    }
     Ok(())
 }
 

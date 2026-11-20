@@ -20,7 +20,7 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
 use net::Target;
-use proto::{Account, Catalog, Instance, InstanceId, Provider, Ticket};
+use proto::{Catalog, Instance, InstanceId, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin, Settings};
@@ -463,12 +463,10 @@ pub async fn login(
         command(&signing.program, &signing.home, signing.flow.run.clone())
             .status()
             .await?;
-    host::start::signed_in(status.code(), &status.to_string())
-        .map_err(anyhow::Error::msg)?;
-    let check = command(&signing.program, &signing.home, signing.check.clone());
-    let (_, printed) =
-        sign_in_check(check).await.map_err(anyhow::Error::msg)?;
-    let named = signing.account(&printed).map(Account::Named);
+    let login =
+        host::sign_in::Login::exited(status.code(), &status.to_string())
+            .map_err(anyhow::Error::msg)?;
+    let named = signing.confirm(login).await.map_err(anyhow::Error::msg)?;
     let Some((next, to)) =
         host::registry::signed_in_as(&roster, &instance, named)
     else {

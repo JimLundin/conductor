@@ -387,9 +387,7 @@ impl RegistryActor {
                 self.sign_ins.exited(key, code, &status)
             }
             Report::Expired => self.sign_ins.expired(key),
-            Report::Checked(code, account) => {
-                self.sign_ins.checked(key, &code, account)
-            }
+            Report::Checked(result) => self.sign_ins.checked(key, result),
             Report::Listed(result) => self.sign_ins.listed(key, result),
         }
     }
@@ -409,7 +407,7 @@ impl RegistryActor {
                 self.runs.write(&key, &code).await;
             }
             SignInEffect::Kill(key) => self.runs.kill(&key),
-            SignInEffect::Check(key) => self.runs.check(key),
+            SignInEffect::Check(key, login) => self.runs.check(key, login),
             SignInEffect::Refresh(key, account) => {
                 let (reply, answer) = oneshot::channel();
                 let effects =

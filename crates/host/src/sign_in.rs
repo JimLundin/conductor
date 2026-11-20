@@ -43,6 +43,40 @@ pub struct Key {
     pub run: Run,
 }
 
+/// A login process that completed successfully.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Login(());
+
+impl Login {
+    /// # Errors
+    ///
+    /// The sign-in process did not exit successfully.
+    pub fn exited(code: Option<i32>, status: &str) -> Result<Self, String> {
+        if code == Some(0) {
+            Ok(Self(()))
+        } else {
+            Err(format!("the sign-in exited with {status}"))
+        }
+    }
+
+    /// Releases the probe's output for account discovery.
+    ///
+    /// # Errors
+    ///
+    /// The probe did not exit successfully.
+    pub fn checked(
+        self,
+        probe: Result<(Option<i32>, String), String>,
+    ) -> Result<String, String> {
+        match probe {
+            Ok((Some(0), output)) => Ok(output),
+            Ok(_) | Err(_) => Err(String::from(
+                "the sign-in ended, but the CLI's sign-in check still fails",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Start the CLI's sign-in in the instance's home, as its `settings`
@@ -59,7 +93,7 @@ pub enum Effect {
     Kill(Key),
     /// Run the CLI's sign-in check against the home, read the account the
     /// CLI names, and report both to [`SignIns::checked`].
-    Check(Key),
+    Check(Key, Login),
     /// Take the instance as signed in as the account, if the CLI named
     /// one, and refresh it, and report what the host runs then to
     /// [`SignIns::listed`].
@@ -213,18 +247,18 @@ impl SignIns {
         let Some(running) = self.current(key) else {
             return Vec::new();
         };
-        if code == Some(0) {
-            running.step = SignInStep::Finishing;
-            Vec::from([
-                Effect::Check(key.clone()),
-                publish(key.instance.clone(), SignInStep::Finishing),
-            ])
-        } else {
-            let reason = running
-                .failure
-                .clone()
-                .unwrap_or_else(|| format!("the sign-in exited with {status}"));
-            self.fail(key, reason)
+        match Login::exited(code, status) {
+            Ok(login) => {
+                running.step = SignInStep::Finishing;
+                Vec::from([
+                    Effect::Check(key.clone(), login),
+                    publish(key.instance.clone(), SignInStep::Finishing),
+                ])
+            }
+            Err(exit_reason) => {
+                let reason = running.failure.clone().unwrap_or(exit_reason);
+                self.fail(key, reason)
+            }
         }
     }
 
@@ -242,26 +276,18 @@ impl SignIns {
         effects
     }
 
-    /// The CLI's sign-in check exited with `code`, or did not finish, and
-    /// the CLI named `account`, or none.
+    /// The completed login confirmed an account, if the CLI named one.
     pub fn checked(
         &mut self,
         key: &Key,
-        code: &Result<Option<i32>, String>,
-        account: Option<String>,
+        result: Result<Option<Account>, String>,
     ) -> Vec<Effect> {
-        match (self.current(key).is_some(), code) {
-            (false, _) => Vec::new(),
-            (true, Ok(Some(0))) => Vec::from([Effect::Refresh(
-                key.clone(),
-                account.map(Account::Named),
-            )]),
-            (true, Ok(_) | Err(_)) => self.fail(
-                key,
-                String::from(
-                    "the sign-in ended, but the CLI's sign-in check still fails",
-                ),
-            ),
+        if self.current(key).is_none() {
+            return Vec::new();
+        }
+        match result {
+            Ok(account) => Vec::from([Effect::Refresh(key.clone(), account)]),
+            Err(reason) => self.fail(key, reason),
         }
     }
 

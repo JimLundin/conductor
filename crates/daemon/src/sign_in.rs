@@ -15,10 +15,10 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use agents::{Invocation, Reported, SignIn as Flow};
-use host::sign_in::{Key, LIMIT};
+use host::sign_in::{Key, LIMIT, Login};
 use install::Home;
 use install::process::{SignInRun, command, sign_in, write_line};
-use proto::{CommandResult, Instance, SignInCode};
+use proto::{Account, CommandResult, Instance, SignInCode};
 use tokio::process::ChildStdin;
 
 use crate::start::Providers;
@@ -39,19 +39,25 @@ pub struct Signing {
 }
 
 impl Signing {
-    /// The account the signed-in home is, from what its sign-in check
-    /// printed or the file the CLI keeps it in.
-    #[must_use]
-    pub fn account(&self, status: &str) -> Option<String> {
-        match (&self.account, &self.home) {
-            (Reported::Status, _) => (self.read)(status),
+    /// # Errors
+    ///
+    /// The CLI's status probe did not exit successfully.
+    pub async fn confirm(
+        &self,
+        login: Login,
+    ) -> Result<Option<Account>, String> {
+        let check = command(&self.program, &self.home, self.check.clone());
+        let status = login.checked(crate::start::sign_in_check(check).await)?;
+        let account = match (&self.account, &self.home) {
+            (Reported::Status, _) => (self.read)(&status),
             (Reported::File(file), Home::Private(dir)) => {
                 std::fs::read_to_string(dir.join(file))
                     .ok()
                     .and_then(|kept| (self.read)(&kept))
             }
             (Reported::File(_), Home::User) => None,
-        }
+        };
+        Ok(account.map(Account::Named))
     }
 }
 
@@ -67,7 +73,7 @@ pub enum Report {
     Printed(String),
     Exited(Option<i32>, String),
     Expired,
-    Checked(Result<Option<i32>, String>, Option<String>),
+    Checked(Result<Option<Account>, String>),
     Listed(CommandResult),
 }
 
@@ -155,24 +161,16 @@ impl Runs {
 
     /// Runs the CLI's sign-in check against the run's home, and reads
     /// the account it names.
-    pub fn check(&mut self, key: Key) {
+    pub fn check(&mut self, key: Key, login: Login) {
         self.stdins.remove(&key);
         if let Some(signing) = self.checks.remove(&key) {
             let sender = self.sender.clone();
-            self.tasks.spawn(async move {
-                let check = command(
-                    &signing.program,
-                    &signing.home,
-                    signing.check.clone(),
-                );
-                let ran = crate::start::sign_in_check(check).await;
-                let account = ran
-                    .as_ref()
-                    .ok()
-                    .and_then(|(_, printed)| signing.account(printed));
-                let code = ran.map(|(code, _)| code);
-                let _ = sender.send((key, Report::Checked(code, account)));
+            let checked = key.clone();
+            let task = self.tasks.spawn(async move {
+                let result = signing.confirm(login).await;
+                let _ = sender.send((checked, Report::Checked(result)));
             });
+            self.aborts.insert(key, task);
         }
     }
 

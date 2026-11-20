@@ -6,12 +6,14 @@ per-run values replaced) and keeps the sign-in in the private home the host
 gives it, as `.fake-signed-in`:
 
 - `status` exits 0 if the home is signed in, else 1. Claude's prints what
-  its subscription's `auth status` prints, with ACCOUNT as the email.
+  its subscription's `auth status` prints, with ACCOUNT as the email unless
+  `.fake-account` supplies another value. `.fake-status` can make a signed-in
+  probe exit nonzero, die by signal, or stay alive until the host times out.
 - A Codex sign-in keeps ACCOUNT in `auth.json`, as the email of the ID
   token its `ChatGPT` sign-in keeps there.
 - Claude's `login` reads one line from stdin. The code ACCEPTED signs the
   home in and exits 0; any other prints Claude's refusal to stderr and
-  exits 1.
+  exits 1. A preexisting `.fake-approve` stands in for terminal interaction.
 - Codex's `login --device-auth` waits until `.fake-approve` appears in the
   home, as if the person had entered the code on the page, then signs it in.
 
@@ -21,6 +23,7 @@ It writes no code anywhere, so a test can check that none was kept.
 import base64
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -37,13 +40,24 @@ if args and args[-1] == "status":
     if not signed_in.exists():
         sys.exit(1)
     if cli == "claude":
-        print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty", "email": ACCOUNT}))
+        account_file = home / ".fake-account"
+        email = account_file.read_text().strip() if account_file.exists() else ACCOUNT
+        print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty", "email": email or None}))
+    sys.stdout.flush()
+    status_file = home / ".fake-status"
+    status = status_file.read_text().strip() if status_file.exists() else ""
+    if status == "nonzero":
+        sys.exit(2)
+    if status == "signal":
+        signal.raise_signal(signal.SIGTERM)
+    if status == "timeout":
+        time.sleep(60)
     sys.exit(0)
 
 sys.stdout.write((fixtures / cli / "sign-in.txt").read_text())
 sys.stdout.flush()
 if cli == "claude":
-    if sys.stdin.readline().strip() != ACCEPTED:
+    if not (home / ".fake-approve").exists() and sys.stdin.readline().strip() != ACCEPTED:
         sys.stderr.write((fixtures / "claude" / "sign-in-refused.txt").read_text())
         sys.exit(1)
     print("\nLogin successful.")

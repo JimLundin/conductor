@@ -89,18 +89,6 @@ pub fn start<P, S>(
     }
 }
 
-/// Whether a sign-in that exited as `status` with `code` succeeded.
-///
-/// # Errors
-/// The sign-in failed.
-pub fn signed_in(code: Option<i32>, status: &str) -> Result<(), String> {
-    if succeeded(code) {
-        Ok(())
-    } else {
-        Err(format!("the sign-in exited with {status}"))
-    }
-}
-
 fn succeeded(code: Option<i32>) -> bool {
     code == Some(0)
 }
@@ -280,7 +268,7 @@ fn unavailable<P, S>(reason: String) -> Next<P, S> {
 mod tests {
     use proto::{Effort, ModelChoice, ModelId, Models, Provider};
 
-    use super::{Mode, Next, Output, setting, signed_in, start};
+    use super::{Mode, Next, Output, setting, start};
     use crate::Note;
     use crate::registry::{Launcher, OwnSignIn};
 
@@ -515,22 +503,6 @@ mod tests {
                 after(1, "installing the pinned claude: offline"),
                 after(2, "/pinned --version exited with Some(2)"),
                 after(2, "/pinned does not run: no such file"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_sign_in_succeeds_only_when_it_exits_zero() {
-        assert_eq!(
-            [
-                signed_in(Some(0), "exit status: 0"),
-                signed_in(Some(1), "exit status: 1"),
-                signed_in(None, "signal: 9"),
-            ],
-            [
-                Ok(()),
-                Err(String::from("the sign-in exited with exit status: 1")),
-                Err(String::from("the sign-in exited with signal: 9")),
             ]
         );
     }
