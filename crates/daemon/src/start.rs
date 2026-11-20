@@ -214,6 +214,7 @@ pub struct Hosted {
     router: Router,
     log: Log,
     token: proto::AuthToken,
+    initialized: tokio::sync::watch::Receiver<bool>,
 }
 
 impl Hosted {
@@ -224,6 +225,20 @@ impl Hosted {
             addr: self.router.endpoint().addr(),
             token: self.token,
         }
+    }
+
+    /// Waits for the stored instances to finish configuring while the host serves.
+    ///
+    /// # Errors
+    ///
+    /// The registry stopped before it published its initial offers.
+    pub async fn initialized(&self) -> anyhow::Result<()> {
+        self.initialized
+            .clone()
+            .wait_for(|ready| *ready)
+            .await
+            .context("the registry stopped during bootstrap")?;
+        Ok(())
     }
 
     /// Stops accepting connections, closes the endpoint and closes the event log.
@@ -241,7 +256,8 @@ impl Hosted {
     }
 }
 
-/// Starts the daemon on `endpoint`, using the given provider plugins.
+/// Starts serving on `endpoint` after session recovery. Stored instances may
+/// still be probing. [`Hosted::initialized`] waits for their offers.
 ///
 /// # Errors
 ///
@@ -253,11 +269,16 @@ pub async fn start(
 ) -> anyhow::Result<Hosted> {
     let started = assemble(plugins, options).await;
     match started {
-        Ok((conductor, log, token)) => {
+        Ok((conductor, log, token, initialized)) => {
             let router = Router::builder(endpoint)
                 .accept(proto::ALPN, conductor)
                 .spawn();
-            Ok(Hosted { router, log, token })
+            Ok(Hosted {
+                router,
+                log,
+                token,
+                initialized,
+            })
         }
         Err(error) => {
             endpoint.close().await;
@@ -269,7 +290,12 @@ pub async fn start(
 async fn assemble(
     plugins: Plugins,
     options: HostOptions,
-) -> anyhow::Result<(Conductor, Log, proto::AuthToken)> {
+) -> anyhow::Result<(
+    Conductor,
+    Log,
+    proto::AuthToken,
+    tokio::sync::watch::Receiver<bool>,
+)> {
     let HostOptions {
         data_dir,
         name,
@@ -285,7 +311,7 @@ async fn assemble(
         remote,
         roots: projects,
     });
-    let registry = Registry::spawn(
+    let (registry, initialized) = Registry::spawn(
         log.clone(),
         store,
         &stored,
@@ -294,7 +320,7 @@ async fn assemble(
     )
     .await?;
     let conductor = Conductor::new(log.clone(), registry, home, token);
-    Ok((conductor, log, token))
+    Ok((conductor, log, token, initialized))
 }
 
 /// An instance's plugin, home and work dir, and its settings over the

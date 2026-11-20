@@ -216,8 +216,8 @@ fn job(
 ) -> Job<&'static str> {
     Job {
         id: number,
-        instance: id.clone(),
-        start,
+        instance_id: id.clone(),
+        adapter: start,
         credential,
     }
 }
@@ -437,19 +437,15 @@ fn a_session_is_found_and_continued_only_while_its_instance_runs() {
             registry.relaunch(SessionId(1)),
             registry.relaunch(SessionId(2)),
             registry.relaunch(SessionId(3)),
-            registry.launcher(&own(Provider::Claude)),
-            registry.launcher(&api()),
         ),
         (
             Some(7),
             None,
-            Ok((7, listed())),
+            Ok((7, "claude", listed())),
             Err(Rejection::InstanceUnavailable {
                 reason: text("no credential configured")
             }),
             Err(Rejection::UnknownSession),
-            Ok("claude"),
-            Ok("api"),
         )
     );
     let _ = set(&mut registry, Provider::Claude, gateway("t"), "set");
@@ -545,7 +541,7 @@ fn each_codex_instance_refreshes_its_own_app_server() {
         ),
         (
             Ok("codex"),
-            Ok((1, listed())),
+            Ok((1, "codex", listed())),
             Err(Rejection::InstanceUnavailable {
                 reason: text("refreshing the instance's models")
             }),
@@ -574,6 +570,7 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
         Vec::from([
             Effect::Log(Note::InstanceAdded { instance: api() }),
             Effect::Start(Starting {
+                mode: crate::start::Mode::Change,
                 id: boot_jobs + 1,
                 instance: api(),
                 settings: added,
@@ -687,6 +684,7 @@ fn a_start_from_before_an_instance_was_added_again_is_dropped() {
                     instance: codex_api.clone()
                 }),
                 Effect::Start(Starting {
+                    mode: crate::start::Mode::Change,
                     id: boot_jobs + 2,
                     instance: codex_api,
                     settings: Instance {
@@ -1097,11 +1095,13 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
                 instance: me.clone()
             }),
             Effect::Start(Starting {
+                mode: crate::start::Mode::Change,
                 id: boot_jobs + 1,
                 instance: me.clone(),
                 settings: Instance::default(),
             }),
             Effect::Start(Starting {
+                mode: crate::start::Mode::Change,
                 id: boot_jobs + 2,
                 instance: claude.clone(),
                 settings: Instance::default(),

@@ -11,14 +11,15 @@ use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
     AuthToken, ClientName, Command, CommandResult, Event, Feed as Frame,
-    HelloReply, Home, Open, Rejection, SessionId, SignIn, Subscribe, Welcome,
+    HelloReply, Home, Instances, Open, Rejection, SessionId, SignIn, Subscribe,
+    Welcome,
 };
 use tokio::sync::{broadcast, watch};
 
 use crate::Stopped;
 use crate::home::HomeClone;
 use crate::log::{BeginCommand, Log};
-use crate::registry::Registry;
+use crate::registry::{Registry, Watch};
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
@@ -65,6 +66,7 @@ struct Feed {
     live: broadcast::Receiver<Event>,
     sign_ins: broadcast::Receiver<SignIn>,
     home: watch::Receiver<Option<Home>>,
+    offers: watch::Receiver<Instances>,
 }
 
 impl ProtocolHandler for Conductor {
@@ -271,8 +273,8 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         match self.registry.relaunch(session).await? {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok((handle, offered)) => handle
-                .order(relaunch.order(offered))
+            Ok((handle, adapter, offered)) => handle
+                .relaunch(relaunch.order(offered), adapter)
                 .await
                 .or_else(|stopped| relaunch.closed().ok_or(stopped)),
         }
@@ -291,13 +293,19 @@ impl Conductor {
                     replayed = subscription.replay.len(),
                     "subscribed"
                 );
-                let (running, sign_ins) = self.registry.watch().await?;
+                let Watch {
+                    running,
+                    sign_ins,
+                    mut offers,
+                } = self.registry.watch().await?;
+                let snapshot = offers.borrow_and_update().clone();
                 let mut home = self.home.watch();
                 let current = home.borrow_and_update().clone();
                 let first = subscription
                     .replay
                     .into_iter()
                     .map(Frame::Event)
+                    .chain([Frame::Instances(snapshot)])
                     .chain(running.into_iter().map(Frame::SignIn))
                     .chain(current.into_iter().map(Frame::Home))
                     .collect::<Vec<Frame>>();
@@ -307,6 +315,7 @@ impl Conductor {
                     live: subscription.live,
                     sign_ins,
                     home,
+                    offers,
                 };
                 let result = feed.run(conn).await;
                 tracing::info!(?result, "subscription ended");
@@ -339,6 +348,7 @@ impl Feed {
             tokio::select! {
                 next = self.live.recv() => upcoming(next.map(Frame::Event)),
                 next = self.sign_ins.recv() => upcoming(next.map(Frame::SignIn)),
+                changed = self.offers.changed() => changed.map_or(Upcoming::Resubscribe, |()| Upcoming::Frame(Frame::Instances(self.offers.borrow_and_update().clone()))),
                 changed = self.home.changed() => changed.map_or(
                     Upcoming::Resubscribe,
                     |()| self.home.borrow_and_update().clone().map_or(Upcoming::Quiet, |home| Upcoming::Frame(Frame::Home(home))),

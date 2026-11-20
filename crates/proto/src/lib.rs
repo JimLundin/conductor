@@ -56,15 +56,16 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/22";
+pub const ALPN: &[u8] = b"conductor/23";
 
-/// One frame of a subscription: a logged event, where a sign-in stands, or
-/// the host's home as it is now, which replaces the one before.
+/// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Feed {
     Event(Event),
     SignIn(SignIn),
     Home(Home),
+    /// The current instance offers, replacing the previous snapshot.
+    Instances(Instances),
 }
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
@@ -578,7 +579,7 @@ pub enum CommandResult {
         session: SessionId,
     },
     /// The answer to every instance command: what the host runs now.
-    /// Another client learns it from its next `Welcome`.
+    /// This receipt retains its original snapshot. Subscribers follow `Feed::Instances`.
     Instances(Instances),
     Rejected(Rejection),
     Diff(CheckpointDiff),

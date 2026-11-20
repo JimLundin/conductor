@@ -17,14 +17,13 @@ use host::registry::{
 use host::restore::{Created, Recovery, Step, events_of};
 use host::serve::{Configure, SignInOrder};
 use host::sign_in::{Effect as SignInEffect, Key, SignIns};
-use host::start::Mode;
 use proto::{
     Catalog, ClientName, CommandResult, Effort, Event, EventKind, InstanceId,
     Instances, ModelId, Models, Provider, Rejection, SessionId, SignIn,
     StartAt,
 };
-use runtime::{Instance, Runtime};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use runtime::Instance;
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use crate::Stopped;
@@ -38,8 +37,11 @@ use crate::start::Providers;
 /// A subscriber this far behind the sign-ins is dropped and resubscribes.
 const SIGN_IN_BUFFER: usize = 64;
 
-/// The sign-ins running now, and the steps they take from then on.
-pub type Watch = (Vec<SignIn>, broadcast::Receiver<SignIn>);
+pub struct Watch {
+    pub running: Vec<SignIn>,
+    pub sign_ins: broadcast::Receiver<SignIn>,
+    pub offers: watch::Receiver<Instances>,
+}
 
 pub type Launcher = host::registry::Launcher<Instance>;
 
@@ -71,7 +73,7 @@ enum RegistryMsg {
     BranchReady(Box<BranchReady>),
     Continue {
         session: SessionId,
-        reply: oneshot::Sender<Result<(Session, Models), Rejection>>,
+        reply: oneshot::Sender<Result<(Session, Instance, Models), Rejection>>,
     },
     Find {
         session: SessionId,
@@ -106,6 +108,8 @@ struct RegistryActor {
     sign_ins: SignIns,
     runs: Runs,
     live: broadcast::Sender<SignIn>,
+    offers: watch::Sender<Instances>,
+    initialized: Option<watch::Sender<bool>>,
 }
 
 impl Registry {
@@ -115,16 +119,15 @@ impl Registry {
         stored: &Stored,
         providers: Providers,
         home: HomeClone,
-    ) -> Result<Self, Stopped> {
-        let core = Core::new(stored, providers.catalog());
-        let mut actor = RegistryActor::new(log, store, core, providers, home);
-        for starting in actor.core.boot() {
-            let started = start(&actor.providers, starting, Mode::Boot).await;
-            let effects = actor.core.started(started);
-            actor.perform(effects);
-        }
+    ) -> Result<(Self, watch::Receiver<bool>), Stopped> {
+        let mut core = Core::new(stored, providers.catalog());
+        let starts = core.boot();
+        let (ready, initialized) = watch::channel(false);
+        let mut actor =
+            RegistryActor::new(log, store, core, providers, home, ready);
+        actor.perform(starts.into_iter().map(Effect::Start).collect());
         actor.restore().await?;
-        Ok(actor.spawn())
+        Ok((actor.spawn(), initialized))
     }
 
     /// The caller holds the session command lease. It keeps competing
@@ -162,7 +165,7 @@ impl Registry {
         Ok(started.result)
     }
 
-    /// The session, how its instance runs now and what it offers, for an
+    /// The session, its current instance adapter and its offer, for an
     /// order that may start the agent or is checked against what the
     /// instance offers: `Continue`, `UndoTurn` and `SetEffort`. The
     /// session starts its agent itself, so a slow start never blocks the
@@ -174,7 +177,7 @@ impl Registry {
     pub async fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<Result<(Session, Models), Rejection>, Stopped> {
+    ) -> Result<Result<(Session, Instance, Models), Rejection>, Stopped> {
         self.ask(|reply| RegistryMsg::Continue { session, reply })
             .await
     }
@@ -227,8 +230,7 @@ impl Registry {
         self.ask(|reply| RegistryMsg::SignIn { order, reply }).await
     }
 
-    /// The sign-ins running now and every step after, taken together so
-    /// none falls between.
+    /// Captures the sign-ins, offers and their live updates in one registry turn.
     ///
     /// # Errors
     ///
@@ -257,10 +259,12 @@ impl RegistryActor {
         core: Core,
         providers: Providers,
         home: HomeClone,
+        initialized: watch::Sender<bool>,
     ) -> Self {
         Self {
             log,
             store,
+            offers: watch::channel(core.instances()).0,
             core,
             providers,
             home,
@@ -269,6 +273,7 @@ impl RegistryActor {
             branches: JoinSet::new(),
             sign_ins: SignIns::default(),
             runs: Runs::default(),
+            initialized: Some(initialized),
             live: broadcast::channel(SIGN_IN_BUFFER).0,
         }
     }
@@ -288,7 +293,7 @@ impl RegistryActor {
             let msg = tokio::select! {
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
                 Some(Ok(result)) = self.refreshes.join_next() => RegistryMsg::Refreshed(result),
-                Some(Ok(result)) = self.starts.join_next() => RegistryMsg::Started(result),
+                Some(result) = self.starts.join_next() => RegistryMsg::Started(result.map_err(|_| Stopped {})?),
                 Some(Ok(result)) = self.branches.join_next() => RegistryMsg::BranchReady(Box::new(result)),
                 Some((key, report)) = self.runs.next() => RegistryMsg::Run(key, report),
             };
@@ -340,8 +345,11 @@ impl RegistryActor {
                 let _ = reply.send(result);
             }
             RegistryMsg::Watch { reply } => {
-                let _ = reply
-                    .send((self.sign_ins.running(), self.live.subscribe()));
+                let _ = reply.send(Watch {
+                    running: self.sign_ins.running(),
+                    sign_ins: self.live.subscribe(),
+                    offers: self.offers.subscribe(),
+                });
             }
             RegistryMsg::Run(key, report) => {
                 let effects = self.reported(&key, report);
@@ -442,6 +450,19 @@ impl RegistryActor {
             let more = self.effect(effect);
             effects.extend(more.into_iter().rev());
         }
+        self.publish_offers();
+    }
+
+    fn publish_offers(&mut self) {
+        let current = self.core.instances();
+        if *self.offers.borrow() != current {
+            self.offers.send_replace(current);
+        }
+        if let Some(ready) =
+            self.initialized.take_if(|_| self.core.offers_settled())
+        {
+            ready.send_replace(true);
+        }
     }
 
     fn effect(&mut self, effect: Effect) -> Vec<Effect> {
@@ -484,9 +505,8 @@ impl RegistryActor {
             }
             Effect::Start(starting) => {
                 let providers = self.providers.clone();
-                self.starts.spawn(async move {
-                    start(&providers, starting, Mode::Change).await
-                });
+                self.starts
+                    .spawn(async move { start(&providers, starting).await });
                 Vec::new()
             }
             Effect::Log(note) => {
@@ -522,17 +542,13 @@ impl RegistryActor {
         let conversation = self.conversation(id, recovery.talked).await?;
         recover(&self.log, id, recovery.steps()).await?;
         let recovered = events_of(id, &self.log.history().await?);
-        let runtime = self
-            .core
-            .launcher(&instance)
-            .map_or_else(Runtime::refusing, runtime::ProviderInstance::start);
         let told = self.told(provider);
         let session = Session::restore(
             id,
             directory,
             recovery.choice,
             told,
-            (runtime, conversation),
+            (None, conversation),
             &recovered,
             self.log.clone(),
         );
@@ -697,17 +713,14 @@ impl RegistryActor {
 async fn refresh(job: Job<Instance>) -> Refreshed {
     Refreshed {
         id: job.id,
-        instance: job.instance,
-        configured: job.start.configure(job.credential).await,
+        instance: job.instance_id,
+        configured: job.adapter.configure(job.credential).await,
     }
 }
 
-async fn start(
-    providers: &Providers,
-    starting: Starting,
-    mode: Mode,
-) -> Started<Instance> {
+async fn start(providers: &Providers, starting: Starting) -> Started<Instance> {
     let Starting {
+        mode,
         id,
         instance,
         settings,

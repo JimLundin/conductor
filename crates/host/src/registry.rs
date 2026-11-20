@@ -44,6 +44,7 @@ use crate::Note;
 use crate::assignment::assigned;
 use crate::prelude::*;
 use crate::session::{Choice, choose};
+use crate::start::Mode;
 use crate::workspace::GitError;
 
 /// What a CLI signs in with when the host stores no credential for its
@@ -281,8 +282,8 @@ fn unbriefed(answer: Option<&CommandResult>) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job<S> {
     pub id: u64,
-    pub instance: InstanceId,
-    pub start: S,
+    pub instance_id: InstanceId,
+    pub adapter: S,
     pub credential: Option<Credential>,
 }
 
@@ -294,10 +295,10 @@ pub struct Refreshed {
     pub configured: Result<Configuration, String>,
 }
 
-/// An added instance to start: its provider's CLI, in its own home, as
-/// `settings` say, with their credential.
+/// The settings and discovery policy for one instance launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Starting {
+    pub mode: Mode,
     pub id: u64,
     pub instance: InstanceId,
     pub settings: Instance,
@@ -364,11 +365,11 @@ enum Refresh<S, R> {
     /// The latest job, which runs once the one running has ended unless it
     /// is that one, and the changes waiting for it.
     Pending { latest: Job<S>, replies: Vec<R> },
-    /// An added instance's CLI is starting with `credential`, and these
-    /// changes wait for it.
+    /// Changes arriving during launch need one live refresh, even if the
+    /// last request repeats the credential the boot probe used.
     Starting {
         id: u64,
-        credential: Option<Credential>,
+        refresh_requested: bool,
         replies: Vec<R>,
     },
 }
@@ -413,9 +414,14 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         roster
             .into_iter()
             .map(|(instance, settings)| {
-                self.starting(instance, settings, Vec::new())
+                self.starting(instance, settings, Vec::new(), Mode::Boot)
             })
             .collect()
+    }
+
+    #[must_use]
+    pub const fn offers_settled(&self) -> bool {
+        self.refreshes.is_empty()
     }
 
     /// What `Welcome` tells a client of each provider that never changes.
@@ -494,13 +500,13 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     pub fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<(H, Models), Rejection> {
+    ) -> Result<(H, S, Models), Rejection> {
         let (instance, handle) = self
             .sessions
             .get(&session)
             .ok_or(Rejection::UnknownSession)?;
         self.ready(instance)
-            .map(|(_, _, models)| (handle.clone(), models))
+            .map(|(adapter, _, models)| (handle.clone(), adapter, models))
             .map_err(unavailable)
     }
 
@@ -509,19 +515,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.sessions
             .get(&session)
             .map(|(_, handle)| handle.clone())
-    }
-
-    /// What starts a restored session's agents, whether or not the
-    /// instance is available now.
-    ///
-    /// # Errors
-    ///
-    /// Why the host can't run the instance at all.
-    pub fn launcher(&self, instance: &InstanceId) -> Result<S, String> {
-        match self.launcher_of(instance)? {
-            Launcher::Running { start, .. } => Ok(start.clone()),
-            Launcher::Unavailable(reason) => Err(reason.clone()),
-        }
     }
 
     /// How the host runs `instance`, if it has it: its CLI, model and
@@ -743,14 +736,14 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         match self.refreshes.remove(&instance) {
             Some(Refresh::Starting {
                 id: current,
-                credential,
+                refresh_requested,
                 replies,
             }) if current == id => {
                 self.launchers.insert(instance.clone(), launcher);
-                if credential == self.credential(&instance) {
-                    self.answers(replies)
-                } else {
+                if refresh_requested {
                     self.schedule(instance, replies)
+                } else {
+                    self.answers(replies)
                 }
             }
             other => {
@@ -801,7 +794,12 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let Some(settings) = self.roster.of(&instance).cloned() else {
             return self.answers(replies);
         };
-        Vec::from([Effect::Start(self.starting(instance, settings, replies))])
+        Vec::from([Effect::Start(self.starting(
+            instance,
+            settings,
+            replies,
+            Mode::Change,
+        ))])
     }
 
     fn starting(
@@ -809,17 +807,19 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         instance: InstanceId,
         settings: Instance,
         replies: Vec<R>,
+        mode: Mode,
     ) -> Starting {
         self.jobs = self.jobs.saturating_add(1);
         self.refreshes.insert(
             instance.clone(),
             Refresh::Starting {
                 id: self.jobs,
-                credential: settings.credential.clone(),
+                refresh_requested: false,
                 replies,
             },
         );
         Starting {
+            mode,
             id: self.jobs,
             instance,
             settings,
@@ -853,9 +853,13 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         instance: InstanceId,
         asked: Vec<R>,
     ) -> Vec<Effect<S, R>> {
-        if let Some(Refresh::Starting { replies, .. }) =
-            self.refreshes.get_mut(&instance)
+        if let Some(Refresh::Starting {
+            refresh_requested,
+            replies,
+            ..
+        }) = self.refreshes.get_mut(&instance)
         {
+            *refresh_requested = true;
             replies.extend(asked);
             return Vec::new();
         }
@@ -868,8 +872,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.jobs = self.jobs.saturating_add(1);
         let latest = Job {
             id: self.jobs,
-            instance: instance.clone(),
-            start: start.clone(),
+            instance_id: instance.clone(),
+            adapter: start.clone(),
             credential,
         };
         let (replies, run) = match self.refreshes.remove(&instance) {
@@ -922,7 +926,13 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     ) -> Result<(S, Auth, Models), String> {
         match self.refreshes.get(instance) {
             None => Ok(()),
-            Some(Refresh::Pending { .. }) => Err(String::from(REFRESHING)),
+            Some(
+                Refresh::Pending { .. }
+                | Refresh::Starting {
+                    refresh_requested: true,
+                    ..
+                },
+            ) => Err(String::from(REFRESHING)),
             Some(Refresh::Starting { .. }) => Err(String::from(STARTING)),
         }?;
         match (self.launcher_of(instance)?, &self.unreadable) {

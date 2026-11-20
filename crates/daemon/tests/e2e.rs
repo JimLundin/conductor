@@ -283,11 +283,21 @@ async fn assemble(
     let host =
         tokio::time::timeout(STEP, daemon::start(endpoint, plugins, options))
             .await??;
+    tokio::time::timeout(STEP, host.initialized()).await??;
     let target = host.target();
     Ok(Fixture { host, target })
 }
 
 async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
+    let endpoint = durable_endpoint(data, address).await?;
+    standard_claude_probe(data)?;
+    serve(endpoint, claude_plugins(), data).await
+}
+
+async fn durable_endpoint(
+    data: &Path,
+    address: SocketAddr,
+) -> Fallible<Endpoint> {
     let key_path = data.join("test-endpoint.key");
     let key = if key_path.exists() {
         iroh::SecretKey::from_bytes(
@@ -300,14 +310,12 @@ async fn durable_host(data: &Path, address: SocketAddr) -> Fallible<Fixture> {
         std::fs::write(key_path, key.to_bytes())?;
         key
     };
-    let endpoint = Endpoint::builder(presets::Minimal)
+    Ok(Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)
         .secret_key(key)
         .bind_addr(address)?
         .bind()
-        .await?;
-    standard_claude_probe(data)?;
-    serve(endpoint, claude_plugins(), data).await
+        .await?)
 }
 
 struct Updates {
@@ -2412,13 +2420,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
         send(&link, claude_gateway()).await?,
         CommandResult::Instances(with_api.clone())
     );
-    loop {
-        if next(&mut updates).await?
-            == Update::Answer(CommandResult::Instances(with_api.clone()))
-        {
-            break;
-        }
-    }
+    wait_for_offer(&mut updates, &claude_api).await?;
     assert_eq!(
         (
             &updates.host.instances,
@@ -4046,6 +4048,187 @@ fn with_api_claude(availability: Availability) -> Instances {
         &api(Provider::Claude),
         availability,
     )
+}
+
+async fn wait_for_offer(updates: &mut Updates, id: &InstanceId) -> Fallible {
+    while !matches!(
+        updates
+            .host
+            .instances
+            .as_ref()
+            .and_then(|list| list.availability(id)),
+        Some(Availability::Available { .. })
+    ) {
+        next(updates).await?;
+    }
+    Ok(())
+}
+
+async fn subscribed_offers(
+    conn: &iroh::endpoint::Connection,
+    welcome: &proto::Welcome,
+) -> Fallible<Instances> {
+    let (mut send, mut recv) = conn.open_bi().await?;
+    net::wire::write(
+        &mut send,
+        &proto::Open::Subscribe(proto::Subscribe {
+            epoch: welcome.epoch,
+            after_seq: welcome.head_seq,
+        }),
+    )
+    .await?;
+    send.finish()?;
+    loop {
+        let frame =
+            tokio::time::timeout(STEP, net::wire::read::<Feed>(&mut recv))
+                .await??;
+        if let Feed::Instances(offers) =
+            frame.ok_or("subscription closed before the roster")?
+        {
+            return Ok(offers);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_held_boot_probe_allows_connections_and_sessions_on_a_ready_account()
+-> Fallible {
+    let data = data_dir("held-boot-probe")?;
+    let held = api(Provider::Claude);
+    let healthy = instance(Provider::Claude);
+    seed(&data, std::slice::from_ref(&held), &[])?;
+    probe(&data, &held, PROBED)?;
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
+    let source = scratch("held-boot-probe", "claude-approve.jsonl")?;
+    let (phone, mut updates) = first.connect().await?;
+    let saved =
+        start_ready(&phone, &mut updates, healthy.clone(), &source).await?;
+    phone.stop().await?;
+    let address = first.address()?;
+    let ticket = first.target.clone();
+    first.shutdown().await?;
+    let work = dir_of(&data, "work", &held);
+    probe(
+        &data,
+        &held,
+        &format!("{}\n{PROBED}", r#"{"fake":"release","file":"go"}"#),
+    )?;
+    let rebound = durable_endpoint(&data, address).await?;
+    let restart = serve(rebound, claude_plugins(), &data);
+    let use_host = async {
+        let (phone, mut updates) = link(ticket.clone(), None).await?;
+        until_live(&mut updates).await?;
+        wait_for_offer(&mut updates, &healthy).await?;
+        let starting = Availability::Unavailable {
+            reason: String::from("starting the instance's CLI"),
+        };
+        assert_eq!(
+            updates
+                .host
+                .instances
+                .as_ref()
+                .and_then(|list| list.availability(&held)),
+            Some(&starting)
+        );
+        accepted(&phone, continued(saved)).await?;
+        events_until(&mut updates, Until::Ready).await?;
+        let other = scratch("held-boot-other", "claude-approve.jsonl")?;
+        start_ready(&phone, &mut updates, healthy, &other).await?;
+        let desktop = endpoint().await?;
+        let (conn, welcome) = hello(&desktop, &ticket).await?;
+        std::fs::write(work.join("go"), "")?;
+        wait_for_offer(&mut updates, &held).await?;
+        let refreshed = send(&phone, claude_gateway()).await?;
+        assert_eq!(
+            refreshed,
+            CommandResult::Instances(with_api_claude(gateway(probed())))
+        );
+        assert_eq!(
+            CommandResult::Instances(subscribed_offers(&conn, &welcome).await?),
+            refreshed
+        );
+        desktop.close().await;
+        phone.stop().await?;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    };
+    let (second, ()) = tokio::try_join!(restart, use_host)?;
+    second.shutdown().await
+}
+
+#[tokio::test]
+async fn retrying_the_stored_credential_during_boot_receives_the_live_refresh_result()
+-> Fallible {
+    let data = data_dir("retry-at-boot")?;
+    let id = api(Provider::Claude);
+    let current = claude_credential("conductor-test-original");
+    let mut roster = seed(&data, std::slice::from_ref(&id), &[])?;
+    roster
+        .0
+        .get_mut(&id)
+        .ok_or("missing seeded instance")?
+        .credential = Some(current.clone());
+    disk::seed_roster(&data, &roster)?;
+    standard_claude_probe(&data)?;
+    let failed = r#"{"fake":"fail","stderr":"discovery failed","status":1}"#;
+    probe(
+        &data,
+        &id,
+        &format!("{}\n{failed}", r#"{"fake":"release","file":"go"}"#),
+    )?;
+    let work = dir_of(&data, "work", &id);
+    std::fs::write(work.join("stdout.2.jsonl"), failed)?;
+    let host = daemon::start(
+        endpoint().await?,
+        claude_plugins(),
+        HostOptions {
+            name: String::from("retry-at-boot"),
+            data_dir: data,
+            home: None,
+            projects: Vec::new(),
+        },
+    )
+    .await?;
+    let target = host.target();
+    let (phone, mut updates) = link(target.clone(), None).await?;
+    until_live(&mut updates).await?;
+    let desktop = endpoint().await?;
+    let conn = authenticated(&desktop, &target).await?;
+    let body = CommandBody::SetCredential {
+        provider: Provider::Claude,
+        credential: current,
+    };
+    let retry = queued_command(&conn, 2363, body.clone());
+    let refreshing = Availability::Unavailable {
+        reason: String::from(REFRESHING),
+    };
+    while updates
+        .host
+        .instances
+        .as_ref()
+        .and_then(|offers| offers.availability(&id))
+        != Some(&refreshing)
+    {
+        next(&mut updates).await?;
+    }
+    std::fs::write(work.join("go"), "")?;
+    let receipt = finished_command(retry).await?;
+    assert!(
+        matches!(status_of(&receipt, &id).map(|status| status.availability), Some(Availability::Unavailable { reason }) if reason != REFRESHING && !reason.is_empty())
+    );
+    std::fs::write(work.join("stdout.3.jsonl"), PROBED)?;
+    assert_eq!(
+        send(&phone, body.clone()).await?,
+        CommandResult::Instances(with_api_claude(gateway(probed())))
+    );
+    assert_eq!(
+        finished_command(queued_command(&conn, 2363, body)).await?,
+        receipt
+    );
+    desktop.close().await;
+    phone.stop().await?;
+    host.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -5700,6 +5883,7 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
     let _ = sign_in_until(&mut updates, &claude, open).await?;
     let right = send(&link, submit(SIGN_IN_CODE)).await?;
     let signed_in = sign_in_until(&mut updates, &claude, ended).await?;
+    wait_for_offer(&mut updates, &account).await?;
     let now = Availability::Available {
         auth: Auth::SignedIn,
         models: probed(),

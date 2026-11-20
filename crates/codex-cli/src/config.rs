@@ -1,6 +1,7 @@
 //! The model provider in a private home's `config.toml` (§6.3): applies
 //! the edits `codex::config_edits` decides, keeping what Codex wrote there.
 
+use install::Home;
 use std::io::ErrorKind;
 use std::path::Path;
 
@@ -13,14 +14,19 @@ use super::server::Error;
 /// Writes `credential`'s provider into `<home>/config.toml`, or takes ours
 /// out for `None`.
 pub fn write(
-    home: &Path,
+    home: &Home,
     credential: Option<&CodexCredential>,
 ) -> Result<(), Error> {
-    let path = home.join("config.toml");
-    let text = read(&path)?;
-    let config = with_provider(&text, credential)
-        .map_err(|err| Error::Command(format!("{}: {err}", path.display())))?;
-    Ok(std::fs::write(&path, config)?)
+    let Home::Private(dir) = home else {
+        return Ok(());
+    };
+    let path = dir.join("config.toml");
+    let failed = |err| Error::Command(format!("{}: {err}", path.display()));
+    let text = read(&path).map_err(failed)?;
+    let config = with_provider(&text, credential).map_err(|reason| {
+        Error::Command(format!("{}: {reason}", path.display()))
+    })?;
+    std::fs::write(&path, config).map_err(failed)
 }
 
 /// The file's text; a home with none yet has an empty one.
@@ -34,20 +40,23 @@ fn read(path: &Path) -> std::io::Result<String> {
 fn with_provider(
     text: &str,
     credential: Option<&CodexCredential>,
-) -> Result<String, toml_edit::TomlError> {
-    let mut config = text.parse::<DocumentMut>()?;
+) -> Result<String, String> {
+    let mut config = text
+        .parse::<DocumentMut>()
+        .map_err(|_| String::from("invalid TOML"))?;
     for edit in codex::config_edits(credential) {
-        apply(config.as_table_mut(), edit);
+        apply(config.as_table_mut(), edit)?;
     }
     Ok(config.to_string())
 }
 
-fn apply(root: &mut Table, edit: Edit) {
+fn apply(root: &mut Table, edit: Edit) -> Result<(), String> {
     match edit {
         Edit::Remove(path) => {
-            at(root, &path, |table, key| {
+            let _ = at(root, &path, |table, key| {
                 table.remove(key);
             });
+            Ok(())
         }
         Edit::Set { path, value: text } => at(root, &path, |table, key| {
             table.insert(key, value(text));
@@ -55,11 +64,14 @@ fn apply(root: &mut Table, edit: Edit) {
         Edit::Table { path, entries } => at(root, &path, |table, key| {
             table.insert(key, Item::Table(entries.into_iter().collect()));
         }),
-        Edit::RemoveIfEmpty(path) => at(root, &path, |table, key| {
-            table.retain(|name, item| {
-                name != key || !item.as_table().is_some_and(Table::is_empty)
+        Edit::RemoveIfEmpty(path) => {
+            let _ = at(root, &path, |table, key| {
+                table.retain(|name, item| {
+                    name != key || !item.as_table().is_some_and(Table::is_empty)
+                });
             });
-        }),
+            Ok(())
+        }
     }
 }
 
@@ -69,14 +81,13 @@ fn at(
     root: &mut Table,
     path: &[String],
     change: impl FnOnce(&mut Table, &str),
-) {
-    if let Some((key, tables)) = path.split_last()
-        && let Some(table) = tables
-            .iter()
-            .try_fold(root, |table, name| section(table, name))
-    {
-        change(table, key);
-    }
+) -> Result<(), String> {
+    let (key, tables) = path.split_last().ok_or("empty config key")?;
+    let table = tables.iter().try_fold(root, |table, name| {
+        section(table, name).ok_or_else(|| format!("{name} must be a table"))
+    })?;
+    change(table, key);
+    Ok(())
 }
 
 /// The table at `key`, created with no header of its own.

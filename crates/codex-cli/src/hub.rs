@@ -26,7 +26,7 @@ struct Asked {
 }
 
 type Listed = oneshot::Sender<Result<Models, Error>>;
-type Configured = oneshot::Sender<()>;
+type Configured = oneshot::Sender<Result<(), Error>>;
 type Route = mpsc::Sender<Routed>;
 type Machine = codex::hub::Hub<Asked, Listed, Route>;
 type Input = codex::hub::Input<Asked, Listed, Configured, Route, Arc<Error>>;
@@ -87,13 +87,13 @@ impl Hub {
     /// its threads end, saying why.
     ///
     /// # Errors
-    /// Fails when the hub has stopped.
+    /// Fails when the hub has stopped or its private config cannot be updated.
     pub async fn set_credential(
         &self,
         credential: Option<CodexCredential>,
     ) -> Result<(), Error> {
         self.ask(|reply| Command::Credential { credential, reply })
-            .await
+            .await?
     }
 
     async fn ask<T>(
@@ -153,7 +153,10 @@ impl Task {
     async fn perform(&mut self, effect: Effect) -> Result<Vec<Effect>, Ended> {
         match effect {
             Effect::Spawn(credential) => {
-                return Ok(self.spawn(credential).await);
+                return Ok(self.spawn(credential, CodexServer::spawn).await);
+            }
+            Effect::SpawnConfigured(credential) => {
+                return Ok(self.spawn(credential, CodexServer::open).await);
             }
             Effect::Open(asked) => return Ok(self.open(asked).await),
             Effect::List(reply) => {
@@ -187,7 +190,13 @@ impl Task {
                 tracing::debug!(?event, "a codex event for no thread");
             }
             Effect::Configured(reply) => {
-                let _ = reply.send(());
+                let applied = crate::config::write(
+                    &self.options.home,
+                    self.machine.credential(),
+                );
+                let more = self.machine.step(Input::Applied(applied.is_ok()));
+                let _ = reply.send(applied);
+                return Ok(more);
             }
             Effect::End => return Err(Ended),
         }
@@ -197,19 +206,24 @@ impl Task {
     async fn spawn(
         &mut self,
         credential: Option<CodexCredential>,
+        launch: impl AsyncFnOnce(
+            ServerOptions,
+        ) -> Result<
+            (CodexServer, mpsc::Receiver<CodexEvent>),
+            Error,
+        >,
     ) -> Vec<Effect> {
         let options = ServerOptions {
             credential,
             ..self.options.clone()
         };
-        let spawned =
-            CodexServer::spawn(options).await.map(|(server, events)| {
-                tracing::info!(
-                    version = server.codex_version().unwrap_or("?"),
-                    "codex app-server started"
-                );
-                self.server = Some(Up { server, events });
-            });
+        let spawned = launch(options).await.map(|(server, events)| {
+            tracing::info!(
+                version = server.codex_version().unwrap_or("?"),
+                "codex app-server started"
+            );
+            self.server = Some(Up { server, events });
+        });
         self.machine.step(Input::Spawned(spawned.map_err(Arc::new)))
     }
 

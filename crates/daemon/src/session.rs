@@ -21,7 +21,7 @@ use proto::{
     CheckpointId, ClientName, CommandResult, HostPath, HostSeq, Models,
     SessionId, TaskId, Workspace,
 };
-use runtime::Runtime;
+use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 
@@ -55,6 +55,7 @@ struct SessionMsg {
 #[derive(Debug)]
 enum Request {
     Order(Order),
+    Relaunch(Order, Instance),
     Finish(ClientName),
 }
 
@@ -75,7 +76,7 @@ enum Happening {
 struct Actor {
     id: SessionId,
     inbox: mpsc::Receiver<SessionMsg>,
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     told: Told,
     /// Where the session was created, which places it in its project.
     created: HostPath,
@@ -101,7 +102,7 @@ impl Session {
         history: &[proto::Event],
     ) -> Self {
         let (runtime, offered) = agent;
-        let restored = (runtime, None);
+        let restored = (Some(runtime), None);
         let session =
             Self::restore(id, directory, choice, told, restored, history, log);
         let (reply, _) = oneshot::channel();
@@ -112,14 +113,14 @@ impl Session {
         session
     }
 
-    /// The session `history` logged, with its agent's runtime and the
-    /// conversation the host saved for it, and no agent running.
+    /// Restores the conversation from the log. A session recovered during
+    /// bootstrap takes its runtime from its first accepted relaunch.
     pub(crate) fn restore(
         id: SessionId,
         directory: HostPath,
         choice: Choice,
         told: Told,
-        agent: (Runtime, Option<String>),
+        agent: (Option<Runtime>, Option<String>),
         history: &[proto::Event],
         log: Log,
     ) -> Self {
@@ -150,6 +151,14 @@ impl Session {
         self.request(Request::Order(order)).await
     }
 
+    pub(crate) async fn relaunch(
+        &self,
+        order: Order,
+        adapter: Instance,
+    ) -> Result<CommandResult, Stopped> {
+        self.request(Request::Relaunch(order, adapter)).await
+    }
+
     pub(crate) async fn finish(
         &self,
         by: ClientName,
@@ -177,7 +186,7 @@ impl Actor {
             let happening = tokio::select! {
                 biased;
                 msg = self.inbox.recv() => msg.map_or(Happening::Closed, Happening::Request),
-                event = self.runtime.events.recv() => event.map_or(Happening::Closed, Happening::Agent),
+                event = next_event(&mut self.runtime) => event.map_or(Happening::Closed, Happening::Agent),
             };
             now = match happening {
                 Happening::Request(SessionMsg {
@@ -205,8 +214,13 @@ impl Actor {
     ) -> Result<Core, Stopped> {
         let input = match happening {
             Happening::Request(SessionMsg { request, reply }) => {
-                let Request::Order(order) = request else {
-                    return Err(Stopped {});
+                let order = match request {
+                    Request::Order(order) => order,
+                    Request::Relaunch(order, adapter) => {
+                        self.runtime.get_or_insert_with(|| adapter.start());
+                        order
+                    }
+                    Request::Finish(_) => return Err(Stopped {}),
                 };
                 self.reply = Some(reply);
                 Input::Order(order.session(uuid::Uuid::new_v4().to_string()))
@@ -344,7 +358,7 @@ impl Actor {
                 () = tokio::time::sleep_until(until) => return Ok((core, FinishInput::TimedOut)),
                 next = subscription.live.recv() => return Ok((core, watched(next)?)),
                 msg = self.inbox.recv() => msg.map_or(Happening::Closed, Happening::Request),
-                event = self.runtime.events.recv() => event.map_or(Happening::Closed, Happening::Agent),
+                event = next_event(&mut self.runtime) => event.map_or(Happening::Closed, Happening::Agent),
             };
             match happening {
                 Happening::Request(SessionMsg {
@@ -450,7 +464,10 @@ impl Actor {
     async fn ask(&mut self, command: Command) -> Outcome {
         let instructed = self.instructed(command);
         let unanswered = instructed.failed("the agent's runtime has stopped");
-        let _ = self.runtime.commands.send(instructed).await;
+        let Some(runtime) = &self.runtime else {
+            return unanswered;
+        };
+        let _ = runtime.commands.send(instructed).await;
         self.outcome().await.unwrap_or(unanswered)
     }
 
@@ -476,11 +493,18 @@ impl Actor {
     /// wait until the session has taken the outcome.
     async fn outcome(&mut self) -> Option<Outcome> {
         loop {
-            match self.runtime.events.recv().await? {
+            match self.runtime.as_mut()?.events.recv().await? {
                 Event::Outcome(outcome) => break Some(outcome),
                 Event::Step(step) => self.held.push_back(step),
             }
         }
+    }
+}
+
+async fn next_event(runtime: &mut Option<Runtime>) -> Option<Event> {
+    match runtime {
+        Some(agent) => agent.events.recv().await,
+        None => std::future::pending().await,
     }
 }
 

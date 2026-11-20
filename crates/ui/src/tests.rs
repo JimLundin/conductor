@@ -185,7 +185,7 @@ fn connection(host: HostId, state: LinkState, error: Option<&str>) -> Intent {
 }
 
 fn roster(instances: Instances) -> Intent {
-    Intent::Link(HOST, Update::Answer(CommandResult::Instances(instances)))
+    Intent::Link(HOST, Update::Feed(Feed::Instances(instances)))
 }
 
 /// A provider's own instance by its name, and otherwise Claude's of the

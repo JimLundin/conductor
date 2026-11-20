@@ -48,6 +48,8 @@ pub enum Command<T, M, C> {
 #[derive(Debug)]
 pub enum Input<T, M, C, R, E> {
     Command(Command<T, M, C>),
+    /// Whether applying the current provider to its private config succeeded.
+    Applied(bool),
     /// How the start [`Effect::Spawn`] asked for went.
     Spawned(Result<(), E>),
     /// The thread an [`Effect::Open`] started, and its route.
@@ -76,6 +78,8 @@ pub enum Effect<T, M, C, R, E> {
     /// Start the server with this credential, then report
     /// [`Input::Spawned`].
     Spawn(Option<CodexCredential>),
+    /// Start a server whose private config already carries this provider.
+    SpawnConfigured(Option<CodexCredential>),
     /// Start the thread on the running server and answer it, then report
     /// [`Input::Opened`] if it started.
     Open(T),
@@ -122,6 +126,7 @@ enum State<T, M> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Hub<T, M, R> {
     credential: Option<CodexCredential>,
+    home_configured: bool,
     state: State<T, M>,
     routes: BTreeMap<ThreadId, R>,
 }
@@ -132,9 +137,15 @@ impl<T, M, R: Clone> Hub<T, M, R> {
     pub const fn new(credential: Option<CodexCredential>) -> Self {
         Self {
             credential,
+            home_configured: false,
             state: State::Down,
             routes: BTreeMap::new(),
         }
+    }
+
+    #[must_use]
+    pub const fn credential(&self) -> Option<&CodexCredential> {
+        self.credential.as_ref()
     }
 
     pub fn step<C, E: Clone>(
@@ -150,6 +161,10 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             }
             Input::Command(Command::Credential { credential, reply }) => {
                 self.configure(credential, reply)
+            }
+            Input::Applied(applied) => {
+                self.home_configured = applied;
+                Vec::new()
             }
             Input::Spawned(Ok(())) => self.spawned(),
             Input::Spawned(Err(error)) => self.unspawned(&error),
@@ -187,8 +202,16 @@ impl<T, M, R: Clone> Hub<T, M, R> {
                     waiting: Vec::from([ask]),
                     stale: false,
                 };
-                Vec::from([Effect::Spawn(self.credential.clone())])
+                Vec::from([self.launch()])
             }
+        }
+    }
+
+    fn launch<C, E>(&self) -> Effect<T, M, C, R, E> {
+        if self.home_configured {
+            Effect::SpawnConfigured(self.credential.clone())
+        } else {
+            Effect::Spawn(self.credential.clone())
         }
     }
 
@@ -200,6 +223,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         reply: C,
     ) -> Vec<Effect<T, M, C, R, E>> {
         self.credential = credential;
+        self.home_configured = false;
         let mut effects = match &mut self.state {
             State::Up => {
                 self.state = State::Down;
@@ -231,10 +255,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
                     waiting,
                     stale: false,
                 };
-                Vec::from([
-                    Effect::Stop,
-                    Effect::Spawn(self.credential.clone()),
-                ])
+                Vec::from([Effect::Stop, self.launch()])
             }
             State::Starting {
                 waiting,
@@ -553,6 +574,7 @@ mod tests {
             Vec::from([
                 credential("k2", "first"),
                 credential("k3", "again"),
+                Input::Applied(true),
                 models('a'),
             ]),
         );
@@ -572,7 +594,10 @@ mod tests {
                     Effect::Configured("first"),
                 ]),
                 Vec::from([Effect::Configured("again")]),
-                Vec::from([Effect::Spawn(Some(key_credential("k3")))]),
+                Vec::new(),
+                Vec::from([Effect::SpawnConfigured(Some(key_credential(
+                    "k3"
+                )))]),
             ]
         );
     }

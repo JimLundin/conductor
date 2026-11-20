@@ -18,8 +18,8 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Providers as plugins** (§5.2, §6.3). The daemon library takes a map of
   `runtime::Plugin`s and names no provider: each is its `agents::Profile`
   as data (CLI pin, probes, sign-in, home config, label, note and credential
-  forms) plus its starter, which takes the stored credentials over the
-  runtime protocol. Credentials are generic form values the app draws
+  forms) plus an adapter for each account. The adapter applies credentials,
+  discovers models and starts session agents. Credentials are generic form values the app draws
   from `Welcome.catalog`, checked by their form and read by each
   provider's core (ALPN `conductor/13`, credential store format 3). The
   binary moved to `crates/conductord`, the one place that wires the
@@ -68,8 +68,10 @@ What is built and what comes next. Update it in the commit that changes it.
   command transaction while a CLI responds. Refreshes are serialized per
   instance, coalesce superseded configurations and discard stale results.
   Pending and failed instances report unavailability; unrelated sessions
-  and connections remain usable. Credential retries retain their final
-  durable `Instances` receipt.
+  and connections remain usable. At boot the stored instances start
+  independently. Subscribers receive `Feed::Instances` whenever offers change
+  (ALPN `conductor/23`). Credential retries retain their final durable
+  `Instances` receipt.
 
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per

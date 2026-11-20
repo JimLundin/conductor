@@ -95,8 +95,8 @@ pub fn version(user_agent: &str) -> Option<&str> {
 /// A path names the tables down to its key; a table on the way that is
 /// missing is made with no header of its own, so
 /// `[model_providers.conductor]` is written without a bare
-/// `[model_providers]` above it. A key whose table on the way is not a
-/// table is left alone: that is Codex's to refuse.
+/// `[model_providers]` above it. An incompatible parent table prevents
+/// setting a key. On removal the key is already absent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
     Remove(Vec<String>),

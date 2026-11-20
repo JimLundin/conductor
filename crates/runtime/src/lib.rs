@@ -44,24 +44,6 @@ fn pair() -> (Runtime, Plug) {
     )
 }
 
-impl Runtime {
-    /// A runtime whose every command fails for `reason`: the host can't run
-    /// its provider.
-    #[must_use]
-    pub fn refusing(reason: String) -> Self {
-        let (runtime, plug) = pair();
-        tokio::spawn(refuse(plug, reason));
-        runtime
-    }
-}
-
-async fn refuse(mut plug: Plug, reason: String) {
-    while let Some(command) = plug.commands.recv().await {
-        let refused = Event::Outcome(command.failed(&reason));
-        let _ = plug.events.send(refused).await;
-    }
-}
-
 /// Logs what an agent's core decided to report.
 pub fn log(note: &Note) {
     match note {

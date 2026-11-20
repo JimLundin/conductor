@@ -119,6 +119,13 @@ impl CodexServer {
     pub async fn spawn(
         opts: ServerOptions,
     ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
+        config::write(&opts.home, opts.credential.as_ref())?;
+        Self::open(opts).await
+    }
+
+    pub(crate) async fn open(
+        opts: ServerOptions,
+    ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
         let line_json::Started {
             handle: commands,
             events,
@@ -351,23 +358,10 @@ fn command(opts: &ServerOptions) -> Command {
     cmd
 }
 
-/// A private home gets the provider in its `config.toml`.
-fn configure(
-    home: &Home,
-    credential: Option<&CodexCredential>,
-) -> Result<(), Error> {
-    match home {
-        Home::Private(dir) => config::write(dir, credential),
-        Home::User => Ok(()),
-    }
-}
-
-/// Configures the home, then starts the process and its actor.
 fn start(
     opts: &ServerOptions,
 ) -> Result<line_json::Started<CommandMsg, CodexEvent>, Error> {
     let stdout_log = line_json::stdout_log(opts.stdout_log.as_deref())?;
-    configure(&opts.home, opts.credential.as_ref())?;
     let mut driver = Server::default();
     Ok(line_json::start(
         command(opts),

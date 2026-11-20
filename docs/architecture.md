@@ -223,7 +223,7 @@ client:
 |---|---|
 | `Open::Hello` (first) | Authenticates and returns `Welcome { host, epoch, head_seq, instances, catalog }`. `instances` is each instance's availability, by its provider and account; `catalog` is how each provider presents itself and the credential forms it takes (§6.3). |
 | `Open::Command` | One `Command` → one `CommandResult`, then the stream closes. |
-| `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, or a live-only `SignIn` step (§6.3). A cursor from another epoch is refused. |
+| `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, a live-only `SignIn` step (§6.3), the current `Home`, or the current `Instances` offer. A cursor from another epoch is refused. |
 
 Each frame is a `u32` length and a postcard body.
 
@@ -259,8 +259,9 @@ that is enough for this app's text-sized traffic.
 `daemon::start` takes a bound iroh endpoint, the provider plugins and the
 host's options, including its data directory. It opens the credential store
 and durable log, starts the home and registry tasks, and serves the protocol
-on the endpoint. It returns a `Hosted` handle with the client's connection
-target and a shutdown operation. `daemon::serve` binds the production
+on the endpoint. It returns a listening `Hosted` handle with the connection
+target and a shutdown operation. Callers that need settled offers can await
+`Hosted::initialized`. `daemon::serve` binds the production
 endpoint with the host's persistent key, calls `start`, prints the ticket
 and QR code, and shuts the host down on Ctrl-C.
 
@@ -287,8 +288,9 @@ Every piece of state has one owner task. Handles talk to it over channels.
   ordering also prevents older Codex reconfiguration from running after a
   newer one. An added instance stays unavailable until its CLI has
   started, which runs beside registry requests the same way. Instances in
-  the stored roster take the same launch path before the registry restores
-  sessions. The registry derives launch settings, sign-in and the instruction
+  the stored roster take the same launch path and probe independently while
+  the registry restores sessions. The host serves after session recovery.
+  A restored session takes its adapter on its first accepted relaunch. The registry derives launch settings, sign-in and the instruction
   file a CLI reads from its plugin.
 - **Session** owns one agent's runtime (§5.2), its turn and its open
   requests. An interrupt that arrives before the agent began the turn is
@@ -395,6 +397,11 @@ At startup and after a credential change, the host configures the instance
 with its stored credential or the CLI's own sign-in. Each adapter applies
 its provider's credential and discovers the models it offers. Claude probes
 with a fresh CLI process, and Codex lists models on the account's app-server.
+After recovering its sessions, the host accepts connections while each stored
+instance starts independently. An early `Welcome` shows which instances
+are still starting. Its subscription carries updated `Feed::Instances`
+snapshots, starting with the current roster at subscription. A ready instance
+can start or continue sessions immediately.
 The instance reports credential refusal separately from discovery failure.
 At boot, a discovery failure still allows the default model. After a change,
 the instance stays unavailable until a refresh succeeds. The host chooses
@@ -1066,11 +1073,12 @@ first one built. The others in the table become more forms.
 - **Codex:** the form `provider`, with a `Provider name`, a `Base URL`, a
   `Model` and a `Key` (a secret), read into `CodexCredential::Provider {
   name, base_url, key, model }`, whose model is the provider's default.
-  Before the app-server starts, the host writes
+  When applying the credential, the Codex adapter writes
   `[model_providers.conductor]` (`name`, `base_url`, `env_key =
   "CONDUCTOR_CODEX_KEY"`, `wire_api = "responses"`, the only one Codex
   0.166 knows) and `model_provider` and `model` into the private
-  `config.toml`, keeping the rest of the file, and passes the key in
+  `config.toml`, keeping the rest of the file. Failure to apply the edits
+  refuses the credential before discovery. The app-server receives the key in
   `CONDUCTOR_CODEX_KEY`. The key is never in the file. Codex 0.166 passes
   variables named like a key to the commands it runs
   (`ignore_default_excludes` defaults to true in
@@ -1082,13 +1090,14 @@ first one built. The others in the table become more forms.
   [codex-src], verified), but the key is in its environment, which is fixed
   when it starts. So a change stops the instance's app-server, its sessions
   close with `CloseReason::Stopped { reason: "new Codex credential" }`,
-  and the next thread starts a server with the new key.
+  and discovery starts a server with the new key after the private config
+  has been updated.
 - **Protocol:** `SetCredential { provider, credential }` and
   `RemoveInstance { instance }` answer `Instances`, what the host runs
-  now, and the client's
-  status takes it at once. Another client sees the change at its next
-  `Welcome`. Like every command they need a client admitted by the ticket's
-  token, which the device certificates of §6.1 replace.
+  when the command completes. A retry returns its original receipt even after
+  the offer has changed. Clients follow the live roster in `Feed::Instances`.
+  These commands require a client admitted by the ticket's token, which
+  the device certificates of §6.1 replace.
 - **Write-only:** `Availability::Available { auth }` reports `Stored {
   kind, url }` (the credential's kind and its `Url` field's value),
   `SignedIn` or `Unmanaged` (a `--cli <provider>=<path>` CLI), and never a
@@ -1195,9 +1204,8 @@ Built: the per-host subscription sign-in of each provider, on one host.
 5. **After it.** A sign-in that exits 0 runs the CLI's sign-in check against
    the home; one that passes makes the instance sign in on its own
    (`OwnSignIn::SignedIn`) and refreshes it, which lists its models. The
-   last step, `SignedIn { instances }`, carries what the host runs then, so
-   every client's availability turns at once, without a restart or a new
-   `Welcome`. A CLI the host was given (`--cli`) is checked the same way
+   last step, `SignedIn { instances }`, records what the host ran at completion.
+   Subscribers receive the current availability through `Feed::Instances`. A CLI the host was given (`--cli`) is checked the same way
    after a sign-in from the app, though it isn't at start.
 6. **Claude, shared token (planned).** The same flow with `claude
    setup-token`, which prints the token instead of storing it; the host

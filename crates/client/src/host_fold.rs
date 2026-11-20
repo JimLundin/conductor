@@ -4,10 +4,7 @@ use core::mem;
 use crate::host_view::HostView;
 use crate::link::{LinkState, Status, Update};
 use crate::prelude::*;
-use proto::{
-    Catalog, CommandResult, Feed, Home, InstanceId, Instances, SignIn,
-    SignInStep,
-};
+use proto::{Catalog, Feed, Home, InstanceId, Instances, SignIn, SignInStep};
 
 /// What a host has reported to this client.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -45,7 +42,7 @@ impl HostFold {
             }
             Update::Feed(Feed::Home(home)) => self.home = Some(home),
             Update::Feed(Feed::SignIn(sign_in)) => self.sign_in(sign_in),
-            Update::Answer(CommandResult::Instances(instances)) => {
+            Update::Feed(Feed::Instances(instances)) => {
                 self.instances = Some(instances);
             }
             Update::Answer(_) => {}
@@ -53,15 +50,9 @@ impl HostFold {
     }
 
     fn sign_in(&mut self, SignIn { instance, step }: SignIn) {
-        match &step {
-            SignInStep::SignedIn { instances } => {
-                self.instances = Some(instances.clone());
-            }
-            SignInStep::Cancelled => {
-                self.sign_ins.remove(&instance);
-                return;
-            }
-            _ => {}
+        if step == SignInStep::Cancelled {
+            self.sign_ins.remove(&instance);
+            return;
         }
         self.sign_ins.insert(instance, step);
     }
@@ -109,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn the_welcome_feed_and_answers_update_the_advertised_facts() {
+    fn welcome_and_live_snapshots_own_the_roster_across_earlier_receipts() {
         let mut host = HostFold::default();
         host.apply(welcome(1));
         assert_eq!(host.name.as_deref(), Some("desk"));
@@ -126,7 +117,7 @@ mod tests {
         }));
         assert_eq!(
             (&host.home, &host.instances),
-            (&Some(home), &Some(instances("signed in")))
+            (&Some(home), &Some(instances("welcome")))
         );
         host.apply(sign_in(SignInStep::Cancelled));
         host.apply(Update::Answer(CommandResult::Instances(instances(
@@ -134,8 +125,16 @@ mod tests {
         ))));
         assert_eq!(
             (&host.instances, host.sign_ins.is_empty()),
-            (&Some(instances("command")), true)
+            (&Some(instances("welcome")), true)
         );
+        host.apply(Update::Feed(Feed::Instances(instances("current"))));
+        host.apply(Update::Answer(CommandResult::Instances(instances(
+            "previous receipt",
+        ))));
+        host.apply(sign_in(SignInStep::SignedIn {
+            instances: instances("previous sign-in"),
+        }));
+        assert_eq!(host.instances, Some(instances("current")));
         host.apply(sign_in(SignInStep::Starting));
         host.apply(welcome(1));
         assert_eq!(

@@ -370,18 +370,8 @@ async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
     }
 }
 
-#[tokio::test]
-async fn configuring_a_codex_provider_lists_models_with_its_key_and_names_its_default()
--> TestResult<()> {
-    let work =
-        fake_codex_dir(&fixture("../e2e/codex-two-threads-listed.jsonl"))?;
-    let plugin = codex_cli::plugin(runtime::Settings::default());
-    let instance = (plugin.instance)(runtime::Launch {
-        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
-        home: Home::private(&work, "gateway", &plugin.profile.config)?,
-        work: work.clone(),
-    });
-    let stored = proto::Credential {
+fn stored_gateway() -> proto::Credential {
+    proto::Credential {
         kind: String::from("provider"),
         values: [
             ("name", "gateway"),
@@ -391,8 +381,21 @@ async fn configuring_a_codex_provider_lists_models_with_its_key_and_names_its_de
         ]
         .map(|(key, value)| (String::from(key), String::from(value)))
         .into(),
-    };
-    let configured = instance.configure(Some(stored)).await?;
+    }
+}
+
+#[tokio::test]
+async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_default()
+-> TestResult<()> {
+    let work =
+        fake_codex_dir(&fixture("../e2e/codex-two-threads-listed.jsonl"))?;
+    let plugin = codex_cli::plugin(runtime::Settings::default());
+    let instance = (plugin.instance)(runtime::Launch {
+        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        home: Home::private(&work, "gateway", &plugin.profile.config)?,
+        work: work.clone(),
+    });
+    let configured = instance.configure(Some(stored_gateway())).await?;
     assert_eq!(
         configured.named,
         Some(proto::ModelId(String::from("gateway-model")))
@@ -405,6 +408,53 @@ async fn configuring_a_codex_provider_lists_models_with_its_key_and_names_its_de
         std::fs::read_to_string(work.join("env.txt"))?
             .contains("CONDUCTOR_CODEX_KEY=conductor-test-key")
     );
+    let cleared = instance.configure(None).await?;
+    assert_eq!(cleared.named, None);
+    assert_eq!(
+        cleared.models?.default,
+        Some(proto::ModelId(String::from("gpt-6.1-sol")))
+    );
+    assert!(
+        !std::fs::read_to_string(work.join("env.txt"))?
+            .contains("CONDUCTOR_CODEX_KEY=")
+    );
+    assert!(
+        !std::fs::read_to_string(work.join("codex-config.toml"))?
+            .contains("gateway-model")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_malformed_codex_provider_config_refuses_the_credential_before_discovery()
+-> TestResult<()> {
+    let work =
+        fake_codex_dir(&fixture("server2-resume.jsonl"))?.join("bad-config");
+    let plugin = codex_cli::plugin(runtime::Settings::default());
+    let home = Home::private(&work, "gateway", &plugin.profile.config)?;
+    std::fs::write(work.join("home/gateway/config.toml"), "private-value = [")?;
+    let instance = (plugin.instance)(runtime::Launch {
+        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        home,
+        work: work.clone(),
+    });
+    let reason = instance
+        .configure(Some(stored_gateway()))
+        .await
+        .err()
+        .ok_or("expected a credential refusal")?;
+    assert!(reason.contains("config.toml"));
+    assert!(!reason.contains("private-value"));
+    std::fs::write(
+        work.join("home/gateway/config.toml"),
+        "model_providers = 1",
+    )?;
+    let conflict = instance
+        .configure(Some(stored_gateway()))
+        .await
+        .err()
+        .ok_or("expected a conflicting provider table to be refused")?;
+    assert!(conflict.contains("model_providers"));
     Ok(())
 }
 
