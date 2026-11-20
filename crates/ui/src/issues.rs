@@ -49,8 +49,10 @@ pub enum IssueIntent {
 
 /// What the person has typed and not sent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Drafts {
-    titles: BTreeMap<ProjectId, String>,
+pub struct Titles(BTreeMap<ProjectId, String>);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueDraft {
     item: String,
     note: String,
     editing: Option<Editing>,
@@ -69,7 +71,7 @@ pub struct Shown<'issue> {
     pub issue: &'issue Issue,
 }
 
-impl Drafts {
+impl Titles {
     pub fn new_issue(
         self,
         intent: NewIssueIntent,
@@ -77,9 +79,9 @@ impl Drafts {
     ) -> (Self, Vec<Effect>) {
         match intent {
             NewIssueIntent::TypeTitle(project, title) => {
-                let mut titles = self.titles;
+                let mut titles = self.0;
                 titles.insert(project, title);
-                (Self { titles, ..self }, Vec::new())
+                (Self(titles), Vec::new())
             }
             NewIssueIntent::Create(host, project) => {
                 let effects = self.create(At { host, visit }, project);
@@ -89,7 +91,7 @@ impl Drafts {
     }
 
     fn create(&self, at: At, project: ProjectId) -> Vec<Effect> {
-        let title = self.titles.get(&project).map_or("", |title| title.trim());
+        let title = self.0.get(&project).map_or("", |title| title.trim());
         if title.is_empty() {
             return Vec::new();
         }
@@ -100,17 +102,13 @@ impl Drafts {
                 priority: Priority::Normal,
                 labels: Vec::new(),
             },
-            project: project.clone(),
+            project,
         };
-        Vec::from([at.send(body, ReplyTo::Created(project))])
+        Vec::from([at.send(body, ReplyTo::Created)])
     }
+}
 
-    /// The project's issue is open: its title draft goes.
-    pub fn created(mut self, project: &ProjectId) -> Self {
-        self.titles.remove(project);
-        self
-    }
-
+impl IssueDraft {
     pub fn update(
         self,
         intent: IssueIntent,
@@ -307,9 +305,9 @@ pub struct IssueRow {
 pub fn list(
     project: &Project,
     host: Option<(HostId, &Host)>,
-    drafts: &Drafts,
+    drafts: &Titles,
 ) -> IssueList {
-    let new_title = drafts.titles.get(&project.id).cloned().unwrap_or_default();
+    let new_title = drafts.0.get(&project.id).cloned().unwrap_or_default();
     let create = host
         .filter(|(_, known)| known.fold.live() && !new_title.trim().is_empty())
         .map(|(id, _)| {
@@ -451,7 +449,7 @@ pub fn find(host: &Host, id: IssueId) -> Option<(&Project, &Issue)> {
 pub fn screen(
     (at, host): (HostId, &Host),
     id: IssueId,
-    (drafts, hosts): (&Drafts, &BTreeMap<HostId, Host>),
+    (drafts, hosts): (&IssueDraft, &BTreeMap<HostId, Host>),
     notice: Option<String>,
 ) -> Option<IssueScreen> {
     let (project, issue) = find(host, id)?;

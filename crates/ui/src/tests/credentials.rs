@@ -1,14 +1,13 @@
 //! The credentials screen: what each field takes, what a sign-in forgets
 //! when it runs again, and what the host's answers say.
 
-use proto::{CommandResult, Provider, SignInStep};
+use proto::{CommandResult, SignInStep};
 
 use super::{
-    HOST, claude, claude_forms, id, paired, pane_of, reply, roster, run,
+    HOST, answer, claude, claude_forms, id, paired, pane_of, roster, run,
     sign_in, sign_in_of, signed_in, signing, text, two_claudes,
 };
-use crate::credentials::{Done, Subject};
-use crate::{CredentialIntent, Intent, Place, ReplyTo, State};
+use crate::{CredentialIntent, Intent, Place, State};
 
 #[test]
 fn each_field_takes_its_kind_of_input_and_an_empty_form_doesnt_save() {
@@ -46,23 +45,28 @@ fn each_field_takes_its_kind_of_input_and_an_empty_form_doesnt_save() {
 
 #[test]
 fn only_a_sign_in_takes_accepted_for_an_answer() {
-    let (answered, _) = run(
+    let (removing, effects) = run(
         paired(),
         Vec::from([
-            super::connection(super::HOST, client::link::LinkState::Live, None),
-            roster(claude(signed_in())),
+            super::connection(HOST, client::link::LinkState::Live, None),
+            roster(two_claudes()),
             Intent::Show(Place::Credentials),
-            Intent::Replied(
-                reply(ReplyTo::Instance(
-                    Subject::Add(Provider::Claude),
-                    Done::Stored,
-                )),
-                Ok(CommandResult::Accepted),
+            Intent::Credential(
+                HOST,
+                CredentialIntent::Remove(id("https://gw.example")),
             ),
         ]),
     );
+    let (answered, _) = run(
+        removing,
+        Vec::from([answer(&effects, Ok(CommandResult::Accepted))]),
+    );
     assert_eq!(
-        claude_forms(&answered).map(|forms| forms.1),
+        pane_of(&answered).and_then(|pane| pane
+            .instances
+            .into_iter()
+            .find(|instance| instance.instance == id("https://gw.example"))
+            .map(|instance| instance.outcome.map(|hint| hint.text))),
         Some(Some(text("desk gave an unexpected answer.")))
     );
 }
@@ -70,20 +74,20 @@ fn only_a_sign_in_takes_accepted_for_an_answer() {
 #[test]
 fn a_removal_says_so_once_the_instance_has_left_the_list() {
     let api = || id("https://gw.example");
-    let (answered, _) = run(
+    let (removing, effects) = run(
         paired(),
         Vec::from([
             roster(two_claudes()),
             Intent::Show(Place::Credentials),
             Intent::Credential(HOST, CredentialIntent::Remove(api())),
-            Intent::Replied(
-                reply(ReplyTo::Instance(
-                    Subject::Instance(api()),
-                    Done::Removed,
-                )),
-                Ok(CommandResult::Instances(claude(signed_in()))),
-            ),
         ]),
+    );
+    let (answered, _) = run(
+        removing,
+        Vec::from([answer(
+            &effects,
+            Ok(CommandResult::Instances(claude(signed_in()))),
+        )]),
     );
     let (gone, _) =
         run(answered.clone(), Vec::from([roster(claude(signed_in()))]));
@@ -136,4 +140,35 @@ fn starting_or_cancelling_a_sign_in_forgets_the_code_typed_and_copied() {
             Some((String::new(), text("Copy"))),
         ]
     );
+}
+
+#[test]
+fn a_credential_reply_cannot_fill_the_outcome_of_a_new_visit() {
+    let remove = Intent::Credential(
+        HOST,
+        CredentialIntent::Remove(id("https://gw.example")),
+    );
+    let (removing, effects) = run(
+        paired(),
+        Vec::from([
+            super::connection(HOST, client::link::LinkState::Live, None),
+            roster(two_claudes()),
+            Intent::Show(Place::Credentials),
+            remove.clone(),
+        ]),
+    );
+    let (returned, _) = run(
+        removing,
+        Vec::from([
+            Intent::Show(Place::Sessions),
+            Intent::Show(Place::Credentials),
+            remove,
+        ]),
+    );
+    let (late, ignored) = run(
+        returned.clone(),
+        Vec::from([answer(&effects, Err(text("old failure")))]),
+    );
+    assert_eq!(pane_of(&late), pane_of(&returned));
+    assert_eq!(ignored, []);
 }

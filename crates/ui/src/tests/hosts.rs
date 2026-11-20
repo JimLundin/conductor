@@ -10,12 +10,13 @@ use proto::{
 };
 
 use super::{
-    HOST, SESSION, claude, connection, created, form, id, instance, joined,
-    listing, paired, pane, run, screen, signed_in, text, ticket, welcomed,
+    HOST, SESSION, answer, claude, connection, created, form, id, instance,
+    joined, listing, paired, pane, run, screen, signed_in, text, ticket,
+    welcomed,
 };
 use crate::{
-    Detail, Effect, FormIntent, Intent, Listing, Place, Reply, ReplyTo, Saved,
-    Screen, SessionIntent, State, Stored, decode, encode, view,
+    Detail, Effect, FormIntent, Intent, Listing, Place, Saved, Screen,
+    SessionIntent, State, Stored, decode, encode, view,
 };
 
 const OTHER: crate::HostId = crate::HostId([7; 32]);
@@ -72,6 +73,7 @@ fn two(state: LinkState) -> State {
                     kind: created(),
                 })),
             ),
+            Intent::Show(Place::AddHost),
             Intent::Join(Ok(other())),
             welcomed(OTHER, "laptop", codex(), None),
             connection(
@@ -144,7 +146,7 @@ fn each_host_lists_its_sessions_under_its_name_and_link_state() {
 
 #[test]
 fn a_command_goes_to_the_host_of_the_session_or_form_it_comes_from() {
-    let (typed, effects) = run(
+    let (starting, effects) = run(
         two(LinkState::Live),
         Vec::from([
             Intent::Show(Place::Session(OTHER, THEIRS)),
@@ -163,31 +165,35 @@ fn a_command_goes_to_the_host_of_the_session_or_form_it_comes_from() {
                 HOST,
                 crate::CredentialIntent::StartSignIn(id("claude")),
             ),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
+            Intent::Form(FormIntent::Start),
         ]),
     );
-    let started = Reply {
-        host: OTHER,
-        visit: 3,
-        to: ReplyTo::Start,
-    };
+    let start = effects
+        .iter()
+        .filter(|effect| {
+            matches!(
+                effect,
+                Effect::Send {
+                    body: CommandBody::StartSession { .. },
+                    ..
+                }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let (answered, _) = run(
-        typed,
-        Vec::from([
-            Intent::Show(Place::NewSession),
-            Intent::Replied(
-                started,
-                Ok(CommandResult::Started {
-                    session: SessionId(9),
-                }),
-            ),
-        ]),
+        starting,
+        Vec::from([answer(
+            &start,
+            Ok(CommandResult::Started { session: THEIRS }),
+        )]),
     );
     let targets = effects
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Send { host, body, reply } => {
-                Some((host, body, reply.host))
-            }
+            Effect::Send { host, body, .. } => Some((host, body)),
             Effect::SaveHosts(_)
             | Effect::Focus(_)
             | Effect::ShowEffort(_)
@@ -204,19 +210,24 @@ fn a_command_goes_to_the_host_of_the_session_or_form_it_comes_from() {
                         session: THEIRS,
                         text: text("hi"),
                     },
-                    OTHER
                 ),
                 (
                     HOST,
                     CommandBody::StartSignIn {
                         instance: id("claude"),
                     },
-                    HOST
+                ),
+                (
+                    OTHER,
+                    CommandBody::StartSession {
+                        instance: id("codex"),
+                        at: StartAt::Directory(HostPath(text("/src/x"))),
+                        model: None,
+                        effort: None,
+                    },
                 ),
             ]),
-            // The session started on laptop opens; it shows once its
-            // events arrive, until then the placeholder.
-            Some("list"),
+            Some("detail"),
         )
     );
 }
@@ -256,20 +267,19 @@ fn one_host_offline_leaves_the_other_live() {
 
 #[test]
 fn forgetting_a_host_drops_its_sessions_and_ignores_what_it_still_sends() {
-    let (forgot, effects) = run(
+    let (open, asked) = run(
         two(LinkState::Live),
         Vec::from([
             Intent::Show(Place::Session(OTHER, THEIRS)),
+            Intent::Session(SessionIntent::Interrupt),
+        ]),
+    );
+    let (forgot, effects) = run(
+        open,
+        Vec::from([
             Intent::Forget(OTHER),
             on(OTHER, 2, SessionId(4), "/home/me/late"),
-            Intent::Replied(
-                Reply {
-                    host: OTHER,
-                    visit: 1,
-                    to: ReplyTo::Notice,
-                },
-                Err(text("gone")),
-            ),
+            answer(&asked, Err(text("gone"))),
         ]),
     );
     let (last, _) = run(forgot.clone(), Vec::from([Intent::Forget(HOST)]));
@@ -390,23 +400,15 @@ fn a_new_session_picks_a_host_then_one_of_its_instances() {
         })
     };
     assert_eq!(
-        (shown(&theirs), shown(&mine), started),
+        (shown(&theirs), shown(&mine), super::sent(&started)),
         (
             Some((Vec::from([text("laptop")]), Vec::from([text("Codex")]))),
             Some((Vec::from([text("desk")]), Vec::from([text("Claude Code")]))),
-            Vec::from([Effect::Send {
-                host: HOST,
-                body: CommandBody::StartSession {
-                    instance: id("claude"),
-                    at: StartAt::Directory(HostPath(text("/src/x"))),
-                    model: None,
-                    effort: None,
-                },
-                reply: Reply {
-                    host: HOST,
-                    visit: 2,
-                    to: ReplyTo::Start,
-                },
+            Vec::from([CommandBody::StartSession {
+                instance: id("claude"),
+                at: StartAt::Directory(HostPath(text("/src/x"))),
+                model: None,
+                effort: None,
             }]),
         )
     );
@@ -491,6 +493,7 @@ fn a_forgotten_host_paired_again_is_not_where_a_new_session_starts() {
         Vec::from([
             Intent::Show(Place::Session(HOST, SESSION)),
             Intent::Forget(HOST),
+            Intent::Show(Place::AddHost),
             Intent::Join(Ok(ticket())),
             Intent::Show(Place::NewSession),
         ]),

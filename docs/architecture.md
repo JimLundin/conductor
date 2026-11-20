@@ -1686,7 +1686,11 @@ open diffs, dropped when another place shows. `ui::update` turns each
 into the next state and `Effect`s as data: send a command to a host, save
 the hosts, move the focus. A link update, a credential change and each
 `Effect::Send` name their host, and an answer comes back to the host and
-the place that asked. `ui::view` describes the whole `Screen`, down to each
+the visit that asked. Returning to the same place starts another visit.
+For example, a newly opened checkpoint diff may use the same request
+number as a diff from an earlier visit to the same session. Resetting a
+host's event history also drops the shown session's draft while the app
+waits for its events to arrive again. `ui::view` describes the whole `Screen`, down to each
 string, class and enabled flag, and which pane a phone shows. The Dioxus
 components only draw that description and turn events into intents; one
 signal in the app shell holds the state and performs the effects, and the
