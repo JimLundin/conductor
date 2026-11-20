@@ -2,7 +2,7 @@
 
 mod support;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
@@ -14,7 +14,7 @@ use proto::{
 };
 use runtime::{Instance, Launch, Runtime, Settings};
 
-use support::{TestResult, fake_codex_dir, fixture};
+use support::{TestResult, fake_cli_path, fake_codex_dir, fixture};
 
 fn stored_gateway() -> proto::Credential {
     proto::Credential {
@@ -39,7 +39,7 @@ async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_def
     )?;
     let plugin = codex_cli::plugin(runtime::Settings::default());
     let instance = (plugin.instance)(runtime::Launch {
-        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        path: fake_cli_path(),
         home: Home::private(&work, "gateway", &plugin.profile.config)?,
         work: work.clone(),
     });
@@ -82,7 +82,7 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
     let home = Home::private(&work, "gateway", &plugin.profile.config)?;
     std::fs::write(work.join("home/gateway/config.toml"), "private-value = [")?;
     let instance = (plugin.instance)(runtime::Launch {
-        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        path: fake_cli_path(),
         home,
         work: work.clone(),
     });
@@ -109,13 +109,13 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
 fn instance(work: PathBuf) -> Instance {
     let plugin = codex_cli::plugin(Settings::default());
     (plugin.instance)(Launch {
-        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh"),
+        path: fake_cli_path(),
         home: Home::User,
         work,
     })
 }
 
-async fn next(agent: &mut Runtime) -> TestResult<Event> {
+async fn next_event(agent: &mut Runtime) -> TestResult<Event> {
     tokio::time::timeout(Duration::from_secs(20), agent.events.recv())
         .await?
         .ok_or_else(|| "the runtime event stream ended early".into())
@@ -123,7 +123,7 @@ async fn next(agent: &mut Runtime) -> TestResult<Event> {
 
 async fn outcome(agent: &mut Runtime) -> TestResult<Outcome> {
     loop {
-        if let Event::Outcome(result) = next(agent).await? {
+        if let Event::Outcome(result) = next_event(agent).await? {
             return Ok(result);
         }
     }
@@ -170,7 +170,9 @@ async fn send(agent: &mut Runtime, text: &str) -> TestResult<()> {
 
 async fn approval(agent: &mut Runtime) -> TestResult<NativeRequest> {
     loop {
-        if let Event::Step(Step::Open { native, .. }) = next(agent).await? {
+        if let Event::Step(Step::Open { native, .. }) =
+            next_event(agent).await?
+        {
             return Ok(native);
         }
     }
@@ -195,7 +197,7 @@ async fn reply(
 async fn messages(agent: &mut Runtime) -> TestResult<Vec<String>> {
     let mut messages = Vec::new();
     loop {
-        match next(agent).await? {
+        match next_event(agent).await? {
             Event::Step(Step::Emit(EventKind::AssistantMessage { text })) => {
                 messages.push(text);
             }

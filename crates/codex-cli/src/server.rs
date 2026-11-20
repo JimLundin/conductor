@@ -159,13 +159,15 @@ impl CodexServer {
         opts: ThreadOptions,
         resume: Option<ThreadId>,
     ) -> Result<CodexThread, Error> {
-        let started = thread_started(
+        let (id, settings) = thread_started(
             request(&self.commands, Call::open(opts, resume)).await?,
         )?;
+        #[cfg(not(all(test, unix)))]
+        let _ = settings;
         Ok(CodexThread {
-            id: started.0,
+            id,
             #[cfg(all(test, unix))]
-            settings: started.1,
+            settings,
             server: self.clone(),
         })
     }

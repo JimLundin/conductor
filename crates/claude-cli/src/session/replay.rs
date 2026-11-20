@@ -1105,42 +1105,78 @@ async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
     Ok(())
 }
 
-#[test]
-fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
 -> TestResult<()> {
-    let dir = test_dir("sandbox-tools")?;
-    let mut options = options(&dir);
+    const CASE: &str = "CONDUCTOR_TEST_SANDBOX_SCRUB";
+    const TEST: &str = concat!(
+        module_path!(),
+        "::gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools"
+    );
+
+    if std::env::var_os(CASE).is_some() {
+        return launch_gateway_fixture().await;
+    }
+
+    let dir = test_dir(&format!("sandbox-tools-{}", ulid::Ulid::new()))?;
+    let tools = dir.join("tools");
+    std::fs::create_dir(&tools)?;
+    std::fs::write(tools.join("bwrap"), "")?;
+    std::os::unix::fs::symlink("/usr/bin/git", tools.join("git"))?;
+    let (_, test) = TEST.split_once("::").ok_or("missing test module")?;
+    for expected in ["0", "1"] {
+        if expected == "1" {
+            std::fs::write(tools.join("socat"), "")?;
+        }
+        let cwd = dir.join(expected);
+        std::fs::create_dir(&cwd)?;
+        std::fs::write(cwd.join("stdout.jsonl"), VERSIONLESS_CLI)?;
+        // Each test process gets its own PATH, including the launched CLI.
+        let output = tokio::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", test])
+            .current_dir(&cwd)
+            .env("PATH", &tools)
+            .env(CASE, "1")
+            .env_remove("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+            .output()
+            .await?;
+        assert!(
+            output.status.success(),
+            "scrub={expected}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let env = std::fs::read_to_string(cwd.join("env.txt"))?;
+        assert_eq!(
+            env.lines()
+                .find(|line| line
+                    .starts_with("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=")),
+            (expected == "1").then_some("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"),
+        );
+    }
+    std::fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn launch_gateway_fixture() -> TestResult<()> {
+    let dir = std::env::current_dir()?;
     let credential = proto::Credential {
         kind: String::from("gateway"),
         values: [
-            ("base_url", "https://gateway.example"),
+            ("base_url", "https://conductor-test.invalid/gateway"),
             ("token", "conductor-test-token"),
         ]
         .map(|(key, value)| (String::from(key), String::from(value)))
         .into(),
     };
-    options.credential = Some(claude::credential(&credential)?);
-
-    let tools = dir.join("tools");
-    std::fs::create_dir_all(&tools)?;
-    std::fs::write(tools.join("bwrap"), "")?;
-    let id = claude::SessionId(String::from("sandbox"));
-    let command = |tools: &Path| {
-        super::command(
-            &options,
-            &id,
-            super::sandbox_at("linux", tools.as_os_str()),
-        )
+    let opts = ClaudeOptions {
+        credential: Some(claude::credential(&credential)?),
+        versions: VersionPolicy::AllowUntested,
+        ..options(&dir)
     };
-    let missing = command(&tools);
-    std::fs::write(tools.join("socat"), "")?;
-    let supported = command(&tools);
-    let scrub = |command: &tokio::process::Command| {
-        command.as_std().get_envs().any(|(key, value)| {
-            key == "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
-                && value == Some(std::ffi::OsStr::new("1"))
-        })
-    };
-    assert_eq!((scrub(&missing), scrub(&supported)), (false, true));
+    let (session, _events) = ClaudeSession::spawn(opts).await?;
+    let _ = session.shutdown().await?;
     Ok(())
 }

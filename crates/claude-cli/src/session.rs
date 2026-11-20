@@ -1,6 +1,5 @@
 //! The Claude handle and handshake over the shared line-JSON process runner.
 
-use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -152,7 +151,7 @@ impl ClaudeSession {
     }
 
     /// Changes the effort of the CLI's later API requests, in this process
-    /// (`apply_flag_settings`); `applied` reports it back.
+    /// using `apply_flag_settings`.
     ///
     /// # Errors
     /// Fails when the CLI has exited, does not answer in time or rejects
@@ -326,15 +325,11 @@ async fn reason(
 #[must_use]
 pub fn sandbox() -> Sandbox {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    sandbox_at(std::env::consts::OS, &path)
-}
-
-fn sandbox_at(os: &str, path: &OsStr) -> Sandbox {
-    let dirs = std::env::split_paths(path).collect::<Vec<PathBuf>>();
+    let dirs = std::env::split_paths(&path).collect::<Vec<PathBuf>>();
     let tools = claude::SANDBOX_TOOLS
         .iter()
         .all(|tool| dirs.iter().any(|dir| dir.join(tool).is_file()));
-    claude::sandbox(os, tools)
+    claude::sandbox(std::env::consts::OS, tools)
 }
 
 fn command(opts: &ClaudeOptions, id: &SessionId, sandbox: Sandbox) -> Command {

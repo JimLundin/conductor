@@ -2269,6 +2269,7 @@ fn captured(path: &Path) -> Fallible<String> {
 const GATEWAY: &str = "https://conductor-test.invalid/gateway";
 const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
 const NO_CREDENTIAL: &str = "no credential configured";
+const UNPROTECTED: &str = "the CLI's commands can read the gateway token; install bubblewrap and socat to sandbox them provider=Claude";
 
 fn read(path: &Path) -> Fallible<String> {
     Ok(std::fs::read_to_string(path)?)
@@ -2419,21 +2420,22 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
         CommandResult::Instances(with_api.clone())
     );
     wait_for_offer(&mut updates, &claude_api).await?;
+    assert_eq!(updates.host.instances.as_ref(), Some(&with_api));
+    let probe_env = read(&dir_of(&data, "work", &claude_api).join("env.txt"))?;
+    let home = dir_of(&data, "home", &claude_api);
+    assert_gateway_env(&probe_env, CLAUDE_TOKEN, GATEWAY, &home);
+    let expected_warnings = usize::from(!scrubbed(&probe_env));
     assert_eq!(
-        (
-            &updates.host.instances,
-            read(&dir_of(&data, "work", &claude_api).join("env.txt"))?
-                .contains(GATEWAY)
-        ),
-        (&Some(with_api.clone()), true),
-        "the gateway's account is an instance, its models listed with the credential"
+        count(&log, UNPROTECTED)?,
+        expected_warnings,
+        "after gateway configuration"
     );
+
     launch(&link, start_on(claude_api.clone(), &dir)).await?;
     let events = legacy_events_until(&mut updates, Until::Ready).await?;
-    assert_eq!(
-        read(&dir.join("env.txt"))?,
-        gateway_env(CLAUDE_TOKEN, GATEWAY, &dir_of(&data, "home", &claude_api))
-    );
+    let env = read(&dir.join("env.txt"))?;
+    assert_gateway_env(&env, CLAUDE_TOKEN, GATEWAY, &home);
+    assert_eq!(scrubbed(&env), scrubbed(&probe_env));
     assert_eq!(count(&data.join("credentials"), CLAUDE_TOKEN)?, 0);
     link.stop().await?;
     fx.shutdown().await?;
@@ -2441,6 +2443,11 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
     let fx = claude_host_in(&data).await?;
     let (link, _updates, welcomed) = live(&fx).await?;
     assert_eq!(welcomed, Some(with_api));
+    assert_eq!(
+        count(&log, UNPROTECTED)?,
+        expected_warnings * 2,
+        "after restarting with the gateway"
+    );
     assert_eq!(
         send(
             &link,
@@ -2463,6 +2470,11 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
     assert_eq!(welcomed, Some(with_claude(no_credential())));
     link.stop().await?;
     fx.shutdown().await?;
+    assert_eq!(
+        count(&log, UNPROTECTED)?,
+        expected_warnings * 2,
+        "after restarting without the gateway"
+    );
     drop(logging);
     let logged = captured(&log)?;
     assert_eq!(
@@ -2798,13 +2810,21 @@ fn created_on(events: &[Event]) -> Vec<(SessionId, InstanceId)> {
         .collect()
 }
 
-/// What the Claude stand-in reads of a gateway at `base_url` with `token`
-/// in the home `home`.
-fn gateway_env(token: &str, base_url: &str, home: &Path) -> String {
-    format!(
-        "ANTHROPIC_AUTH_TOKEN={token}\nANTHROPIC_BASE_URL={base_url}\nCLAUDE_CONFIG_DIR={}\n",
-        home.display()
-    )
+fn scrubbed(env: &str) -> bool {
+    env.lines()
+        .any(|line| line == "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1")
+}
+
+fn assert_gateway_env(env: &str, token: &str, base_url: &str, home: &Path) {
+    let fields = env
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(fields.get("ANTHROPIC_AUTH_TOKEN"), Some(&token));
+    assert_eq!(fields.get("ANTHROPIC_BASE_URL"), Some(&base_url));
+    assert_eq!(fields.get("ANTHROPIC_API_KEY"), None);
+    assert_eq!(fields.get("CLAUDE_CODE_OAUTH_TOKEN"), None);
+    assert_eq!(fields.get("CLAUDE_CONFIG_DIR").map(Path::new), Some(home));
 }
 
 /// Two instances of Claude run side by side, one for each gateway account:
@@ -2864,22 +2884,23 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
     let second = launch(&link, start_on(other.clone(), &on_other)).await?;
     let other_events = events_until(&mut updates, Until::Ready).await?;
     assert_eq!(
-        (
-            created_on(&api_events),
-            created_on(&other_events),
-            read(&on_api.join("env.txt"))?,
-            read(&on_other.join("env.txt"))?,
-        ),
+        (created_on(&api_events), created_on(&other_events)),
         (
             Vec::from([(first, claude_api.clone())]),
             Vec::from([(second, other.clone())]),
-            gateway_env(
-                API_TOKEN,
-                GATEWAY,
-                &dir_of(&data, "home", &claude_api)
-            ),
-            gateway_env(OTHER_TOKEN, OTHER, &dir_of(&data, "home", &other)),
         )
+    );
+    assert_gateway_env(
+        &read(&on_api.join("env.txt"))?,
+        API_TOKEN,
+        GATEWAY,
+        &dir_of(&data, "home", &claude_api),
+    );
+    assert_gateway_env(
+        &read(&on_other.join("env.txt"))?,
+        OTHER_TOKEN,
+        OTHER,
+        &dir_of(&data, "home", &other),
     );
     assert_eq!(
         (

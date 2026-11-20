@@ -76,7 +76,7 @@ async fn configuring_a_claude_gateway_lists_its_models_and_efforts()
     Ok(())
 }
 
-async fn next(runtime: &mut Runtime) -> TestResult<Event> {
+async fn next_event(runtime: &mut Runtime) -> TestResult<Event> {
     tokio::time::timeout(Duration::from_secs(20), runtime.events.recv())
         .await?
         .ok_or_else(|| "runtime event stream ended".into())
@@ -102,7 +102,7 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
         }))
         .await?;
     assert!(matches!(
-        next(&mut runtime).await?,
+        next_event(&mut runtime).await?,
         Event::Outcome(Outcome::Started(Ok(_)))
     ));
 
@@ -114,7 +114,7 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
         })
         .await?;
     let request = loop {
-        match next(&mut runtime).await? {
+        match next_event(&mut runtime).await? {
             Event::Step(Step::Open { native, .. }) => break native,
             Event::Outcome(Outcome::Sent(Err(error))) => {
                 return Err(error.into());
@@ -131,14 +131,14 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
         })
         .await?;
     assert_eq!(
-        next(&mut runtime).await?,
+        next_event(&mut runtime).await?,
         Event::Outcome(Outcome::Replied(Ok(())))
     );
     let text = loop {
         if let Event::Step(Step::Emit(EventKind::AssistantMessage {
             text,
             ..
-        })) = next(&mut runtime).await?
+        })) = next_event(&mut runtime).await?
         {
             break text;
         }
@@ -149,7 +149,7 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
     );
     loop {
         if let Event::Step(Step::TurnEnded(outcome)) =
-            next(&mut runtime).await?
+            next_event(&mut runtime).await?
         {
             assert_eq!(outcome, TurnOutcome::Completed);
             break;
@@ -157,7 +157,7 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
     }
     runtime.commands.send(Command::Shutdown).await?;
     assert_eq!(
-        next(&mut runtime).await?,
+        next_event(&mut runtime).await?,
         Event::Outcome(Outcome::ShutDown(Ok(())))
     );
     Ok(())

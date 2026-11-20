@@ -19,7 +19,9 @@ use proto::{Answer, Effort, TaskStatus, ToolKind, ToolPhase, TurnOutcome};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::replay_support::{TestResult, fake_codex_dir, fixture};
+use crate::replay_support::{
+    TestResult, fake_cli_path, fake_codex_dir, fixture,
+};
 
 use super::{CodexServer, CodexThread, Error, ServerOptions};
 
@@ -298,8 +300,7 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 async fn spawn(name: &str) -> TestResult<Recorder> {
     let cwd = fake_codex_dir(&fixture(name), "driver")?;
     let (server, events) = CodexServer::spawn(ServerOptions {
-        codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fake-codex.sh"),
+        codex_path: fake_cli_path(),
         home: Home::User,
         credential: None,
         cwd: cwd.clone(),
@@ -728,8 +729,7 @@ fn refusal_options(name: &str, recording: &str) -> TestResult<ServerOptions> {
     std::fs::create_dir_all(&cwd)?;
     std::fs::write(cwd.join("stdout.jsonl"), recording)?;
     Ok(ServerOptions {
-        codex_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fake-codex.sh"),
+        codex_path: fake_cli_path(),
         home: Home::User,
         credential: None,
         cwd,

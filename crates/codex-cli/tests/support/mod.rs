@@ -30,3 +30,7 @@ pub fn fake_codex_dir(fixture: &Path, replay: &str) -> TestResult<PathBuf> {
     std::fs::copy(fixture, dir.join("stdout.jsonl"))?;
     Ok(dir)
 }
+
+pub fn fake_cli_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh")
+}
