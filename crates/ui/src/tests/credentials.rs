@@ -4,8 +4,8 @@
 use proto::{CommandResult, Provider, SignInStep};
 
 use super::{
-    HOST, claude, claude_forms, id, paired, pane_of, reply, run, sign_in,
-    sign_in_of, signed_in, signing, status, text, two_claudes,
+    HOST, claude, claude_forms, id, paired, pane_of, reply, roster, run,
+    sign_in, sign_in_of, signed_in, signing, text, two_claudes,
 };
 use crate::credentials::{Done, Subject};
 use crate::{CredentialIntent, Intent, Place, ReplyTo, State};
@@ -14,7 +14,11 @@ use crate::{CredentialIntent, Intent, Place, ReplyTo, State};
 fn each_field_takes_its_kind_of_input_and_an_empty_form_doesnt_save() {
     let (shown, _) = run(
         paired(),
-        Vec::from([status(two_claudes()), Intent::Show(Place::Credentials)]),
+        Vec::from([
+            super::connection(super::HOST, client::link::LinkState::Live, None),
+            roster(two_claudes()),
+            Intent::Show(Place::Credentials),
+        ]),
     );
     let fields = pane_of(&shown).map(|pane| {
         pane.add
@@ -45,7 +49,8 @@ fn only_a_sign_in_takes_accepted_for_an_answer() {
     let (answered, _) = run(
         paired(),
         Vec::from([
-            status(claude(signed_in())),
+            super::connection(super::HOST, client::link::LinkState::Live, None),
+            roster(claude(signed_in())),
             Intent::Show(Place::Credentials),
             Intent::Replied(
                 reply(ReplyTo::Instance(
@@ -68,7 +73,7 @@ fn a_removal_says_so_once_the_instance_has_left_the_list() {
     let (answered, _) = run(
         paired(),
         Vec::from([
-            status(two_claudes()),
+            roster(two_claudes()),
             Intent::Show(Place::Credentials),
             Intent::Credential(HOST, CredentialIntent::Remove(api())),
             Intent::Replied(
@@ -81,7 +86,7 @@ fn a_removal_says_so_once_the_instance_has_left_the_list() {
         ]),
     );
     let (gone, _) =
-        run(answered.clone(), Vec::from([status(claude(signed_in()))]));
+        run(answered.clone(), Vec::from([roster(claude(signed_in()))]));
     let removed = |state: &State| {
         pane_of(state)
             .and_then(|pane| pane.removed)

@@ -4,12 +4,11 @@
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::host_view::{HostView, SessionView};
-use client::link::{LinkState, Status, Update, shown_after};
+use client::host_fold::HostFold;
+use client::host_view::SessionView;
+use client::link::{LinkState, Update};
 use data_encoding::HEXLOWER;
-use proto::{
-    Catalog, Home, InstanceId, Instances, Project, SignInStep, Ticket,
-};
+use proto::{Project, Ticket};
 
 /// A host's endpoint id, which keys it everywhere the app keeps hosts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,8 +32,7 @@ pub struct Host {
     pub ticket: Ticket,
     /// The name from its last `Welcome`, kept across launches.
     pub saved: Option<String>,
-    pub status: Option<Status>,
-    pub view: HostView,
+    pub fold: HostFold,
 }
 
 /// The hosts in the order the app lists them: by name, then by id.
@@ -56,31 +54,27 @@ pub struct StatusLine {
 }
 
 impl Host {
-    pub const fn new(ticket: Ticket, saved: Option<String>) -> Self {
+    pub fn new(ticket: Ticket, saved: Option<String>) -> Self {
         Self {
             ticket,
             saved,
-            status: None,
-            view: HostView::empty(),
+            fold: HostFold::default(),
         }
     }
 
     /// The host after `update`, and whether it gave a name the app hasn't
     /// saved.
-    pub fn linked(self, update: Update) -> (Self, bool) {
-        let (status, view) = shown_after(self.status, self.view, update);
-        let named = status.as_ref().and_then(|known| known.host.clone());
-        let saved = named.or_else(|| self.saved.clone());
-        let renamed = saved != self.saved;
-        (
-            Self {
-                ticket: self.ticket,
-                saved,
-                status,
-                view,
-            },
-            renamed,
-        )
+    pub fn linked(mut self, update: Update) -> (Self, bool) {
+        self.fold.apply(update);
+        let renamed = self
+            .fold
+            .name
+            .as_ref()
+            .is_some_and(|name| self.saved.as_ref() != Some(name));
+        if renamed {
+            self.saved.clone_from(&self.fold.name);
+        }
+        (self, renamed)
     }
 
     /// What the app calls the host: the name it gave, else a short form of
@@ -92,36 +86,11 @@ impl Host {
         })
     }
 
-    pub fn live(&self) -> bool {
-        self.status
-            .as_ref()
-            .is_some_and(|known| known.state == LinkState::Live)
-    }
-
-    pub fn instances(&self) -> Option<&Instances> {
-        self.status
-            .as_ref()
-            .and_then(|known| known.instances.as_ref())
-    }
-
-    /// How each provider presents itself, once the host has said.
-    pub fn catalog(&self) -> Catalog {
-        self.status
-            .as_ref()
-            .map_or_default(|known| known.catalog.clone())
-    }
-
-    /// Its home and projects, once it has said; none on a host with no
-    /// home.
-    pub fn home(&self) -> Option<&Home> {
-        self.status.as_ref().and_then(|known| known.home.as_ref())
-    }
-
     /// The project a session runs in: the one with a checkout at its
     /// worktree's repository.
     pub fn project_of(&self, session: &SessionView) -> Option<&Project> {
         let repository = &session.workspace.as_ref()?.repository;
-        self.home()?.projects.iter().find(|project| {
+        self.fold.home.as_ref()?.projects.iter().find(|project| {
             project
                 .checkouts
                 .iter()
@@ -129,14 +98,8 @@ impl Host {
         })
     }
 
-    pub fn sign_ins(&self) -> BTreeMap<InstanceId, SignInStep> {
-        self.status
-            .as_ref()
-            .map_or_default(|known| known.sign_ins.clone())
-    }
-
     pub fn status_line(&self) -> StatusLine {
-        let shown = self.status.clone().unwrap_or_default();
+        let shown = self.fold.status.clone().unwrap_or_default();
         let state = match shown.state {
             LinkState::Disconnected => "Disconnected",
             LinkState::Connecting => "Connecting",

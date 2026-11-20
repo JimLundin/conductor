@@ -311,7 +311,7 @@ pub fn list(
 ) -> IssueList {
     let new_title = drafts.titles.get(&project.id).cloned().unwrap_or_default();
     let create = host
-        .filter(|(_, known)| known.live() && !new_title.trim().is_empty())
+        .filter(|(_, known)| known.fold.live() && !new_title.trim().is_empty())
         .map(|(id, _)| {
             Intent::NewIssue(NewIssueIntent::Create(id, project.id.clone()))
         });
@@ -434,13 +434,18 @@ pub struct EditForm {
 
 /// The issue `id` as `host`'s home has it, if it still does.
 pub fn find(host: &Host, id: IssueId) -> Option<(&Project, &Issue)> {
-    host.home()?.projects.iter().find_map(|project| {
-        project
-            .issues
-            .iter()
-            .find(|issue| issue.id == id)
-            .map(|issue| (project, issue))
-    })
+    host.fold
+        .home
+        .as_ref()?
+        .projects
+        .iter()
+        .find_map(|project| {
+            project
+                .issues
+                .iter()
+                .find(|issue| issue.id == id)
+                .map(|issue| (project, issue))
+        })
 }
 
 pub fn screen(
@@ -493,7 +498,7 @@ pub fn screen(
             labels: editing.labels.clone(),
             save_disabled: !editing.saves(),
         }),
-        enabled: host.live(),
+        enabled: host.fold.live(),
         notice,
         start: Intent::StartOn(at, id),
         sessions: sessions(hosts, id),
@@ -506,12 +511,17 @@ fn sessions(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> Vec<IssueSession> {
     by_name(hosts)
         .into_iter()
         .flat_map(|(host_id, host)| {
-            let catalog = host.catalog();
-            host.view
+            let catalog = &host.fold.catalog;
+            host.fold
+                .view
                 .recent()
                 .into_iter()
                 .filter_map(|session| {
-                    host.view.sessions.get(&session).map(|view| (session, view))
+                    host.fold
+                        .view
+                        .sessions
+                        .get(&session)
+                        .map(|view| (session, view))
                 })
                 .filter(|(_, view)| view.issue == Some(id))
                 .map(|(session, view)| IssueSession {
@@ -520,7 +530,7 @@ fn sessions(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> Vec<IssueSession> {
                         "{} on {} · {}",
                         crate::credentials::instance_name(
                             &view.instance,
-                            &catalog
+                            catalog
                         ),
                         host.name(),
                         view.status.word()

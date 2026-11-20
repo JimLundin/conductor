@@ -59,14 +59,15 @@ pub fn list(hosts: &BTreeMap<HostId, Host>, place: Place) -> SessionList {
 }
 
 fn group(id: HostId, host: &Host, place: Place) -> HostGroup {
-    let catalog = host.catalog();
-    let known = (host.instances(), &catalog);
+    let catalog = &host.fold.catalog;
+    let known = (host.fold.instances.as_ref(), catalog);
     let rows = host
+        .fold
         .view
         .recent()
         .into_iter()
         .filter_map(|session| {
-            host.view.sessions.get(&session).map(|shown| {
+            host.fold.view.sessions.get(&session).map(|shown| {
                 row(
                     (id, session),
                     shown,

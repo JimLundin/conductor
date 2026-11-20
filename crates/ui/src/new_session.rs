@@ -151,7 +151,8 @@ impl Form {
         visit: u64,
     ) -> (Self, Vec<Effect>) {
         let chosen = self.host(hosts);
-        let instances = chosen.and_then(|(_, host)| host.instances());
+        let instances =
+            chosen.and_then(|(_, host)| host.fold.instances.as_ref());
         match intent {
             FormIntent::PickHost(key) => {
                 let picked = hosts.keys().find(|id| id.key() == key).copied();
@@ -217,7 +218,7 @@ impl Form {
                 else {
                     return (self, Vec::new());
                 };
-                let at = self.place(known.home());
+                let at = self.place(known.fold.home.as_ref());
                 let body = CommandBody::StartSession {
                     instance,
                     at,
@@ -255,7 +256,7 @@ impl Form {
         picked.or_else(|| {
             listed
                 .iter()
-                .find(|(_, host)| host.live())
+                .find(|(_, host)| host.fold.live())
                 .or_else(|| listed.first())
                 .copied()
         })
@@ -316,8 +317,11 @@ impl Form {
     pub fn screen(&self, hosts: &BTreeMap<HostId, Host>) -> NewSessionForm {
         let chosen = self.host(hosts);
         let name = chosen.map_or_default(|(_, host)| host.name());
-        let instances = chosen.and_then(|(_, host)| host.instances());
-        let catalog = chosen.map_or_default(|(_, host)| host.catalog());
+        let instances =
+            chosen.and_then(|(_, host)| host.fold.instances.as_ref());
+        let empty_catalog = proto::Catalog::default();
+        let catalog =
+            chosen.map_or(&empty_catalog, |(_, host)| &host.fold.catalog);
         let (directory_error, instance_error, form_error) = match &self.attempt
         {
             Attempt::Refused(Refusal::Directory) => (
@@ -337,14 +341,14 @@ impl Form {
         let available = availability(instances, picked);
         let offered = models(available);
         let suggestions = chosen
-            .map_or_default(|(_, host)| host.view.directories())
+            .map_or_default(|(_, host)| host.fold.view.directories())
             .iter()
             .map(|path| Suggestion {
                 name: short(path).to_owned(),
                 path: path.0.clone(),
             })
             .collect::<Vec<Suggestion>>();
-        let home = chosen.and_then(|(_, host)| host.home());
+        let home = chosen.and_then(|(_, host)| host.fold.home.as_ref());
         let project = self.project(home);
         let issue = self.issue.map(|id| issue_title(hosts, id));
         let placed = issue.is_some()
@@ -372,7 +376,7 @@ impl Form {
                     .iter()
                     .map(|(id, choice)| InstanceChoice {
                         pick: FormIntent::PickInstance(id.clone()),
-                        label: crate::credentials::instance_name(id, &catalog),
+                        label: crate::credentials::instance_name(id, catalog),
                         state: word(Some(&choice.availability)),
                         checked: Some(id) == picked,
                     })
@@ -384,7 +388,7 @@ impl Form {
                 (
                     &picked.map_or_else(
                         || String::from("That instance"),
-                        |it| crate::credentials::instance_name(it, &catalog),
+                        |it| crate::credentials::instance_name(it, catalog),
                     ),
                     &name,
                 ),
@@ -484,7 +488,7 @@ fn host_choice(
     let name = host.name();
     Choice {
         value: id.key(),
-        label: if host.live() {
+        label: if host.fold.live() {
             name
         } else {
             format!("{name} (offline)")

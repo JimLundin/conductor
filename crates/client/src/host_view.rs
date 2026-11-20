@@ -13,7 +13,7 @@ use proto::{
     ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostView {
     pub sessions: BTreeMap<SessionId, SessionView>,
 }
@@ -289,6 +289,15 @@ pub enum Attention {
     Requests(usize),
 }
 
+/// A live delta repeats the last stored sequence, which may belong to
+/// another session.
+pub(crate) const fn is_delta(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. }
+    )
+}
+
 impl HostView {
     #[must_use]
     pub const fn empty() -> Self {
@@ -301,6 +310,7 @@ impl HostView {
     /// a removed session is gone.
     #[must_use]
     pub fn apply(self, event: Event) -> Self {
+        let delta = is_delta(&event.kind);
         let mut sessions = self.sessions;
         let session = match (sessions.remove(&event.session), event.kind) {
             (
@@ -332,18 +342,13 @@ impl HostView {
                 activity: event.seq,
             }),
             (_, EventKind::SessionRemoved { .. }) | (None, _) => None,
-            // A delta repeats the seq of the event before it, which may be
-            // another session's, so it is not this session's activity.
-            (Some(view), EventKind::AssistantDelta { text }) => {
-                Some(view.reply(text, ReplyState::Streaming))
+            (Some(view), kind) => {
+                let mut next = view.apply(kind, event.seq);
+                if !delta {
+                    next.activity = event.seq;
+                }
+                Some(next)
             }
-            (Some(view), EventKind::ReasoningDelta { text }) => {
-                Some(view.reasoning(text, ReplyState::Streaming))
-            }
-            (Some(view), kind) => Some(SessionView {
-                activity: event.seq,
-                ..view.apply(kind, event.seq)
-            }),
         };
         sessions.extend(session.map(|view| (event.session, view)));
         Self { sessions }

@@ -1,18 +1,16 @@
 //! The projects view and starting a session in a project.
 
-use alloc::collections::BTreeMap;
-
-use client::link::{LinkState, Status, Update};
+use client::link::{LinkState, Update};
 use proto::{
     AuthToken, ChecklistItem, Checkout, Cloning, CommandBody, CommandResult,
-    EventKind, Home, HomeSync, HostPath, Issue, IssueChange, IssueFields,
+    EventKind, Feed, Home, HomeSync, HostPath, Issue, IssueChange, IssueFields,
     IssueId, IssueStatus, Origin, Priority, Project, ProjectId, Rejection,
     StartAt, Ticket, Workspace,
 };
 
 use super::{
-    HOST, SESSION, catalog, claude, created, event, form, id, listing, paired,
-    run, screen, sent, signed_in, text,
+    HOST, SESSION, claude, connection, created, event, form, id, listing,
+    paired, run, screen, sent, signed_in, text, welcomed,
 };
 use crate::{
     CheckoutRow, Detail, Effect, FormIntent, HomeLine, Intent, IssueIntent,
@@ -64,27 +62,6 @@ fn home(sync: HomeSync, projects: Vec<Project>) -> Home {
         unpushed: 0,
         projects,
     }
-}
-
-/// A host's status, live or not, with this home.
-fn homed(
-    host: crate::HostId,
-    name: &str,
-    state: LinkState,
-    home: Option<Home>,
-) -> Intent {
-    Intent::Link(
-        host,
-        Update::Status(Status {
-            state,
-            host: Some(text(name)),
-            instances: Some(claude(signed_in())),
-            catalog: catalog(),
-            sign_ins: BTreeMap::new(),
-            home,
-            error: None,
-        }),
-    )
 }
 
 /// desk's home: alpha checked out twice, beta not, a local-only project,
@@ -167,11 +144,12 @@ fn two_homes() -> crate::State {
         paired(),
         Vec::from([
             Intent::Join(Ok(laptop())),
-            homed(HOST, "desk", LinkState::Live, Some(desk_home())),
-            homed(
+            welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
+            connection(HOST, LinkState::Live, None),
+            welcomed(
                 OTHER,
                 "laptop",
-                LinkState::Live,
+                claude(signed_in()),
                 Some(home(
                     HomeSync::Behind {
                         reason: text("offline"),
@@ -184,6 +162,7 @@ fn two_homes() -> crate::State {
                     )]),
                 )),
             ),
+            connection(OTHER, LinkState::Live, None),
             Intent::Show(Place::Projects),
         ]),
     );
@@ -326,17 +305,18 @@ fn a_host_with_no_home_or_no_link_says_so_and_offers_nothing() {
         paired(),
         Vec::from([
             Intent::Join(Ok(laptop())),
-            homed(HOST, "desk", LinkState::Live, None),
+            welcomed(HOST, "desk", claude(signed_in()), None),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::Projects),
         ]),
     );
     let (offline, _) = run(
         paired(),
         Vec::from([
-            homed(
+            welcomed(
                 HOST,
                 "desk",
-                LinkState::Connecting,
+                claude(signed_in()),
                 Some(home(
                     HomeSync::Syncing,
                     Vec::from([project(
@@ -347,6 +327,7 @@ fn a_host_with_no_home_or_no_link_says_so_and_offers_nothing() {
                     )]),
                 )),
             ),
+            connection(HOST, LinkState::Connecting, None),
             Intent::Show(Place::Projects),
         ]),
     );
@@ -414,15 +395,16 @@ fn a_host_with_no_clone_says_why_and_offers_sync() {
     let (broken, _) = run(
         paired(),
         Vec::from([
-            homed(
+            welcomed(
                 HOST,
                 "desk",
-                LinkState::Live,
+                claude(signed_in()),
                 Some(Home {
                     synced: None,
                     ..failed
                 }),
             ),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::Projects),
         ]),
     );
@@ -443,7 +425,8 @@ fn sync_and_clone_send_their_commands_and_a_refusal_is_the_notice() {
     let (shown, _) = run(
         paired(),
         Vec::from([
-            homed(HOST, "desk", LinkState::Live, Some(desk_home())),
+            welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::Projects),
         ]),
     );
@@ -495,7 +478,8 @@ fn a_session_starts_in_a_checked_out_project_picked_in_the_form() {
     let (shown, _) = run(
         paired(),
         Vec::from([
-            homed(HOST, "desk", LinkState::Live, Some(desk_home())),
+            welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::NewSession),
         ]),
     );
@@ -579,14 +563,13 @@ fn a_project_the_host_no_longer_lists_falls_back_to_the_directory() {
     let (gone, effects) = run(
         paired(),
         Vec::from([
-            homed(HOST, "desk", LinkState::Live, Some(desk_home())),
+            welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::NewSession),
             Intent::Form(FormIntent::PickProject(text("alpha"))),
-            homed(
+            Intent::Link(
                 HOST,
-                "desk",
-                LinkState::Live,
-                Some(home(HomeSync::Synced, Vec::new())),
+                Update::Feed(Feed::Home(home(HomeSync::Synced, Vec::new()))),
             ),
             Intent::Form(FormIntent::Start),
         ]),
@@ -620,7 +603,8 @@ fn a_project_the_host_no_longer_lists_falls_back_to_the_directory() {
     let (homeless, _) = run(
         paired(),
         Vec::from([
-            homed(HOST, "desk", LinkState::Live, None),
+            welcomed(HOST, "desk", claude(signed_in()), None),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::NewSession),
         ]),
     );
@@ -642,7 +626,8 @@ fn a_session_in_a_checkout_is_listed_by_its_project() {
         let (state, _) = run(
             paired(),
             Vec::from([
-                homed(HOST, "desk", LinkState::Live, Some(desk_home())),
+                welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
+                connection(HOST, LinkState::Live, None),
                 event(1, created()),
                 event(2, workspace(repository)),
             ]),
@@ -717,12 +702,13 @@ fn with_issues() -> crate::State {
     let (shown, _) = run(
         paired(),
         Vec::from([
-            homed(
+            welcomed(
                 HOST,
                 "desk",
-                LinkState::Live,
+                claude(signed_in()),
                 Some(home(HomeSync::Synced, Vec::from([alpha]))),
             ),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::Projects),
         ]),
     );
@@ -909,12 +895,13 @@ fn an_issue_gone_from_its_home_falls_back_to_the_placeholder() {
     let (gone, _) = run(
         paired(),
         Vec::from([
-            homed(
+            welcomed(
                 HOST,
                 "desk",
-                LinkState::Live,
+                claude(signed_in()),
                 Some(home(HomeSync::Synced, Vec::new())),
             ),
+            connection(HOST, LinkState::Live, None),
             Intent::Show(Place::Issue(HOST, OPENED)),
         ]),
     );

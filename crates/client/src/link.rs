@@ -10,16 +10,15 @@
 //! `net` owns the connection: it performs each [`Effect`] and feeds back what
 //! happened as an [`Input`].
 
-use alloc::collections::BTreeMap;
 use core::cmp::Ordering;
 use core::fmt;
 use core::time::Duration;
 
-use crate::host_view::HostView;
+use crate::host_view::is_delta;
 use crate::prelude::*;
 use proto::{
-    Catalog, Epoch, Event, EventKind, Feed as Frame, Hello, HelloReply, Home,
-    HostSeq, InstanceId, Instances, SignIn, SignInStep, Subscribe, Welcome,
+    CommandResult, Epoch, Event, Feed as Frame, Hello, HelloReply, HostSeq,
+    Subscribe, Welcome,
 };
 
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
@@ -43,19 +42,6 @@ pub enum LinkState {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Status {
     pub state: LinkState,
-    /// The host's name from its last `Welcome`.
-    pub host: Option<String>,
-    /// What the host can run, from its last `Welcome` or a later
-    /// instance command's answer.
-    pub instances: Option<Instances>,
-    /// How each provider presents itself, from the last `Welcome`.
-    pub catalog: Catalog,
-    /// Where each instance's sign-in from the app stands, since the last
-    /// `Welcome`. A cancelled one has none.
-    pub sign_ins: BTreeMap<InstanceId, SignInStep>,
-    /// The host's home and its projects, from the last `Welcome` or a later
-    /// `Feed::Home`. `None` on a host given no home.
-    pub home: Option<Home>,
     /// Why the last connection ended, until the next one is live.
     pub error: Option<String>,
 }
@@ -72,22 +58,9 @@ pub enum Update {
     /// The events that follow belong to this epoch, starting after seq 0.
     /// Anything folded from an earlier epoch is stale.
     Reset(Epoch),
-    Event(Event),
-}
-
-/// What the app shows, its link status and host view, once `update`
-/// arrives.
-#[must_use]
-pub fn shown_after(
-    status: Option<Status>,
-    view: HostView,
-    update: Update,
-) -> (Option<Status>, HostView) {
-    match update {
-        Update::Status(next) => (Some(next), view),
-        Update::Reset(_) => (status, HostView::empty()),
-        Update::Event(event) => (status, view.apply(event)),
-    }
+    Welcome(Welcome),
+    Feed(Frame),
+    Answer(CommandResult),
 }
 
 /// A stream the host may close.
@@ -170,10 +143,8 @@ pub enum Input {
     Welcomed(Welcome),
     /// The subscription is open and its events will follow.
     Subscribed,
-    Event(Event),
-    SignIn(SignIn),
-    /// The host's home changed to this.
-    Home(Home),
+    Frame(Frame),
+    Answered(CommandResult),
     Lost(Lost),
     /// The random number [`Operation::Draw`] asked for.
     Drawn(u64),
@@ -182,8 +153,6 @@ pub enum Input {
     /// Asked to drop the connection and connect again at once, as after a
     /// network change.
     Reconnect,
-    /// What the host runs now, from a command's answer.
-    Instances(Instances),
 }
 
 impl From<Option<HelloReply>> for Input {
@@ -200,12 +169,10 @@ impl From<Option<HelloReply>> for Input {
 
 impl From<Option<Frame>> for Input {
     fn from(frame: Option<Frame>) -> Self {
-        match frame {
-            Some(Frame::Event(event)) => Self::Event(event),
-            Some(Frame::SignIn(sign_in)) => Self::SignIn(sign_in),
-            Some(Frame::Home(home)) => Self::Home(home),
-            None => Self::Lost(Lost::HostClosed(Stream::Subscription)),
-        }
+        frame.map_or(
+            Self::Lost(Lost::HostClosed(Stream::Subscription)),
+            Self::Frame,
+        )
     }
 }
 
@@ -346,10 +313,6 @@ impl Link {
 
     fn on(&mut self, input: Input) -> Vec<Effect> {
         match (self.phase, input) {
-            (_, Input::Instances(instances)) => self.publish(Status {
-                instances: Some(instances),
-                ..self.status.clone()
-            }),
             (Phase::Waiting, Input::Elapsed | Input::Reconnect) => self.dial(),
             (Phase::Connected(_), Input::Reconnect) => {
                 let shown = self.disconnected(None);
@@ -372,16 +335,15 @@ impl Link {
                 self.phase = Phase::Connected(feed);
                 Vec::new()
             }
-            (Phase::Connected(feed), Input::Event(event)) => {
+            (Phase::Connected(feed), Input::Frame(Frame::Event(event))) => {
                 self.apply(feed, event)
             }
-            (Phase::Connected(_), Input::SignIn(sign_in)) => {
-                self.signs_in(sign_in)
+            (Phase::Connected(_), Input::Frame(frame)) => {
+                Vec::from([Effect::Forward(Update::Feed(frame))])
             }
-            (Phase::Connected(_), Input::Home(home)) => self.publish(Status {
-                home: Some(home),
-                ..self.status.clone()
-            }),
+            (Phase::Connected(_), Input::Answered(answer)) => {
+                Vec::from([Effect::Forward(Update::Answer(answer))])
+            }
             (
                 Phase::Greeting | Phase::Subscribing(_) | Phase::Connected(_),
                 Input::Lost(lost),
@@ -504,21 +466,13 @@ impl Link {
             live_at: welcome.head_seq,
         };
         let reset = self.adopt(feed.epoch);
-        // The subscription starts with the sign-ins running now.
-        let shown = self.publish(Status {
-            host: Some(welcome.host),
-            instances: Some(welcome.instances),
-            catalog: welcome.catalog,
-            sign_ins: BTreeMap::new(),
-            home: welcome.home,
-            state: LinkState::CatchingUp,
-            ..self.status.clone()
-        });
+        let shown = self.set_state(LinkState::CatchingUp);
         let after_seq = self.cursor_seq();
         let live = self.catch_up(after_seq, feed.live_at);
         self.phase = Phase::Subscribing(feed);
         join([
             reset,
+            Vec::from([Effect::Forward(Update::Welcome(welcome))]),
             shown,
             live,
             Vec::from([Effect::Start(Operation::Subscribe(Subscribe {
@@ -545,49 +499,27 @@ impl Link {
 
     fn apply(&mut self, feed: Feed, event: Event) -> Vec<Effect> {
         let after = self.cursor_seq();
-        let order = after.0.checked_add(1).map(|next| event.seq.0.cmp(&next));
-        let delta = matches!(
-            event.kind,
-            EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. }
-        );
+        let seq = event.seq;
+        let delta = is_delta(&event.kind);
+        let forwarded =
+            || Vec::from([Effect::Forward(Update::Feed(Frame::Event(event)))]);
+        let order = after.0.checked_add(1).map(|next| seq.0.cmp(&next));
         match (order, delta) {
-            // A delta repeats the seq of the stored event before it, which
-            // the stream delivered first (`EventKind::AssistantDelta`).
-            (Some(Ordering::Less), true) => {
-                Vec::from([Effect::Forward(Update::Event(event))])
-            }
+            (Some(Ordering::Less), true) => forwarded(),
             (Some(Ordering::Less), false) => Vec::new(),
-            (Some(Ordering::Equal), true)
-            | (Some(Ordering::Greater) | None, _) => self.lose(&Lost::Gap {
-                after: after.0,
-                got: event.seq.0,
-            }),
             (Some(Ordering::Equal), false) => {
-                let seq = event.seq;
                 self.cursor = Some(Cursor {
                     epoch: feed.epoch,
                     seq,
                 });
-                let live = self.catch_up(seq, feed.live_at);
-                join([Vec::from([Effect::Forward(Update::Event(event))]), live])
+                join([forwarded(), self.catch_up(seq, feed.live_at)])
             }
+            (Some(Ordering::Equal), true)
+            | (Some(Ordering::Greater) | None, _) => self.lose(&Lost::Gap {
+                after: after.0,
+                got: seq.0,
+            }),
         }
-    }
-
-    /// Shows the sign-in's step. A signed-in one brings what the host runs
-    /// now, and a cancelled one leaves none.
-    fn signs_in(&mut self, sign_in: SignIn) -> Vec<Effect> {
-        let SignIn { instance, step } = sign_in;
-        let mut next = self.status.clone();
-        if let SignInStep::SignedIn { instances } = &step {
-            next.instances = Some(instances.clone());
-        }
-        if step == SignInStep::Cancelled {
-            next.sign_ins.remove(&instance);
-        } else {
-            next.sign_ins.insert(instance, step);
-        }
-        self.publish(next)
     }
 
     /// Goes live once the link has applied the host's head as of `Welcome`.
@@ -598,7 +530,6 @@ impl Link {
                 self.publish(Status {
                     state: LinkState::Live,
                     error: None,
-                    ..self.status.clone()
                 })
             }
             _ => Vec::new(),
@@ -633,7 +564,6 @@ impl Link {
         self.publish(Status {
             state: LinkState::Disconnected,
             error,
-            ..self.status.clone()
         })
     }
 
@@ -675,13 +605,12 @@ fn backoff(failures: u32, random: u64) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeMap;
     use core::time::Duration;
 
     use proto::{
-        AuthToken, Availability, Catalog, ClientName, Epoch, Event, EventKind,
-        Feed, Hello, HelloReply, HostSeq, InstanceId, InstanceStatus,
-        Instances, Provider, SessionId, SignIn, SignInStep, Subscribe, Welcome,
+        AuthToken, Availability, Catalog, ClientName, CommandResult, Epoch,
+        Event, EventKind, Feed, Hello, HelloReply, HostSeq, InstanceId,
+        InstanceStatus, Instances, Provider, SessionId, Subscribe, Welcome,
     };
 
     use super::{
@@ -748,11 +677,6 @@ mod tests {
     fn status(state: LinkState, error: Option<&str>) -> Status {
         Status {
             state,
-            host: Some(String::from("host")),
-            instances: Some(instances("test")),
-            catalog: Catalog::default(),
-            sign_ins: BTreeMap::new(),
-            home: None,
             error: error.map(String::from),
         }
     }
@@ -816,8 +740,8 @@ mod tests {
                 connected(0),
                 Input::Welcomed(welcome(1, 2)),
                 Input::Subscribed,
-                Input::Event(stored(1)),
-                Input::Event(stored(2)),
+                Input::Frame(Feed::Event(stored(1))),
+                Input::Frame(Feed::Event(stored(2))),
             ]),
         )
         .0
@@ -854,8 +778,8 @@ mod tests {
                 connected(0),
                 Input::Welcomed(welcome(1, 2)),
                 Input::Subscribed,
-                Input::Event(stored(1)),
-                Input::Event(stored(2)),
+                Input::Frame(Feed::Event(stored(1))),
+                Input::Frame(Feed::Event(stored(2))),
                 Input::Lost(Lost::Wire(String::from("reset"))),
                 Input::Drawn(0),
                 Input::Elapsed,
@@ -887,13 +811,16 @@ mod tests {
                     ]),
                     Vec::from([
                         Effect::Forward(Update::Reset(Epoch(1))),
+                        Effect::Forward(Update::Welcome(welcome(1, 2))),
                         Effect::Show(status(LinkState::CatchingUp, None)),
                         subscribe(1, 0),
                     ]),
                     Vec::new(),
-                    Vec::from([Effect::Forward(Update::Event(stored(1)))]),
+                    Vec::from([Effect::Forward(Update::Feed(Feed::Event(
+                        stored(1)
+                    )))]),
                     Vec::from([
-                        Effect::Forward(Update::Event(stored(2))),
+                        Effect::Forward(Update::Feed(Feed::Event(stored(2)))),
                         Effect::Show(status(LinkState::Live, None)),
                     ]),
                     Vec::from([
@@ -921,6 +848,7 @@ mod tests {
                         greeting(),
                     ]),
                     Vec::from([
+                        Effect::Forward(Update::Welcome(welcome(1, 3))),
                         Effect::Show(status(
                             LinkState::CatchingUp,
                             Some("reset")
@@ -948,6 +876,7 @@ mod tests {
             (
                 Some(&Vec::from([
                     Effect::Forward(Update::Reset(Epoch(2))),
+                    Effect::Forward(Update::Welcome(welcome(2, 0))),
                     Effect::Show(status(LinkState::CatchingUp, None)),
                     Effect::Show(status(LinkState::Live, None)),
                     subscribe(2, 0),
@@ -974,6 +903,7 @@ mod tests {
         assert_eq!(
             seen.last(),
             Some(&Vec::from([
+                Effect::Forward(Update::Welcome(welcome(1, 6))),
                 Effect::Show(status(LinkState::CatchingUp, None)),
                 subscribe(1, 4),
             ]))
@@ -985,16 +915,22 @@ mod tests {
         let (_, seen) = walk(
             live(),
             Vec::from([
-                Input::Event(stored(2)),
-                Input::Event(delta(2)),
-                Input::Event(stored(4)),
+                Input::Frame(Feed::Event(stored(2))),
+                Input::Frame(Feed::Event(delta(2))),
+                Input::Frame(Feed::Event(delta(1))),
+                Input::Frame(Feed::Event(stored(4))),
             ]),
         );
         assert_eq!(
             seen,
             Vec::from([
                 Vec::new(),
-                Vec::from([Effect::Forward(Update::Event(delta(2)))]),
+                Vec::from([Effect::Forward(Update::Feed(Feed::Event(delta(
+                    2
+                ))))]),
+                Vec::from([Effect::Forward(Update::Feed(Feed::Event(delta(
+                    1
+                ))))]),
                 Vec::from([
                     Effect::Close,
                     Effect::Show(status(
@@ -1009,7 +945,8 @@ mod tests {
 
     #[test]
     fn a_delta_for_the_next_seq_is_a_gap() {
-        let (_, seen) = walk(live(), Vec::from([Input::Event(delta(3))]));
+        let (_, seen) =
+            walk(live(), Vec::from([Input::Frame(Feed::Event(delta(3)))]));
         assert_eq!(
             seen.first().and_then(|effects| effects.first()),
             Some(&Effect::Close)
@@ -1227,7 +1164,6 @@ mod tests {
                 Effect::Show(Status {
                     state: LinkState::Disconnected,
                     error: Some(String::from(lost)),
-                    ..Status::default()
                 }),
                 Effect::Start(Operation::Draw),
             ]))
@@ -1235,57 +1171,17 @@ mod tests {
     }
 
     #[test]
-    fn instances_update_the_status_and_stale_inputs_do_nothing() {
-        let (link, adopted) =
-            live().step(Input::Instances(instances("signed out")));
-        let (_, stale) =
-            walk(link, Vec::from([Input::Elapsed, Input::Drawn(1)]));
+    fn answers_are_forwarded_while_connected() {
+        let answer = CommandResult::Instances(instances("signed out"));
+        let (link, effects) = live().step(Input::Answered(answer.clone()));
+        let (down, _) =
+            link.step(Input::Lost(Lost::HostClosed(Stream::Subscription)));
+        let (_, stale) = down.step(Input::Answered(answer.clone()));
         assert_eq!(
-            (adopted, stale),
+            (effects, stale),
             (
-                Vec::from([Effect::Show(Status {
-                    instances: Some(instances("signed out")),
-                    ..status(LinkState::Live, None)
-                })]),
-                Vec::from([Vec::new(), Vec::new()]),
-            )
-        );
-    }
-
-    #[test]
-    fn the_home_comes_with_the_welcome_and_each_frame_replaces_it() {
-        let home = |sync| proto::Home {
-            remote: String::from("file:///home.git"),
-            synced: Some(5),
-            sync,
-            unpushed: 0,
-            projects: Vec::new(),
-        };
-        let (link, _) = Link::start(hello(), None);
-        let (welcomed, shown) =
-            link.step(connected(0)).0.step(Input::Welcomed(Welcome {
-                home: Some(home(proto::HomeSync::Syncing)),
-                ..welcome(1, 0)
-            }));
-        let (subscribed, _) = welcomed.step(Input::Subscribed);
-        let (_, changed) = subscribed.step(Input::from(Some(
-            proto::Feed::Home(home(proto::HomeSync::Synced)),
-        )));
-        let homes = |effects: &[Effect]| {
-            effects
-                .iter()
-                .filter_map(|effect| match effect {
-                    Effect::Show(status) => status.home.clone(),
-                    _ => None,
-                })
-                .map(|known| known.sync)
-                .collect::<Vec<proto::HomeSync>>()
-        };
-        assert_eq!(
-            (homes(&shown), homes(&changed)),
-            (
-                Vec::from([proto::HomeSync::Syncing, proto::HomeSync::Syncing]),
-                Vec::from([proto::HomeSync::Synced]),
+                Vec::from([Effect::Forward(Update::Answer(answer))]),
+                Vec::new(),
             )
         );
     }
@@ -1334,67 +1230,6 @@ mod tests {
     }
 
     #[test]
-    fn sign_ins_show_in_the_status_until_cancelled_or_the_next_welcome() {
-        let id = || InstanceId::own(Provider::Claude);
-        let frame = |step| {
-            Input::from(Some(Feed::SignIn(SignIn {
-                instance: id(),
-                step,
-            })))
-        };
-        let open = SignInStep::Open {
-            url: String::from("https://sign.example/in"),
-            code: None,
-            paste: true,
-        };
-        let signed_in = SignInStep::SignedIn {
-            instances: instances("signed in"),
-        };
-        let (_, seen) = walk(
-            live(),
-            Vec::from([
-                frame(open.clone()),
-                frame(signed_in.clone()),
-                frame(SignInStep::Cancelled),
-                frame(open.clone()),
-                Input::Lost(Lost::Wire(String::from("reset"))),
-                Input::Drawn(0),
-                Input::Elapsed,
-                connected(1),
-                Input::Welcomed(welcome(1, 2)),
-            ]),
-        );
-        let shown = |instances_reason: &str, sign_ins: &[SignInStep]| Status {
-            instances: Some(instances(instances_reason)),
-            sign_ins: sign_ins
-                .iter()
-                .map(|step| (id(), step.clone()))
-                .collect(),
-            ..status(LinkState::Live, None)
-        };
-        let show = |status| Some(Vec::from([Effect::Show(status)]));
-        assert_eq!(
-            (
-                seen.first().cloned(),
-                seen.get(1).cloned(),
-                seen.get(2).cloned(),
-                seen.get(3).cloned(),
-                seen.get(8).and_then(|effects| effects.first().cloned()),
-            ),
-            (
-                show(shown("test", core::slice::from_ref(&open))),
-                show(shown("signed in", &[signed_in])),
-                show(shown("signed in", &[])),
-                show(shown("signed in", &[open])),
-                Some(Effect::Show(Status {
-                    state: LinkState::CatchingUp,
-                    error: Some(String::from("reset")),
-                    ..shown("test", &[])
-                })),
-            )
-        );
-    }
-    #[test]
     fn a_stream_is_named_for_the_error_it_ends_with() {
         assert_eq!(
             [Stream::Hello, Stream::Subscription]
@@ -1411,41 +1246,18 @@ mod tests {
     }
 
     #[test]
-    fn going_live_clears_the_last_error_and_takes_the_welcomes_catalog() {
-        let catalog = Catalog(BTreeMap::from([(
-            Provider::Claude,
-            proto::ProviderInfo {
-                label: String::from("Claude Code"),
-                note: None,
-                credentials: Vec::new(),
-            },
-        )]));
+    fn going_live_clears_the_last_error() {
         let (link, _) = Link::start(hello(), None);
-        let (_, seen) = walk(
+        let (live, _) = walk(
             link,
             Vec::from([
                 no_route(0),
                 Input::Drawn(1),
                 Input::Elapsed,
                 connected(1),
-                Input::Welcomed(Welcome {
-                    catalog: catalog.clone(),
-                    ..welcome(1, 0)
-                }),
+                Input::Welcomed(welcome(1, 0)),
             ]),
         );
-        let last = seen.last().and_then(|effects| {
-            effects.iter().rev().find_map(|effect| match effect {
-                Effect::Show(shown) => Some(shown.clone()),
-                _ => None,
-            })
-        });
-        assert_eq!(
-            last,
-            Some(Status {
-                catalog,
-                ..status(LinkState::Live, None)
-            })
-        );
+        assert_eq!(live.status(), &status(LinkState::Live, None));
     }
 }

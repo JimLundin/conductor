@@ -4,8 +4,8 @@
 use proto::{Provider, TicketError};
 
 use super::{
-    HOST, SESSION, claude, claude_forms, composer, joined, opened, paired, run,
-    screen, signed_in, status, text, ticket,
+    HOST, SESSION, claude, claude_forms, composer, joined, opened, paired,
+    roster, run, screen, signed_in, text, ticket,
 };
 use crate::{
     CredentialIntent, Detail, Intent, Place, Screen, SessionIntent, State, view,
@@ -110,7 +110,8 @@ fn leaving_a_place_drops_what_was_typed_there() {
     let (filling, _) = run(
         paired(),
         Vec::from([
-            status(claude(signed_in())),
+            super::connection(super::HOST, client::link::LinkState::Live, None),
+            roster(claude(signed_in())),
             Intent::Show(Place::Credentials),
             Intent::Credential(
                 HOST,

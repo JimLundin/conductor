@@ -99,13 +99,18 @@ pub fn screen(
     let mut read =
         BTreeMap::<ProjectId, (HostId, &Host, &proto::Project)>::new();
     for (id, host) in &listed {
-        for project in host.home().map_or(&[][..], |home| &home.projects) {
+        for project in host
+            .fold
+            .home
+            .as_ref()
+            .map_or(&[][..], |home| &home.projects)
+        {
             rows.entry(project.id.clone())
                 .or_default()
                 .push(row(*id, host, project));
-            let better = read
-                .get(&project.id)
-                .is_none_or(|(_, first, _)| host.live() && !first.live());
+            let better = read.get(&project.id).is_none_or(|(_, first, _)| {
+                host.fold.live() && !first.fold.live()
+            });
             if better {
                 read.insert(project.id.clone(), (*id, host, project));
             }
@@ -144,7 +149,10 @@ fn detail(project: &proto::Project) -> String {
 
 fn home_line(id: HostId, host: &Host) -> HomeLine {
     let name = host.name();
-    let (state, text) = match (host.status.as_ref(), host.home()) {
+    let (state, text) = match (
+        host.fold.status.as_ref(),
+        host.fold.home.as_ref(),
+    ) {
         (None, _) => ("offline", format!("Not connected to {name} yet.")),
         (Some(_), None) => (
             "none",
@@ -156,7 +164,7 @@ fn home_line(id: HostId, host: &Host) -> HomeLine {
     };
     HomeLine {
         key: id.key(),
-        sync: (host.live() && host.home().is_some())
+        sync: (host.fold.live() && host.fold.home.as_ref().is_some())
             .then_some(Intent::Project(id, ProjectIntent::Sync)),
         host: name,
         state,
@@ -206,7 +214,7 @@ fn row(id: HostId, host: &Host, project: &proto::Project) -> CheckoutRow {
     CheckoutRow {
         key: id.key(),
         paths: project.checkouts.iter().map(path).collect(),
-        clone: (offered && host.live()).then(|| CloneButton {
+        clone: (offered && host.fold.live()).then(|| CloneButton {
             intent: Intent::Project(
                 id,
                 ProjectIntent::Clone(project.id.clone()),

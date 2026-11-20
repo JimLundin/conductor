@@ -3,15 +3,15 @@
 
 use alloc::collections::BTreeMap;
 
-use client::link::{LinkState, Status, Update};
+use client::link::{LinkState, Update};
 use proto::{
-    AuthToken, ClientName, CommandBody, CommandResult, Event, EventKind,
+    AuthToken, ClientName, CommandBody, CommandResult, Event, EventKind, Feed,
     HostPath, HostSeq, Instances, Provider, SessionId, StartAt, Ticket,
 };
 
 use super::{
-    HOST, SESSION, catalog, claude, created, form, id, instance, joined,
-    listing, paired, pane, run, screen, signed_in, text, ticket,
+    HOST, SESSION, claude, connection, created, form, id, instance, joined,
+    listing, paired, pane, run, screen, signed_in, text, ticket, welcomed,
 };
 use crate::{
     Detail, Effect, FormIntent, Intent, Listing, Place, Reply, ReplyTo, Saved,
@@ -29,32 +29,6 @@ fn other() -> Ticket {
     }
 }
 
-fn named(
-    host: crate::HostId,
-    name: &str,
-    state: LinkState,
-    instances: Instances,
-) -> Intent {
-    Intent::Link(
-        host,
-        Update::Status(Status {
-            state,
-            host: Some(text(name)),
-            instances: Some(instances),
-            catalog: catalog(),
-            sign_ins: BTreeMap::new(),
-            home: None,
-            error: match state {
-                LinkState::Live => None,
-                LinkState::Disconnected
-                | LinkState::Connecting
-                | LinkState::Authenticating
-                | LinkState::CatchingUp => Some(text("timed out")),
-            },
-        }),
-    )
-}
-
 fn codex() -> Instances {
     Instances(BTreeMap::from([(id("codex"), instance(signed_in()))]))
 }
@@ -67,7 +41,7 @@ fn on(
 ) -> Intent {
     Intent::Link(
         host,
-        Update::Event(Event {
+        Update::Feed(Feed::Event(Event {
             seq: HostSeq(seq),
             session,
             kind: EventKind::SessionCreated {
@@ -78,7 +52,7 @@ fn on(
                 model: None,
                 effort: None,
             },
-        }),
+        })),
     )
 }
 
@@ -88,17 +62,23 @@ fn two(state: LinkState) -> State {
     let (both, _) = run(
         paired(),
         Vec::from([
-            named(HOST, "desk", LinkState::Live, claude(signed_in())),
+            welcomed(HOST, "desk", claude(signed_in()), None),
+            connection(HOST, LinkState::Live, None),
             Intent::Link(
                 HOST,
-                Update::Event(Event {
+                Update::Feed(Feed::Event(Event {
                     seq: HostSeq(1),
                     session: SESSION,
                     kind: created(),
-                }),
+                })),
             ),
             Intent::Join(Ok(other())),
-            named(OTHER, "laptop", state, codex()),
+            welcomed(OTHER, "laptop", codex(), None),
+            connection(
+                OTHER,
+                state,
+                (state != LinkState::Live).then_some("timed out"),
+            ),
             on(OTHER, 1, THEIRS, "/home/me/notes"),
         ]),
     );
@@ -170,11 +150,11 @@ fn a_command_goes_to_the_host_of_the_session_or_form_it_comes_from() {
             Intent::Show(Place::Session(OTHER, THEIRS)),
             Intent::Link(
                 OTHER,
-                Update::Event(Event {
+                Update::Feed(Feed::Event(Event {
                     seq: HostSeq(2),
                     session: THEIRS,
                     kind: EventKind::SessionReady,
-                }),
+                })),
             ),
             Intent::Session(SessionIntent::TypeMessage(text("hi"))),
             Intent::Session(SessionIntent::SendMessage),

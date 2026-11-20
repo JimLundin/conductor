@@ -1651,8 +1651,15 @@ The owner settled these on 2026-11-12.
   `Disconnected → Connecting → Authenticating → CatchingUp → Live`,
   reconnecting with jittered backoff, each host on its own. It keeps the
   cursor, so every reconnect resubscribes after the last applied seq, with
-  no duplicates and no gaps. A new link starts with no cursor, so the host
-  resets what the app holds for it before it catches up.
+  no duplicate stored events and no gaps. A fresh cursor or an epoch change
+  emits a reset before the welcome and subscription updates. The link
+  forwards the welcome, feed frames and command results from its current
+  connection.
+- `HostFold` (in `client`) keeps the connection status, the host's name,
+  catalog, instance roster, sign-ins, and home. Each welcome replaces the
+  advertised facts and starts a new set of sign-ins. The feed and command
+  answers update those facts, while event frames go to `HostView`. A reset
+  clears the event history before the link replays the new epoch.
 - `HostView` (in `client`, the pure `no_std` core) folds a host's events
   into what the UI renders: sessions,
   transcripts, tool cards, open requests, what the composer and the
@@ -1660,16 +1667,16 @@ The owner settled these on 2026-11-12.
 - Both compile to wasm32 for the app. A native build exists only as
   the harness for the daemon's e2e tests and the headless example.
   `tools/live-host.sh` runs the example from `net` against a live host.
-  The example reads session controls, requests and turn checkpoints from
-  `HostView` to drive its scripted checks.
+  The example applies link updates to `HostFold` and uses its `HostView`
+  to read session controls, requests and turn checkpoints for its scripted
+  checks.
 
 ## 8. The app (`crates/app`)
 
 Dioxus web, routed through the URL fragment so GitHub Pages never serves an
 unknown path. The app is model, update, view over the pure `no_std` `ui`
 crate. `ui::State` holds every paired host, keyed by its endpoint id
-(`ui::HostId`), each with its ticket, the name from its last `Welcome`, its
-`HostView` and its link `Status` (its instances, catalog and sign-ins).
+(`ui::HostId`), each with its ticket, its saved name and its host fold.
 Beside the hosts it holds what the person has open: the place shown, which
 names its host when it is a session, and that place's drafts, forms and
 open diffs, dropped when another place shows. `ui::update` turns each

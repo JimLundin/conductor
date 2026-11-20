@@ -1,14 +1,13 @@
 //! The new-session form's picks: what each marks, and what picking a host,
 //! an instance or a model puts back.
 
-use alloc::collections::BTreeMap;
-
-use client::link::{LinkState, Status, Update};
+use client::link::LinkState;
 use proto::{Availability, Instances};
 
 use super::projects::desk_home;
 use super::{
-    HOST, catalog, form, id, instance, paired, run, text, two_claudes,
+    HOST, connection, form, id, instance, paired, run, text, two_claudes,
+    welcomed,
 };
 use crate::{FormIntent, Intent, NewSessionForm, Place, State};
 
@@ -24,18 +23,8 @@ fn picked(picks: Vec<FormIntent>) -> Option<NewSessionForm> {
         .chain([(id("codex"), unavailable)])
         .collect();
     let shown = Vec::from([
-        Intent::Link(
-            HOST,
-            Update::Status(Status {
-                state: LinkState::Live,
-                host: Some(text("desk")),
-                instances: Some(Instances(instances)),
-                catalog: catalog(),
-                sign_ins: BTreeMap::new(),
-                home: Some(desk_home()),
-                error: None,
-            }),
-        ),
+        welcomed(HOST, "desk", Instances(instances), Some(desk_home())),
+        connection(HOST, LinkState::Live, None),
         Intent::Show(Place::NewSession),
     ]);
     let state: State = run(

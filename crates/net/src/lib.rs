@@ -11,8 +11,8 @@ use iroh::{EndpointAddr, EndpointId, RelayUrl};
 use proto::{Ticket, TicketError};
 
 pub use link::{
-    Cursor, HostLink, LinkOptions, LinkState, SendError, StartError, Status,
-    Target, Update, shown_after,
+    HostLink, LinkOptions, LinkState, SendError, StartError, Status, Target,
+    Update,
 };
 pub use platform::Network;
 pub use relay::without_root_dot;
