@@ -11,12 +11,12 @@
 use alloc::format;
 
 use proto::{
-    Checkpoint, CheckpointId, CloseReason, Event, EventKind, HistoryAnchor,
-    HostPath, HostSeq, InstanceId, Provider, RequestId, Resolution, SessionId,
-    TurnOutcome, UndoAvailability, Workspace,
+    CloseReason, Event, EventKind, HostPath, InstanceId, Provider, RequestId,
+    Resolution, SessionId, TurnOutcome,
 };
 
 use crate::checkpoints::Book;
+pub use crate::checkpoints::SnapshotPlan;
 use crate::prelude::*;
 use crate::session::Choice;
 
@@ -68,34 +68,7 @@ pub fn events_of(session: SessionId, history: &[Event]) -> Vec<Event> {
         .collect()
 }
 
-/// The checkpoint an interrupted turn leaves: its files, snapshotted into
-/// `reserved` on top of `base`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Interrupted {
-    pub workspace: Workspace,
-    pub reserved: CheckpointId,
-    /// The commit of the session's last checkpoint.
-    pub base: Option<String>,
-    parent: Option<CheckpointId>,
-    turn_start: Option<HostSeq>,
-    history: HistoryAnchor,
-    undo: UndoAvailability,
-}
-
-impl Interrupted {
-    /// The checkpoint, once the snapshot made `commit`.
-    #[must_use]
-    pub fn checkpoint(self, commit: String) -> Checkpoint {
-        Checkpoint {
-            id: self.reserved,
-            parent: self.parent,
-            turn_start: self.turn_start,
-            commit,
-            history: self.history,
-            undo: self.undo,
-        }
-    }
-
+impl SnapshotPlan {
     /// What the session records once the snapshot made a commit, or why
     /// it did not.
     #[must_use]
@@ -118,8 +91,8 @@ pub enum Step {
     /// Commit what the log has staged before the snapshot runs.
     Barrier,
     /// Snapshot the turn's files, then append what
-    /// [`Interrupted::snapshotted`] says of it.
-    Snapshot(Interrupted),
+    /// [`SnapshotPlan::snapshotted`] says of it.
+    Snapshot(SnapshotPlan),
 }
 
 /// What a restart does to a session.
@@ -134,7 +107,7 @@ pub struct Recovery {
     pub interrupted: bool,
     /// The running turn's checkpoint, when it has a workspace and no undo
     /// is being recovered.
-    pub checkpoint: Option<Interrupted>,
+    pub checkpoint: Option<SnapshotPlan>,
     /// The agent was running.
     pub closed: bool,
 }
@@ -160,7 +133,9 @@ impl Recovery {
             }),
             withdrawn: open_requests(events),
             interrupted,
-            checkpoint: interrupted.then(|| checkpoint(events)).flatten(),
+            checkpoint: interrupted
+                .then(|| Book::replay(events).plan_snapshot())
+                .flatten(),
             closed: agent_running(events),
         }
     }
@@ -249,26 +224,6 @@ fn agent_running(events: &[Event]) -> bool {
         .unwrap_or(false)
 }
 
-fn checkpoint(events: &[Event]) -> Option<Interrupted> {
-    let book = Book::replay(events);
-    match (
-        book.snapshot.as_ref(),
-        book.workspace.as_ref(),
-        &book.recovery,
-    ) {
-        (Some(snapshot), Some(workspace), None) => Some(Interrupted {
-            workspace: workspace.clone(),
-            reserved: book.highwater.next(),
-            base: book.last().map(|last| last.commit.clone()),
-            parent: book.last().map(|last| last.id),
-            turn_start: snapshot.turn_start,
-            undo: book.availability(&snapshot.history),
-            history: snapshot.history.clone(),
-        }),
-        _ => None,
-    }
-}
-
 fn replay_choice(created: Choice, events: &[Event]) -> Choice {
     events
         .iter()
@@ -294,7 +249,7 @@ mod tests {
         UndoAvailability, Workspace,
     };
 
-    use super::{Created, Interrupted, Recovery, Step, created, events_of};
+    use super::{Created, Recovery, SnapshotPlan, Step, created, events_of};
     use crate::session::Choice;
 
     fn event(seq: u64, session: u128, kind: EventKind) -> Event {
@@ -402,9 +357,9 @@ mod tests {
         );
     }
 
-    fn turn() -> Interrupted {
+    fn turn() -> SnapshotPlan {
         let path = HostPath(String::from("/work"));
-        Interrupted {
+        SnapshotPlan {
             workspace: Workspace {
                 repository: path.clone(),
                 original: path.clone(),
@@ -554,7 +509,7 @@ mod tests {
                 },
             )])
             .collect::<Vec<Event>>();
-        let recovery = |checkpoint: Option<Interrupted>| Recovery {
+        let recovery = |checkpoint: Option<SnapshotPlan>| Recovery {
             choice: Choice {
                 model: Some(ModelId(String::from("small"))),
                 effort: Some(Effort::Low),
@@ -575,7 +530,7 @@ mod tests {
                 Recovery::of(none, &finished),
             ],
             [
-                recovery(Some(Interrupted {
+                recovery(Some(SnapshotPlan {
                     reserved: CheckpointId(1),
                     base: Some(String::from("c0")),
                     parent: Some(CheckpointId(0)),

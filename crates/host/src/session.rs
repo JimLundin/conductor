@@ -19,7 +19,8 @@
 
 use core::mem;
 
-use crate::checkpoints::{Book, Recovery, Snapshot, Undo};
+pub use crate::checkpoints::Compared;
+use crate::checkpoints::{Book, Recovery, SnapshotPlan, Undo};
 use crate::prelude::*;
 use crate::tasks;
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
@@ -28,12 +29,11 @@ use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use proto::{
-    Checkpoint, CheckpointDiff, CheckpointId, ClientName, CloseReason,
-    CommandResult, Decision, Effort, Event, EventKind, HistoryAnchor, HostPath,
-    HostSeq, Kept, ModelId, Models, Rejection, RequestId, Resolution,
-    SessionId, SubagentActivity, SubagentEvent, SubagentId, Task, TaskId,
-    ToolCallId, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability,
-    Workspace,
+    CheckpointDiff, CheckpointId, ClientName, CloseReason, CommandResult,
+    Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq, Kept,
+    ModelId, Models, Rejection, RequestId, Resolution, SessionId,
+    SubagentActivity, SubagentEvent, SubagentId, Task, TaskId, ToolCallId,
+    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -223,14 +223,6 @@ pub enum Call {
     Agent(Command),
 }
 
-/// A checkpoint whose changes since its parent the shell lists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Compared {
-    pub workspace: Workspace,
-    pub checkpoint: Checkpoint,
-    pub parent: Checkpoint,
-}
-
 /// Where an agent starts: the history to restore, else the saved
 /// conversation.
 type At = (Option<HistoryAnchor>, Option<String>);
@@ -344,9 +336,7 @@ enum Flow {
 }
 
 struct Saving {
-    checkpoint: CheckpointId,
-    parent: Option<CheckpointId>,
-    snapshot: Snapshot,
+    plan: SnapshotPlan,
     then: Saved,
 }
 
@@ -397,7 +387,6 @@ pub struct Session {
     last_request: RequestId,
     book: Book,
     turn_start: Option<HostSeq>,
-    boundary: Option<String>,
     /// Tool calls the user denied, whose failed result means `Declined`.
     declined: Vec<ToolCallId>,
     /// The tasks the session holds, from its agent's checklist.
@@ -417,9 +406,8 @@ impl Session {
         conversation: Option<String>,
         history: &[Event],
     ) -> Self {
-        let replayed = Book::replay(history);
-        let resume = resumed(&replayed, conversation.as_ref(), history);
-        let book = Book { resume, ..replayed };
+        let mut book = Book::replay(history);
+        book.resume = resumed(&book, conversation.as_ref(), history);
         Self {
             id,
             directory: book
@@ -430,7 +418,6 @@ impl Session {
             agent: Agent::Down,
             book,
             turn_start: None,
-            boundary: None,
             conversation,
             turn: Turn::Idle,
             requests: replay_requests(history),
@@ -676,11 +663,7 @@ impl Session {
 
     fn recorded(&mut self, text: String, seq: HostSeq) -> Vec<Effect> {
         self.turn_start = Some(seq);
-        self.book.snapshot = Some(Snapshot {
-            history: HistoryAnchor::Unknown,
-            turn_start: self.turn_start,
-        });
-        self.boundary = None;
+        self.book.accept_message(seq);
         let change = changed(self.choice.effort, self.agent.effort());
         self.send(text, change)
     }
@@ -837,14 +820,12 @@ impl Session {
             // answer in between would log a decision for a command that
             // never runs. Its later withdrawal then finds nothing open.
             Step::HistoryBoundary(boundary) => self.history_boundary(boundary),
-            Step::TurnEnded(outcome) => {
-                self.checkpoint(Saved::TurnEnded(outcome))
-            }
+            Step::TurnEnded(outcome) => self.save(Saved::TurnEnded(outcome)),
             Step::TurnStarted(native) => self.turn_started(native),
             // Nothing the gone agent asked can be answered, and a turn it
             // ran is over; clients mark both when they see the close.
             Step::Closed(reason) => match &self.turn {
-                Turn::Running(_) => self.checkpoint(Saved::Closed(reason)),
+                Turn::Running(_) => self.save(Saved::Closed(reason)),
                 Turn::Idle | Turn::Starting(_) => self.closed(reason),
             },
         }
@@ -895,17 +876,11 @@ impl Session {
     }
 
     fn history_boundary(&mut self, boundary: Option<String>) -> Vec<Effect> {
-        self.boundary = boundary;
-        match &self.boundary {
-            Some(_) => {
-                let history = self.anchor(None);
-                self.book.resume = Some(history.clone());
-                Vec::from([Effect::Emit(EventKind::HistoryMaterialized {
-                    history,
-                })])
-            }
-            None => Vec::new(),
-        }
+        boundary.map_or_else(Vec::new, |message| {
+            let history = self.anchor(None, Some(message));
+            Vec::from([self
+                .checkpoint_event(EventKind::HistoryMaterialized { history })])
+        })
     }
 
     fn checklist(&mut self, steps: Vec<PlanStep>) -> Vec<Effect> {
@@ -968,7 +943,6 @@ impl Session {
             Turn::Idle => None,
             Turn::Starting(_) | Turn::Running(_) => self.turn_start,
         };
-        self.boundary = None;
         self.conversation = self.agent.conversation();
         let saved = self.conversation.clone().map(Effect::Conversation);
         let materialized = match (&self.book.workspace, &self.agent) {
@@ -979,19 +953,16 @@ impl Session {
                     ..
                 },
             ) => {
-                let history = self.anchor(Some(&native));
-                self.book.resume = Some(history.clone());
-                Some(Effect::Emit(EventKind::HistoryMaterialized { history }))
+                let history = self.anchor(Some(&native), None);
+                Some(self.checkpoint_event(EventKind::HistoryMaterialized {
+                    history,
+                }))
             }
             _ => None,
         };
         let started = self.book.workspace.is_some().then(|| {
-            let history = self.anchor(Some(&native));
-            self.book.snapshot = Some(Snapshot {
-                history: history.clone(),
-                turn_start: self.turn_start,
-            });
-            Effect::Emit(EventKind::NativeTurnStarted {
+            let history = self.anchor(Some(&native), None);
+            self.checkpoint_event(EventKind::NativeTurnStarted {
                 history,
                 turn_start: self.turn_start,
             })
@@ -1051,7 +1022,11 @@ impl Session {
         Vec::from([Effect::Emit(EventKind::SessionClosed { reason })])
     }
 
-    fn anchor(&self, native: Option<&NativeTurn>) -> HistoryAnchor {
+    fn anchor(
+        &self,
+        native: Option<&NativeTurn>,
+        message: Option<String>,
+    ) -> HistoryAnchor {
         match &self.agent {
             Agent::Up {
                 anchoring: Anchoring::Messages,
@@ -1059,7 +1034,7 @@ impl Session {
                 ..
             } => HistoryAnchor::Messages {
                 conversation: conversation.clone(),
-                message: self.boundary.clone(),
+                message,
             },
             Agent::Up {
                 anchoring: Anchoring::Turns,
@@ -1075,39 +1050,27 @@ impl Session {
         }
     }
 
-    /// Takes the running turn's snapshot, then goes on with `then`.
-    fn checkpoint(&mut self, then: Saved) -> Vec<Effect> {
-        if let Turn::Running(native) = &self.turn {
-            self.book.snapshot = Some(Snapshot {
-                history: self.anchor(Some(native)),
-                turn_start: self.turn_start,
-            });
-        }
-        self.save(then)
+    fn checkpoint_event(&mut self, kind: EventKind) -> Effect {
+        self.book.apply_kind(&kind);
+        Effect::Emit(kind)
     }
 
-    /// Saves the pending snapshot as a checkpoint, if there is one, then
-    /// goes on with `then`.
     fn save(&mut self, then: Saved) -> Vec<Effect> {
-        match self.book.workspace.clone().zip(self.book.snapshot.clone()) {
-            Some((workspace, snapshot)) => {
-                let previous = self.book.last().cloned();
-                let checkpoint = self.book.highwater.next();
-                self.book.highwater = checkpoint;
-                self.flow = Flow::Saving(Saving {
+        match self.book.plan_snapshot() {
+            Some(plan) => {
+                let checkpoint = plan.reserved;
+                let call = Call::Snapshot {
+                    workspace: plan.workspace.clone(),
                     checkpoint,
-                    parent: previous.as_ref().map(|last| last.id),
-                    snapshot,
-                    then,
-                });
+                    previous: plan.base.clone(),
+                };
+                self.flow = Flow::Saving(Saving { plan, then });
                 Vec::from([
-                    Effect::Emit(EventKind::CheckpointReserved { checkpoint }),
-                    Effect::Barrier,
-                    Effect::Call(Call::Snapshot {
-                        workspace,
+                    self.checkpoint_event(EventKind::CheckpointReserved {
                         checkpoint,
-                        previous: previous.map(|last| last.commit),
                     }),
+                    Effect::Barrier,
+                    Effect::Call(call),
                 ])
             }
             None => self.saved(then, Ok(())),
@@ -1119,32 +1082,14 @@ impl Session {
         saving: Saving,
         taken: Result<String, String>,
     ) -> Vec<Effect> {
-        let Saving {
-            checkpoint,
-            parent,
-            snapshot,
-            then,
-        } = saving;
+        let Saving { plan, then } = saving;
         match taken {
             Ok(commit) => {
-                let undo = self.book.availability(&snapshot.history);
-                let created = Checkpoint {
-                    id: checkpoint,
-                    parent,
-                    turn_start: snapshot.turn_start,
-                    commit,
-                    history: snapshot.history,
-                    undo,
-                };
-                self.book.active.push(checkpoint);
-                self.book.checkpoints.insert(checkpoint, created.clone());
-                self.book.snapshot = None;
-                join(
-                    [Effect::Emit(EventKind::CheckpointCreated {
-                        checkpoint: created,
-                    })],
-                    self.saved(then, Ok(())),
-                )
+                let created =
+                    self.checkpoint_event(EventKind::CheckpointCreated {
+                        checkpoint: plan.checkpoint(commit),
+                    });
+                join([created], self.saved(then, Ok(())))
             }
             Err(reason) => self.saved(then, Err(reason)),
         }
@@ -1262,23 +1207,7 @@ impl Session {
     }
 
     fn diff(&mut self, id: CheckpointId) -> Vec<Effect> {
-        match self
-            .book
-            .workspace
-            .as_ref()
-            .zip(self.book.checkpoints.get(&id))
-            .and_then(|(workspace, checkpoint)| {
-                checkpoint
-                    .parent
-                    .and_then(|parent| self.book.checkpoints.get(&parent))
-                    .map(|parent| {
-                        Call::Diff(Box::new(Compared {
-                            workspace: workspace.clone(),
-                            checkpoint: checkpoint.clone(),
-                            parent: parent.clone(),
-                        }))
-                    })
-            }) {
+        match self.book.diff(id).map(Box::new).map(Call::Diff) {
             Some(call) => {
                 self.flow = Flow::Diffing;
                 Vec::from([Effect::Call(call)])
@@ -1654,13 +1583,9 @@ impl Session {
     }
 
     fn finish_undo(&mut self, undo: &Undo) -> Vec<Effect> {
-        self.book.active.retain(|id| id <= &undo.restored);
-        self.book.recovery = None;
-        self.book.snapshot = None;
         self.turn_start = None;
-        self.boundary = None;
         Vec::from([
-            Effect::Emit(EventKind::TurnsUndone {
+            self.checkpoint_event(EventKind::TurnsUndone {
                 checkpoint: undo.selected,
                 restored: undo.restored,
             }),

@@ -2,7 +2,7 @@
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
 use proto::{
-    Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor,
+    Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor, HostSeq,
     UndoAvailability, Workspace,
 };
 
@@ -22,37 +22,176 @@ pub enum Recovery {
 }
 
 #[derive(Debug, Clone)]
-pub struct Snapshot {
-    pub history: HistoryAnchor,
-    pub turn_start: Option<proto::HostSeq>,
+struct PendingTurn {
+    history: HistoryAnchor,
+    turn_start: Option<HostSeq>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotPlan {
+    pub workspace: Workspace,
+    pub reserved: CheckpointId,
+    pub base: Option<String>,
+    pub(crate) parent: Option<CheckpointId>,
+    pub(crate) turn_start: Option<HostSeq>,
+    pub(crate) history: HistoryAnchor,
+    pub(crate) undo: UndoAvailability,
+}
+
+impl SnapshotPlan {
+    #[must_use]
+    pub fn checkpoint(self, commit: String) -> Checkpoint {
+        Checkpoint {
+            id: self.reserved,
+            parent: self.parent,
+            turn_start: self.turn_start,
+            commit,
+            history: self.history,
+            undo: self.undo,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Compared {
+    pub workspace: Workspace,
+    pub checkpoint: Checkpoint,
+    pub parent: Checkpoint,
+}
+
+#[derive(Default)]
 pub struct Book {
     pub workspace: Option<Workspace>,
     pub checkpoints: BTreeMap<CheckpointId, Checkpoint>,
     pub active: Vec<CheckpointId>,
-    pub highwater: CheckpointId,
+    highwater: u64,
     pub recovery: Option<Recovery>,
     pub resume: Option<HistoryAnchor>,
-    pub snapshot: Option<Snapshot>,
+    snapshot: Option<PendingTurn>,
 }
 
 impl Book {
     #[must_use]
     pub fn replay(events: &[Event]) -> Self {
-        Self {
-            workspace: replay_workspace(events),
-            checkpoints: replay_checkpoints(events),
-            active: replay_active(events),
-            highwater: replay_highwater(events),
-            recovery: replay_recovery(events),
-            snapshot: replay_snapshot(events),
-            resume: replay_resume(events),
+        let mut book = Self::default();
+        for event in events {
+            book.apply(event);
+        }
+        book
+    }
+
+    pub fn apply(&mut self, event: &Event) {
+        match &event.kind {
+            EventKind::UserMessage { .. } => self.accept_message(event.seq),
+            kind => self.apply_kind(kind),
+        }
+    }
+
+    pub fn accept_message(&mut self, seq: HostSeq) {
+        self.snapshot = Some(PendingTurn {
+            history: HistoryAnchor::Unknown,
+            turn_start: Some(seq),
+        });
+    }
+
+    pub fn apply_kind(&mut self, kind: &EventKind) {
+        match kind {
+            EventKind::WorkspaceCreated { workspace } => {
+                self.workspace = Some(workspace.clone());
+            }
+            EventKind::NativeTurnStarted {
+                history,
+                turn_start,
+            } => {
+                self.snapshot = Some(PendingTurn {
+                    history: history.clone(),
+                    turn_start: *turn_start,
+                });
+                if matches!(self.resume, None | Some(HistoryAnchor::Fresh)) {
+                    self.resume = Some(history.clone());
+                }
+            }
+            EventKind::HistoryMaterialized { history } => {
+                if let Some(snapshot) = &mut self.snapshot {
+                    snapshot.history = history.clone();
+                }
+                self.resume = Some(history.clone());
+            }
+            EventKind::CheckpointReserved { checkpoint } => {
+                self.highwater = self.highwater.max(checkpoint.0);
+            }
+            EventKind::CheckpointCreated { checkpoint } => {
+                self.highwater = self.highwater.max(checkpoint.id.0);
+                self.active.push(checkpoint.id);
+                self.checkpoints.insert(checkpoint.id, checkpoint.clone());
+                self.snapshot = None;
+            }
+            EventKind::UndoStarted {
+                checkpoint,
+                restore,
+                history,
+            } => {
+                self.recovery = Some(Recovery::Native(Undo {
+                    selected: *checkpoint,
+                    restored: *restore,
+                    history: history.clone(),
+                }));
+            }
+            EventKind::UndoHistoryRestored { history, .. } => {
+                self.resume = Some(history.clone());
+                self.recovery = self.recovery.take().map(|phase| match phase {
+                    Recovery::Native(undo) | Recovery::Files(undo) => {
+                        Recovery::Files(undo)
+                    }
+                });
+            }
+            EventKind::TurnsUndone { restored, .. } => {
+                self.active.retain(|id| id <= restored);
+                self.snapshot = None;
+                self.recovery = None;
+            }
+            _ => {}
         }
     }
 
     #[must_use]
-    pub fn availability(&self, history: &HistoryAnchor) -> UndoAvailability {
+    pub const fn next_reservation(&self) -> CheckpointId {
+        CheckpointId(self.highwater).next()
+    }
+
+    #[must_use]
+    pub fn plan_snapshot(&self) -> Option<SnapshotPlan> {
+        if self.recovery.is_some() {
+            return None;
+        }
+        let workspace = self.workspace.as_ref()?;
+        let snapshot = self.snapshot.as_ref()?;
+        let previous = self.last();
+        Some(SnapshotPlan {
+            workspace: workspace.clone(),
+            reserved: self.next_reservation(),
+            base: previous.map(|parent| parent.commit.clone()),
+            parent: previous.map(|parent| parent.id),
+            turn_start: snapshot.turn_start,
+            history: snapshot.history.clone(),
+            undo: self.availability(&snapshot.history),
+        })
+    }
+
+    #[must_use]
+    pub fn diff(&self, id: CheckpointId) -> Option<Compared> {
+        let workspace = self.workspace.as_ref()?;
+        let checkpoint = self.checkpoints.get(&id)?;
+        let parent = self.checkpoints.get(&checkpoint.parent?)?;
+        Some(Compared {
+            workspace: workspace.clone(),
+            checkpoint: checkpoint.clone(),
+            parent: parent.clone(),
+        })
+    }
+
+    #[must_use]
+    fn availability(&self, history: &HistoryAnchor) -> UndoAvailability {
         match history {
             HistoryAnchor::Turns { .. } => match self
                 .active
@@ -76,118 +215,6 @@ impl Book {
     pub fn last(&self) -> Option<&Checkpoint> {
         self.active.last().and_then(|id| self.checkpoints.get(id))
     }
-}
-
-fn replay_workspace(events: &[Event]) -> Option<Workspace> {
-    events.iter().rev().find_map(|event| match &event.kind {
-        EventKind::WorkspaceCreated { workspace } => Some(workspace.clone()),
-        _ => None,
-    })
-}
-
-fn replay_checkpoints(events: &[Event]) -> BTreeMap<CheckpointId, Checkpoint> {
-    events
-        .iter()
-        .filter_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => {
-                Some((checkpoint.id, checkpoint.clone()))
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-fn replay_active(events: &[Event]) -> Vec<CheckpointId> {
-    events.iter().fold(Vec::new(), |mut active, event| {
-        match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => {
-                active.push(checkpoint.id);
-            }
-            EventKind::TurnsUndone { restored, .. } => {
-                active.retain(|id| id <= restored);
-            }
-            _ => {}
-        }
-        active
-    })
-}
-
-fn replay_highwater(events: &[Event]) -> CheckpointId {
-    events
-        .iter()
-        .filter_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => Some(checkpoint.id),
-            EventKind::CheckpointReserved { checkpoint } => {
-                Some(checkpoint.to_owned())
-            }
-            _ => None,
-        })
-        .max()
-        .unwrap_or(CheckpointId(0))
-}
-
-fn replay_recovery(events: &[Event]) -> Option<Recovery> {
-    events
-        .iter()
-        .fold(None, |pending, event| match &event.kind {
-            EventKind::UndoStarted {
-                checkpoint,
-                restore,
-                history,
-            } => Some(Recovery::Native(Undo {
-                selected: checkpoint.to_owned(),
-                restored: restore.to_owned(),
-                history: history.clone(),
-            })),
-            EventKind::UndoHistoryRestored { .. } => {
-                pending.map(|recovery| match recovery {
-                    Recovery::Native(undo) | Recovery::Files(undo) => {
-                        Recovery::Files(undo)
-                    }
-                })
-            }
-            EventKind::TurnsUndone { .. } => None,
-            _ => pending,
-        })
-}
-
-fn replay_snapshot(events: &[Event]) -> Option<Snapshot> {
-    events
-        .iter()
-        .fold(None, |current, event| match &event.kind {
-            EventKind::UserMessage { .. } => Some(Snapshot {
-                history: HistoryAnchor::Unknown,
-                turn_start: Some(event.seq),
-            }),
-            EventKind::NativeTurnStarted {
-                history,
-                turn_start,
-            } => Some(Snapshot {
-                history: history.clone(),
-                turn_start: turn_start.to_owned(),
-            }),
-            EventKind::HistoryMaterialized { history } => {
-                current.map(|snapshot| Snapshot {
-                    history: history.clone(),
-                    ..snapshot
-                })
-            }
-            EventKind::CheckpointCreated { .. }
-            | EventKind::TurnsUndone { .. } => None,
-            _ => current,
-        })
-}
-
-fn replay_resume(events: &[Event]) -> Option<HistoryAnchor> {
-    events.iter().fold(None, |resume, event| match &event.kind {
-        EventKind::UndoHistoryRestored { history, .. }
-        | EventKind::HistoryMaterialized { history } => Some(history.clone()),
-        EventKind::NativeTurnStarted { history, .. } => match resume {
-            None | Some(HistoryAnchor::Fresh) => Some(history.clone()),
-            retained @ Some(_) => retained,
-        },
-        _ => resume,
-    })
 }
 
 #[must_use]
@@ -248,6 +275,18 @@ mod tests {
         }
     }
 
+    fn workspace() -> Event {
+        event(EventKind::WorkspaceCreated {
+            workspace: proto::Workspace {
+                repository: proto::HostPath(String::from("/repo")),
+                original: proto::HostPath(String::from("/repo")),
+                worktree: proto::HostPath(String::from("/worktree")),
+                directory: proto::HostPath(String::from("/worktree")),
+                branch: String::from("conductor/1"),
+            },
+        })
+    }
+
     fn checkpoint(id: u64) -> Event {
         event(EventKind::CheckpointCreated {
             checkpoint: Checkpoint {
@@ -263,8 +302,9 @@ mod tests {
 
     #[test]
     fn accepted_message_has_filesystem_intent_without_claiming_a_native_boundary()
-     {
+    -> Result<(), &'static str> {
         let events = Vec::from([
+            workspace(),
             checkpoint(0),
             event(EventKind::UserMessage {
                 text: String::from("edit"),
@@ -272,13 +312,15 @@ mod tests {
             }),
         ]);
         let book = Book::replay(&events);
-        assert_eq!(
-            book.snapshot.as_ref().map(|snapshot| &snapshot.history),
-            Some(&HistoryAnchor::Unknown)
-        );
+        let pending = book
+            .plan_snapshot()
+            .ok_or("accepted message has no pending snapshot")?
+            .checkpoint(String::from("interrupted"));
+        assert_eq!(pending.history, HistoryAnchor::Unknown);
+        assert_eq!(pending.turn_start, Some(HostSeq(1)));
         assert_eq!(book.resume, None);
         assert_eq!(
-            super::availability(book.last(), &HistoryAnchor::Unknown),
+            pending.undo,
             UndoAvailability::Unavailable {
                 reason: String::from("native turn boundary was not observed")
             }
@@ -312,16 +354,26 @@ mod tests {
                 )
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn failed_snapshot_retains_the_completed_native_boundary_for_retry() {
+    fn failed_snapshot_retains_the_completed_native_boundary_for_retry()
+    -> Result<(), &'static str> {
         let history = HistoryAnchor::Messages {
             conversation: String::from("native"),
             message: Some(String::from("finished")),
         };
         let events = Vec::from([
+            workspace(),
             checkpoint(0),
+            Event {
+                seq: HostSeq(5),
+                ..event(EventKind::UserMessage {
+                    text: String::from("edit"),
+                    by: proto::ClientName(String::from("phone")),
+                })
+            },
             event(EventKind::NativeTurnStarted {
                 history: HistoryAnchor::Messages {
                     conversation: String::from("native"),
@@ -342,47 +394,52 @@ mod tests {
                 outcome: proto::TurnOutcome::Completed,
             }),
         ]);
-        let book = Book::replay(&events);
-        assert_eq!(
-            book.snapshot.as_ref().map(|snapshot| &snapshot.history),
-            Some(&history)
-        );
-        assert_eq!(
-            book.snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.turn_start),
-            Some(HostSeq(5))
-        );
-        assert_eq!(book.highwater.next(), CheckpointId(2));
-        assert_eq!(
-            super::availability(book.last(), &history),
-            UndoAvailability::Available
-        );
+        assert_live_matches_replay(&events);
+        let live = Book::replay(&events);
+        let retry = live
+            .plan_snapshot()
+            .ok_or("retry has no pending snapshot")?;
+        assert_eq!(retry.reserved, CheckpointId(2));
+        assert_eq!(retry.base.as_deref(), Some("0"));
+        let saved_checkpoint = retry.checkpoint(String::from("retry"));
+        assert_eq!(saved_checkpoint.history, history);
+        assert_eq!(saved_checkpoint.turn_start, Some(HostSeq(5)));
+        assert_eq!(saved_checkpoint.undo, UndoAvailability::Available);
         let saved = events
             .into_iter()
             .chain([event(EventKind::CheckpointCreated {
-                checkpoint: Checkpoint {
-                    id: CheckpointId(2),
-                    parent: Some(CheckpointId(0)),
-                    turn_start: Some(HostSeq(5)),
-                    commit: String::from("retry"),
-                    history,
-                    undo: UndoAvailability::Available,
-                },
+                checkpoint: saved_checkpoint,
             })])
             .collect::<Vec<Event>>();
-        assert_eq!(
-            Book::replay(&saved)
-                .snapshot
-                .map(|snapshot| snapshot.history),
-            None
-        );
+        assert_live_matches_replay(&saved);
+        assert_eq!(Book::replay(&saved).plan_snapshot(), None);
+        Ok(())
+    }
+
+    fn assert_live_matches_replay(events: &[Event]) {
+        let mut live = Book::default();
+        for (index, event) in events.iter().enumerate() {
+            match &event.kind {
+                EventKind::UserMessage { .. } => live.accept_message(event.seq),
+                kind => live.apply_kind(kind),
+            }
+            let reopened = Book::replay(&events[..=index]);
+            assert_eq!(live.plan_snapshot(), reopened.plan_snapshot());
+            assert_eq!(live.next_reservation(), reopened.next_reservation());
+            assert_eq!(live.last(), reopened.last());
+            assert_eq!(live.resume, reopened.resume);
+            assert_eq!(
+                live.diff(CheckpointId(2)),
+                reopened.diff(CheckpointId(2))
+            );
+        }
     }
 
     #[test]
     fn reservations_and_undone_checkpoints_keep_the_highwater_and_immutable_diff_history()
-     {
+    -> Result<(), &'static str> {
         let book = Book::replay(&[
+            workspace(),
             checkpoint(0),
             checkpoint(1),
             checkpoint(2),
@@ -394,13 +451,19 @@ mod tests {
                 restored: CheckpointId(0),
             }),
         ]);
-        assert_eq!(book.active, Vec::from([CheckpointId(0)]));
-        assert_eq!(book.highwater.next(), CheckpointId(4));
-        assert_eq!(book.checkpoints.len(), 3);
+        assert_eq!(book.last().map(|last| last.id), Some(CheckpointId(0)));
+        assert_eq!(book.next_reservation(), CheckpointId(4));
+        assert_eq!(book.diff(CheckpointId(0)), None);
+        let discarded = book
+            .diff(CheckpointId(2))
+            .ok_or("discarded turn has no diff")?;
+        assert_eq!(discarded.checkpoint.commit, "2");
+        assert_eq!(discarded.parent.commit, "1");
         assert_eq!(
-            Book::replay(&[checkpoint(0), checkpoint(1)]).highwater,
-            CheckpointId(1)
+            Book::replay(&[checkpoint(0), checkpoint(1)]).next_reservation(),
+            CheckpointId(2)
         );
+        Ok(())
     }
 
     #[test]

@@ -5456,6 +5456,14 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
     let recovered = checkpoints.first().ok_or("expected a value")?;
     let latest = checkpoints.last().ok_or("expected a value")?;
     assert_eq!(recovered.parent, Some(retained.id));
+    let boundary = failed
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::HistoryMaterialized { history } => Some(history),
+            _ => None,
+        })
+        .ok_or("failed snapshot did not record the native boundary")?;
+    assert_eq!(&recovered.history, boundary);
     assert_eq!(latest.parent, Some(recovered.id));
     assert!(recovered.id > proto::CheckpointId(2));
     let diff = get_diff(&phone, session, latest.id).await?;
