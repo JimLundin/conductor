@@ -154,3 +154,36 @@ fn leaving_a_place_drops_what_was_typed_there() {
         )
     );
 }
+
+#[test]
+fn a_late_start_cannot_open_a_session_over_a_new_form() {
+    use super::{answer, form};
+    use crate::FormIntent;
+    use proto::{CommandResult, Rejection, SessionId};
+
+    let (starting, effects) = run(
+        paired(),
+        Vec::from([
+            super::connection(HOST, client::link::LinkState::Live, None),
+            roster(claude(signed_in())),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/old"))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    let (returned, _) = run(
+        back_to(starting, Place::NewSession),
+        Vec::from([Intent::Form(FormIntent::TypeDirectory(text("/new")))]),
+    );
+    for result in [
+        CommandResult::Started {
+            session: SessionId(9),
+        },
+        CommandResult::Rejected(Rejection::NoSuchDirectory),
+    ] {
+        let (late, ignored) =
+            run(returned.clone(), Vec::from([answer(&effects, Ok(result))]));
+        assert_eq!(form(&late), form(&returned));
+        assert_eq!(ignored, []);
+    }
+}

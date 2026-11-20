@@ -27,8 +27,8 @@ mod tests;
 use crate::prelude::*;
 use client::link::Update;
 use proto::{
-    CheckpointId, CommandBody, CommandResult, Effort, IssueId, ProjectId,
-    SessionId, Ticket, TicketError,
+    CheckpointId, CommandBody, CommandResult, Effort, IssueId, SessionId,
+    Ticket, TicketError,
 };
 
 pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
@@ -180,7 +180,7 @@ enum ReplyTo {
     Effort(Option<Effort>),
     Start,
     /// A new issue in this project: it opens once the host has it.
-    Created(ProjectId),
+    Created,
     Instance(Subject, Done),
     Diff {
         checkpoint: CheckpointId,

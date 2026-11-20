@@ -22,14 +22,13 @@ use proto::{
     ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Welcome,
 };
 
-use crate::credentials::{Done, Subject};
 use crate::{
     Action, AgentGroup, Ask, CredentialIntent, Detail, Diff, DiffFile,
     DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
     HostsScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
-    Patch, Place, QuestionBody, Reply, ReplyTo, Row, Saved, Screen,
-    SessionIntent, SessionPane, State, Stored, ToolDetail, ToolLine,
-    TurnChanges, UndoNote, sends, update, view,
+    Patch, Place, QuestionBody, Row, Saved, Screen, SessionIntent, SessionPane,
+    State, Stored, ToolDetail, ToolLine, TurnChanges, UndoNote, sends, update,
+    view,
 };
 
 const SESSION: SessionId = SessionId(7);
@@ -279,12 +278,25 @@ fn sent(effects: &[Effect]) -> Vec<CommandBody> {
         .collect()
 }
 
-const fn reply(to: ReplyTo) -> Reply {
-    Reply {
-        host: HOST,
-        visit: 1,
-        to,
-    }
+fn answer(effects: &[Effect], result: Result<CommandResult, String>) -> Intent {
+    let sent = effects.iter().find_map(|effect| match effect {
+        Effect::Send { reply, .. } => Some(reply),
+        _ => None,
+    });
+    assert!(sent.is_some(), "expected a command to answer");
+    sent.map_or(Intent::DismissNotice, |reply| {
+        Intent::Replied(reply.clone(), result)
+    })
+}
+
+fn local(effects: &[Effect]) -> Vec<Effect> {
+    effects
+        .iter()
+        .filter(|effect| {
+            !matches!(effect, Effect::Send { .. } | Effect::SaveHosts(_))
+        })
+        .cloned()
+        .collect()
 }
 
 fn line(state: &'static str, command: &str) -> ToolLine {
@@ -643,7 +655,12 @@ fn an_open_approval_offers_its_decisions_and_resolves_in_place() {
     let shown =
         |state: &State| card(state).map(|card| (card.id, card.open, card.ask));
     assert_eq!(
-        (shown(&open), shown(&resolved), decided),
+        (
+            shown(&open),
+            shown(&resolved),
+            sent(&decided),
+            local(&decided)
+        ),
         (
             Some((
                 text("request-3"),
@@ -669,18 +686,12 @@ fn an_open_approval_offers_its_decisions_and_resolves_in_place() {
                 false,
                 Ask::Resolved(text("Allowed for this session by phone"))
             )),
-            Vec::from([
-                Effect::Send {
-                    host: HOST,
-                    body: CommandBody::Resolve {
-                        session: SESSION,
-                        request: RequestId(3),
-                        decision: Decision::ApproveForSession,
-                    },
-                    reply: reply(ReplyTo::Notice),
-                },
-                Effect::Focus(Focus::Element(text("request-3"))),
-            ]),
+            Vec::from([CommandBody::Resolve {
+                session: SESSION,
+                request: RequestId(3),
+                decision: Decision::ApproveForSession,
+            }]),
+            Vec::from([Effect::Focus(Focus::Element(text("request-3")))]),
         )
     );
 }
@@ -969,7 +980,8 @@ fn a_closed_session_offers_continue_and_focuses_the_composer_that_follows() {
     assert_eq!(
         (
             pane(&closed).map(|shown| shown.footer),
-            effects,
+            sent(&effects),
+            local(&effects),
             pane(&continued).map(|shown| shown.status),
         ),
         (
@@ -977,14 +989,8 @@ fn a_closed_session_offers_continue_and_focuses_the_composer_that_follows() {
                 text: text("Stopped: reset"),
                 resume: true
             }),
-            Vec::from([
-                Effect::Send {
-                    host: HOST,
-                    body: CommandBody::Continue { session: SESSION },
-                    reply: reply(ReplyTo::Notice),
-                },
-                Effect::Focus(Focus::Composer),
-            ]),
+            Vec::from([CommandBody::Continue { session: SESSION }]),
+            Vec::from([Effect::Focus(Focus::Composer)]),
             Some(text("idle")),
         )
     );
@@ -1008,13 +1014,9 @@ fn removing_a_closed_session_sends_the_removal_and_leaves_its_pane() {
         ]),
     );
     assert_eq!(
-        (effects, pane(&removed)),
+        (sent(&effects), pane(&removed)),
         (
-            Vec::from([Effect::Send {
-                host: HOST,
-                body: CommandBody::RemoveSession { session: SESSION },
-                reply: reply(ReplyTo::Notice),
-            }]),
+            Vec::from([CommandBody::RemoveSession { session: SESSION }]),
             None,
         )
     );
@@ -1049,11 +1051,27 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
     ]));
     let (refused, put_back) = run(
         state.clone(),
-        Vec::from([Intent::Replied(
-            reply(ReplyTo::Effort(None)),
+        Vec::from([answer(
+            &effects,
             Ok(CommandResult::Rejected(Rejection::TurnInProgress)),
         )]),
     );
+    let (returned, _) = run(
+        state.clone(),
+        Vec::from([
+            Intent::Show(Place::Sessions),
+            Intent::Show(Place::Session(HOST, SESSION)),
+        ]),
+    );
+    let (late, ignored) = run(
+        returned.clone(),
+        Vec::from([answer(
+            &effects,
+            Ok(CommandResult::Rejected(Rejection::TurnInProgress)),
+        )]),
+    );
+    assert_eq!(pane(&late), pane(&returned));
+    assert_eq!(ignored, []);
     let picker = pane(&state).map(|shown| match shown.effort {
         EffortControl::Picker(choices) => choices
             .into_iter()
@@ -1066,10 +1084,8 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
     assert_eq!(
         (
             picker,
-            effects
-                .into_iter()
-                .filter(|effect| !matches!(effect, Effect::SaveHosts(_)))
-                .collect::<Vec<Effect>>(),
+            sent(&effects),
+            local(&effects),
             put_back,
             pane(&refused).and_then(|shown| shown.notice),
         ),
@@ -1079,14 +1095,11 @@ fn the_effort_picker_offers_the_models_efforts_and_puts_back_a_refusal() {
                 (text("low"), text("low effort"), false, false),
                 (text("high"), text("high effort"), false, false),
             ])),
-            Vec::from([Effect::Send {
-                host: HOST,
-                body: CommandBody::SetEffort {
-                    session: SESSION,
-                    effort: Effort::High
-                },
-                reply: reply(ReplyTo::Effort(None)),
+            Vec::from([CommandBody::SetEffort {
+                session: SESSION,
+                effort: Effort::High,
             }]),
+            Vec::new(),
             Vec::from([Effect::ShowEffort(String::new())]),
             Some(text("a turn is already running")),
         )
@@ -1125,12 +1138,8 @@ fn the_new_session_form_validates_and_shows_refusals_where_they_belong() {
             Intent::Form(FormIntent::Start),
         ]),
     );
-    let answered = |answer| {
-        run(
-            starting.clone(),
-            Vec::from([Intent::Replied(reply(ReplyTo::Start), Ok(answer))]),
-        )
-        .0
+    let answered = |result| {
+        run(starting.clone(), Vec::from([answer(&started, Ok(result))])).0
     };
     let refused = answered(CommandResult::Rejected(Rejection::NoSuchDirectory));
     let button = |state: &State| {
@@ -1257,13 +1266,7 @@ fn a_secret_is_sent_once_and_its_account_makes_the_instance() {
     let (stored, _) = run(
         saving.clone(),
         Vec::from([
-            Intent::Replied(
-                reply(ReplyTo::Instance(
-                    Subject::Add(Provider::Claude),
-                    Done::Stored,
-                )),
-                Ok(CommandResult::Instances(two_claudes())),
-            ),
+            answer(&saved, Ok(CommandResult::Instances(two_claudes()))),
             connection(HOST, LinkState::Live, None),
             roster(two_claudes()),
         ]),
@@ -1410,24 +1413,18 @@ fn an_instance_is_removed_and_a_refusal_shows_why() {
         ]),
     );
     let api = || id("https://gw.example");
-    let (_, removed) = run(
-        shown.clone(),
+    let (removing, removed) = run(
+        shown,
         Vec::from([Intent::Credential(HOST, CredentialIntent::Remove(api()))]),
     );
     let (refused, _) = run(
-        shown,
-        Vec::from([
-            Intent::Credential(HOST, CredentialIntent::Remove(api())),
-            Intent::Replied(
-                reply(ReplyTo::Instance(
-                    Subject::Instance(api()),
-                    Done::Removed,
-                )),
-                Ok(CommandResult::Rejected(Rejection::InstanceInUse {
-                    sessions: 1,
-                })),
-            ),
-        ]),
+        removing,
+        Vec::from([answer(
+            &removed,
+            Ok(CommandResult::Rejected(Rejection::InstanceInUse {
+                sessions: 1,
+            })),
+        )]),
     );
     let outcome = |state: &State| {
         pane_of(state).and_then(|pane| {
@@ -1539,13 +1536,6 @@ fn diff() -> CheckpointDiff {
     }
 }
 
-fn diff_reply() -> Reply {
-    reply(ReplyTo::Diff {
-        checkpoint: CheckpointId(1),
-        request: 1,
-    })
-}
-
 #[test]
 fn a_turns_changes_load_once_and_offer_undo_only_while_idle() {
     let show = Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
@@ -1558,22 +1548,18 @@ fn a_turns_changes_load_once_and_offer_undo_only_while_idle() {
         )
     };
     let (loading, asked) = turn(UndoAvailability::Available);
-    let loaded_with = |answer| {
-        run(
-            loading.clone(),
-            Vec::from([Intent::Replied(diff_reply(), answer)]),
-        )
-        .0
-    };
+    let loaded_with =
+        |result| run(loading.clone(), Vec::from([answer(&asked, result)])).0;
     let loaded = loaded_with(Ok(CommandResult::Diff(diff())));
     let (busy, _) = run(loaded.clone(), Vec::from([event(6, said("again"))]));
-    let (not_offered, _) = turn(UndoAvailability::Unavailable {
-        reason: text("no worktree"),
-    });
+    let (not_offered, unavailable_request) =
+        turn(UndoAvailability::Unavailable {
+            reason: text("no worktree"),
+        });
     let unavailable = run(
         not_offered,
-        Vec::from([Intent::Replied(
-            diff_reply(),
+        Vec::from([answer(
+            &unavailable_request,
             Ok(CommandResult::Diff(diff())),
         )]),
     )
@@ -1697,45 +1683,27 @@ fn undo_sends_the_checkpoint_and_the_pane_follows_its_progress() {
 }
 
 #[test]
-fn a_refusal_is_the_notice_until_dismissed_and_a_left_pane_drops_late_answers()
-{
-    let (state, effects) = opened(Vec::from([
-        Intent::Session(SessionIntent::Interrupt),
-        Intent::Replied(
-            reply(ReplyTo::Notice),
+fn a_refusal_is_the_notice_until_dismissed() {
+    let (interrupted, effects) =
+        opened(Vec::from([Intent::Session(SessionIntent::Interrupt)]));
+    let (state, _) = run(
+        interrupted,
+        Vec::from([answer(
+            &effects,
             Err(text("Not connected to the host yet.")),
-        ),
-    ]));
-    let (dismissed, _) = run(state.clone(), Vec::from([Intent::DismissNotice]));
-    let back = Vec::from([
-        Intent::Show(Place::Sessions),
-        Intent::Show(Place::Session(HOST, SESSION)),
-    ]);
-    let (returned, _) = run(state.clone(), back.clone());
-    let (late, _) = run(
-        state.clone(),
-        core::iter::once(Intent::Session(SessionIntent::ShowChanges(
-            CheckpointId(1),
-        )))
-        .chain(back)
-        .chain([Intent::Replied(
-            diff_reply(),
-            Ok(CommandResult::Diff(diff())),
-        )])
-        .collect(),
+        )]),
     );
+    let (dismissed, _) = run(state.clone(), Vec::from([Intent::DismissNotice]));
     assert_eq!(
         (
             sent(&effects),
             pane(&state).and_then(|shown| shown.notice),
             pane(&dismissed).and_then(|shown| shown.notice),
-            pane(&late) == pane(&returned),
         ),
         (
             Vec::from([CommandBody::Interrupt { session: SESSION }]),
             Some(text("Not connected to the host yet.")),
             None,
-            true,
         )
     );
 }
@@ -1795,13 +1763,7 @@ fn a_sign_in_starts_from_the_instance_and_takes_the_pasted_code_once() {
     );
     let (accepted, _) = run(
         submitted.clone(),
-        Vec::from([Intent::Replied(
-            reply(ReplyTo::Instance(
-                Subject::Instance(id("claude")),
-                Done::SignIn,
-            )),
-            Ok(CommandResult::Accepted),
-        )]),
+        Vec::from([answer(&sent_code, Ok(CommandResult::Accepted))]),
     );
     let paste = |state: &State| {
         sign_in_of(state)

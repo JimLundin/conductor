@@ -9,7 +9,7 @@ use proto::{
 };
 
 use crate::host::{Host, HostId, by_name};
-use crate::issues::{self, Drafts, IssueList};
+use crate::issues::{self, IssueList, Titles};
 use crate::{At, Effect, Intent, ReplyTo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +91,7 @@ pub struct CloneButton {
 /// the first live host whose home lists it, else the first that does.
 pub fn screen(
     hosts: &BTreeMap<HostId, Host>,
-    drafts: &Drafts,
+    drafts: &Titles,
     notice: Option<String>,
 ) -> ProjectsScreen {
     let listed = by_name(hosts);

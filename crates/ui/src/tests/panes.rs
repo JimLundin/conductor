@@ -8,7 +8,7 @@ use proto::{
 };
 
 use super::{
-    HOST, SESSION, a_turn, changes, created, diff, diff_reply, event, opened,
+    HOST, SESSION, a_turn, answer, changes, created, diff, event, opened,
     paired, pane, questions, rows, run, said, sent, text,
 };
 use crate::{
@@ -86,7 +86,7 @@ fn the_agents_tasks_count_those_done() {
 #[test]
 fn a_turns_changes_hang_under_its_end_and_only_the_latest_load_shows() {
     let show = || Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
-    let (reopened, _) = opened(
+    let (reopened, effects) = opened(
         a_turn(UndoAvailability::Available)
             .into_iter()
             .chain([
@@ -98,10 +98,7 @@ fn a_turns_changes_hang_under_its_end_and_only_the_latest_load_shows() {
     );
     let (late, _) = run(
         reopened.clone(),
-        Vec::from([Intent::Replied(
-            diff_reply(),
-            Ok(CommandResult::Diff(diff())),
-        )]),
+        Vec::from([answer(&effects, Ok(CommandResult::Diff(diff())))]),
     );
     assert_eq!(
         (
@@ -189,5 +186,79 @@ fn a_file_change_lists_each_file_with_its_verb() {
             shown("Edit", "b.rs"),
             shown("Delete", "c.rs"),
         ])))
+    );
+}
+
+#[test]
+fn a_diff_from_an_old_visit_does_not_answer_the_same_checkpoint_again() {
+    let show = || Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
+    let (loading, old) = opened(
+        a_turn(UndoAvailability::Available)
+            .into_iter()
+            .chain([show()])
+            .collect(),
+    );
+    let (reopened, new) = run(
+        loading,
+        Vec::from([
+            Intent::Show(Place::Sessions),
+            Intent::Show(Place::Session(HOST, SESSION)),
+            show(),
+        ]),
+    );
+    let (still_loading, _) = run(
+        reopened,
+        Vec::from([answer(&old, Ok(CommandResult::Diff(diff())))]),
+    );
+    let (loaded, _) = run(
+        still_loading.clone(),
+        Vec::from([answer(&new, Ok(CommandResult::Diff(diff())))]),
+    );
+    assert_eq!(
+        changes(&still_loading).map(|turn| turn.panel),
+        Some(DiffPanel::Loading)
+    );
+    assert!(matches!(
+        changes(&loaded).map(|turn| turn.panel),
+        Some(DiffPanel::Loaded(_))
+    ));
+}
+
+#[test]
+fn a_host_reset_drops_the_old_sessions_draft_and_pending_diff() {
+    let show = Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
+    let turn = a_turn(UndoAvailability::Available);
+    let (loading, old) = opened(
+        turn.iter()
+            .cloned()
+            .chain([
+                Intent::Session(SessionIntent::TypeMessage(text("old draft"))),
+                show.clone(),
+            ])
+            .collect(),
+    );
+    let (reset, _) = run(
+        loading,
+        Vec::from([Intent::Link(
+            HOST,
+            client::link::Update::Reset(proto::Epoch(2)),
+        )]),
+    );
+    assert!(pane(&reset).is_none());
+    let (reopened, _) = run(
+        reset,
+        [event(1, created()), event(2, EventKind::SessionReady)]
+            .into_iter()
+            .chain(turn)
+            .chain([show, answer(&old, Ok(CommandResult::Diff(diff())))])
+            .collect(),
+    );
+    assert_eq!(
+        changes(&reopened).map(|turn| turn.panel),
+        Some(DiffPanel::Loading)
+    );
+    assert_eq!(
+        super::composer(&reopened).map(|composer| composer.0),
+        Some(String::new())
     );
 }

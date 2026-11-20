@@ -4,15 +4,15 @@
 //! another place is shown.
 
 use alloc::collections::BTreeMap;
+use core::mem;
 
 use crate::prelude::*;
-use client::host_view::SessionView;
 use client::link::Update;
-use proto::{CommandResult, Effort, SessionId, Ticket, TicketError};
+use proto::{CommandResult, Effort, IssueId, SessionId, Ticket, TicketError};
 
 use crate::credentials::{CredentialsScreen, Forms};
 use crate::host::{Host, HostId, by_name};
-use crate::issues::{self, Drafts, IssueScreen, Shown};
+use crate::issues::{self, IssueDraft, IssueScreen, Shown, Titles};
 use crate::new_session::{Form, NewSessionForm};
 use crate::projects::{self, ProjectsScreen};
 use crate::saved::{Saved, decode};
@@ -26,7 +26,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     hosts: BTreeMap<HostId, Host>,
-    place: Place,
+    shown: ShownPlace,
     /// The host of the last session shown, where a new session starts.
     recent: Option<HostId>,
     /// The last command's refusal, shown under any session.
@@ -34,14 +34,34 @@ pub struct State {
     /// Counts the places shown. A form left since it sent a command
     /// ignores the answer.
     visit: u64,
-    form: Form,
-    credentials: BTreeMap<HostId, Forms>,
-    pane: Pane,
-    issues: Drafts,
-    pairing: Pairing,
     /// Why the join link the app opened on was refused. The pairing form
     /// says so each time it opens.
     first_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShownPlace {
+    Sessions,
+    AddHost(Pairing),
+    NewSession(Form),
+    Credentials(BTreeMap<HostId, Forms>),
+    Projects(Titles),
+    Session(HostId, SessionId, Option<Pane>),
+    Issue(HostId, IssueId, Option<IssueDraft>),
+}
+
+impl ShownPlace {
+    const fn place(&self) -> Place {
+        match self {
+            Self::Sessions => Place::Sessions,
+            Self::AddHost(_) => Place::AddHost,
+            Self::NewSession(_) => Place::NewSession,
+            Self::Credentials(_) => Place::Credentials,
+            Self::Projects(_) => Place::Projects,
+            Self::Session(host, id, _) => Place::Session(*host, *id),
+            Self::Issue(host, id, _) => Place::Issue(*host, *id),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -96,7 +116,7 @@ impl State {
             .as_ref()
             .and_then(|joined| joined.as_ref().err())
             .map(invalid);
-        let hosts = decode(&opening.stored)
+        let hosts: BTreeMap<_, _> = decode(&opening.stored)
             .into_iter()
             .map(|saved| {
                 (
@@ -105,20 +125,17 @@ impl State {
                 )
             })
             .collect();
+        let shown = if hosts.is_empty() {
+            ShownPlace::AddHost(Pairing::new(first_error.clone()))
+        } else {
+            ShownPlace::Sessions
+        };
         let opened = Self {
             hosts,
-            place: Place::Sessions,
+            shown,
             recent: None,
             notice: None,
             visit: 0,
-            form: Form::default(),
-            credentials: BTreeMap::new(),
-            pane: Pane::default(),
-            issues: Drafts::default(),
-            pairing: Pairing {
-                text: String::new(),
-                error: first_error.clone(),
-            },
             first_error,
         };
         match opening.joined {
@@ -139,79 +156,65 @@ impl State {
             .collect()
     }
 
-    pub(crate) fn update(self, intent: Intent) -> (Self, Vec<Effect>) {
+    pub(crate) fn update(mut self, intent: Intent) -> (Self, Vec<Effect>) {
         match intent {
-            Intent::TypeJoin(text) => (
-                Self {
-                    pairing: Pairing {
-                        text,
-                        error: self.pairing.error.clone(),
-                    },
-                    ..self
-                },
-                Vec::new(),
-            ),
-            Intent::Join(Ok(ticket)) => {
+            Intent::TypeJoin(text) => {
+                if let ShownPlace::AddHost(pairing) = &mut self.shown {
+                    pairing.text = text;
+                }
+                (self, Vec::new())
+            }
+            Intent::Join(Ok(ticket))
+                if matches!(self.shown, ShownPlace::AddHost(_)) =>
+            {
                 let next = self.paired(ticket);
                 let saved = next.saved();
                 (next, Vec::from([Effect::SaveHosts(saved)]))
             }
-            Intent::Join(Err(error)) => (
-                Self {
-                    pairing: Pairing {
-                        text: self.pairing.text.clone(),
-                        error: Some(invalid(&error)),
-                    },
-                    ..self
-                },
-                Vec::new(),
-            ),
+            Intent::Join(Ok(_)) => (self, Vec::new()),
+            Intent::Join(Err(error)) => {
+                if let ShownPlace::AddHost(pairing) = &mut self.shown {
+                    pairing.error = Some(invalid(&error));
+                }
+                (self, Vec::new())
+            }
             Intent::Forget(host) => self.forget(host),
             Intent::Link(host, update) => self.linked(host, update),
             Intent::Show(place) => (self.show(place), Vec::new()),
-            Intent::DismissNotice => (
-                Self {
-                    notice: None,
-                    ..self
-                },
-                Vec::new(),
-            ),
-            Intent::Form(change) => {
-                let (form, effects) =
-                    self.form.update(change, &self.hosts, self.visit);
-                (Self { form, ..self }, effects)
+            Intent::DismissNotice => {
+                self.notice = None;
+                (self, Vec::new())
             }
+            Intent::Form(change) => self.form(change),
             Intent::Credential(host, change) => self.credential(host, change),
             Intent::Project(host, change) => {
-                let at = At {
-                    host,
-                    visit: self.visit,
+                let effects = if matches!(self.shown, ShownPlace::Projects(_))
+                    && self.hosts.contains_key(&host)
+                {
+                    change.send(At {
+                        host,
+                        visit: self.visit,
+                    })
+                } else {
+                    Vec::new()
                 };
-                (self, change.send(at))
+                (self, effects)
             }
             Intent::Session(change) => self.session(change),
-            Intent::NewIssue(change) => {
-                let (issues, effects) =
-                    self.issues.clone().new_issue(change, self.visit);
-                (Self { issues, ..self }, effects)
-            }
+            Intent::NewIssue(change) => self.new_issue(change),
             Intent::Issue(change) => self.issue(change),
             Intent::StartOn(host, issue) => {
-                let shown = self.show(Place::NewSession);
-                (
-                    Self {
-                        form: Form::on_issue(host, issue),
-                        ..shown
-                    },
-                    Vec::new(),
-                )
+                if !self.hosts.is_empty() {
+                    self.replace(ShownPlace::NewSession(Form::on_issue(
+                        host, issue,
+                    )));
+                }
+                (self, Vec::new())
             }
             Intent::Replied(reply, answer) => self.replied(reply, answer),
         }
     }
 
-    /// Adds the host, or gives a known one its new ticket, and leaves the
-    /// pairing form.
     fn paired(mut self, ticket: Ticket) -> Self {
         let id = HostId::of(&ticket);
         let host = match self.hosts.remove(&id) {
@@ -219,44 +222,27 @@ impl State {
             None => Host::new(ticket, None),
         };
         self.hosts.insert(id, host);
-        let shown = match self.place {
-            Place::AddHost => self.show(Place::Sessions),
-            Place::Sessions
-            | Place::NewSession
-            | Place::Credentials
-            | Place::Projects
-            | Place::Session(..)
-            | Place::Issue(..) => self,
-        };
-        Self {
-            pairing: Pairing::default(),
-            ..shown
+        if matches!(self.shown, ShownPlace::AddHost(_)) {
+            self.replace(ShownPlace::Sessions);
         }
+        self
     }
 
-    /// Drops the host and what was open on it. With none left, the app
-    /// asks to pair again.
     fn forget(mut self, host: HostId) -> (Self, Vec<Effect>) {
         self.hosts.remove(&host);
-        self.credentials.remove(&host);
         self.recent = self.recent.filter(|recent| *recent != host);
-        let left =
-            match (self.place.host() == Some(host), self.hosts.is_empty()) {
-                (true, _) | (_, true) => self.show(Place::Sessions),
-                (false, false) => self,
-            };
-        let saved = left.saved();
-        let error = left.first_error.clone();
-        (
-            Self {
-                pairing: Pairing {
-                    text: String::new(),
-                    error,
-                },
-                ..left
-            },
-            Vec::from([Effect::SaveHosts(saved)]),
-        )
+        if self.hosts.is_empty() || matches!(self.shown, ShownPlace::AddHost(_))
+        {
+            self.replace(ShownPlace::AddHost(Pairing::new(
+                self.first_error.clone(),
+            )));
+        } else if self.shown.place().host() == Some(host) {
+            self.replace(ShownPlace::Sessions);
+        } else if let ShownPlace::Credentials(forms) = &mut self.shown {
+            forms.remove(&host);
+        }
+        let saved = self.saved();
+        (self, Vec::from([Effect::SaveHosts(saved)]))
     }
 
     fn linked(mut self, host: HostId, update: Update) -> (Self, Vec<Effect>) {
@@ -264,6 +250,18 @@ impl State {
             return (self, Vec::new());
         };
         let (next, renamed) = known.linked(update);
+        let left = match &mut self.shown {
+            ShownPlace::Session(selected, id, draft) if *selected == host => {
+                sync_draft(draft, next.fold.view.sessions.contains_key(id))
+            }
+            ShownPlace::Issue(selected, id, draft) if *selected == host => {
+                sync_draft(draft, issues::find(&next, *id).is_some())
+            }
+            _ => false,
+        };
+        if left {
+            self.visit = self.visit.wrapping_add(1);
+        }
         self.hosts.insert(host, next);
         let effects = renamed
             .then(|| Effect::SaveHosts(self.saved()))
@@ -272,28 +270,55 @@ impl State {
         (self, effects)
     }
 
-    /// Showing another place drops what the last one held: its drafts, the
-    /// forms' fields and the open diffs.
-    fn show(self, place: Place) -> Self {
-        if place == self.place {
+    fn replace(&mut self, shown: ShownPlace) {
+        self.shown = shown;
+        self.visit = self.visit.wrapping_add(1);
+    }
+
+    fn show(mut self, place: Place) -> Self {
+        if self.hosts.is_empty() || place == self.shown.place() {
             return self;
         }
-        let recent = place.host().or(self.recent);
-        let error = self.first_error.clone();
-        Self {
-            place,
-            recent,
-            visit: self.visit.wrapping_add(1),
-            form: Form::on(recent),
-            credentials: BTreeMap::new(),
-            pane: Pane::default(),
-            issues: Drafts::default(),
-            pairing: Pairing {
-                text: String::new(),
-                error,
-            },
-            ..self
-        }
+        self.recent = place.host().or(self.recent);
+        let shown = match place {
+            Place::Sessions => ShownPlace::Sessions,
+            Place::AddHost => {
+                ShownPlace::AddHost(Pairing::new(self.first_error.clone()))
+            }
+            Place::NewSession => ShownPlace::NewSession(Form::on(self.recent)),
+            Place::Credentials => ShownPlace::Credentials(BTreeMap::new()),
+            Place::Projects => ShownPlace::Projects(Titles::default()),
+            Place::Session(host, id) => {
+                let draft = self
+                    .hosts
+                    .get(&host)
+                    .is_some_and(|known| {
+                        known.fold.view.sessions.contains_key(&id)
+                    })
+                    .then(Pane::default);
+                ShownPlace::Session(host, id, draft)
+            }
+            Place::Issue(host, id) => {
+                let draft = self
+                    .hosts
+                    .get(&host)
+                    .and_then(|known| issues::find(known, id))
+                    .map(|_| IssueDraft::default());
+                ShownPlace::Issue(host, id, draft)
+            }
+        };
+        self.replace(shown);
+        self
+    }
+
+    fn form(mut self, intent: crate::FormIntent) -> (Self, Vec<Effect>) {
+        let ShownPlace::NewSession(form) = &mut self.shown else {
+            return (self, Vec::new());
+        };
+        let (next, effects) =
+            mem::take(form).update(intent, &self.hosts, self.visit);
+        *form = next;
+        (self, effects)
     }
 
     fn credential(
@@ -301,11 +326,13 @@ impl State {
         host: HostId,
         intent: crate::CredentialIntent,
     ) -> (Self, Vec<Effect>) {
-        let Some(known) = self.hosts.get(&host) else {
+        let (ShownPlace::Credentials(forms), Some(known)) =
+            (&mut self.shown, self.hosts.get(&host))
+        else {
             return (self, Vec::new());
         };
-        let kept = self.credentials.remove(&host).unwrap_or_default();
-        let (forms, effects) = kept.update(
+        let kept = forms.entry(host).or_default();
+        let (next, effects) = mem::take(kept).update(
             intent,
             At {
                 host,
@@ -313,66 +340,63 @@ impl State {
             },
             &known.fold.catalog,
         );
-        self.credentials.insert(host, forms);
+        *kept = next;
         (self, effects)
     }
 
-    fn session(self, intent: SessionIntent) -> (Self, Vec<Effect>) {
-        let Place::Session(host, id) = self.place else {
+    fn session(mut self, intent: SessionIntent) -> (Self, Vec<Effect>) {
+        let ShownPlace::Session(host, id, Some(pane)) = &mut self.shown else {
             return (self, Vec::new());
         };
         let Some(session) = self
             .hosts
-            .get(&host)
-            .and_then(|known| known.fold.view.sessions.get(&id))
+            .get(host)
+            .and_then(|known| known.fold.view.sessions.get(id))
         else {
             return (self, Vec::new());
         };
         let at = At {
-            host,
+            host: *host,
             visit: self.visit,
         };
-        let (pane, effects) = self.pane.update(intent, id, session, at);
-        (Self { pane, ..self }, effects)
+        let (next, effects) = mem::take(pane).update(intent, *id, session, at);
+        *pane = next;
+        (self, effects)
     }
 
-    fn issue(self, intent: IssueIntent) -> (Self, Vec<Effect>) {
-        let Place::Issue(host, id) = self.place else {
+    fn new_issue(
+        mut self,
+        intent: crate::NewIssueIntent,
+    ) -> (Self, Vec<Effect>) {
+        let ShownPlace::Projects(titles) = &mut self.shown else {
+            return (self, Vec::new());
+        };
+        let (next, effects) = mem::take(titles).new_issue(intent, self.visit);
+        *titles = next;
+        (self, effects)
+    }
+
+    fn issue(mut self, intent: IssueIntent) -> (Self, Vec<Effect>) {
+        let ShownPlace::Issue(host, id, Some(draft)) = &mut self.shown else {
             return (self, Vec::new());
         };
         let Some((_, issue)) = self
             .hosts
-            .get(&host)
-            .and_then(|known| issues::find(known, id))
+            .get(host)
+            .and_then(|known| issues::find(known, *id))
         else {
             return (self, Vec::new());
         };
         let shown = Shown {
             at: At {
-                host,
+                host: *host,
                 visit: self.visit,
             },
             issue,
         };
-        let (drafts, effects) = self.issues.clone().update(intent, &shown);
-        (
-            Self {
-                issues: drafts,
-                ..self
-            },
-            effects,
-        )
-    }
-
-    /// The session shown, if its host still reports it.
-    fn selected(&self) -> Option<(HostId, SessionId, &SessionView)> {
-        let Place::Session(host, id) = self.place else {
-            return None;
-        };
-        self.hosts
-            .get(&host)
-            .and_then(|known| known.fold.view.sessions.get(&id))
-            .map(|session| (host, id, session))
+        let (next, effects) = mem::take(draft).update(intent, &shown);
+        *draft = next;
+        (self, effects)
     }
 
     fn replied(
@@ -380,48 +404,61 @@ impl State {
         reply: Reply,
         answer: Result<CommandResult, String>,
     ) -> (Self, Vec<Effect>) {
-        let Some(name) = self.hosts.get(&reply.host).map(Host::name) else {
+        if reply.visit != self.visit {
+            return (self, Vec::new());
+        }
+        let Some(known) = self.hosts.get(&reply.host) else {
             return (self, Vec::new());
         };
-        let current = reply.visit == self.visit;
-        match (reply.to, current) {
-            (ReplyTo::Notice, _) => (
-                Self {
-                    notice: refusal(answer),
-                    ..self
-                },
-                Vec::new(),
-            ),
-            (ReplyTo::Effort(shown), _) => self.effort_refused(shown, answer),
-            (ReplyTo::Start, _) => {
-                (self.started(reply.host, answer, current), Vec::new())
+        match (&mut self.shown, reply.to) {
+            (_, ReplyTo::Notice) => self.notice = refusal(answer),
+            (ShownPlace::Session(_, _, Some(_)), ReplyTo::Effort(shown)) => {
+                return self.effort_refused(shown, answer);
             }
-            (ReplyTo::Created(project), _) => {
-                (self.opened(reply.host, &project, answer), Vec::new())
+            (ShownPlace::NewSession(form), ReplyTo::Start) => {
+                if let Ok(CommandResult::Started { session }) = answer {
+                    self = self.show(Place::Session(reply.host, session));
+                } else {
+                    *form = mem::take(form).answered(answer);
+                }
             }
-            (ReplyTo::Instance(subject, done), true) => {
-                let forms = self
-                    .credentials
-                    .remove(&reply.host)
-                    .unwrap_or_default()
-                    .replied(subject, done, answer, &name);
-                self.credentials.insert(reply.host, forms);
-                (self, Vec::new())
+            (ShownPlace::Projects(_), ReplyTo::Created) => {
+                if let Ok(CommandResult::IssueCreated { issue }) = answer {
+                    self = self.show(Place::Issue(reply.host, issue));
+                } else {
+                    self.notice = refusal(answer);
+                }
             }
             (
+                ShownPlace::Credentials(forms),
+                ReplyTo::Instance(subject, done),
+            ) => {
+                if let Some(host_forms) = forms.get_mut(&reply.host) {
+                    *host_forms = mem::take(host_forms).replied(
+                        subject,
+                        done,
+                        answer,
+                        &known.name(),
+                    );
+                }
+            }
+            (
+                ShownPlace::Session(_, _, Some(pane)),
                 ReplyTo::Diff {
                     checkpoint,
                     request,
                 },
-                true,
             ) => {
-                let pane = self.pane.diffed(checkpoint, request, answer, &name);
-                (Self { pane, ..self }, Vec::new())
+                *pane = mem::take(pane).diffed(
+                    checkpoint,
+                    request,
+                    answer,
+                    &known.name(),
+                );
             }
-            (ReplyTo::Instance(..) | ReplyTo::Diff { .. }, false) => {
-                (self, Vec::new())
-            }
+            _ => {}
         }
+        (self, Vec::new())
     }
 
     /// A refused effort change goes to the notice, and the picker back to
@@ -447,54 +484,13 @@ impl State {
         }
     }
 
-    /// A new issue opens, its title draft gone; a refusal is the notice.
-    fn opened(
-        self,
-        host: HostId,
-        project: &proto::ProjectId,
-        answer: Result<CommandResult, String>,
-    ) -> Self {
-        match answer {
-            Ok(CommandResult::IssueCreated { issue }) => {
-                let issues = self.issues.clone().created(project);
-                Self { issues, ..self }.show(Place::Issue(host, issue))
-            }
-            other => Self {
-                notice: refusal(other),
-                ..self
-            },
-        }
-    }
-
-    /// A started session opens; the form shows any refusal.
-    fn started(
-        self,
-        host: HostId,
-        answer: Result<CommandResult, String>,
-        current: bool,
-    ) -> Self {
-        let opened = match &answer {
-            Ok(CommandResult::Started { session }) => Some(*session),
-            Ok(_) | Err(_) => None,
-        };
-        let answered = if current {
-            Self {
-                form: self.form.answered(answer),
-                ..self
-            }
-        } else {
-            self
-        };
-        match opened {
-            Some(session) => answered.show(Place::Session(host, session)),
-            None => answered,
-        }
-    }
-
     pub(crate) fn screen(&self) -> Screen {
-        if self.hosts.is_empty() {
-            return Screen::Pair(self.pair());
+        if let ShownPlace::AddHost(pairing) = &self.shown
+            && self.hosts.is_empty()
+        {
+            return Screen::Pair(pairing.screen());
         }
+        let place = self.shown.place();
         let detail = self.detail();
         Screen::Hosts(Box::new(HostsScreen {
             links: self
@@ -515,63 +511,45 @@ impl State {
                 | Detail::Session(_)
                 | Detail::Issue(_) => "detail",
             },
-            add_current: self.place == Place::AddHost,
-            credentials_current: self.place == Place::Credentials,
+            add_current: place == Place::AddHost,
+            credentials_current: place == Place::Credentials,
             projects_current: matches!(
-                self.place,
+                place,
                 Place::Projects | Place::Issue(..)
             ),
-            list: sessions::list(&self.hosts, self.place),
+            list: sessions::list(&self.hosts, place),
             detail,
         }))
     }
 
-    fn pair(&self) -> Pair {
-        Pair {
-            text: self.pairing.text.clone(),
-            connect_disabled: self.pairing.text.trim().is_empty(),
-            error: self.pairing.error.clone(),
-        }
-    }
-
-    /// A session its host no longer reports (after a reset, or once the
-    /// host is forgotten) falls back to the placeholder, and a phone to the
-    /// list, its only way out.
     fn detail(&self) -> Detail {
-        match (self.place, self.selected()) {
-            (Place::AddHost, _) => Detail::Pair(self.pair()),
-            (Place::NewSession, _) => {
-                Detail::NewSession(Box::new(self.form.screen(&self.hosts)))
+        match &self.shown {
+            ShownPlace::AddHost(pairing) => Detail::Pair(pairing.screen()),
+            ShownPlace::NewSession(form) => {
+                Detail::NewSession(Box::new(form.screen(&self.hosts)))
             }
-            (Place::Credentials, _) => {
+            ShownPlace::Credentials(forms) => {
                 let empty = Forms::default();
                 Detail::Credentials(Box::new(CredentialsScreen {
                     hosts: by_name(&self.hosts)
                         .into_iter()
                         .map(|(id, host)| {
-                            self.credentials
-                                .get(&id)
-                                .unwrap_or(&empty)
-                                .screen(id, host)
+                            forms.get(&id).unwrap_or(&empty).screen(id, host)
                         })
                         .collect(),
                 }))
             }
-            (Place::Projects, _) => {
-                Detail::Projects(Box::new(projects::screen(
-                    &self.hosts,
-                    &self.issues,
-                    self.notice.clone(),
-                )))
-            }
-            (Place::Issue(host, id), _) => self
+            ShownPlace::Projects(titles) => Detail::Projects(Box::new(
+                projects::screen(&self.hosts, titles, self.notice.clone()),
+            )),
+            ShownPlace::Issue(host, id, Some(draft)) => self
                 .hosts
-                .get(&host)
+                .get(host)
                 .and_then(|known| {
                     issues::screen(
-                        (host, known),
-                        id,
-                        (&self.issues, &self.hosts),
+                        (*host, known),
+                        *id,
+                        (draft, &self.hosts),
                         self.notice.clone(),
                     )
                 })
@@ -581,24 +559,55 @@ impl State {
                     ),
                     |screen| Detail::Issue(Box::new(screen)),
                 ),
-            (Place::Session(..), Some((host, id, session))) => {
-                let known = self.hosts.get(&host);
-                let empty_catalog = proto::Catalog::default();
-                let catalog =
-                    known.map_or(&empty_catalog, |host| &host.fold.catalog);
-                Detail::Session(Box::new(self.pane.screen(
-                    id,
-                    session,
-                    (
-                        known.and_then(|host| host.fold.instances.as_ref()),
-                        catalog,
-                    ),
-                    (self.notice.clone(), known.map_or_default(Host::name)),
-                )))
+            ShownPlace::Issue(_, _, None) => {
+                Detail::Placeholder("That issue is gone from its host's home.")
             }
-            (Place::Sessions | Place::Session(..), _) => {
-                Detail::Placeholder("Choose a session, or start a new one.")
+            ShownPlace::Session(host, id, Some(pane)) => self
+                .hosts
+                .get(host)
+                .and_then(|known| {
+                    let session = known.fold.view.sessions.get(id)?;
+                    Some(Detail::Session(Box::new(pane.screen(
+                        *id,
+                        session,
+                        (known.fold.instances.as_ref(), &known.fold.catalog),
+                        (self.notice.clone(), known.name()),
+                    ))))
+                })
+                .unwrap_or_else(session_placeholder),
+            ShownPlace::Sessions | ShownPlace::Session(_, _, None) => {
+                session_placeholder()
             }
+        }
+    }
+}
+
+fn sync_draft<D: Default>(draft: &mut Option<D>, visible: bool) -> bool {
+    if visible {
+        draft.get_or_insert_with(D::default);
+        false
+    } else {
+        draft.take().is_some()
+    }
+}
+
+const fn session_placeholder() -> Detail {
+    Detail::Placeholder("Choose a session, or start a new one.")
+}
+
+impl Pairing {
+    const fn new(error: Option<String>) -> Self {
+        Self {
+            text: String::new(),
+            error,
+        }
+    }
+
+    fn screen(&self) -> Pair {
+        Pair {
+            text: self.text.clone(),
+            connect_disabled: self.text.trim().is_empty(),
+            error: self.error.clone(),
         }
     }
 }

@@ -143,6 +143,7 @@ fn two_homes() -> crate::State {
     let (shown, _) = run(
         paired(),
         Vec::from([
+            Intent::Show(Place::AddHost),
             Intent::Join(Ok(laptop())),
             welcomed(HOST, "desk", claude(signed_in()), Some(desk_home())),
             connection(HOST, LinkState::Live, None),
@@ -304,6 +305,7 @@ fn a_host_with_no_home_or_no_link_says_so_and_offers_nothing() {
     let (shown, _) = run(
         paired(),
         Vec::from([
+            Intent::Show(Place::AddHost),
             Intent::Join(Ok(laptop())),
             welcomed(HOST, "desk", claude(signed_in()), None),
             connection(HOST, LinkState::Live, None),
@@ -1017,14 +1019,12 @@ fn a_refused_issue_is_the_notice_and_keeps_its_title()
 }
 
 #[test]
-fn an_issue_made_while_it_is_shown_keeps_its_drafts_but_the_title()
+fn a_late_created_reply_cannot_open_an_issue_or_clear_a_new_title()
 -> Result<(), &'static str> {
     let alpha = || ProjectId(text("alpha"));
-    let item = || Intent::Issue(IssueIntent::TypeItem(text("docs")));
     let (typed, effects) = run(
-        on_issue(),
+        with_issues(),
         Vec::from([
-            item(),
             Intent::NewIssue(NewIssueIntent::TypeTitle(
                 alpha(),
                 text("Remove"),
@@ -1033,14 +1033,35 @@ fn an_issue_made_while_it_is_shown_keeps_its_drafts_but_the_title()
         ]),
     );
     let reply = reply_of(&effects).ok_or("no reply")?;
-    let (made, _) = run(
+    let (on_issue, _) = run(
         typed,
-        Vec::from([Intent::Replied(
-            reply,
-            Ok(CommandResult::IssueCreated { issue: OPENED }),
-        )]),
+        Vec::from([
+            Intent::Show(Place::Issue(HOST, OPENED)),
+            Intent::Issue(IssueIntent::TypeItem(text("docs"))),
+        ]),
     );
-    assert_eq!(made, run(on_issue(), Vec::from([item()])).0);
+    let answer = Intent::Replied(
+        reply,
+        Ok(CommandResult::IssueCreated { issue: CLOSED }),
+    );
+    let on_issue_before_reply = on_issue.clone();
+    let (still_open, _) = run(on_issue.clone(), Vec::from([answer.clone()]));
+    let (returned, _) = run(
+        on_issue,
+        Vec::from([
+            Intent::Show(Place::Projects),
+            Intent::NewIssue(NewIssueIntent::TypeTitle(
+                alpha(),
+                text("New draft"),
+            )),
+        ]),
+    );
+    let (still_typing, _) = run(returned.clone(), Vec::from([answer]));
+    assert_eq!(
+        issue_screen(&still_open),
+        issue_screen(&on_issue_before_reply)
+    );
+    assert_eq!(projects(&still_typing), projects(&returned));
     Ok(())
 }
 
