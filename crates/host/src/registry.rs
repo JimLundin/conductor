@@ -38,6 +38,7 @@ use proto::{
     Event, EventKind, Instance, InstanceId, InstanceStatus, Instances, IssueId,
     ModelId, Models, Provider, Rejection, Roster, SessionId,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Note;
@@ -170,10 +171,7 @@ pub fn picked(
     provider: Provider,
     account: Option<&str>,
 ) -> Result<InstanceId, String> {
-    let id = account.map_or_else(
-        || InstanceId::own(provider),
-        |named| InstanceId::named(provider, named),
-    );
+    let id = sign_in_instance(provider, account);
     if roster.of(&id).is_some() {
         return Ok(id);
     }
@@ -197,37 +195,89 @@ pub fn picked(
     })
 }
 
-/// What a sign-in of `from` that the CLI says is `account`'s makes of the
-/// roster.
-///
-/// That is `None` when it is `from`'s own account or the CLI named none,
-/// and otherwise the roster with that account's instance, signed in on
-/// its own, in place of `from`, and the instance. An own instance stays,
-/// fresh, for the next sign-in.
+/// Which instance a terminal sign-in requests.
 #[must_use]
-pub fn signed_in_as(
-    roster: &Roster,
-    from: &InstanceId,
-    account: Option<Account>,
-) -> Option<(Roster, InstanceId)> {
-    let named = account.filter(|named| named != &from.account)?;
-    let settings = roster.of(from)?;
-    let to = InstanceId {
-        provider: from.provider,
-        account: named,
-    };
-    let mut next = roster.clone();
-    if from.account != Account::Own {
-        next.0.remove(from);
+pub fn sign_in_instance(
+    provider: Provider,
+    account: Option<&str>,
+) -> InstanceId {
+    account.map_or_else(
+        || InstanceId::own(provider),
+        |named| InstanceId::named(provider, named),
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountAdoption {
+    pub from: InstanceId,
+    pub to: InstanceId,
+}
+
+pub enum AdoptionReplay {
+    Install(Roster),
+    Committed(Roster),
+}
+
+impl AccountAdoption {
+    /// A new account named by a confirmed sign-in.
+    #[must_use]
+    pub fn named(from: &InstanceId, reported: Option<Account>) -> Option<Self> {
+        let account = reported.filter(|named| named != &from.account)?;
+        Some(Self {
+            from: from.clone(),
+            to: InstanceId {
+                provider: from.provider,
+                account,
+            },
+        })
     }
-    next.0.insert(
-        to.clone(),
-        Instance {
-            credential: None,
-            ..settings.clone()
-        },
-    );
-    Some((next, to))
+
+    /// The result of retrying the source instance's sign-in.
+    #[must_use]
+    pub fn destination_for(
+        &self,
+        requested: &InstanceId,
+    ) -> Option<&InstanceId> {
+        (&self.from == requested).then_some(&self.to)
+    }
+
+    /// The adopted account takes the source's settings and signs in through
+    /// its private home. The provider's own instance remains available.
+    #[must_use]
+    pub fn plan(&self, roster: &Roster) -> Option<Roster> {
+        if self.from.provider != self.to.provider || self.from == self.to {
+            return None;
+        }
+        let settings = roster.of(&self.from)?;
+        let mut next = roster.clone();
+        if self.from.account != Account::Own {
+            next.0.remove(&self.from);
+        }
+        next.0.insert(
+            self.to.clone(),
+            Instance {
+                credential: None,
+                ..settings.clone()
+            },
+        );
+        Some(next)
+    }
+
+    /// Resolves where to resume an adoption against the current roster.
+    /// # Errors
+    /// Neither a source nor a destination instance remains.
+    pub fn replay(
+        &self,
+        roster: Roster,
+    ) -> Result<AdoptionReplay, &'static str> {
+        if let Some(next) = self.plan(&roster) {
+            return Ok(AdoptionReplay::Install(next));
+        }
+        if roster.of(&self.to).is_some() {
+            return Ok(AdoptionReplay::Committed(roster));
+        }
+        Err("the adoption has neither a source nor a destination instance")
+    }
 }
 
 /// The sessions whose agents run, or start, after `history`: created or
@@ -319,10 +369,7 @@ pub enum Change {
     Added(InstanceId),
     /// A sign-in of `from` named `to`'s account. The shell commits
     /// ownership of the private directories with the roster change.
-    SignedIn {
-        from: InstanceId,
-        to: InstanceId,
-    },
+    SignedIn(AccountAdoption),
     Removed(InstanceId),
 }
 
@@ -352,7 +399,7 @@ impl Change {
             Self::Removed(instance) => {
                 current.0.remove(instance);
             }
-            Self::SignedIn { .. } => return false,
+            Self::SignedIn(_) => return false,
         }
         true
     }
@@ -568,11 +615,12 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         account: Option<Account>,
         reply: R,
     ) -> Vec<Effect<S, R>> {
-        if let Some((roster, to)) =
-            signed_in_as(&self.roster, &instance, account)
+        if let Some((adoption, roster)) =
+            AccountAdoption::named(&instance, account).and_then(|adoption| {
+                adoption.plan(&self.roster).map(|roster| (adoption, roster))
+            })
         {
-            let change = Change::SignedIn { from: instance, to };
-            return self.save(roster, change, reply);
+            return self.save(roster, Change::SignedIn(adoption), reply);
         }
         if let Some(Launcher::Running { own, .. }) =
             self.launchers.get_mut(&instance)
@@ -702,7 +750,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 };
                 logged(note, self.launch(instance, Vec::from([reply])))
             }
-            Change::SignedIn { from, to } => {
+            Change::SignedIn(AccountAdoption { from, to }) => {
                 let mut waiting = self.forget(&to);
                 waiting.push(reply);
                 let note = Note::InstanceAdded {

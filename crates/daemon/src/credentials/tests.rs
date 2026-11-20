@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use host::registry::Change;
+use host::registry::{AccountAdoption, Change};
 use proto::{Catalog, Instance, InstanceId, ModelId, Provider, Roster};
 
 use super::{Store, Stored};
@@ -36,6 +36,13 @@ impl Data {
 impl Drop for Data {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn adoption(from: &InstanceId, to: &InstanceId) -> AccountAdoption {
+    AccountAdoption {
+        from: from.clone(),
+        to: to.clone(),
     }
 }
 
@@ -75,7 +82,17 @@ fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
     let blocked = data.private("work", &to);
     fs::write(&blocked, "blocked")?;
 
-    assert!(store.adopt(&store.signing(&from)?, &to).is_err());
+    assert!(
+        store
+            .adopt(
+                &store.signing(&from)?,
+                AccountAdoption {
+                    from: from.clone(),
+                    to: to.clone()
+                }
+            )
+            .is_err()
+    );
     assert!(!data.private("home", &from).try_exists()?);
     assert_eq!(
         fs::read_to_string(data.private("home", &to).join("marker"))?,
@@ -105,6 +122,56 @@ fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn retry_installs_the_staged_directory_after_the_destination_is_recreated()
+-> anyhow::Result<()> {
+    let data = Data::new()?;
+    let catalog = Catalog::default();
+    let from = InstanceId::named(Provider::Codex, "source");
+    let to = InstanceId::named(Provider::Codex, "signed-in");
+    let mut roster = Roster::default();
+    roster.0.insert(from.clone(), Instance::default());
+    roster.0.insert(to.clone(), Instance::default());
+    let (store, _) = Store::open(&data.0, catalog)?;
+    store.save(&roster)?;
+    data.put("work", &from, "signed-in files")?;
+
+    let destination = data.private("work", &to);
+    fs::write(&destination, "blocked")?;
+    assert!(
+        store
+            .adopt(
+                &store.signing(&from)?,
+                AccountAdoption {
+                    from: from.clone(),
+                    to: to.clone()
+                }
+            )
+            .is_err()
+    );
+    fs::remove_file(&destination)?;
+    data.put("work", &to, "previous destination")?;
+    let backup = data.0.join("work/.adoption-backup");
+    fs::rename(&destination, &backup)?;
+    data.put("work", &to, "recreated destination")?;
+
+    let blocked = data.0.join("credentials.new");
+    fs::create_dir(&blocked)?;
+    assert!(store.resume_adoption().is_err());
+    assert_eq!(
+        fs::read_to_string(backup.join("marker"))?,
+        "previous destination"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("marker"))?,
+        "signed-in files"
+    );
+    fs::remove_dir(blocked)?;
+    assert!(store.resume_adoption()?.is_some());
+    assert!(!backup.try_exists()?);
+    Ok(())
+}
+
 #[tokio::test]
 async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
 -> anyhow::Result<()> {
@@ -124,7 +191,17 @@ async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
     let blocked = data.0.join("credentials.new");
     fs::create_dir(&blocked)?;
 
-    assert!(store.adopt(&store.signing(&from)?, &to).is_err());
+    assert!(
+        store
+            .adopt(
+                &store.signing(&from)?,
+                AccountAdoption {
+                    from: from.clone(),
+                    to: to.clone()
+                }
+            )
+            .is_err()
+    );
     for kind in ["home", "work"] {
         assert!(!data.private(kind, &from).try_exists()?);
         assert_eq!(
@@ -134,6 +211,9 @@ async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
     }
 
     fs::remove_dir(blocked)?;
+    for kind in ["home", "work"] {
+        data.put(kind, &from, "recreated source")?;
+    }
     crate::login(
         Some(data.0.clone()),
         crate::Plugins::default(),
@@ -146,6 +226,12 @@ async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
         anyhow::bail!("the roster did not reopen");
     };
     assert!(roster.of(&from).is_none());
+    for kind in ["home", "work"] {
+        assert_eq!(
+            fs::read_to_string(data.private(kind, &from).join("marker"))?,
+            "recreated source"
+        );
+    }
     assert!(roster.of(&to).is_some());
     for kind in ["home", "work"] {
         assert_eq!(
@@ -153,6 +239,82 @@ async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
             "signed-in files"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn committed_adoption_returns_its_roster_while_cleanup_can_retry()
+-> anyhow::Result<()> {
+    let data = Data::new()?;
+    let catalog = Catalog::default();
+    let from = InstanceId::named(Provider::Codex, "source");
+    let to = InstanceId::named(Provider::Codex, "signed-in");
+    let mut roster = Roster::default();
+    roster.0.insert(from.clone(), Instance::default());
+    let (store, _) = Store::open(&data.0, catalog.clone())?;
+    store.save(&roster)?;
+    data.put("home", &from, "signed-in files")?;
+
+    let blocked = data.0.join("credentials.new");
+    fs::create_dir(&blocked)?;
+    assert!(
+        store
+            .adopt(
+                &store.signing(&from)?,
+                AccountAdoption {
+                    from: from.clone(),
+                    to: to.clone()
+                }
+            )
+            .is_err()
+    );
+    fs::remove_dir(blocked)?;
+
+    let backup = data.0.join("home/.adoption-backup");
+    fs::write(&backup, "cleanup blocked")?;
+    let committed = store
+        .resume_adoption()?
+        .ok_or_else(|| anyhow::anyhow!("pending adoption"))?;
+    assert!(committed.roster.of(&from).is_none());
+    assert!(committed.roster.of(&to).is_some());
+
+    fs::remove_file(backup)?;
+    let retried = store
+        .resume_adoption()?
+        .ok_or_else(|| anyhow::anyhow!("cleanup pending"))?;
+    assert_eq!(retried.roster, committed.roster);
+    assert!(store.resume_adoption()?.is_none());
+    let (_, stored) = Store::open(&data.0, catalog)?;
+    assert_eq!(stored, Stored::Opened(committed.roster));
+    assert_eq!(
+        fs::read_to_string(data.private("home", &to).join("marker"))?,
+        "signed-in files"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_signing_lease_uses_the_current_roster() -> anyhow::Result<()> {
+    let data = Data::new()?;
+    let catalog = Catalog::default();
+    let instance = InstanceId::named(Provider::Codex, "source");
+    let mut roster = Roster::default();
+    roster.0.insert(instance.clone(), Instance::default());
+    let (writer, _) = Store::open(&data.0, catalog.clone())?;
+    writer.save(&roster)?;
+    let (store, opened) = Store::open(&data.0, catalog)?;
+    let updated = Instance {
+        model: Some(ModelId("current model".into())),
+        ..Instance::default()
+    };
+    roster.0.insert(instance.clone(), updated.clone());
+    writer.save(&roster)?;
+
+    assert_eq!(
+        opened.roster(&Catalog::default()).of(&instance),
+        Some(&Instance::default())
+    );
+    assert_eq!(store.signing(&instance)?.settings, updated);
     Ok(())
 }
 
@@ -187,8 +349,10 @@ fn competing_adoptions_and_a_stale_credential_update_keep_each_account()
     let (other_store, _) = Store::open(&data.0, catalog.clone())?;
     let other_lease = other_store.signing(&other_from)?;
     std::thread::scope(|scope| {
-        let other = scope.spawn(|| other_store.adopt(&other_lease, &other_to));
-        store.adopt(&store.signing(&from)?, &to)?;
+        let other = scope.spawn(|| {
+            other_store.adopt(&other_lease, adoption(&other_from, &other_to))
+        });
+        store.adopt(&store.signing(&from)?, adoption(&from, &to))?;
         other
             .join()
             .map_err(|_| anyhow::anyhow!("the adoption thread panicked"))??;
@@ -236,10 +400,20 @@ fn adoption_keeps_the_source_of_another_sign_in() -> anyhow::Result<()> {
     let (other_store, _) = Store::open(&data.0, catalog)?;
     let first_lease = store.signing(&first)?;
     let second_lease = other_store.signing(&second)?;
-    assert!(store.adopt(&first_lease, &second).is_err());
-    other_store.adopt(&second_lease, &third)?;
+    assert!(
+        store
+            .adopt(
+                &first_lease,
+                AccountAdoption {
+                    from: first.clone(),
+                    to: second.clone()
+                }
+            )
+            .is_err()
+    );
+    other_store.adopt(&second_lease, adoption(&second, &third))?;
     drop(second_lease);
-    store.adopt(&first_lease, &second)?;
+    store.adopt(&first_lease, adoption(&first, &second))?;
 
     for (id, contents) in [
         (&second, "first signed-in home"),

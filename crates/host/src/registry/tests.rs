@@ -12,10 +12,10 @@ use proto::{
 };
 
 use super::{
-    Change, Effect, Job, Launch, Launcher, OwnSignIn, Refreshed, Registry,
-    StartDecision, StartEffect, StartEnd, StartReport, StartSession, StartStep,
-    Started, Starting, Stored, defaults, dir, offered, picked, running,
-    signed_in_as,
+    AccountAdoption, Change, Effect, Job, Launch, Launcher, OwnSignIn,
+    Refreshed, Registry, StartDecision, StartEffect, StartEnd, StartReport,
+    StartSession, StartStep, Started, Starting, Stored, defaults, dir, offered,
+    picked, running,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -1081,10 +1081,10 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
         signed,
         Vec::from([Effect::Save {
             roster,
-            change: Change::SignedIn {
+            change: Change::SignedIn(AccountAdoption {
                 from: claude.clone(),
                 to: me.clone(),
-            },
+            }),
             reply: "signed in",
         }])
     );
@@ -1159,12 +1159,12 @@ fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
     let mut signed = defaults(&catalog());
     signed.0.insert(me.clone(), Instance::default());
     assert_eq!(
-        signed_in_as(
-            &with_credential(defaults(&catalog()), &api(), "t"),
-            &api(),
-            Some(Account::Named(text("me@example.com"))),
-        ),
-        Some((signed, me))
+        AccountAdoption {
+            from: api(),
+            to: me
+        }
+        .plan(&with_credential(defaults(&catalog()), &api(), "t")),
+        Some(signed)
     );
 }
 

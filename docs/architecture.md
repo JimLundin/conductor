@@ -981,9 +981,13 @@ private home set, because `codex --version` writes helper binaries into
 The app signs an instance in (§6.3, *Sign in from the phone*), and
 `conductord login <provider> [--account <account>]` does the same on the
 host's terminal: both run the CLI's own sign-in against the instance's
-private home, then read the account the CLI names, whose instance the
-home becomes (§5.2); `login` stores it for the host's next start. Both
-run its
+private home. Both require a successful login and status check before
+resolving the account. If the CLI reports another account, its instance
+takes the home and work directory (§5.2). Adoption records which original
+directories it staged before installing them, so recovery can finish the
+roster update even if another launch creates a fresh source directory.
+The previous destination copies are kept until the roster is durable.
+`login` stores the result for the host's next start. Both run the
 provider's `claude auth login --claudeai`, §6.3's per-host mode, which
 stores its own credential, or `codex login --device-auth`. A private home
 signed in this way counts as configured (`Auth::SignedIn`, §6.3). The host

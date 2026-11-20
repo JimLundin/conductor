@@ -225,9 +225,12 @@ Each item ends in something to try. The fleet design is
    --device-auth`, a link and a one-time code). Each provider's core
    describes its sign-in as data (`agents::SignIn`); `StartSignIn`,
    `SubmitSignInCode` and `CancelSignIn` run it, and every client follows
-   it live as `Feed::SignIn`, stored nowhere. A sign-in that ends signed in
-   re-runs the instance's sign-in check and model listing, so it turns
-   available without a restart (ALPN `conductor/15`). Next: API keys, the
+   it live as `Feed::SignIn`, stored nowhere. The app and terminal both
+   require the login and its status check to succeed before resolving the
+   account. A different account takes ownership of the private home and
+   work directory through a journaled roster update that can resume after
+   interruption. The app refreshes the resulting instance and lists its
+   models without a restart (ALPN `conductor/15`). Next: API keys, the
    Claude `setup-token` token and the platform keystores for the host key;
    a real sign-in of each pinned CLI from the iPhone (the fake's flow and
    both CLIs' recorded output are tested, a completed real sign-in is

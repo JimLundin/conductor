@@ -13,6 +13,7 @@ use crate::registry::{Launcher, Registry};
 use crate::serve::Conductor;
 use crate::sign_in::Signing;
 use anyhow::Context;
+use host::registry::{AccountAdoption, sign_in_instance};
 use host::start::{Mode, Next, Output};
 use install::process::command;
 use install::{Home, install};
@@ -448,10 +449,7 @@ pub async fn login(
     let data_dir = data_dir_or_default(given)?;
     let catalog = plugins.catalog();
     let (store, stored) = Store::open(&data_dir, catalog.clone())?;
-    let requested = account.as_deref().map_or_else(
-        || InstanceId::own(provider),
-        |named| InstanceId::named(provider, named),
-    );
+    let requested = sign_in_instance(provider, account.as_deref());
     if let Some(to) = store.recovered_account(&requested) {
         tracing::info!(target: "host", instance = %to, "signed in");
         return Ok(());
@@ -460,13 +458,10 @@ pub async fn login(
     let instance =
         host::registry::picked(&roster, provider, account.as_deref())
             .map_err(anyhow::Error::msg)?;
-    let settings = roster
-        .of(&instance)
-        .with_context(|| format!("this host has no instance {instance}"))?;
     let lease = store.signing(&instance)?;
     let providers = Providers::new(plugins, data_dir);
     let signing = providers
-        .signing(&instance, settings)
+        .signing(&instance, &lease.settings)
         .await
         .map_err(anyhow::Error::msg)?;
     let status =
@@ -477,11 +472,11 @@ pub async fn login(
         host::sign_in::Login::exited(status.code(), &status.to_string())
             .map_err(anyhow::Error::msg)?;
     let named = signing.confirm(login).await.map_err(anyhow::Error::msg)?;
-    let Some((_, to)) = host::registry::signed_in_as(&roster, &instance, named)
-    else {
+    let Some(adoption) = AccountAdoption::named(&instance, named) else {
         return Ok(());
     };
-    store.adopt(&lease, &to)?;
+    let to = adoption.to.clone();
+    store.adopt(&lease, adoption)?;
     tracing::info!(target: "host", instance = %to, "signed in");
     Ok(())
 }

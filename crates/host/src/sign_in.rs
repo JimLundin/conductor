@@ -25,6 +25,7 @@ use proto::{
 
 use crate::Note;
 use crate::prelude::*;
+use crate::registry::AccountAdoption;
 
 /// How long a sign-in may run before the host stops it: Codex's one-time
 /// code expires after 15 minutes.
@@ -153,8 +154,15 @@ impl SignIns {
     /// # Errors
     ///
     /// The instance already has a sign-in running.
-    pub fn resume(&mut self, instance: InstanceId) -> Result<Key, Rejection> {
-        self.begin(instance, SignInStep::Finishing)
+    pub fn resume(
+        &mut self,
+        requested: &InstanceId,
+        adoption: &AccountAdoption,
+    ) -> Result<Option<Key>, Rejection> {
+        adoption
+            .destination_for(requested)
+            .map(|_| self.begin(requested.clone(), SignInStep::Finishing))
+            .transpose()
     }
 
     fn begin(
@@ -384,6 +392,19 @@ impl Running {
             paste: flow.paste,
         };
         Some(self.step.clone())
+    }
+}
+
+/// Releases the private home when a sign-in reaches a terminal step.
+#[must_use]
+pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
+    match sign_in.step {
+        SignInStep::SignedIn { .. }
+        | SignInStep::Failed { .. }
+        | SignInStep::Cancelled => Some(&sign_in.instance),
+        SignInStep::Starting
+        | SignInStep::Open { .. }
+        | SignInStep::Finishing => None,
     }
 }
 

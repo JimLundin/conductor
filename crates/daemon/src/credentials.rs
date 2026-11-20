@@ -21,8 +21,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
-use host::registry::{Change, signed_in_as};
-use proto::{Catalog, InstanceId, Roster};
+use host::registry::{AccountAdoption, AdoptionReplay, Change};
+use proto::{Catalog, Instance, InstanceId, Roster};
 
 use adoption::Adoption;
 
@@ -39,19 +39,19 @@ pub struct Store {
     dir: PathBuf,
     path: PathBuf,
     catalog: Catalog,
-    recovered: Option<(InstanceId, InstanceId)>,
+    recovered: Option<AccountAdoption>,
     cipher: XChaCha20Poly1305,
 }
 
 #[derive(Clone)]
 pub struct SigningLease {
     instance: InstanceId,
+    pub settings: Instance,
     _lock: Arc<File>,
 }
 
 pub struct RecoveredAdoption {
-    pub from: InstanceId,
-    pub to: InstanceId,
+    pub account: AccountAdoption,
     pub roster: Roster,
 }
 
@@ -82,9 +82,7 @@ impl Store {
             cipher: XChaCha20Poly1305::new(&Key::from(key)),
         };
         let lock = store.lock()?;
-        store.recovered = store
-            .recover()?
-            .map(|adoption| (adoption.from, adoption.to));
+        store.recovered = store.recover()?.map(|adoption| adoption.account);
         let stored = store.read();
         drop(lock);
         Ok((store, stored))
@@ -96,31 +94,39 @@ impl Store {
     ) -> anyhow::Result<SigningLease> {
         let _lock = self.lock()?;
         self.ensure_idle()?;
-        anyhow::ensure!(
-            self.read().roster(&self.catalog).of(instance).is_some(),
-            "this host has no instance {instance}"
-        );
-        self.lease(instance)
+        let lock = self.lease(instance)?;
+        let settings = self
+            .read()
+            .roster(&self.catalog)
+            .of(instance)
+            .cloned()
+            .with_context(|| format!("this host has no instance {instance}"))?;
+        Ok(SigningLease {
+            instance: instance.clone(),
+            settings,
+            _lock: Arc::new(lock),
+        })
     }
 
     pub fn adopt(
         &self,
         source: &SigningLease,
-        to: &InstanceId,
+        account: AccountAdoption,
     ) -> anyhow::Result<Roster> {
-        let from = &source.instance;
+        let AccountAdoption { from, to } = &account;
+        anyhow::ensure!(
+            source.instance == *from,
+            "the sign-in no longer has its private home"
+        );
         let _lock = self.lock()?;
         self.ensure_idle()?;
         let _destination = self.lease(to)?;
         let roster = self.read_roster()?;
-        anyhow::ensure!(
-            from.provider == to.provider
-                && signed_in_as(&roster, from, Some(to.account.clone()))
-                    .is_some(),
-            "the source instance {from} cannot be adopted as {to}"
-        );
-        let adoption = Adoption::begin(&self.dir, from, to)?;
-        self.complete(&adoption, roster)
+        let next = account.plan(&roster).with_context(|| {
+            format!("the source instance {from} cannot be adopted as {to}")
+        })?;
+        let mut adoption = Adoption::begin(&self.dir, account)?;
+        self.complete(&mut adoption, AdoptionReplay::Install(next))
     }
 
     pub fn save_change(
@@ -151,17 +157,14 @@ impl Store {
         Ok(())
     }
 
-    fn lease(&self, instance: &InstanceId) -> anyhow::Result<SigningLease> {
+    fn lease(&self, instance: &InstanceId) -> anyhow::Result<File> {
         let locks = self.dir.join("sign-in-locks");
         std::fs::create_dir_all(&locks)?;
         let file = lock_file(&locks.join(host::registry::dir(instance)))?;
         file.try_lock().with_context(|| {
             format!("claiming the private home for {instance}")
         })?;
-        Ok(SigningLease {
-            instance: instance.clone(),
-            _lock: Arc::new(file),
-        })
+        Ok(file)
     }
 
     fn lock(&self) -> anyhow::Result<File> {
@@ -178,8 +181,7 @@ impl Store {
     ) -> Option<&InstanceId> {
         self.recovered
             .as_ref()
-            .filter(|(from, _)| from == source)
-            .map(|(_, to)| to)
+            .and_then(|adoption| adoption.destination_for(source))
     }
 
     pub fn resume_adoption(&self) -> anyhow::Result<Option<RecoveredAdoption>> {
@@ -188,39 +190,42 @@ impl Store {
     }
 
     fn recover(&self) -> anyhow::Result<Option<RecoveredAdoption>> {
-        let Some(adoption) = Adoption::pending(&self.dir)? else {
+        let Some(mut adoption) = Adoption::pending(&self.dir)? else {
             return Ok(None);
         };
-        let _source = self.lease(&adoption.from)?;
-        let _destination = self.lease(&adoption.to)?;
-        let roster = self.complete(&adoption, self.read_roster()?)?;
-        let Adoption { from, to, .. } = adoption;
-        Ok(Some(RecoveredAdoption { from, to, roster }))
+        let _source = self.lease(&adoption.account.from)?;
+        let _destination = self.lease(&adoption.account.to)?;
+        let replay = adoption
+            .account
+            .replay(self.read_roster()?)
+            .map_err(anyhow::Error::msg)?;
+        let roster = self.complete(&mut adoption, replay)?;
+        Ok(Some(RecoveredAdoption {
+            account: adoption.account,
+            roster,
+        }))
     }
 
     fn complete(
         &self,
-        adoption: &Adoption,
-        roster: Roster,
+        adoption: &mut Adoption,
+        replay: AdoptionReplay,
     ) -> anyhow::Result<Roster> {
-        let next = signed_in_as(
-            &roster,
-            &adoption.from,
-            Some(adoption.to.account.clone()),
-        )
-        .map(|(next, _)| next);
-        if let Some(updated) = &next {
-            adoption.move_directories(&self.dir)?;
-            self.save(updated)?;
-        } else {
-            anyhow::ensure!(
-                roster.of(&adoption.to).is_some(),
-                "the adoption has neither a source nor a destination instance"
-            );
-            crate::sync_dir(&self.dir)?;
+        let roster = match replay {
+            AdoptionReplay::Install(next) => {
+                adoption.move_directories(&self.dir)?;
+                self.save(&next)?;
+                next
+            }
+            AdoptionReplay::Committed(roster) => {
+                crate::sync_dir(&self.dir)?;
+                roster
+            }
+        };
+        if let Err(err) = adoption.finish(&self.dir) {
+            tracing::warn!(target: "host", reason = %format!("{err:#}"), "could not clean up committed account adoption");
         }
-        adoption.finish(&self.dir)?;
-        Ok(next.unwrap_or(roster))
+        Ok(roster)
     }
 
     fn read_roster(&self) -> anyhow::Result<Roster> {

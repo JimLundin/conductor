@@ -22,7 +22,7 @@ use host::sign_in::{Effect as SignInEffect, Key, SignIns};
 use proto::{
     Catalog, ClientName, CommandResult, Effort, Event, EventKind, InstanceId,
     Instances, ModelId, Models, Provider, Rejection, Roster, SessionId, SignIn,
-    SignInStep, StartAt,
+    StartAt,
 };
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -404,8 +404,7 @@ impl RegistryActor {
         })? {
             return Ok(None);
         }
-        let settings = self
-            .core
+        self.core
             .settings(instance)
             .ok_or(Rejection::UnknownInstance)?;
         let lease = self.store.signing(instance).map_err(|err| {
@@ -413,6 +412,7 @@ impl RegistryActor {
                 reason: format!("{err:#}"),
             }
         })?;
+        let settings = lease.settings.clone();
         self.leases.insert(instance.clone(), lease);
         Ok(Some(settings))
     }
@@ -422,17 +422,12 @@ impl RegistryActor {
         requested: &InstanceId,
         adoption: RecoveredAdoption,
     ) -> Result<bool, Rejection> {
-        let RecoveredAdoption { from, to, roster } = adoption;
-        let run = (from == *requested)
-            .then(|| self.sign_ins.resume(from.clone()))
-            .transpose()?;
+        let RecoveredAdoption { account, roster } = adoption;
+        let run = self.sign_ins.resume(requested, &account)?;
         let (reply, answer) = oneshot::channel();
-        let effects = self.core.saved(
-            roster,
-            Change::SignedIn { from, to },
-            reply,
-            Ok(()),
-        );
+        let effects =
+            self.core
+                .saved(roster, Change::SignedIn(account), reply, Ok(()));
         self.perform(effects);
         let resumed = run.is_some();
         if let Some(key) = run {
@@ -491,13 +486,8 @@ impl RegistryActor {
     }
 
     fn publish_sign_in(&mut self, step: SignIn) {
-        if matches!(
-            step.step,
-            SignInStep::SignedIn { .. }
-                | SignInStep::Failed { .. }
-                | SignInStep::Cancelled
-        ) {
-            self.leases.remove(&step.instance);
+        if let Some(instance) = host::sign_in::release(&step) {
+            self.leases.remove(instance);
         }
         crate::log_note(&host::sign_in::note(&step));
         let _ = self.live.send(step);
@@ -589,11 +579,11 @@ impl RegistryActor {
         reply: Reply,
     ) -> Vec<Effect> {
         let saved = match &change {
-            Change::SignedIn { from, to } => self
+            Change::SignedIn(adoption) => self
                 .leases
-                .get(from)
+                .get(&adoption.from)
                 .context("the sign-in no longer has its private home")
-                .and_then(|lease| self.store.adopt(lease, to)),
+                .and_then(|lease| self.store.adopt(lease, adoption.clone())),
             Change::Credential(_) | Change::Added(_) | Change::Removed(_) => {
                 self.store.save_change(&roster, &change)
             }

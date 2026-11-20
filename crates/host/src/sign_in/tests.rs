@@ -4,7 +4,8 @@ use proto::{
     Rejection, SignIn, SignInCode, SignInStep,
 };
 
-use super::{Effect, Key, Login, Run, SignIns};
+use super::{Effect, Key, Login, Run, SignIns, release};
+use crate::registry::AccountAdoption;
 
 fn id() -> InstanceId {
     InstanceId::own(Provider::ALL[0])
@@ -88,6 +89,41 @@ fn shown(flow: Flow) -> SignIns {
     let _ = sign_ins.printed(&key(1), "code:");
     let _ = sign_ins.printed(&key(1), "  WXYZ-1234");
     sign_ins
+}
+
+#[test]
+fn only_a_matching_retry_waits_for_the_recovered_account() {
+    let mut sign_ins = SignIns::default();
+    let adoption = AccountAdoption {
+        from: id(),
+        to: InstanceId::named(id().provider, "signed-in"),
+    };
+    assert_eq!(sign_ins.resume(&adoption.to, &adoption), Ok(None));
+    assert_eq!(sign_ins.running(), []);
+    let key = key(1);
+    assert_eq!(
+        sign_ins.resume(&adoption.from, &adoption),
+        Ok(Some(key.clone()))
+    );
+    assert_eq!(
+        release(&SignIn {
+            instance: id(),
+            step: SignInStep::Finishing
+        }),
+        None,
+    );
+    let instances = Instances::default();
+    let done = SignIn {
+        instance: id(),
+        step: SignInStep::SignedIn {
+            instances: instances.clone(),
+        },
+    };
+    assert_eq!(
+        sign_ins.listed(&key, CommandResult::Instances(instances)),
+        Vec::from([Effect::Publish(done.clone())]),
+    );
+    assert_eq!(release(&done), Some(&adoption.from));
 }
 
 #[test]

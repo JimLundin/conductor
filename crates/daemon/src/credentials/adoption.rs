@@ -3,38 +3,49 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
-use host::registry::dir;
-use proto::InstanceId;
+use host::registry::{AccountAdoption, dir};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Adoption {
-    pub(super) from: InstanceId,
-    pub(super) to: InstanceId,
-    had_home: bool,
-    had_work: bool,
+    pub(super) account: AccountAdoption,
+    staging: [Staging; 2],
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum Staging {
+    Absent,
+    Source,
+    Staged,
 }
 
 impl Adoption {
     pub(super) fn begin(
         data: &Path,
-        from: &InstanceId,
-        to: &InstanceId,
+        account: AccountAdoption,
     ) -> anyhow::Result<Self> {
-        ensure!(dir(from) != dir(to), "the private directories coincide");
-        let source = dir(from);
+        ensure!(
+            dir(&account.from) != dir(&account.to),
+            "the private directories coincide"
+        );
+        let source = dir(&account.from);
         let adoption = Self {
-            from: from.clone(),
-            to: to.clone(),
-            had_home: is_directory(&data.join("home").join(&source))?,
-            had_work: is_directory(&data.join("work").join(&source))?,
+            account,
+            staging: [
+                Staging::inspect(&data.join("home").join(&source))?,
+                Staging::inspect(&data.join("work").join(&source))?,
+            ],
         };
+        adoption.save(data)?;
+        Ok(adoption)
+    }
+
+    fn save(&self, data: &Path) -> anyhow::Result<()> {
         let journal = data.join("adoption");
         let next = journal.with_extension("new");
-        crate::write_private(&next, &postcard::to_stdvec(&adoption)?)?;
+        crate::write_private(&next, &postcard::to_stdvec(self)?)?;
         rename(&next, &journal)?;
-        crate::sync_dir(data)?;
-        Ok(adoption)
+        Ok(crate::sync_dir(data)?)
     }
 
     pub(super) fn pending(data: &Path) -> anyhow::Result<Option<Self>> {
@@ -49,33 +60,61 @@ impl Adoption {
         }
     }
 
-    pub(super) fn move_directories(&self, data: &Path) -> anyhow::Result<()> {
-        self.directories(data)
-            .iter()
-            .try_for_each(Directory::move_to)
+    pub(super) fn move_directories(
+        &mut self,
+        data: &Path,
+    ) -> anyhow::Result<()> {
+        // A journal rename may have succeeded before its sync failed.
+        crate::sync_dir(data)?;
+        for (index, directory) in self.directories(data).into_iter().enumerate()
+        {
+            match self.staging[index] {
+                Staging::Absent => continue,
+                Staging::Source => {
+                    directory.stage()?;
+                    self.staging[index] = Staging::Staged;
+                    self.save(data)?;
+                }
+                Staging::Staged => {}
+            }
+            directory.install()?;
+        }
+        Ok(())
     }
 
     pub(super) fn finish(&self, data: &Path) -> anyhow::Result<()> {
-        for directory in self.directories(data) {
-            directory.discard_backup()?;
+        for (directory, staging) in
+            self.directories(data).into_iter().zip(self.staging)
+        {
+            if matches!(staging, Staging::Staged) {
+                directory.discard_backup()?;
+            }
         }
         fs::remove_file(data.join("adoption"))?;
         Ok(crate::sync_dir(data)?)
     }
 
     fn directories(&self, data: &Path) -> [Directory; 2] {
-        [("home", self.had_home), ("work", self.had_work)].map(
-            |(kind, existed)| {
-                let parent = data.join(kind);
-                Directory {
-                    source: parent.join(dir(&self.from)),
-                    destination: parent.join(dir(&self.to)),
-                    backup: parent.join(".adoption-backup"),
-                    parent,
-                    existed,
-                }
-            },
-        )
+        ["home", "work"].map(|kind| {
+            let parent = data.join(kind);
+            Directory {
+                source: parent.join(dir(&self.account.from)),
+                destination: parent.join(dir(&self.account.to)),
+                staged: parent.join(".adoption-source"),
+                backup: parent.join(".adoption-backup"),
+                parent,
+            }
+        })
+    }
+}
+
+impl Staging {
+    fn inspect(source: &Path) -> anyhow::Result<Self> {
+        Ok(if is_directory(source)? {
+            Self::Source
+        } else {
+            Self::Absent
+        })
     }
 }
 
@@ -83,18 +122,22 @@ struct Directory {
     parent: PathBuf,
     source: PathBuf,
     destination: PathBuf,
+    staged: PathBuf,
     backup: PathBuf,
-    existed: bool,
 }
 
 impl Directory {
-    fn move_to(&self) -> anyhow::Result<()> {
-        if !self.existed {
-            return Ok(());
+    fn stage(&self) -> anyhow::Result<()> {
+        if !is_directory(&self.staged)? {
+            rename(&self.source, &self.staged)?;
         }
-        if is_directory(&self.source)? {
-            self.back_up_destination()?;
-            rename(&self.source, &self.destination)?;
+        Ok(crate::sync_dir(&self.parent)?)
+    }
+
+    fn install(&self) -> anyhow::Result<()> {
+        if is_directory(&self.staged)? {
+            self.prepare_destination()?;
+            rename(&self.staged, &self.destination)?;
         } else {
             ensure!(
                 is_directory(&self.destination)?,
@@ -105,27 +148,24 @@ impl Directory {
         Ok(crate::sync_dir(&self.parent)?)
     }
 
-    fn back_up_destination(&self) -> anyhow::Result<()> {
+    fn prepare_destination(&self) -> anyhow::Result<()> {
         if is_directory(&self.destination)? {
-            ensure!(
-                !is_directory(&self.backup)?,
-                "both {} and its adoption backup exist",
-                self.destination.display()
-            );
-            rename(&self.destination, &self.backup)?;
-            crate::sync_dir(&self.parent)?;
+            if is_directory(&self.backup)? {
+                // A launcher recreated the destination after the original was backed up.
+                remove_directory(&self.destination)?;
+            } else {
+                rename(&self.destination, &self.backup)?;
+            }
         }
-        Ok(())
+        Ok(crate::sync_dir(&self.parent)?)
     }
 
     fn discard_backup(&self) -> anyhow::Result<()> {
-        if self.existed && is_directory(&self.backup)? {
-            fs::remove_dir_all(&self.backup).with_context(|| {
-                format!("removing {}", self.backup.display())
-            })?;
-            crate::sync_dir(&self.parent)?;
+        if is_directory(&self.backup)? {
+            remove_directory(&self.backup)?;
         }
-        Ok(())
+        // A previous removal may have succeeded before syncing the parent.
+        Ok(crate::sync_dir(&self.parent)?)
     }
 }
 
@@ -146,4 +186,9 @@ fn rename(from: &Path, to: &Path) -> anyhow::Result<()> {
     fs::rename(from, to).with_context(|| {
         format!("moving {} to {}", from.display(), to.display())
     })
+}
+
+fn remove_directory(path: &Path) -> anyhow::Result<()> {
+    fs::remove_dir_all(path)
+        .with_context(|| format!("removing {}", path.display()))
 }
