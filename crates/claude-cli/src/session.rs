@@ -297,7 +297,7 @@ fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
     let (events_tx, events) = mpsc::channel(1024);
     let (commands_tx, commands) = mpsc::channel(32);
     let actor = Actor {
-        session: Session::running(),
+        session: Session::default(),
         process: Some(Running {
             child,
             stdin,

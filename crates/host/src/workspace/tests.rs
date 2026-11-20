@@ -146,6 +146,13 @@ fn only_a_subdirectory_is_checked_for_a_tree() {
 #[test]
 fn a_commit_is_owned_when_a_checkpoint_ref_names_it() {
     assert_eq!(owned("abc\ndef", "def"), Ok(()));
+    assert_eq!(owned("def", "def"), Ok(()));
+    assert_eq!(
+        owned("abc", "def"),
+        failure(
+            "checkpoint: commit is not an immutable checkpoint of this workspace"
+        )
+    );
     assert_eq!(
         owned("", "def"),
         failure(
@@ -381,5 +388,44 @@ fn a_checkpoint_moves_the_branch_on_from_its_parent_and_never_drops_commits() {
         Err(GitError::Failed(String::from(
             "checkpoint: the session's branch moved on since the checkpoint was taken"
         )))
+    );
+}
+
+#[test]
+fn a_listing_of_exactly_the_file_limit_is_complete() {
+    let all = (0..super::FILE_LIMIT).fold(Vec::new(), |mut bytes, number| {
+        bytes.extend_from_slice(format!("M\0file-{number:03}\0").as_bytes());
+        bytes
+    });
+    assert_eq!(
+        listing(output(&all)).map(|(entries, extent)| (entries.len(), extent)),
+        Ok((super::FILE_LIMIT, DiffExtent::Complete))
+    );
+}
+
+#[test]
+fn output_is_oversized_only_past_the_patch_limit() {
+    assert!(!super::oversized(PATCH_LIMIT));
+    assert!(super::oversized(PATCH_LIMIT + 1));
+}
+
+#[test]
+fn the_marker_records_the_workspace_one_field_per_line() {
+    let workspace = workspace();
+    assert_eq!(
+        super::marker(&workspace),
+        format!(
+            "/repo\n/repo/sub\n/data/worktrees/00000000000000000000000001\n\
+             /data/worktrees/00000000000000000000000001/sub\n{}\n",
+            workspace.branch
+        )
+    );
+}
+
+#[test]
+fn a_turns_commit_names_its_checkpoint() {
+    assert_eq!(
+        super::message(CheckpointId(3)),
+        "Conductor: checkpoint 3 of the session"
     );
 }

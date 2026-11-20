@@ -203,4 +203,14 @@ mod tests {
             )
         );
     }
+    #[test]
+    fn a_credential_shows_only_its_kind_when_logged() {
+        let provider = CodexCredential::Provider {
+            name: String::from("Gateway"),
+            base_url: String::from("https://g.example/v1"),
+            key: String::from("secret-key"),
+            model: String::from("gpt-6"),
+        };
+        assert_eq!(format!("{provider:?}"), "Provider");
+    }
 }

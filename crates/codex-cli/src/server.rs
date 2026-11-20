@@ -417,7 +417,7 @@ fn start(opts: &ServerOptions) -> Result<Started, Error> {
     let (events_tx, events) = mpsc::channel(4096);
     let (commands_tx, commands) = mpsc::channel(64);
     let actor = Actor {
-        server: Server::running(),
+        server: Server::default(),
         process: Some(Running {
             child,
             stdin,

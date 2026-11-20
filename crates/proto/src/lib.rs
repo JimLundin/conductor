@@ -1187,7 +1187,7 @@ mod tests {
             super::CommandResult::Rejected(super::Rejection::SessionClosed)
         );
         assert_eq!(
-            postcard::to_stdvec(&super::Event {
+            postcard::to_allocvec(&super::Event {
                 seq: super::HostSeq(1),
                 session: super::SessionId(1),
                 kind: super::EventKind::SessionReady,
@@ -1195,5 +1195,131 @@ mod tests {
             Vec::from([1, 1, 1])
         );
         Ok(())
+    }
+    #[test]
+    fn each_effort_reads_back_from_its_word() {
+        use super::Effort;
+        let all = [
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+            Effort::Ultra,
+        ];
+        assert_eq!(
+            all.iter().map(Effort::wire).collect::<Vec<_>>(),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(
+            all.map(|effort| Effort::parse(effort.wire())),
+            all.map(Some)
+        );
+        assert_eq!(Effort::parse("minimal"), None);
+    }
+
+    #[test]
+    fn each_issue_status_and_priority_reads_back_from_its_word() {
+        use super::{IssueStatus, Priority};
+        assert_eq!(
+            IssueStatus::ALL.map(IssueStatus::word),
+            ["open", "ready", "in-progress", "review", "done", "dropped"]
+        );
+        assert_eq!(
+            IssueStatus::ALL.map(|status| IssueStatus::named(status.word())),
+            IssueStatus::ALL.map(Some)
+        );
+        assert_eq!(IssueStatus::named("blocked"), None);
+        assert_eq!(
+            Priority::ALL.map(Priority::word),
+            ["low", "normal", "high", "urgent"]
+        );
+        assert_eq!(
+            Priority::ALL.map(|priority| Priority::named(priority.word())),
+            Priority::ALL.map(Some)
+        );
+        assert_eq!(Priority::named("someday"), None);
+    }
+
+    #[test]
+    fn a_model_is_found_by_its_id() {
+        use super::{ModelChoice, ModelId, Models};
+        let choice = |id: &str| ModelChoice {
+            id: ModelId(String::from(id)),
+            name: String::from(id),
+            description: String::new(),
+            efforts: Vec::new(),
+        };
+        let models = Models {
+            choices: Vec::from([choice("opus"), choice("haiku")]),
+            default: None,
+        };
+        assert_eq!(
+            models.find(&ModelId(String::from("haiku"))),
+            Some(&choice("haiku"))
+        );
+        assert_eq!(models.find(&ModelId(String::from("sonnet"))), None);
+    }
+
+    #[test]
+    fn a_rejection_says_why_for_a_person() {
+        assert_eq!(
+            super::Rejection::NoSuchDirectory.label(),
+            "no directory at that path on the host"
+        );
+    }
+
+    #[test]
+    fn a_provider_is_labelled_by_its_plugin_else_by_its_name() {
+        use super::{Catalog, Provider, ProviderInfo};
+        let info = ProviderInfo {
+            label: String::from("Claude Code"),
+            note: None,
+            credentials: Vec::new(),
+        };
+        let catalog = Catalog(alloc::collections::BTreeMap::from([(
+            Provider::Claude,
+            info.clone(),
+        )]));
+        assert_eq!(catalog.of(Provider::Claude), Some(&info));
+        assert_eq!(catalog.of(Provider::Codex), None);
+        assert_eq!(
+            [
+                catalog.label(Provider::Claude),
+                catalog.label(Provider::Codex)
+            ],
+            [String::from("Claude Code"), String::from("codex")]
+        );
+    }
+
+    #[test]
+    fn an_instance_is_shown_and_found_by_its_provider_and_account() {
+        use super::{
+            Availability, InstanceId, InstanceStatus, Instances, Provider,
+        };
+        let own = InstanceId::own(Provider::Claude);
+        let named = InstanceId::named(Provider::Codex, "me@example.com");
+        assert_eq!(
+            [format!("{own}"), format!("{named}")],
+            [String::from("claude"), String::from("codex me@example.com")]
+        );
+        let available = InstanceStatus {
+            availability: Availability::Unavailable {
+                reason: String::from("signed out"),
+            },
+        };
+        let instances = Instances(alloc::collections::BTreeMap::from([(
+            own.clone(),
+            available.clone(),
+        )]));
+        assert_eq!(instances.of(&own), Some(&available));
+        assert_eq!(instances.availability(&own), Some(&available.availability));
+        assert_eq!(instances.availability(&named), None);
+        let roster = super::Roster(alloc::collections::BTreeMap::from([(
+            named.clone(),
+            super::Instance::default(),
+        )]));
+        assert_eq!(roster.of(&named), Some(&super::Instance::default()));
+        assert_eq!(roster.of(&own), None);
     }
 }

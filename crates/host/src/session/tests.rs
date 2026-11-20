@@ -1,12 +1,13 @@
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
-use agents::{NativeRequest, NativeTurn, Reply, Step};
+use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
 use proto::{
     Answer, Checkpoint, CheckpointId, ClientName, CloseReason, CommandResult,
     Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq,
     InstanceId, Kept, ModelChoice, ModelId, Models, Provider, Question,
     Rejection, RequestId, Resolution, Selection, SessionId, SubagentActivity,
-    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    SubagentEvent, SubagentId, SubagentOutcome, Task, TaskId, TaskStatus,
+    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    UndoAvailability, Workspace,
 };
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
@@ -516,6 +517,24 @@ fn an_effort_the_model_takes_applies_from_the_next_turn() {
             ),
             (set(Effort::High), Vec::from([accepted()])),
             (
+                set(Effort::Low),
+                Vec::from([
+                    Effect::Emit(EventKind::EffortChanged {
+                        effort: Effort::Low,
+                    }),
+                    accepted(),
+                ]),
+            ),
+            (
+                set(Effort::High),
+                Vec::from([
+                    Effect::Emit(EventKind::EffortChanged {
+                        effort: Effort::High,
+                    }),
+                    accepted(),
+                ]),
+            ),
+            (
                 set(Effort::Medium),
                 Vec::from([rejected(Rejection::NotOffered {
                     reason: text("Opus doesn't take the effort medium"),
@@ -786,6 +805,13 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
                 ]),
             ),
             (send("hi"), Vec::from([rejected(Rejection::UndoInProgress)])),
+            (
+                Input::Order(Order::Undo {
+                    checkpoint: CheckpointId(0),
+                    fork: text("fork"),
+                }),
+                Vec::from([rejected(Rejection::UndoInProgress)]),
+            ),
             (undo(), Vec::from([restore()])),
             (ok(), undone()),
             (
@@ -796,12 +822,24 @@ fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
     );
 }
 
-#[test]
-fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
-    let thread = |turn: &str| HistoryAnchor::Turns {
+fn thread(turn: &str) -> HistoryAnchor {
+    HistoryAnchor::Turns {
         conversation: text("thread"),
         turn: Some(text(turn)),
-    };
+    }
+}
+
+fn turns(listed: &[&str]) -> Input {
+    Input::Agent(Outcome::Turns(Ok(listed
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect())))
+}
+
+/// A session anchored at turns whose directory is gone, on its way to
+/// undo checkpoint 1 in the worktree once it lists its turns.
+fn reverting() -> Session {
     let history = [
         event(EventKind::WorkspaceCreated {
             workspace: workspace(),
@@ -809,14 +847,7 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
         checkpoint(0, thread("t0"), UndoAvailability::Available),
         checkpoint(1, thread("t1"), UndoAvailability::Available),
     ];
-    let turns = |listed: &[&str]| {
-        Input::Agent(Outcome::Turns(Ok(listed
-            .iter()
-            .copied()
-            .map(String::from)
-            .collect())))
-    };
-    let _ = expect(
+    expect(
         restored(&history, None),
         Vec::from([
             (undo(), Vec::from([preflight()])),
@@ -847,6 +878,15 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
                 started("thread", Anchoring::Turns),
                 Vec::from([agent(Command::Turns)]),
             ),
+        ]),
+    )
+}
+
+#[test]
+fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
+    let _ = expect(
+        reverting(),
+        Vec::from([
             (
                 turns(&["t0", "t1"]),
                 Vec::from([agent(Command::Revert(text("t1")))]),
@@ -872,6 +912,430 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
                 Vec::from([launching("/work", Some(thread("t0")), None)]),
             ),
             (started("thread", Anchoring::Turns), undone()),
+        ]),
+    );
+}
+
+/// A retried undo whose turn the agent already reverted only checks the
+/// turns left.
+#[test]
+fn an_undo_does_not_revert_a_turn_the_agent_no_longer_lists() {
+    let _ = expect(
+        reverting(),
+        Vec::from([
+            (turns(&["t0"]), Vec::from([agent(Command::Turns)])),
+            (turns(&["t0"]), Vec::from([agent(Command::Shutdown)])),
+        ]),
+    );
+}
+
+#[test]
+fn an_undo_to_a_message_forks_the_conversation_through_it() {
+    let message = |id: &str| HistoryAnchor::Messages {
+        conversation: text("conv"),
+        message: Some(text(id)),
+    };
+    let fork = HistoryAnchor::Fork {
+        source: text("conv"),
+        through: text("m0"),
+        target: text("fork"),
+    };
+    let history = [
+        event(EventKind::WorkspaceCreated {
+            workspace: workspace(),
+        }),
+        checkpoint(0, message("m0"), UndoAvailability::Available),
+        checkpoint(1, message("m1"), UndoAvailability::Available),
+    ];
+    let _ = expect(
+        restored(&history, None),
+        Vec::from([
+            (undo(), Vec::from([preflight()])),
+            (
+                ok(),
+                Vec::from([
+                    Effect::Emit(EventKind::UndoStarted {
+                        checkpoint: CheckpointId(1),
+                        restore: CheckpointId(0),
+                        history: fork.clone(),
+                    }),
+                    Effect::Barrier,
+                    Effect::Call(Call::Exists(HostPath(text("/work")))),
+                ]),
+            ),
+            (Input::Exists(true), Vec::from([agent(Command::Shutdown)])),
+            (
+                Input::Agent(Outcome::ShutDown(Ok(()))),
+                Vec::from([launching("/work", Some(fork), None)]),
+            ),
+        ]),
+    );
+}
+
+fn tasks(label: &str, status: TaskStatus) -> Vec<Task> {
+    Vec::from([Task {
+        id: TaskId(7),
+        text: text(label),
+        status,
+        holder: SessionId(1),
+    }])
+}
+
+/// An undo restores the session's tasks as they were when the checkpoint
+/// it goes back to was taken.
+#[test]
+fn the_tasks_before_a_checkpoint_are_the_session_s_last_before_it() {
+    let at = |seq, session, kind| Event {
+        seq: HostSeq(seq),
+        session: SessionId(session),
+        kind,
+    };
+    let changed = |seq, session, label| {
+        at(
+            seq,
+            session,
+            EventKind::TasksChanged {
+                tasks: tasks(label, TaskStatus::Pending),
+            },
+        )
+    };
+    let taken = |seq, id| Event {
+        seq: HostSeq(seq),
+        ..checkpoint(id, HistoryAnchor::Fresh, UndoAvailability::Available)
+    };
+    let history = [
+        changed(1, 1, "first"),
+        taken(2, 0),
+        changed(3, 1, "second"),
+        changed(4, 2, "another session's"),
+        taken(5, 1),
+        changed(6, 1, "after"),
+    ];
+    assert_eq!(
+        [CheckpointId(1), CheckpointId(9)].map(|id| super::tasks_before(
+            &history,
+            SessionId(1),
+            id
+        )),
+        [tasks("second", TaskStatus::Pending), Vec::new()]
+    );
+}
+
+#[test]
+fn a_restored_session_keeps_its_tasks_and_their_ids() {
+    let checklist = |status| {
+        Input::Step(Step::Checklist(Vec::from([PlanStep {
+            text: text("plan"),
+            status,
+        }])))
+    };
+    let _ = expect(
+        restored(
+            &[event(EventKind::TasksChanged {
+                tasks: tasks("plan", TaskStatus::Pending),
+            })],
+            None,
+        ),
+        Vec::from([
+            (checklist(TaskStatus::Pending), Vec::new()),
+            (
+                checklist(TaskStatus::Completed),
+                Vec::from([Effect::Emit(EventKind::TasksChanged {
+                    tasks: tasks("plan", TaskStatus::Completed),
+                })]),
+            ),
+        ]),
+    );
+}
+
+fn asking(native: &str, call: &str) -> Input {
+    Input::Step(Step::Open {
+        native: NativeRequest(text(native)),
+        call: ToolCallId(text(call)),
+        tool: ToolKind::Command {
+            command: text("ls"),
+        },
+        reason: None,
+        for_session: None,
+    })
+}
+
+fn opened(request: u64, call: &str) -> Effect {
+    Effect::Emit(EventKind::RequestOpened {
+        request: RequestId(request),
+        call: ToolCallId(text(call)),
+        tool: ToolKind::Command {
+            command: text("ls"),
+        },
+        reason: None,
+        for_session: None,
+    })
+}
+
+fn withdrawn(request: u64) -> Effect {
+    Effect::Emit(EventKind::RequestResolved {
+        request: RequestId(request),
+        resolution: Resolution::Withdrawn,
+    })
+}
+
+#[test]
+fn an_agent_withdraws_only_the_request_it_names() {
+    let withdraw =
+        |native: &str| Input::Step(Step::Withdraw(NativeRequest(text(native))));
+    let _ = expect(
+        running(),
+        Vec::from([
+            (
+                asking("perm-1", "toolu_1"),
+                Vec::from([opened(1, "toolu_1")]),
+            ),
+            (
+                asking("perm-2", "toolu_2"),
+                Vec::from([opened(2, "toolu_2")]),
+            ),
+            (withdraw("perm-2"), Vec::from([withdrawn(2)])),
+            (withdraw("perm-2"), Vec::new()),
+            (withdraw("perm-1"), Vec::from([withdrawn(1)])),
+        ]),
+    );
+}
+
+#[test]
+fn each_denied_call_is_declined_when_it_fails() {
+    let deny = |request, native: &str| {
+        (
+            reply(request, Reply::Decide(Decision::Deny), "phone"),
+            Vec::from([
+                Effect::Emit(EventKind::RequestResolved {
+                    request: RequestId(request),
+                    resolution: Resolution::Decided {
+                        decision: Decision::Deny,
+                        by: phone(),
+                    },
+                }),
+                agent(Command::Reply {
+                    native: NativeRequest(text(native)),
+                    reply: Reply::Decide(Decision::Deny),
+                    by: phone(),
+                }),
+            ]),
+        )
+    };
+    let failed = |call: &str| {
+        (
+            Input::Step(Step::ToolFinished {
+                call: ToolCallId(text(call)),
+                outcome: ToolOutcome::Failed,
+            }),
+            Vec::from([Effect::Emit(EventKind::ToolCall {
+                call: ToolCallId(text(call)),
+                phase: ToolPhase::Finished {
+                    outcome: ToolOutcome::Declined,
+                },
+            })]),
+        )
+    };
+    let replied = || {
+        (
+            Input::Agent(Outcome::Replied(Ok(()))),
+            Vec::from([accepted()]),
+        )
+    };
+    let _ = expect(
+        running(),
+        Vec::from([
+            (
+                asking("perm-1", "toolu_1"),
+                Vec::from([opened(1, "toolu_1")]),
+            ),
+            (
+                asking("perm-2", "toolu_2"),
+                Vec::from([opened(2, "toolu_2")]),
+            ),
+            deny(1, "perm-1"),
+            replied(),
+            deny(2, "perm-2"),
+            replied(),
+            failed("toolu_1"),
+            failed("toolu_2"),
+        ]),
+    );
+}
+
+/// The ids of requests the log holds stay taken, and a resolved one keeps
+/// who resolved it.
+#[test]
+fn a_restored_session_keeps_its_request_ids_and_who_answered_them() {
+    let history = [
+        event(EventKind::RequestOpened {
+            request: RequestId(1),
+            call: ToolCallId(text("toolu_1")),
+            tool: ToolKind::Command {
+                command: text("ls"),
+            },
+            reason: None,
+            for_session: None,
+        }),
+        event(EventKind::RequestResolved {
+            request: RequestId(1),
+            resolution: Resolution::Decided {
+                decision: Decision::Deny,
+                by: phone(),
+            },
+        }),
+        event(EventKind::QuestionAsked {
+            request: RequestId(2),
+            questions: Vec::new(),
+        }),
+    ];
+    let _ = expect(
+        restored(&history, None),
+        Vec::from([
+            (start(), Vec::from([launching("/work", None, None)])),
+            (
+                started("conv", Anchoring::Messages),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::SessionReady),
+                    accepted(),
+                ]),
+            ),
+            (
+                reply(1, Reply::Decide(Decision::Approve), "laptop"),
+                Vec::from([rejected(Rejection::AlreadyResolved {
+                    by: phone(),
+                })]),
+            ),
+            (
+                reply(2, Reply::Answer(Vec::new()), "phone"),
+                Vec::from([rejected(Rejection::UnknownRequest)]),
+            ),
+            (
+                asking("perm-3", "toolu_3"),
+                Vec::from([opened(3, "toolu_3")]),
+            ),
+        ]),
+    );
+}
+
+/// A model the credential no longer offers gives way to the default, but
+/// the default itself stays even when the CLI doesn't list it.
+#[test]
+fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
+    let model = |id: &str| Some(ModelId(text(id)));
+    let offered = Models {
+        choices: Vec::from([ModelChoice {
+            id: ModelId(text("big")),
+            name: text("Big"),
+            description: String::new(),
+            efforts: Vec::new(),
+        }]),
+        default: model("house"),
+    };
+    let choosing = |id: &str| {
+        Session::restore(
+            SessionId(1),
+            HostPath(text("/work")),
+            Choice {
+                model: model(id),
+                effort: None,
+            },
+            None,
+            &[],
+        )
+    };
+    let starting = |id: &str| {
+        agent(Command::Start(Start {
+            instructions: None,
+            session: SessionId(1),
+            directory: HostPath(text("/work")),
+            model: model(id),
+            effort: None,
+            history: None,
+            conversation: None,
+        }))
+    };
+    let order = || {
+        Input::Order(Order::Start {
+            offered: offered.clone(),
+        })
+    };
+    let _ = expect(
+        choosing("gone"),
+        Vec::from([(
+            order(),
+            Vec::from([
+                Effect::Emit(EventKind::ModelChanged {
+                    model: model("house"),
+                    effort: None,
+                    reason: text(
+                        "Model changed to house: gone is not offered by the current credential",
+                    ),
+                }),
+                starting("house"),
+            ]),
+        )]),
+    );
+    let _ = expect(
+        choosing("house"),
+        Vec::from([(order(), Vec::from([starting("house")]))]),
+    );
+}
+
+#[test]
+fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
+    let _ = expect(
+        restored(&in_workspace(), None),
+        Vec::from([
+            (start(), Vec::from([launching("/work", None, None)])),
+            (
+                started("conv", Anchoring::Messages),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::SessionReady),
+                    accepted(),
+                ]),
+            ),
+            (send("hi"), Vec::from([record("hi")])),
+            (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
+            (sent(), Vec::from([saved(), accepted()])),
+            (
+                turn_started(),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::NativeTurnStarted {
+                        history: HistoryAnchor::Messages {
+                            conversation: text("conv"),
+                            message: None,
+                        },
+                        turn_start: Some(HostSeq(4)),
+                    }),
+                ]),
+            ),
+            (
+                turn_ended(),
+                Vec::from([
+                    Effect::Emit(EventKind::CheckpointReserved {
+                        checkpoint: CheckpointId(1),
+                    }),
+                    Effect::Barrier,
+                    Effect::Call(Call::Snapshot {
+                        workspace: workspace(),
+                        checkpoint: CheckpointId(1),
+                        previous: Some(text("c0")),
+                    }),
+                ]),
+            ),
+            (
+                Input::Snapshotted(Err(text("disk full"))),
+                Vec::from([
+                    Effect::Emit(EventKind::Error {
+                        message: text("checkpoint failed: disk full"),
+                    }),
+                    completed(),
+                ]),
+            ),
         ]),
     );
 }

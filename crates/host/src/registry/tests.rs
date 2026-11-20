@@ -11,7 +11,7 @@ use proto::{
 use super::{
     Change, Effect, Job, Launch, Launcher, Listing, Offer, OwnSignIn,
     Refreshed, Registry, Started, Starting, Stored, defaults, dir, picked,
-    running, unprepared,
+    running, signed_in_as, unprepared,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -622,6 +622,54 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
     assert_eq!(registry.instances().of(&codex_api), None);
 }
 
+/// Starting an instance added again runs only its new CLI: the start of
+/// the one removed meanwhile is dropped.
+#[test]
+fn a_start_from_before_an_instance_was_added_again_is_dropped() {
+    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
+    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
+    let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
+    let removed =
+        registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
+    let _ = saving(&mut registry, removed);
+    let again = set(&mut registry, Provider::Codex, gateway("k"), "again");
+    let stale = registry.started(Started {
+        id: 1,
+        instance: codex_api.clone(),
+        launcher: ready("old", OwnSignIn::Unmanaged),
+    });
+    let starting = availability(&registry, &codex_api);
+    let current = registry.started(Started {
+        id: 2,
+        instance: codex_api.clone(),
+        launcher: ready("codex-api", OwnSignIn::Unmanaged),
+    });
+    assert_eq!(
+        (again, stale, starting, current),
+        (
+            Vec::from([
+                Effect::Log(Note::InstanceAdded {
+                    instance: codex_api.clone()
+                }),
+                Effect::Start(Starting {
+                    id: 2,
+                    instance: codex_api,
+                    settings: Instance {
+                        credential: Some(gateway("k")),
+                        ..Instance::default()
+                    },
+                }),
+            ]),
+            Vec::new(),
+            Some(unavailable("starting the instance's CLI")),
+            Vec::from([Effect::Reply(
+                "again",
+                CommandResult::Instances(registry.instances())
+            )]),
+        )
+    );
+}
+
 #[test]
 fn an_instance_is_removed_only_while_no_session_runs_on_it() {
     let mut registry = host_of(&[("api", api())]);
@@ -1054,6 +1102,23 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
             Some(unavailable("no credential configured")),
             Vec::from([Effect::Refresh(job(3, &me, "me", None))]),
         )
+    );
+}
+
+/// The account's instance signs in on its own, so it keeps none of the
+/// credential of the instance it signed in from.
+#[test]
+fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
+    let me = InstanceId::named(Provider::Claude, "me@example.com");
+    let mut signed = defaults(&catalog());
+    signed.0.insert(me.clone(), Instance::default());
+    assert_eq!(
+        signed_in_as(
+            &with_credential(defaults(&catalog()), &api(), "t"),
+            &api(),
+            Some(Account::Named(text("me@example.com"))),
+        ),
+        Some((signed, me))
     );
 }
 

@@ -206,12 +206,6 @@ impl<R> Default for Server<R> {
 }
 
 impl<R> Server<R> {
-    /// A server whose process is running.
-    #[must_use]
-    pub fn running() -> Self {
-        Self::default()
-    }
-
     pub fn step<S, E: fmt::Display>(
         &mut self,
         input: Input<R, S, E>,
@@ -634,7 +628,7 @@ mod tests {
 
     #[test]
     fn a_response_goes_to_its_request_and_initialize_is_acknowledged() {
-        let mut server = Server::running();
+        let mut server = Server::default();
         let seen = walk(
             &mut server,
             Vec::from([
@@ -684,7 +678,7 @@ mod tests {
 
     #[test]
     fn an_approval_is_answered_once_and_a_withdrawn_one_is_cancelled() {
-        let mut server = Server::running();
+        let mut server = Server::default();
         let respond = |id: &str, decision, reply| {
             Input::Command(Command::Respond {
                 id: ApprovalId(String::from(id)),
@@ -760,7 +754,7 @@ mod tests {
 
     #[test]
     fn an_answer_that_does_not_encode_fails_and_closes_the_approval() {
-        let mut server = Server::running();
+        let mut server = Server::default();
         let id = ApprovalId(String::from("ap_1"));
         let open = Open {
             rpc_id: RequestId::Integer(3),
@@ -790,7 +784,7 @@ mod tests {
 
     #[test]
     fn a_request_codex_does_not_serve_is_rejected_and_passed_on() {
-        let mut server = Server::<u8>::running();
+        let mut server = Server::<u8>::default();
         let seen: Vec<Step> = server.step(line(&json!({
             "id": 9,
             "method": "item/tool/call",
@@ -818,7 +812,7 @@ mod tests {
 
     #[test]
     fn a_failed_request_write_stops_the_server_and_fails_with_its_reason() {
-        let mut server = Server::running();
+        let mut server = Server::default();
         let seen = walk(
             &mut server,
             Vec::from([
@@ -856,7 +850,7 @@ mod tests {
 
     #[test]
     fn without_a_reason_a_failed_request_keeps_its_error() {
-        let mut server = Server::<u8>::running();
+        let mut server = Server::<u8>::default();
         let seen: Vec<Step> = server.step(Input::Stopped {
             exit: exit(),
             refusal: None,
@@ -874,7 +868,7 @@ mod tests {
     #[test]
     fn stdout_ending_stops_the_server_and_an_answer_write_failure_is_reported()
     {
-        let mut server = Server::<u8>::running();
+        let mut server = Server::<u8>::default();
         let seen: Vec<Vec<Step>> = walk(
             &mut server,
             Vec::from([
@@ -929,6 +923,47 @@ mod tests {
                 "approval 7 cannot be answered with that decision",
             ]
             .map(String::from)
+        );
+    }
+    #[test]
+    fn failures_are_equal_only_in_kind_and_contents() {
+        type Failed = Failure<&'static str>;
+        let json = |text: &str| {
+            serde_json::from_str::<Value>(text).err().map(Failed::Json)
+        };
+        let rpc = |method: &str, message: &str| Failed::Rpc {
+            method: String::from(method),
+            message: String::from(message),
+        };
+        assert_eq!(Failed::Exited, Failed::Exited);
+        assert_ne!(Failed::Exited, Failed::Io("broken pipe"));
+        assert_eq!(
+            Failed::Refused(String::from("no")),
+            Failed::Refused(String::from("no"))
+        );
+        assert_ne!(
+            Failed::Refused(String::from("no")),
+            Failed::Refused(String::from("later"))
+        );
+        assert_eq!(Failed::Io("broken pipe"), Failed::Io("broken pipe"));
+        assert_ne!(Failed::Io("broken pipe"), Failed::Io("closed"));
+        assert_eq!(json("{"), json("{"));
+        assert_ne!(json("{"), json("["));
+        assert_eq!(rpc("turn/start", "no"), rpc("turn/start", "no"));
+        assert_ne!(rpc("turn/start", "no"), rpc("thread/start", "no"));
+        assert_ne!(rpc("turn/start", "no"), rpc("turn/start", "busy"));
+        let id = |text: &str| ApprovalId(String::from(text));
+        assert_eq!(
+            Failed::UnknownApproval(id("a")),
+            Failed::UnknownApproval(id("a"))
+        );
+        assert_ne!(
+            Failed::UnknownApproval(id("a")),
+            Failed::DecisionNotApplicable(id("a"))
+        );
+        assert_ne!(
+            Failed::DecisionNotApplicable(id("a")),
+            Failed::DecisionNotApplicable(id("b"))
         );
     }
 }

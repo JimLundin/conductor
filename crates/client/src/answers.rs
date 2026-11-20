@@ -173,4 +173,14 @@ mod tests {
             )
         );
     }
+    #[test]
+    fn the_typed_text_is_kept_per_question() {
+        let draft =
+            Draft::new(&[question(Selection::One), question(Selection::One)])
+                .r#type(1, "Green", Selection::One);
+        assert_eq!(
+            [draft.typed(0), draft.typed(1), draft.typed(2)],
+            [String::new(), String::from("Green"), String::new()]
+        );
+    }
 }

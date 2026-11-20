@@ -163,6 +163,24 @@ fn the_summary_is_the_last_reply_of_the_summary_turn() {
         "a stopped agent's last reply stands in"
     );
     assert_eq!(summary(&started(), SESSION, HostSeq(0)), None);
+    let other = Event {
+        session: SessionId(2),
+        ..reply(12, "Another session's reply.")
+    };
+    assert_eq!(
+        summary(
+            &and(history.clone(), Vec::from([other])),
+            SESSION,
+            HostSeq(7)
+        ),
+        Some(text("Built the protocol; the browser part is left.")),
+        "another session's reply isn't the summary"
+    );
+    assert_eq!(
+        summary(&history, SESSION, HostSeq(10)),
+        None,
+        "the reply the summary turn started after isn't the summary"
+    );
     assert!(turn_ended(&done(11), SESSION));
     let accepted = Some(&proto::CommandResult::Accepted);
     assert!(super::waits(accepted, &[], SESSION));
@@ -297,5 +315,13 @@ fn a_merge_gives_its_tree_or_names_the_conflicts() {
             Some(&proto::CommandResult::Rejected(Rejection::TurnInProgress))
         )
         .is_some_and(|reason| reason.starts_with("asking for a summary: "))
+    );
+}
+
+#[test]
+fn the_merge_commit_says_which_session_lands_on_which_issue() {
+    assert_eq!(
+        super::merge_message("issue/01JD", "conductor/01JE"),
+        "Land conductor/01JE on issue/01JD"
     );
 }

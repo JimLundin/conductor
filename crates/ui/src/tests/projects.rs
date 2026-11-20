@@ -89,7 +89,7 @@ fn homed(
 
 /// desk's home: alpha checked out twice, beta not, a local-only project,
 /// one cloning and one whose clone failed.
-fn desk_home() -> Home {
+pub(super) fn desk_home() -> Home {
     home(
         HomeSync::Synced,
         Vec::from([
@@ -973,5 +973,188 @@ fn an_issue_starts_a_session_on_it_and_lists_its_sessions() {
             text("Claude Code on desk · idle"),
             Intent::Show(Place::Session(HOST, SESSION)),
         )]))
+    );
+}
+
+#[test]
+fn a_project_shared_by_live_hosts_opens_its_issues_on_the_first() {
+    let (typed, _) = run(
+        two_homes(),
+        Vec::from([Intent::NewIssue(NewIssueIntent::TypeTitle(
+            ProjectId(text("alpha")),
+            text("Remove"),
+        ))]),
+    );
+    assert_eq!(
+        projects(&typed)
+            .and_then(|screen| screen.projects.into_iter().next())
+            .and_then(|group| group.issues.create),
+        Some(Intent::NewIssue(NewIssueIntent::Create(
+            HOST,
+            ProjectId(text("alpha")),
+        )))
+    );
+}
+
+#[test]
+fn a_refused_issue_is_the_notice_and_keeps_its_title()
+-> Result<(), &'static str> {
+    let alpha = || ProjectId(text("alpha"));
+    let (typed, effects) = run(
+        with_issues(),
+        Vec::from([
+            Intent::NewIssue(NewIssueIntent::TypeTitle(
+                alpha(),
+                text("Remove"),
+            )),
+            Intent::NewIssue(NewIssueIntent::Create(HOST, alpha())),
+        ]),
+    );
+    let reply = reply_of(&effects).ok_or("no reply")?;
+    let (refused, _) = run(
+        typed,
+        Vec::from([Intent::Replied(reply, Err(text("offline")))]),
+    );
+    assert_eq!(
+        projects(&refused).map(|screen| (
+            screen.notice,
+            screen
+                .projects
+                .into_iter()
+                .map(|group| group.issues.new_title)
+                .collect::<Vec<_>>()
+        )),
+        Some((Some(text("offline")), Vec::from([text("Remove")])))
+    );
+    Ok(())
+}
+
+#[test]
+fn an_issue_made_while_it_is_shown_keeps_its_drafts_but_the_title()
+-> Result<(), &'static str> {
+    let alpha = || ProjectId(text("alpha"));
+    let item = || Intent::Issue(IssueIntent::TypeItem(text("docs")));
+    let (typed, effects) = run(
+        on_issue(),
+        Vec::from([
+            item(),
+            Intent::NewIssue(NewIssueIntent::TypeTitle(
+                alpha(),
+                text("Remove"),
+            )),
+            Intent::NewIssue(NewIssueIntent::Create(HOST, alpha())),
+        ]),
+    );
+    let reply = reply_of(&effects).ok_or("no reply")?;
+    let (made, _) = run(
+        typed,
+        Vec::from([Intent::Replied(
+            reply,
+            Ok(CommandResult::IssueCreated { issue: OPENED }),
+        )]),
+    );
+    assert_eq!(made, run(on_issue(), Vec::from([item()])).0);
+    Ok(())
+}
+
+#[test]
+fn an_issue_marks_its_priority_and_sends_only_a_new_one() {
+    let (_, effects) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::SetPriority(text("high"))),
+            Intent::Issue(IssueIntent::SetPriority(text("low"))),
+        ]),
+    );
+    assert_eq!(
+        (
+            issue_screen(&on_issue()).map(|issue| issue
+                .priority
+                .into_iter()
+                .filter(|pick| pick.selected)
+                .map(|pick| pick.word)
+                .collect::<Vec<_>>()),
+            sent(&effects),
+        ),
+        (
+            Some(Vec::from(["high"])),
+            Vec::from([CommandBody::ChangeIssue {
+                issue: OPENED,
+                change: IssueChange::Priority(Priority::Low),
+            }]),
+        )
+    );
+}
+
+#[test]
+fn an_added_item_or_note_empties_its_field() {
+    let (added, _) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::TypeItem(text("docs"))),
+            Intent::Issue(IssueIntent::AddItem),
+            Intent::Issue(IssueIntent::TypeNote(text("halfway"))),
+            Intent::Issue(IssueIntent::AddNote),
+        ]),
+    );
+    assert_eq!(
+        issue_screen(&added).map(|issue| (issue.item, issue.note)),
+        Some((String::new(), String::new()))
+    );
+}
+
+#[test]
+fn the_edit_form_saves_only_with_a_title_and_cancel_closes_it() {
+    let edit = |intents: Vec<IssueIntent>| {
+        run(
+            on_issue(),
+            core::iter::once(IssueIntent::Edit)
+                .chain(intents)
+                .map(Intent::Issue)
+                .collect(),
+        )
+    };
+    let editing = |state: &crate::State| {
+        issue_screen(state).map(|issue| {
+            issue
+                .editing
+                .map(|editing| (editing.title, editing.save_disabled))
+        })
+    };
+    let (opened, _) = edit(Vec::new());
+    let (untitled, unsaved) = edit(Vec::from([
+        IssueIntent::TypeTitle(text("  ")),
+        IssueIntent::Save,
+    ]));
+    let (cancelled, _) = edit(Vec::from([IssueIntent::Cancel]));
+    assert_eq!(
+        (
+            editing(&opened),
+            editing(&untitled),
+            sent(&unsaved),
+            editing(&cancelled),
+        ),
+        (
+            Some(Some((text("Sign in"), false))),
+            Some(Some((text("  "), true))),
+            Vec::new(),
+            Some(None),
+        )
+    );
+}
+
+#[test]
+fn leaving_an_issue_drops_its_drafts() {
+    let (typed, _) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::TypeItem(text("docs"))),
+            Intent::Show(Place::Projects),
+            Intent::Show(Place::Issue(HOST, OPENED)),
+        ]),
+    );
+    assert_eq!(
+        issue_screen(&typed).map(|issue| issue.item),
+        Some(String::new())
     );
 }

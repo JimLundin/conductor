@@ -1619,11 +1619,8 @@ impl Session {
     ) -> Vec<Effect> {
         let tasks =
             self.retask(tasks_before(events, self.id, undoing.undo.restored));
-        self.book.resume = Some(history.clone());
-        self.book.recovery = Some(Recovery::Files(Undo {
-            history,
-            ..undoing.undo
-        }));
+        self.book.resume = Some(history);
+        self.book.recovery = Some(Recovery::Files(undoing.undo.clone()));
         join(join(tasks, [Effect::Barrier]), self.restore_files(undoing))
     }
 
@@ -1813,15 +1810,12 @@ fn resumed(
     }
 }
 
+/// The resolved requests. One left open is unknown, which a reply takes as
+/// withdrawn.
 fn replay_requests(history: &[Event]) -> BTreeMap<RequestId, Pending> {
     history
         .iter()
         .filter_map(|event| match &event.kind {
-            EventKind::RequestOpened { request, .. }
-            | EventKind::QuestionAsked { request, .. } => Some((
-                request.to_owned(),
-                Pending::Resolved(Resolution::Withdrawn),
-            )),
             EventKind::RequestResolved {
                 request,
                 resolution,
@@ -1853,18 +1847,20 @@ fn tasks_before(
     session: SessionId,
     restored: CheckpointId,
 ) -> Vec<Task> {
-    let taken = history.iter().find_map(|event| match &event.kind {
-        EventKind::CheckpointCreated { checkpoint }
-            if checkpoint.id == restored =>
-        {
-            Some(event.seq)
-        }
-        _ => None,
-    });
+    let taken = history
+        .iter()
+        .position(|event| match &event.kind {
+            EventKind::CheckpointCreated { checkpoint } => {
+                checkpoint.id == restored
+            }
+            _ => false,
+        })
+        .unwrap_or(0);
     last_tasks(
-        history.iter().filter(|event| {
-            event.session == session && Some(event.seq) < taken
-        }),
+        history
+            .iter()
+            .take(taken)
+            .filter(|event| event.session == session),
     )
 }
 

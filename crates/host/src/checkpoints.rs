@@ -13,9 +13,11 @@ pub struct Undo {
     pub history: HistoryAnchor,
 }
 
+/// The pending undo, as planned, and its phase.
 #[derive(Debug, Clone)]
 pub enum Recovery {
     Native(Undo),
+    /// The native history is restored, to [`Book::resume`].
     Files(Undo),
 }
 
@@ -137,19 +139,13 @@ fn replay_recovery(events: &[Event]) -> Option<Recovery> {
                 restored: restore.to_owned(),
                 history: history.clone(),
             })),
-            EventKind::UndoHistoryRestored {
-                checkpoint,
-                history,
-            } => pending.map(|recovery| {
-                let undo = match recovery {
-                    Recovery::Native(undo) | Recovery::Files(undo) => undo,
-                };
-                Recovery::Files(Undo {
-                    selected: checkpoint.to_owned(),
-                    history: history.clone(),
-                    ..undo
+            EventKind::UndoHistoryRestored { .. } => {
+                pending.map(|recovery| match recovery {
+                    Recovery::Native(undo) | Recovery::Files(undo) => {
+                        Recovery::Files(undo)
+                    }
                 })
-            }),
+            }
             EventKind::TurnsUndone { .. } => None,
             _ => pending,
         })
@@ -401,6 +397,44 @@ mod tests {
         assert_eq!(book.active, Vec::from([CheckpointId(0)]));
         assert_eq!(book.highwater.next(), CheckpointId(4));
         assert_eq!(book.checkpoints.len(), 3);
+        assert_eq!(
+            Book::replay(&[checkpoint(0), checkpoint(1)]).highwater,
+            CheckpointId(1)
+        );
+    }
+
+    #[test]
+    fn a_native_turn_start_is_resumed_unless_an_undo_restored_a_history() {
+        let turn = |id: &str| HistoryAnchor::Turns {
+            conversation: String::from("native"),
+            turn: Some(String::from(id)),
+        };
+        let started = |id| {
+            event(EventKind::NativeTurnStarted {
+                history: turn(id),
+                turn_start: Some(HostSeq(2)),
+            })
+        };
+        let fork = HistoryAnchor::Fork {
+            source: String::from("source"),
+            through: String::from("boundary"),
+            target: String::from("target"),
+        };
+        assert_eq!(
+            [
+                Book::replay(&[checkpoint(0), started("t1")]).resume,
+                Book::replay(&[
+                    checkpoint(0),
+                    event(EventKind::UndoHistoryRestored {
+                        checkpoint: CheckpointId(1),
+                        history: fork.clone(),
+                    }),
+                    started("t2"),
+                ])
+                .resume,
+            ],
+            [Some(turn("t1")), Some(fork)]
+        );
     }
 
     #[test]

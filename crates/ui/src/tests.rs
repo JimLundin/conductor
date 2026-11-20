@@ -1,4 +1,8 @@
+mod credentials;
 mod hosts;
+mod new_session;
+mod panes;
+mod places;
 mod projects;
 
 use alloc::collections::BTreeMap;

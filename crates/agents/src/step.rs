@@ -104,3 +104,29 @@ pub fn reasoning_delta(text: String) -> Option<Step> {
         .filter(|piece| !piece.is_empty())
         .map(|piece| Step::Emit(EventKind::ReasoningDelta { text: piece }))
 }
+
+#[cfg(test)]
+mod tests {
+    use proto::EventKind;
+
+    use super::{Step, reasoning, reasoning_delta};
+
+    #[test]
+    fn reasoning_shows_only_when_it_has_text() {
+        let text = || String::from("thinking");
+        assert_eq!(
+            [reasoning(text()), reasoning(String::new())],
+            [
+                Some(Step::Emit(EventKind::Reasoning { text: text() })),
+                None
+            ]
+        );
+        assert_eq!(
+            [reasoning_delta(text()), reasoning_delta(String::new())],
+            [
+                Some(Step::Emit(EventKind::ReasoningDelta { text: text() })),
+                None
+            ]
+        );
+    }
+}

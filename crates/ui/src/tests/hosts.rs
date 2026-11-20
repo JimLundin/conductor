@@ -491,3 +491,41 @@ fn the_single_saved_ticket_moves_into_the_list() {
         )
     );
 }
+
+#[test]
+fn forgetting_another_host_keeps_the_session_shown() {
+    let (kept, _) = run(
+        two(LinkState::Live),
+        Vec::from([
+            Intent::Show(Place::Session(OTHER, THEIRS)),
+            Intent::Forget(HOST),
+        ]),
+    );
+    assert_eq!(pane(&kept).map(|shown| shown.title), Some(text("notes")));
+}
+
+#[test]
+fn a_forgotten_host_paired_again_is_not_where_a_new_session_starts() {
+    let (again, _) = run(
+        two(LinkState::Live),
+        Vec::from([
+            Intent::Show(Place::Session(HOST, SESSION)),
+            Intent::Forget(HOST),
+            Intent::Join(Ok(ticket())),
+            Intent::Show(Place::NewSession),
+        ]),
+    );
+    assert_eq!(
+        form(&again).map(|shown| {
+            shown
+                .hosts
+                .into_iter()
+                .map(|choice| (choice.label, choice.selected))
+                .collect::<Vec<_>>()
+        }),
+        Some(Vec::from([
+            (text("host 09090909 (offline)"), false),
+            (text("laptop"), true),
+        ]))
+    );
+}

@@ -191,12 +191,6 @@ impl<R> Default for Session<R> {
 }
 
 impl<R> Session<R> {
-    /// A session whose process is running.
-    #[must_use]
-    pub fn running() -> Self {
-        Self::default()
-    }
-
     pub fn step<S, E: fmt::Display>(
         &mut self,
         input: Input<R, S, E>,
@@ -543,7 +537,7 @@ mod tests {
 
     #[test]
     fn only_a_sub_agents_task_ends_as_a_sub_agent() {
-        let mut session = Session::<u8>::running();
+        let mut session = Session::<u8>::default();
         let ended = |effects: &[Step]| match effects {
             [Effect::Emit(ClaudeEvent::SubagentStarted { agent, .. })] => {
                 format!("started {agent}")
@@ -620,7 +614,7 @@ mod tests {
 
     #[test]
     fn a_control_request_waits_for_its_response_by_request_id() {
-        let mut session = Session::running();
+        let mut session = Session::default();
         let seen = walk(
             &mut session,
             Vec::from([
@@ -684,7 +678,7 @@ mod tests {
 
     #[test]
     fn a_failed_write_fails_its_command_and_a_refusal_is_only_logged() {
-        let mut session = Session::running();
+        let mut session = Session::default();
         let seen = walk(
             &mut session,
             Vec::from([
@@ -720,7 +714,7 @@ mod tests {
 
     #[test]
     fn an_unsupported_control_request_gets_an_error_reply() {
-        let mut session = Session::<u8>::running();
+        let mut session = Session::<u8>::default();
         let seen: Vec<Step> = session.step(line(&json!({
             "type": "control_request",
             "request_id": "cli_1",
@@ -749,7 +743,7 @@ mod tests {
 
     #[test]
     fn a_permission_is_answered_once_and_a_withdrawn_one_not_at_all() {
-        let mut session = Session::running();
+        let mut session = Session::default();
         let respond = |id: &str, reply| {
             Input::Command(Command::Respond {
                 id: PermissionRequestId(String::from(id)),
@@ -796,7 +790,7 @@ mod tests {
 
     #[test]
     fn a_result_carries_the_last_message_since_the_user_wrote() {
-        let mut session = Session::<u8>::running();
+        let mut session = Session::<u8>::default();
         let assistant = json!({
             "type": "assistant",
             "uuid": "m1",
@@ -840,7 +834,7 @@ mod tests {
 
     #[test]
     fn a_line_that_is_not_json_passes_on_as_unknown() {
-        let mut session = Session::<u8>::running();
+        let mut session = Session::<u8>::default();
         let seen: Vec<Step> =
             session.step(Input::Read(Ok(Some(String::from("oops")))));
         assert_eq!(
@@ -860,7 +854,7 @@ mod tests {
 
     #[test]
     fn stopping_fails_what_waits_and_reports_the_exit_to_a_shutdown() {
-        let mut session = Session::running();
+        let mut session = Session::default();
         let seen = walk(
             &mut session,
             Vec::from([
@@ -911,7 +905,7 @@ mod tests {
 
     #[test]
     fn stdout_closing_or_failing_stops_the_process_and_closing_ends_it() {
-        let mut session = Session::<u8>::running();
+        let mut session = Session::<u8>::default();
         let seen: Vec<Vec<Step>> = walk(
             &mut session,
             Vec::from([
@@ -967,5 +961,34 @@ mod tests {
             ]
             .map(String::from)
         );
+    }
+    #[test]
+    fn failures_are_equal_only_in_kind_and_contents() {
+        type Failed = Failure<&'static str>;
+        let encode = |text: &str| {
+            serde_json::from_str::<Value>(text)
+                .err()
+                .map(Failed::Encode)
+        };
+        let control = |subtype: &str, message: &str| Failed::Control {
+            subtype: String::from(subtype),
+            message: String::from(message),
+        };
+        let unknown = |id: &str| {
+            Failed::UnknownPermissionRequest(PermissionRequestId(String::from(
+                id,
+            )))
+        };
+        assert_eq!(Failed::Exited, Failed::Exited);
+        assert_ne!(Failed::Exited, Failed::Io("broken pipe"));
+        assert_eq!(Failed::Io("broken pipe"), Failed::Io("broken pipe"));
+        assert_ne!(Failed::Io("broken pipe"), Failed::Io("closed"));
+        assert_eq!(encode("{"), encode("{"));
+        assert_ne!(encode("{"), encode("["));
+        assert_eq!(control("set_model", "no"), control("set_model", "no"));
+        assert_ne!(control("set_model", "no"), control("interrupt", "no"));
+        assert_ne!(control("set_model", "no"), control("set_model", "busy"));
+        assert_eq!(unknown("a"), unknown("a"));
+        assert_ne!(unknown("a"), unknown("b"));
     }
 }

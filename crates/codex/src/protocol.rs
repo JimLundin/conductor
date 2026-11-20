@@ -2301,4 +2301,44 @@ mod tests {
         assert_eq!(got, want);
         Ok(())
     }
+    #[test]
+    fn hidden_models_are_left_out_and_the_default_is_marked() -> TestResult<()>
+    {
+        let listed = serde_json::from_str::<Value>(
+            r#"{"data": [
+                {"id": "gpt-6", "displayName": "GPT-6", "description": "a", "isDefault": false, "supportedReasoningEfforts": []},
+                {"id": "gpt-6-luna", "displayName": "Luna", "description": "b", "isDefault": true, "supportedReasoningEfforts": [{"reasoningEffort": "high"}]},
+                {"id": "gpt-5", "displayName": "GPT-5", "description": "c", "hidden": true, "supportedReasoningEfforts": []}
+            ]}"#,
+        )?;
+        let models = super::models(listed)?;
+        assert_eq!(
+            models
+                .choices
+                .iter()
+                .map(|choice| (choice.id.0.as_str(), choice.efforts.clone()))
+                .collect::<Vec<_>>(),
+            Vec::from([
+                ("gpt-6", Vec::new()),
+                ("gpt-6-luna", Vec::from([Effort::High]))
+            ])
+        );
+        assert_eq!(
+            models.default,
+            Some(proto::ModelId(String::from("gpt-6-luna")))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_user_agent_is_read_from_initialize() -> TestResult<()> {
+        let result = serde_json::from_str::<Value>(
+            r#"{"userAgent": "conductor/0.166.0 (Ubuntu 24.4.0; x86_64)"}"#,
+        )?;
+        assert_eq!(
+            super::user_agent(result)?,
+            "conductor/0.166.0 (Ubuntu 24.4.0; x86_64)"
+        );
+        Ok(())
+    }
 }
