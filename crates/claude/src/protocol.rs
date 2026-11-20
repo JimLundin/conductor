@@ -1160,8 +1160,8 @@ mod tests {
     use serde_json::Value;
 
     use proto::{
-        Answer, Change, FileChange, Question, QuestionOption, Selection,
-        SubagentOutcome, ToolKind, ToolOutcome, TurnOutcome,
+        Answer, Change, Effort, FileChange, ModelId, Question, QuestionOption,
+        Selection, SubagentOutcome, ToolKind, ToolOutcome, TurnOutcome,
     };
 
     use super::{
@@ -1607,8 +1607,24 @@ mod tests {
         want: ToolKind,
     }
 
-    fn tool_cases() -> [ToolCase; 11] {
+    fn other(name: &str, input: &'static str, detail: &str) -> ToolCase {
+        ToolCase {
+            name: String::from(name),
+            input,
+            want: ToolKind::Other {
+                name: String::from(name),
+                detail: String::from(detail),
+            },
+        }
+    }
+
+    fn tool_cases() -> [ToolCase; 12] {
         [
+            other(
+                "Agent",
+                r#"{"description":"Review the diff","prompt":"..."}"#,
+                "Review the diff",
+            ),
             ToolCase {
                 name: String::from("Bash"),
                 input: r#"{"command":"ls -a"}"#,
@@ -1646,64 +1662,25 @@ mod tests {
                     }]),
                 },
             },
-            ToolCase {
-                name: String::from("Read"),
-                input: r#"{"file_path":"d.txt"}"#,
-                want: ToolKind::Other {
-                    name: String::from("Read"),
-                    detail: String::from("d.txt"),
-                },
-            },
-            ToolCase {
-                name: String::from("Grep"),
-                input: r#"{"pattern":"fn main"}"#,
-                want: ToolKind::Other {
-                    name: String::from("Grep"),
-                    detail: String::from("fn main"),
-                },
-            },
-            ToolCase {
-                name: String::from("Glob"),
-                input: r#"{"pattern":"*.rs"}"#,
-                want: ToolKind::Other {
-                    name: String::from("Glob"),
-                    detail: String::from("*.rs"),
-                },
-            },
-            ToolCase {
-                name: String::from("WebFetch"),
-                input: r#"{"url":"https://example.com"}"#,
-                want: ToolKind::Other {
-                    name: String::from("WebFetch"),
-                    detail: String::from("https://example.com"),
-                },
-            },
-            ToolCase {
-                name: String::from("Write"),
-                input: r#"{"content":"no path"}"#,
-                want: ToolKind::Other {
-                    name: String::from("Write"),
-                    detail: String::from(r#"{"content":"no path"}"#),
-                },
-            },
-            ToolCase {
-                name: String::from("Bash"),
-                input: r#"{"command":7}"#,
-                want: ToolKind::Other {
-                    name: String::from("Bash"),
-                    detail: String::from(r#"{"command":7}"#),
-                },
-            },
-            ToolCase {
-                name: String::from("TodoWrite"),
-                input: r#"{"todos":[{"content":"a","status":"later"}]}"#,
-                want: ToolKind::Other {
-                    name: String::from("TodoWrite"),
-                    detail: String::from(
-                        r#"{"todos":[{"content":"a","status":"later"}]}"#,
-                    ),
-                },
-            },
+            other("Read", r#"{"file_path":"d.txt"}"#, "d.txt"),
+            other("Grep", r#"{"pattern":"fn main"}"#, "fn main"),
+            other("Glob", r#"{"pattern":"*.rs"}"#, "*.rs"),
+            other(
+                "WebFetch",
+                r#"{"url":"https://example.com"}"#,
+                "https://example.com",
+            ),
+            other(
+                "Write",
+                r#"{"content":"no path"}"#,
+                r#"{"content":"no path"}"#,
+            ),
+            other("Bash", r#"{"command":7}"#, r#"{"command":7}"#),
+            other(
+                "TodoWrite",
+                r#"{"todos":[{"content":"a","status":"later"}]}"#,
+                r#"{"todos":[{"content":"a","status":"later"}]}"#,
+            ),
         ]
     }
 
@@ -1803,6 +1780,41 @@ mod tests {
             Ok((got, Some(want)))
         }).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?.into_iter().unzip::<Option<ToolOutcome>, Option<ToolOutcome>, Vec<Option<ToolOutcome>>, Vec<Option<ToolOutcome>>>();
         assert_eq!(got, want);
+        Ok(())
+    }
+    #[test]
+    fn the_default_row_names_the_model_with_its_resolved_model()
+    -> TestResult<()> {
+        let listed = serde_json::from_str::<Value>(
+            r#"{"models": [
+                {"value": "default", "resolvedModel": "haiku-x", "displayName": "Default", "description": "d"},
+                {"value": "opus", "resolvedModel": "opus-x", "displayName": "Opus", "description": "o", "supportedEffortLevels": ["low", "high"]},
+                {"value": "haiku", "resolvedModel": "haiku-x", "displayName": "Haiku", "description": "h"},
+                {"value": "custom", "displayName": "Custom", "description": "c"}
+            ]}"#,
+        )?;
+        let models = super::models(&listed);
+        assert_eq!(
+            models
+                .choices
+                .iter()
+                .map(|choice| (choice.id.0.as_str(), choice.efforts.clone()))
+                .collect::<Vec<_>>(),
+            Vec::from([
+                ("opus", Vec::from([Effort::Low, Effort::High])),
+                ("haiku", Vec::new()),
+                ("custom", Vec::new()),
+            ])
+        );
+        assert_eq!(models.default, Some(ModelId(String::from("haiku"))));
+        let undefaulted = serde_json::from_str::<Value>(
+            r#"{"models": [{"value": "custom", "displayName": "Custom", "description": "c"}]}"#,
+        )?;
+        assert_eq!(
+            super::models(&undefaulted).default,
+            None,
+            "without a default row no model is the default"
+        );
         Ok(())
     }
 }

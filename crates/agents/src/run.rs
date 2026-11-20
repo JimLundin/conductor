@@ -55,3 +55,19 @@ impl Invocation {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Invocation, Var};
+
+    #[test]
+    fn an_invocation_keeps_its_environment_and_arguments_in_order() {
+        assert_eq!(
+            Invocation::of(Vec::from([Var::remove("A")]), &["-p", "x"]),
+            Invocation {
+                env: Vec::from([Var::remove("A")]),
+                args: Vec::from([String::from("-p"), String::from("x")]),
+            }
+        );
+    }
+}

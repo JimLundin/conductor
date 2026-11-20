@@ -136,4 +136,12 @@ mod tests {
             )
         );
     }
+    #[test]
+    fn a_credential_shows_only_its_kind_when_logged() {
+        let gateway = ClaudeCredential::Gateway {
+            base_url: String::from("https://g.example"),
+            token: String::from("secret-token"),
+        };
+        assert_eq!(format!("{gateway:?}"), "Gateway");
+    }
 }

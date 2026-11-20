@@ -1187,7 +1187,7 @@ mod tests {
             super::CommandResult::Rejected(super::Rejection::SessionClosed)
         );
         assert_eq!(
-            postcard::to_stdvec(&super::Event {
+            postcard::to_allocvec(&super::Event {
                 seq: super::HostSeq(1),
                 session: super::SessionId(1),
                 kind: super::EventKind::SessionReady,

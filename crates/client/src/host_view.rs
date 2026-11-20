@@ -2451,4 +2451,238 @@ mod tests {
         );
         Ok(())
     }
+    #[test]
+    fn each_state_has_its_word_class_and_label() {
+        assert_eq!(
+            [ReplyState::Done.class(), ReplyState::Streaming.class()],
+            ["reply", "reply streaming"]
+        );
+        assert_eq!(
+            [
+                ToolState::Running,
+                ToolState::Finished(ToolOutcome::Succeeded),
+                ToolState::Finished(ToolOutcome::Failed),
+                ToolState::Finished(ToolOutcome::Declined),
+                ToolState::Stopped,
+            ]
+            .map(ToolState::label),
+            ["running", "succeeded", "failed", "declined", "stopped"]
+        );
+        assert_eq!(
+            [
+                RequestState::Open.is_open(),
+                RequestState::Resolved(Resolution::Withdrawn).is_open()
+            ],
+            [true, false]
+        );
+        assert_eq!(
+            [
+                SessionStatus::Starting,
+                SessionStatus::Idle,
+                SessionStatus::Running,
+                SessionStatus::Closed(CloseReason::Exited {
+                    status: text("9")
+                }),
+            ]
+            .map(|status| status.word()),
+            ["starting", "idle", "running", "closed"].map(text)
+        );
+    }
+
+    #[test]
+    fn a_session_keeps_its_workspace_and_a_changed_effort()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = |at: &str| HostPath(text(at));
+        let workspace = proto::Workspace {
+            repository: path("/repo"),
+            original: path("/repo"),
+            worktree: path("/data/worktrees/1"),
+            directory: path("/data/worktrees/1"),
+            branch: text("conductor/1"),
+        };
+        let view = fold(Vec::from([
+            (1, created("/repo")),
+            (
+                1,
+                EventKind::WorkspaceCreated {
+                    workspace: workspace.clone(),
+                },
+            ),
+            (
+                1,
+                EventKind::ModelChanged {
+                    model: Some(ModelId(text("opus"))),
+                    effort: Some(Effort::High),
+                    reason: text("Effort set to high"),
+                },
+            ),
+        ]));
+        let session =
+            view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
+        assert_eq!(
+            (session.workspace.clone(), session.effort),
+            (Some(workspace), Some(Effort::High))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn finishing_on_an_issue_shows_and_a_new_message_makes_the_session_ready_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let failed = proto::Finished::Failed {
+            reason: text("merge conflict"),
+        };
+        let mut events = Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::OnIssue {
+                    issue: proto::IssueId(7),
+                },
+            ),
+            (1, EventKind::FinishStarted),
+        ]);
+        let finishing = fold(events.clone());
+        let session = finishing
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
+        assert_eq!(
+            (session.issue, session.finish, session.items.clone()),
+            (
+                Some(proto::IssueId(7)),
+                FinishState::Finishing,
+                Vec::from([Item::Finishing])
+            )
+        );
+        events.extend([
+            (
+                1,
+                EventKind::SessionFinished {
+                    finished: failed.clone(),
+                },
+            ),
+            (
+                1,
+                EventKind::UndoFailed {
+                    checkpoint: proto::CheckpointId(1),
+                    reason: text("restore failed"),
+                },
+            ),
+        ]);
+        let finished = fold(events.clone());
+        let session = finished
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
+        assert_eq!(
+            (session.finish, session.items.clone()),
+            (
+                FinishState::Done,
+                Vec::from([Item::Finishing, Item::Finished(failed)])
+            )
+        );
+        events.push((
+            1,
+            EventKind::UserMessage {
+                text: text("more"),
+                by: ClientName(text("phone")),
+            },
+        ));
+        let again = fold(events);
+        let session = again
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
+        assert_eq!(
+            (session.finish, session.undo.clone()),
+            (FinishState::Ready, UndoState::Ready)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_undo_keeps_only_the_earlier_turns_sub_agents_and_starts_and_idles()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let said = |words: &str| EventKind::UserMessage {
+            text: text(words),
+            by: ClientName(text("phone")),
+        };
+        let completed = || EventKind::TurnCompleted {
+            outcome: TurnOutcome::Completed,
+        };
+        let undone = numbered(Vec::from([
+            created("/a"),
+            EventKind::SessionReady,
+            said("first"),
+            started("call1"),
+            subagent_started("a", "call1"),
+            completed(),
+            checkpoint(1, 3, 0),
+            said("second"),
+            started("call2"),
+            subagent_started("b", "call2"),
+            completed(),
+            checkpoint(2, 8, 1),
+            said("third"),
+            EventKind::TurnsUndone {
+                checkpoint: proto::CheckpointId(2),
+                restored: proto::CheckpointId(1),
+            },
+        ]))
+        .into_iter()
+        .fold(HostView::empty(), HostView::apply);
+        let session = undone
+            .sessions
+            .get(&SessionId(1))
+            .ok_or("expected a value")?;
+        assert_eq!(
+            session
+                .subagents
+                .iter()
+                .map(|subagent| subagent.id.0.as_str())
+                .collect::<Vec<_>>(),
+            Vec::from(["a"])
+        );
+        assert_eq!(
+            session.turn_starts.keys().copied().collect::<Vec<_>>(),
+            Vec::from([HostSeq(3)])
+        );
+        assert_eq!(
+            (session.status.clone(), session.undo.clone()),
+            (SessionStatus::Idle, UndoState::Undone)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_undo_of_a_checkpoint_the_view_lacks_still_ends()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let view = numbered(
+            checkpoint_events()
+                .into_iter()
+                .chain([
+                    EventKind::UndoStarted {
+                        checkpoint: proto::CheckpointId(9),
+                        restore: proto::CheckpointId(1),
+                        history: proto::HistoryAnchor::Fresh,
+                    },
+                    EventKind::TurnsUndone {
+                        checkpoint: proto::CheckpointId(9),
+                        restored: proto::CheckpointId(1),
+                    },
+                ])
+                .collect(),
+        )
+        .into_iter()
+        .fold(HostView::empty(), HostView::apply);
+        let session =
+            view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
+        assert_eq!(
+            (session.items.len(), session.undo.clone()),
+            (9, UndoState::Undone)
+        );
+        Ok(())
+    }
 }

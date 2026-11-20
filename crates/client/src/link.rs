@@ -1394,4 +1394,58 @@ mod tests {
             )
         );
     }
+    #[test]
+    fn a_stream_is_named_for_the_error_it_ends_with() {
+        assert_eq!(
+            [Stream::Hello, Stream::Subscription]
+                .map(|stream| format!("{stream}")),
+            [String::from("hello"), String::from("subscription")]
+        );
+    }
+
+    #[test]
+    fn a_dial_the_round_never_made_is_retired() {
+        let (link, _) = Link::start(hello(), None);
+        let (_, effects) = link.step(connected(7));
+        assert_eq!(effects, Vec::from([Effect::Retire(Attempt(7))]));
+    }
+
+    #[test]
+    fn going_live_clears_the_last_error_and_takes_the_welcomes_catalog() {
+        let catalog = Catalog(BTreeMap::from([(
+            Provider::Claude,
+            proto::ProviderInfo {
+                label: String::from("Claude Code"),
+                note: None,
+                credentials: Vec::new(),
+            },
+        )]));
+        let (link, _) = Link::start(hello(), None);
+        let (_, seen) = walk(
+            link,
+            Vec::from([
+                no_route(0),
+                Input::Drawn(1),
+                Input::Elapsed,
+                connected(1),
+                Input::Welcomed(Welcome {
+                    catalog: catalog.clone(),
+                    ..welcome(1, 0)
+                }),
+            ]),
+        );
+        let last = seen.last().and_then(|effects| {
+            effects.iter().rev().find_map(|effect| match effect {
+                Effect::Show(shown) => Some(shown.clone()),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            last,
+            Some(Status {
+                catalog,
+                ..status(LinkState::Live, None)
+            })
+        );
+    }
 }

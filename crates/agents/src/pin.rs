@@ -131,31 +131,76 @@ pub fn verify(found: String, expected: &str) -> Result<(), Mismatch> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Mismatch, Package, Pin, Platform, kept, pin, pins, platform,
-        verify,
+        Cli, Mismatch, Package, Pin, kept, pin, pins, platform, verify,
     };
+
+    const SUPPORTED: [(&str, &str); 6] = [
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+        ("macos", "x86_64"),
+        ("macos", "aarch64"),
+        ("windows", "x86_64"),
+        ("windows", "aarch64"),
+    ];
 
     #[test]
     fn each_supported_platform_has_both_vendors_names() {
         assert_eq!(
+            SUPPORTED.map(|(os, arch)| platform(os, arch)
+                .map(|named| (named.claude, named.codex))),
             [
-                platform("linux", "aarch64"),
-                platform("windows", "x86_64"),
-                platform("linux", "riscv64"),
-                platform("freebsd", "x86_64"),
-            ],
-            [
-                Some(Platform {
-                    claude: "linux-arm64",
-                    codex: "aarch64-unknown-linux-musl",
-                }),
-                Some(Platform {
-                    claude: "win32-x64",
-                    codex: "x86_64-pc-windows-msvc",
-                }),
-                None,
-                None,
+                Some(("linux-x64", "x86_64-unknown-linux-musl")),
+                Some(("linux-arm64", "aarch64-unknown-linux-musl")),
+                Some(("darwin-x64", "x86_64-apple-darwin")),
+                Some(("darwin-arm64", "aarch64-apple-darwin")),
+                Some(("win32-x64", "x86_64-pc-windows-msvc")),
+                Some(("win32-arm64", "aarch64-pc-windows-msvc")),
             ]
+        );
+        assert_eq!(
+            [platform("linux", "riscv64"), platform("freebsd", "x86_64")],
+            [None, None]
+        );
+    }
+
+    fn is_digest(sha256: Option<String>) -> bool {
+        sha256.is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+    }
+
+    #[test]
+    fn every_build_the_pins_list_has_its_own_digest() {
+        let platforms = SUPPORTED.map(|(os, arch)| platform(os, arch));
+        let claude = platforms
+            .iter()
+            .flatten()
+            .map(|named| named.claude)
+            .chain(["linux-arm64-musl", "linux-x64-musl"])
+            .map(pins::claude_sha256);
+        let codex = platforms
+            .iter()
+            .flatten()
+            .map(|named| pins::codex_sha256(named.codex));
+        let digests: Vec<Option<String>> = claude.chain(codex).collect();
+        assert_eq!(digests.len(), 14);
+        assert!(digests.iter().cloned().all(is_digest), "{digests:?}");
+        let mut distinct = digests.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), digests.len(), "each build its own digest");
+        assert_eq!(pins::claude_sha256("freebsd-x64"), None);
+        assert_eq!(pins::codex_sha256("riscv64-unknown-linux-gnu"), None);
+    }
+
+    #[test]
+    fn each_cli_is_named_as_its_binary() {
+        assert_eq!(
+            [Cli::Claude.name(), Cli::Codex.name()],
+            ["claude", "codex"]
         );
     }
 
