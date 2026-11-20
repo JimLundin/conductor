@@ -512,3 +512,66 @@ fn a_forgotten_host_paired_again_is_not_where_a_new_session_starts() {
         ]))
     );
 }
+
+#[test]
+fn forgetting_a_selected_host_cannot_start_on_another_host() {
+    let (forgotten, _) = run(
+        two(LinkState::Live),
+        Vec::from([
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickHost(HOST.key())),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+            Intent::Forget(HOST),
+        ]),
+    );
+    let (blocked, effects) =
+        crate::update(forgotten, Intent::Form(FormIntent::Start));
+    assert_eq!(
+        form(&blocked).map(|shown| (
+            shown.start_disabled,
+            shown.error.map(|hint| hint.text)
+        )),
+        Some((true, Some(text("The selected host is no longer paired."))))
+    );
+    assert_eq!(effects, []);
+    let (_, started) = run(
+        blocked,
+        Vec::from([
+            Intent::Form(FormIntent::PickHost(OTHER.key())),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert!(matches!(
+        started.as_slice(),
+        [Effect::Send { host: OTHER, .. }]
+    ));
+}
+
+#[test]
+fn forgetting_a_host_releases_its_pending_start() {
+    let start = Intent::Form(FormIntent::Start);
+    let (pending, first) = run(
+        two(LinkState::Live),
+        Vec::from([
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickHost(HOST.key())),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+            start.clone(),
+        ]),
+    );
+    let (picked, _) = run(
+        pending,
+        Vec::from([
+            Intent::Forget(HOST),
+            Intent::Form(FormIntent::PickHost(OTHER.key())),
+            Intent::Join(Ok(ticket())),
+            answer(&first, Ok(CommandResult::Started { session: SESSION })),
+        ]),
+    );
+    assert_eq!(form(&picked).map(|shown| shown.start_disabled), Some(false));
+    let (_, started) = crate::update(picked, start);
+    assert!(matches!(
+        started.as_slice(),
+        [Effect::Send { host: OTHER, .. }]
+    ));
+}

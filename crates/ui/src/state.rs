@@ -238,8 +238,18 @@ impl State {
             )));
         } else if self.shown.place().host() == Some(host) {
             self.replace(ShownPlace::Sessions);
-        } else if let ShownPlace::Credentials(forms) = &mut self.shown {
-            forms.remove(&host);
+        } else {
+            match &mut self.shown {
+                ShownPlace::Credentials(forms) => {
+                    forms.remove(&host);
+                }
+                ShownPlace::NewSession(form) => {
+                    if form.forgot(host) {
+                        self.visit = self.visit.wrapping_add(1);
+                    }
+                }
+                _ => {}
+            }
         }
         let saved = self.saved();
         (self, Vec::from([Effect::SaveHosts(saved)]))

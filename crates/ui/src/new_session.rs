@@ -97,7 +97,7 @@ pub struct Suggestion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Form {
     /// The host of the session shown last, or the one a person picked;
-    /// `None`, or a host since forgotten, means the first live one.
+    /// `None` means the first live one.
     host: Option<HostId>,
     /// `None` until a person picks one: the first available instance.
     instance: Option<InstanceId>,
@@ -207,26 +207,71 @@ impl Form {
                 (Self { directory, ..self }, Vec::new())
             }
             FormIntent::Start => {
-                let Some(((host, known), instance)) =
-                    chosen.zip(self.chosen(instances).cloned())
-                else {
+                let Ok((host, body)) = self.start(chosen) else {
                     return (self, Vec::new());
-                };
-                let at = self.place(known.fold.home.as_ref());
-                let body = CommandBody::StartSession {
-                    instance,
-                    at,
-                    model: self.model.clone(),
-                    effort: self.effort,
                 };
                 (
                     Self {
-                        attempt: Attempt::Starting,
+                        attempt: Attempt::Starting(host),
                         ..self
                     },
                     Vec::from([At { host, visit }.send(body, ReplyTo::Start)]),
                 )
             }
+        }
+    }
+
+    fn start(
+        &self,
+        chosen: Option<(HostId, &Host)>,
+    ) -> Result<(HostId, CommandBody), StartBlocked> {
+        if matches!(self.attempt, Attempt::Starting(_)) {
+            return Err(StartBlocked::Pending);
+        }
+        let (host, known) = chosen.ok_or(StartBlocked::Host)?;
+        if !known.fold.live() {
+            return Err(StartBlocked::Offline);
+        }
+        let instances = known.fold.instances.as_ref();
+        let instance = self.chosen(instances).ok_or(StartBlocked::Instance)?;
+        let models = match availability(instances, Some(instance)) {
+            Some(Availability::Available { models, .. }) => models,
+            Some(Availability::Unavailable { .. }) => {
+                return Err(StartBlocked::UnavailableInstance);
+            }
+            None => return Err(StartBlocked::MissingInstance),
+        };
+        if self
+            .model
+            .as_ref()
+            .is_some_and(|id| models.find(id).is_none())
+        {
+            return Err(StartBlocked::Model);
+        }
+        if models.kept_effort(self.model.as_ref(), self.effort) != self.effort {
+            return Err(StartBlocked::Effort);
+        }
+        let at = self.place(known.fold.home.as_ref());
+        if matches!(&at, StartAt::Directory(path) if path.0.is_empty()) {
+            return Err(StartBlocked::Directory);
+        }
+        Ok((
+            host,
+            CommandBody::StartSession {
+                instance: instance.clone(),
+                at,
+                model: self.model.clone(),
+                effort: self.effort,
+            },
+        ))
+    }
+
+    pub fn forgot(&mut self, host: HostId) -> bool {
+        if self.attempt == Attempt::Starting(host) {
+            self.attempt = Attempt::Editing;
+            true
+        } else {
+            false
         }
     }
 
@@ -237,23 +282,20 @@ impl Form {
         }
     }
 
-    /// The host a person picked or the form opened on, if it is still
-    /// paired, else the first live one, else the first.
+    /// The default is the first live host, or the first paired.
     fn host<'a>(
         &self,
         hosts: &'a BTreeMap<HostId, Host>,
     ) -> Option<(HostId, &'a Host)> {
+        if let Some(id) = self.host {
+            return hosts.get(&id).map(|host| (id, host));
+        }
         let listed = by_name(hosts);
-        let picked = self
-            .host
-            .and_then(|id| hosts.get(&id).map(|host| (id, host)));
-        picked.or_else(|| {
-            listed
-                .iter()
-                .find(|(_, host)| host.fold.live())
-                .or_else(|| listed.first())
-                .copied()
-        })
+        listed
+            .iter()
+            .find(|(_, host)| host.fold.live())
+            .or_else(|| listed.first())
+            .copied()
     }
 
     /// Where the session starts: the issue, else the project, else the
@@ -283,18 +325,13 @@ impl Form {
         })
     }
 
-    /// The instance a person picked, if the host still has it, else the
-    /// first available one, else the first.
+    /// The default is the first available instance, or the first listed.
     fn chosen<'a>(
         &'a self,
         instances: Option<&'a Instances>,
     ) -> Option<&'a InstanceId> {
         let known = instances.map(|listed| &listed.0);
-        let picked = self
-            .instance
-            .as_ref()
-            .filter(|id| known.is_some_and(|listed| listed.contains_key(*id)));
-        picked.or_else(|| {
+        self.instance.as_ref().or_else(|| {
             let mut ids = known.into_iter().flatten();
             ids.clone()
                 .find(|(_, status)| {
@@ -329,7 +366,7 @@ impl Form {
             Attempt::Refused(Refusal::Other(message)) => {
                 (None, None, Some(message.clone()))
             }
-            Attempt::Editing | Attempt::Starting => (None, None, None),
+            Attempt::Editing | Attempt::Starting(_) => (None, None, None),
         };
         let picked = self.chosen(instances);
         let available = availability(instances, picked);
@@ -345,25 +382,19 @@ impl Form {
         let home = chosen.and_then(|(_, host)| host.fold.home.as_ref());
         let project = self.project(home);
         let issue = self.issue.map(|id| issue_title(hosts, id));
-        let placed = issue.is_some()
-            || project.is_some()
-            || !self.directory.trim().is_empty();
-        let (start_disabled, start_label) =
-            match (&self.attempt, placed, picked) {
-                (Attempt::Starting, _, _) => (true, "Starting…"),
-                (_, false, _) | (_, _, None) => (true, "Start session"),
-                (_, true, Some(_)) => (false, "Start session"),
-            };
+        let blocked = self.start(chosen).err();
+        let start_label = if blocked == Some(StartBlocked::Pending) {
+            "Starting…"
+        } else {
+            "Start session"
+        };
         NewSessionForm {
             subtitle: String::from(if issue.is_some() {
                 "Runs on the host you choose, on the issue's branch in its project there."
             } else {
                 "Runs on the host you choose, in one of its projects or a directory there."
             }),
-            hosts: by_name(hosts)
-                .into_iter()
-                .map(|(id, host)| host_choice(id, host, chosen))
-                .collect(),
+            hosts: host_choices(hosts, chosen, self.host),
             instances: instances.map_or_else(Vec::new, |listed| {
                 listed
                     .0
@@ -401,8 +432,12 @@ impl Form {
             directory_invalid: directory_error.is_some(),
             directory_error: directory_error.map(alert),
             suggestions: (!suggestions.is_empty()).then_some(suggestions),
-            error: form_error.map(alert),
-            start_disabled,
+            error: form_error
+                .or_else(|| {
+                    blocked.and_then(StartBlocked::reason).map(String::from)
+                })
+                .map(alert),
+            start_disabled: blocked.is_some(),
             start_label,
         }
     }
@@ -422,7 +457,15 @@ impl Form {
             selected: Some(&choice.id) == self.model.as_ref(),
             disabled: false,
         });
-        core::iter::once(first).chain(listed).collect()
+        let missing = self
+            .model
+            .as_ref()
+            .filter(|id| offered.find(id).is_none())
+            .map(|id| missing_choice(&id.0, "no longer offered"));
+        core::iter::once(first)
+            .chain(listed)
+            .chain(missing)
+            .collect()
     }
 
     fn effort_choices(&self, offered: &[Effort]) -> Vec<Choice> {
@@ -438,7 +481,23 @@ impl Form {
             selected: Some(*effort) == self.effort,
             disabled: false,
         });
-        core::iter::once(first).chain(listed).collect()
+        let missing = self
+            .effort
+            .filter(|effort| !offered.contains(effort))
+            .map(|effort| missing_choice(effort.wire(), "no longer offered"));
+        core::iter::once(first)
+            .chain(listed)
+            .chain(missing)
+            .collect()
+    }
+}
+
+fn missing_choice(value: &str, reason: &str) -> Choice {
+    Choice {
+        value: value.to_owned(),
+        label: format!("{value} ({reason})"),
+        selected: true,
+        disabled: true,
     }
 }
 
@@ -473,6 +532,21 @@ fn project_choices(home: &Home, picked: Option<&ProjectId>) -> Vec<Choice> {
         disabled: project.checkouts.is_empty(),
     });
     core::iter::once(first).chain(listed).collect()
+}
+
+fn host_choices(
+    hosts: &BTreeMap<HostId, Host>,
+    chosen: Option<(HostId, &Host)>,
+    selected: Option<HostId>,
+) -> Vec<Choice> {
+    let missing = selected
+        .filter(|_| chosen.is_none())
+        .map(|id| missing_choice(&id.key(), "no longer paired"));
+    by_name(hosts)
+        .into_iter()
+        .map(|(id, host)| host_choice(id, host, chosen))
+        .chain(missing)
+        .collect()
 }
 
 /// A host in the host picker; one whose link isn't live says so.
@@ -542,10 +616,40 @@ const fn word(availability: Option<&Availability>) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartBlocked {
+    Pending,
+    Host,
+    Offline,
+    Instance,
+    MissingInstance,
+    UnavailableInstance,
+    Model,
+    Effort,
+    Directory,
+}
+
+impl StartBlocked {
+    const fn reason(self) -> Option<&'static str> {
+        match self {
+            Self::Pending | Self::UnavailableInstance => None,
+            Self::Host => Some("The selected host is no longer paired."),
+            Self::Offline => Some("The selected host is offline."),
+            Self::Instance => Some("Choose an available instance."),
+            Self::MissingInstance => {
+                Some("The selected instance is no longer listed on this host.")
+            }
+            Self::Model => Some("The selected model is no longer offered."),
+            Self::Effort => Some("The selected effort is no longer offered."),
+            Self::Directory => Some("Enter a directory path."),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Attempt {
     Editing,
-    Starting,
+    Starting(HostId),
     Refused(Refusal),
 }
 

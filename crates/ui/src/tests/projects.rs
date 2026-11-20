@@ -593,15 +593,7 @@ fn a_project_the_host_no_longer_lists_falls_back_to_the_directory() {
             true
         ))
     );
-    assert_eq!(
-        sent(&effects),
-        [CommandBody::StartSession {
-            instance: id("claude"),
-            at: StartAt::Directory(HostPath(String::new())),
-            model: None,
-            effort: None,
-        }]
-    );
+    assert_eq!(sent(&effects), []);
     let (homeless, _) = run(
         paired(),
         Vec::from([

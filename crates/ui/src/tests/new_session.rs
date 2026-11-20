@@ -148,3 +148,230 @@ fn a_listed_project_is_enough_to_start_and_an_unlisted_one_is_ignored() {
         [Some((false, false)), Some((true, true))]
     );
 }
+
+#[test]
+fn starting_a_directory_sends_only_once_until_the_host_replies() {
+    let (ready, _) = run(
+        paired(),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            super::roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickModel(text("opus"))),
+            Intent::Form(FormIntent::PickEffort(text("high"))),
+            Intent::Form(FormIntent::TypeDirectory(text(" /src/test "))),
+        ]),
+    );
+    let (pending, first) =
+        crate::update(ready.clone(), Intent::Form(FormIntent::Start));
+    let (_, second) =
+        crate::update(pending.clone(), Intent::Form(FormIntent::Start));
+    assert_eq!(form(&ready).map(|shown| shown.start_disabled), Some(false));
+    assert_eq!(form(&pending).map(|shown| shown.start_disabled), Some(true));
+    assert!(matches!(
+        first.as_slice(),
+        [crate::Effect::Send { host: HOST, .. }]
+    ));
+    assert_eq!(
+        super::sent(&first),
+        [proto::CommandBody::StartSession {
+            instance: id("claude"),
+            at: proto::StartAt::Directory(proto::HostPath(text("/src/test"))),
+            model: Some(proto::ModelId(text("opus"))),
+            effort: Some(proto::Effort::High),
+        }]
+    );
+    assert_eq!(second, []);
+}
+
+#[test]
+fn a_blank_directory_blocks_start_until_a_path_is_entered() {
+    let (blank, effects) = run(
+        paired(),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            super::roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("   "))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(
+        form(&blank).map(|shown| (
+            shown.start_disabled,
+            shown.error.map(|hint| hint.text)
+        )),
+        Some((true, Some(text("Enter a directory path."))))
+    );
+    assert_eq!(effects, []);
+    let (ready, _) = crate::update(
+        blank,
+        Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+    );
+    assert_eq!(form(&ready).map(|shown| shown.start_disabled), Some(false));
+}
+
+#[test]
+fn going_offline_blocks_start_until_the_chosen_host_returns() {
+    let (ready, _) = run(
+        paired(),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            super::roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickHost(HOST.key())),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+        ]),
+    );
+    let (offline, _) =
+        crate::update(ready, connection(HOST, LinkState::Disconnected, None));
+    let (blocked, effects) =
+        crate::update(offline, Intent::Form(FormIntent::Start));
+    assert_eq!(
+        form(&blocked).map(|shown| (
+            shown.start_disabled,
+            shown.error.map(|hint| hint.text)
+        )),
+        Some((true, Some(text("The selected host is offline."))))
+    );
+    assert_eq!(effects, []);
+    let (online, _) =
+        crate::update(blocked, connection(HOST, LinkState::Live, None));
+    assert_eq!(form(&online).map(|shown| shown.start_disabled), Some(false));
+    let (_, effects) = crate::update(online, Intent::Form(FormIntent::Start));
+    assert!(matches!(
+        effects.as_slice(),
+        [crate::Effect::Send { host: HOST, .. }]
+    ));
+}
+
+#[test]
+fn start_waits_for_the_selected_instance_to_be_available_again() {
+    let selected = id("https://gw.example");
+    let (ready, _) = run(
+        paired(),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            super::roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickInstance(selected.clone())),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+        ]),
+    );
+    let mut changed = two_claudes();
+    changed.0.insert(
+        selected.clone(),
+        instance(Availability::Unavailable {
+            reason: text("sign in again"),
+        }),
+    );
+    let (unavailable, blocked) = run(
+        ready,
+        Vec::from([super::roster(changed), Intent::Form(FormIntent::Start)]),
+    );
+    assert_eq!(
+        form(&unavailable).map(|shown| shown.start_disabled),
+        Some(true)
+    );
+    assert_eq!(
+        form(&unavailable)
+            .and_then(|shown| shown.instance_hint)
+            .map(|hint| hint.text),
+        Some(text("https://gw.example can't run on desk: sign in again"))
+    );
+    assert_eq!(blocked, []);
+
+    let (missing, blocked) = run(
+        unavailable,
+        Vec::from([
+            super::roster(super::claude(super::signed_in())),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(form(&missing).map(|shown| shown.start_disabled), Some(true));
+    assert_eq!(blocked, []);
+
+    let (recovered, _) = crate::update(missing, super::roster(two_claudes()));
+    assert_eq!(
+        form(&recovered).map(|shown| shown.start_disabled),
+        Some(false)
+    );
+    let (_, started) =
+        crate::update(recovered, Intent::Form(FormIntent::Start));
+    assert_eq!(
+        super::sent(&started),
+        [proto::CommandBody::StartSession {
+            instance: selected,
+            at: proto::StartAt::Directory(proto::HostPath(text("/src/test"))),
+            model: None,
+            effort: None,
+        }]
+    );
+}
+
+#[test]
+fn start_waits_when_the_selected_model_or_effort_is_no_longer_offered() {
+    let (ready, _) = run(
+        paired(),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            super::roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickModel(text("opus"))),
+            Intent::Form(FormIntent::PickEffort(text("high"))),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+        ]),
+    );
+    let changed_offer = |models| {
+        super::roster(super::claude(Availability::Available {
+            auth: proto::Auth::SignedIn,
+            models,
+        }))
+    };
+    let mut low_only = super::models();
+    low_only.choices[0].efforts = Vec::from([proto::Effort::Low]);
+    for (models, reason) in [
+        (
+            proto::Models::none(),
+            "The selected model is no longer offered.",
+        ),
+        (low_only, "The selected effort is no longer offered."),
+    ] {
+        let (blocked, effects) = run(
+            ready.clone(),
+            Vec::from([changed_offer(models), Intent::Form(FormIntent::Start)]),
+        );
+        assert_eq!(
+            form(&blocked).map(|shown| (
+                shown.start_disabled,
+                shown.error.map(|hint| hint.text)
+            )),
+            Some((true, Some(text(reason))))
+        );
+        assert_eq!(effects, []);
+        let (restored, _) =
+            crate::update(blocked, changed_offer(super::models()));
+        assert_eq!(
+            form(&restored).map(|shown| shown.start_disabled),
+            Some(false)
+        );
+        assert_eq!(
+            form(&restored)
+                .and_then(|shown| shown
+                    .models
+                    .into_iter()
+                    .find(|choice| choice.selected))
+                .map(|choice| choice.value),
+            Some(text("opus"))
+        );
+        assert_eq!(
+            form(&restored)
+                .and_then(|shown| shown
+                    .efforts
+                    .into_iter()
+                    .find(|choice| choice.selected))
+                .map(|choice| choice.value),
+            Some(text("high"))
+        );
+    }
+}
