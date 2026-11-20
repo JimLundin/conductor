@@ -271,10 +271,17 @@ Every piece of state has one owner task. Handles talk to it over channels.
   falls between them. A subscriber that falls behind the broadcast is dropped
   and resubscribes from its cursor.
 - **Registry** maps session ids to session handles and starts sessions,
-  and keeps the host's instances. Credential saves update its current
-  configuration immediately. Model discovery and Codex reconfiguration run
-  in at most one pending future per instance, polled alongside registry
-  requests. New saves supersede queued work; old results cannot replace
+  and keeps the host's instances. The registry core decides session starts.
+  The session command lease keeps starts in order through the commit of the
+  opening events. Issue branch readiness runs alongside other registry
+  requests. The registry checks the directory and instance after the branch
+  is ready and snapshots the workspace before recording any opening events.
+  The session actor starts the agent after the records are written. The
+  issue brief runs separately. The start command waits for the issue's
+  progress update before answering.
+  Credential saves update the current configuration immediately. Model
+  discovery and Codex reconfiguration run in at most one pending future per
+  instance, polled alongside registry requests. New saves supersede queued work; old results cannot replace
   current models or failures. Each instance stays unavailable while
   refreshing, and reports a failure if discovery fails. Per-instance
   ordering also prevents older Codex reconfiguration from running after a
@@ -697,7 +704,7 @@ standards and issues, cloned on every host. Built so far are home steps
 - **Sessions on issues** (home step 7, started). `StartSession { at:
   StartAt::Issue(issue) }` starts in the issue's project's first
   checkout (`NotCheckedOut` without one). An instance has one session on
-  an issue until it is removed (`host::registry::on_issue`; `IssueTaken`),
+  an issue until it is removed (`IssueTaken`),
   checked before anything else. Then the host readies the issue's branch,
   `issue/<id>`, in the checkout (`home::issue::Branch`): it fetches
   `origin`'s, the remote the home matched the checkout by, into

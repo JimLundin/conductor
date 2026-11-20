@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 agents = { path = "../agents" }
 data-encoding.workspace = true
+home = { path = "../home" }
 proto = { path = "../proto" }
 sha2 = { version = "0.11.0", default-features = false }
 thiserror.workspace = true

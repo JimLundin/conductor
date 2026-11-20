@@ -264,7 +264,7 @@ pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
 /// The session `instance` has on `issue` after `history`, if it has one
 /// it hasn't removed: an instance works on an issue in one session.
 #[must_use]
-pub fn on_issue(
+fn on_issue(
     history: &[Event],
     issue: IssueId,
     instance: &InstanceId,
@@ -278,7 +278,7 @@ pub fn on_issue(
 /// What the session's log says when the issue's brief, its first
 /// message, didn't reach the agent: `None` when it did.
 #[must_use]
-pub fn unbriefed(answer: Option<&CommandResult>) -> Option<String> {
+fn unbriefed(answer: Option<&CommandResult>) -> Option<String> {
     let why = match answer {
         Some(CommandResult::Accepted) => return None,
         Some(CommandResult::Rejected(rejection)) => rejection.label(),
@@ -374,11 +374,11 @@ pub enum Effect<S, R> {
 /// A session that may start: its instance's starter, the model and effort
 /// it runs with, and what the instance offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Launch<S> {
-    pub start: S,
-    pub choice: Choice,
-    pub offered: Models,
-    pub provider: Provider,
+struct Launch<S> {
+    start: S,
+    choice: Choice,
+    offered: Models,
+    provider: Provider,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -476,7 +476,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     ///
     /// Why it may not: no such directory, no such instance, the instance
     /// is unavailable, or it doesn't offer the model or effort.
-    pub fn start(
+    fn launch_session(
         &self,
         instance: &InstanceId,
         exists: bool,
@@ -1015,7 +1015,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
 
 /// Why a session's workspace could not be made.
 #[must_use]
-pub fn unprepared(error: GitError) -> Rejection {
+fn unprepared(error: GitError) -> Rejection {
     match error {
         GitError::NotRepository => Rejection::NotGitRepository,
         GitError::Failed(reason) => Rejection::WorkspaceFailure { reason },
@@ -1037,6 +1037,12 @@ const fn not_saved<S, R>(reply: R, reason: String) -> Effect<S, R> {
 fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {
     core::iter::once(Effect::Log(note)).chain(then).collect()
 }
+
+mod start;
+pub use start::{
+    StartDecision, StartEffect, StartEnd, StartOutcome, StartReport,
+    StartRequest, StartSession, StartStep, brief_sent,
+};
 
 #[cfg(test)]
 mod tests;

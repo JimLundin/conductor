@@ -35,7 +35,8 @@ use proto::{
     TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
-use tokio::net::UdpSocket;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
 
 const STEP: Duration = Duration::from_secs(10);
@@ -6204,6 +6205,56 @@ fn on_issue(issue: proto::IssueId) -> CommandBody {
     }
 }
 
+async fn pause_first_fetch(
+    checkout: &Path,
+    script: &Path,
+) -> Fallible<TcpListener> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let port = listener.local_addr()?.port();
+    std::fs::write(
+        script,
+        format!(
+            r#"#!/bin/bash
+if mkdir "$0.entered" 2>/dev/null; then
+    exec 3<>/dev/tcp/127.0.0.1/{port} || exit 1
+    read -r release <&3 || exit 1
+    exec 3<&-
+fi
+exec git upload-pack "$@"
+"#
+        ),
+    )?;
+    std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700))?;
+    let path = script.to_str().ok_or("non-UTF-8 upload-pack path")?;
+    let quoted = path.replace('\'', "'\"'\"'");
+    git(
+        checkout,
+        &["config", "remote.origin.uploadpack", &format!("'{quoted}'")],
+    )?;
+    Ok(listener)
+}
+
+async fn competing_start_during_fetch(
+    fx: &Fixture,
+    listener: TcpListener,
+    issue: proto::IssueId,
+) -> Fallible<CommandResult> {
+    let (mut barrier, _) =
+        tokio::time::timeout(STEP, listener.accept()).await??;
+    let (other, _updates) = fx.connect().await?;
+    assert!(other.status().instances.is_some());
+    let release = async {
+        barrier.write_all(b"continue\n").await?;
+        Ok(())
+    };
+    let (competing, ()) =
+        tokio::try_join!(send(&other, on_issue(issue)), release)?;
+    other.stop().await?;
+    Ok(competing)
+}
+
 #[tokio::test]
 async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
 -> Fallible {
@@ -6217,7 +6268,17 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
     })
     .await?;
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
-    let session = launch(&link, on_issue(issue)).await?;
+    let alpha = land.roots.join("apps").join("alpha");
+    let listener =
+        pause_first_fetch(&alpha, &land.scratch.join("upload-pack")).await?;
+    let (session, competing) = tokio::try_join!(
+        launch(&link, on_issue(issue)),
+        competing_start_during_fetch(&fx, listener, issue),
+    )?;
+    assert_eq!(
+        competing,
+        CommandResult::Rejected(Rejection::IssueTaken { session })
+    );
     let events = events_until(&mut updates, Until::Request).await?;
     let mine = events
         .iter()
@@ -6238,7 +6299,6 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
         "the first message is the issue's brief: {brief:?}"
     );
     let branch = format!("issue/{}", home::issue::name(issue));
-    let alpha = land.roots.join("apps").join("alpha");
     let session_branch = mine
         .iter()
         .find_map(|kind| match kind {
@@ -6265,10 +6325,6 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
     })
     .await?;
     assert_eq!(moved.unpushed, 0);
-    assert_eq!(
-        send(&link, on_issue(issue)).await?,
-        CommandResult::Rejected(Rejection::IssueTaken { session })
-    );
     link.stop().await?;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);

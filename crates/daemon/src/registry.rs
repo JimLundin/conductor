@@ -7,20 +7,21 @@
 //! starts and the sign-ins' runs, and performs what the cores decide.
 
 use std::convert::Infallible;
-use std::path::Path;
+use std::ops::ControlFlow::{Break, Continue};
 
 use agents::runtime::Command;
 use host::registry::{
-    Change, Job, Launch, Listing, Refreshed, Started, Starting,
+    Change, Job, Listing, Refreshed, StartDecision, StartEffect, StartEnd,
+    StartOutcome, StartReport, StartRequest, StartSession, StartStep, Started,
+    Starting, brief_sent,
 };
 use host::restore::{Created, Recovery, Step, events_of};
 use host::serve::{Configure, SignInOrder};
 use host::sign_in::{Effect as SignInEffect, Key, SignIns};
 use proto::{
-    Catalog, Checkpoint, CheckpointId, ClientName, CommandResult, Credential,
-    Effort, Event, EventKind, HistoryAnchor, HostPath, InstanceId, Instances,
-    ModelId, Models, Provider, Rejection, SessionId, SignIn, UndoAvailability,
-    Workspace,
+    Catalog, ClientName, CommandResult, Credential, Effort, Event, EventKind,
+    InstanceId, Instances, ModelId, Models, Provider, Rejection, SessionId,
+    SignIn, StartAt,
 };
 use runtime::{Runtime, Starter};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -45,23 +46,29 @@ pub type Launcher = host::registry::Launcher<Starter>;
 type Reply = oneshot::Sender<CommandResult>;
 type Core = host::registry::Registry<Starter, Session, Reply>;
 type Effect = host::registry::Effect<Starter, Reply>;
+type StartReply = oneshot::Sender<StartOutcome>;
+
+struct BranchReady {
+    next: StartSession<Starter, Session>,
+    report: StartReport<Session>,
+    reply: StartReply,
+}
 
 #[derive(Debug, Clone)]
 pub struct Registry {
     inbox: mpsc::Sender<RegistryMsg>,
+    home: HomeClone,
 }
 
 enum RegistryMsg {
     Refreshed(Refreshed),
     Started(Started<Starter>),
     Start {
-        instance: InstanceId,
-        placed: Placement,
-        model: Option<ModelId>,
-        effort: Option<Effort>,
-        by: ClientName,
-        reply: Reply,
+        request: StartRequest,
+        placed: Box<Result<Placement, Rejection>>,
+        reply: StartReply,
     },
+    BranchReady(Box<BranchReady>),
     Continue {
         session: SessionId,
         reply: oneshot::Sender<Result<(Session, Models), Rejection>>,
@@ -95,6 +102,7 @@ struct RegistryActor {
     home: HomeClone,
     refreshes: JoinSet<Refreshed>,
     starts: JoinSet<Started<Starter>>,
+    branches: JoinSet<BranchReady>,
     sign_ins: SignIns,
     runs: Runs,
     live: broadcast::Sender<SignIn>,
@@ -119,12 +127,9 @@ impl Registry {
         Ok(actor.spawn())
     }
 
-    /// Checks the directory and the instance, logs `SessionCreated` and
-    /// answers `Started` at once. The agent starts inside the session's own
-    /// task, so a slow start never blocks the registry. A session on an
-    /// issue is refused while the instance has one on it, works on a
-    /// branch cut from the issue's, and gets the issue's brief as its first
-    /// message.
+    /// The caller holds the session command lease. It keeps competing
+    /// starts out until the opening records are committed, including while
+    /// the registry waits for a branch alongside its other requests.
     ///
     /// # Errors
     ///
@@ -132,20 +137,29 @@ impl Registry {
     pub async fn start(
         &self,
         instance: InstanceId,
-        placed: Placement,
+        at: StartAt,
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     ) -> Result<CommandResult, Stopped> {
+        let placed = self.home.place(at).await?;
         let (model, effort) = choice;
-        self.ask(|reply| RegistryMsg::Start {
+        let request = StartRequest {
             instance,
-            placed,
             model,
             effort,
             by,
-            reply,
-        })
-        .await
+        };
+        let started = self
+            .ask(|reply| RegistryMsg::Start {
+                request,
+                placed: Box::new(placed),
+                reply,
+            })
+            .await?;
+        if let Some((issue, by)) = started.progress {
+            self.home.started(issue, by).await?;
+        }
+        Ok(started.result)
     }
 
     /// The session, how its instance runs now and what it offers, for an
@@ -252,6 +266,7 @@ impl RegistryActor {
             home,
             refreshes: JoinSet::new(),
             starts: JoinSet::new(),
+            branches: JoinSet::new(),
             sign_ins: SignIns::default(),
             runs: Runs::default(),
             live: broadcast::channel(SIGN_IN_BUFFER).0,
@@ -260,8 +275,9 @@ impl RegistryActor {
 
     fn spawn(self) -> Registry {
         let (inbox, messages) = mpsc::channel(16);
+        let home = self.home.clone();
         tokio::spawn(self.run(messages));
-        Registry { inbox }
+        Registry { inbox, home }
     }
 
     async fn run(
@@ -273,6 +289,7 @@ impl RegistryActor {
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
                 Some(Ok(result)) = self.refreshes.join_next() => RegistryMsg::Refreshed(result),
                 Some(Ok(result)) = self.starts.join_next() => RegistryMsg::Started(result),
+                Some(Ok(result)) = self.branches.join_next() => RegistryMsg::BranchReady(Box::new(result)),
                 Some((key, report)) = self.runs.next() => RegistryMsg::Run(key, report),
             };
             self.on(msg).await?;
@@ -290,16 +307,18 @@ impl RegistryActor {
                 self.perform(effects);
             }
             RegistryMsg::Start {
-                instance,
+                request,
                 placed,
-                model,
-                effort,
-                by,
                 reply,
-            } => {
-                let result =
-                    self.start(instance, placed, (model, effort), by).await?;
-                let _ = reply.send(result);
+            } => self.start(request, *placed, reply).await?,
+            RegistryMsg::BranchReady(ready) => {
+                let BranchReady {
+                    next,
+                    report,
+                    reply,
+                } = *ready;
+                let decision = next.report(&mut self.core, report);
+                self.run_start(decision, reply).await?;
             }
             RegistryMsg::Continue { session, reply } => {
                 let _ = reply.send(self.core.relaunch(session));
@@ -542,108 +561,135 @@ impl RegistryActor {
 
     async fn start(
         &mut self,
-        instance: InstanceId,
-        placed: Placement,
-        asked: (Option<ModelId>, Option<Effort>),
-        by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
-        if let Some(session) = self.taken(&placed, &instance).await? {
-            return Ok(CommandResult::Rejected(Rejection::IssueTaken {
-                session,
-            }));
-        }
-        // `read_dir` fails for a missing path and for a file alike.
-        let exists = std::fs::read_dir(&placed.directory.0).is_ok();
-        let (model, effort) = asked;
-        match self.core.start(&instance, exists, model, effort) {
-            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok(launch) => self.create(instance, placed, launch, by).await,
-        }
-    }
-
-    /// Logs the issue the new session works on, if any.
-    async fn attach(
-        &self,
-        id: SessionId,
-        on: Option<&home::issue::Start>,
+        request: StartRequest,
+        placed: Result<Placement, Rejection>,
+        reply: StartReply,
     ) -> Result<(), Stopped> {
-        match on {
-            Some(start) => {
-                let issue = start.issue;
-                self.log.append(id, EventKind::OnIssue { issue }).await
-            }
-            None => Ok(()),
-        }
-    }
-
-    /// The session the instance has on the placement's issue already.
-    async fn taken(
-        &self,
-        placed: &Placement,
-        instance: &InstanceId,
-    ) -> Result<Option<SessionId>, Stopped> {
-        let Some(on) = &placed.on else {
-            return Ok(None);
+        let history = if placed.as_ref().is_ok_and(|at| at.on.is_some()) {
+            self.log.history().await?
+        } else {
+            Vec::new()
         };
-        let history = self.log.history().await?;
-        Ok(host::registry::on_issue(&history, on.issue, instance))
+        self.run_start(request.placed(placed, &history), reply)
+            .await
     }
 
-    /// Makes the session's workspace and first checkpoint, logs them, and
-    /// starts the session.
-    async fn create(
+    fn ready_branch(
         &mut self,
-        instance: InstanceId,
-        placed: Placement,
-        launch: Launch<Starter>,
-        by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
-        let id = SessionId(u128::from(ulid::Ulid::new()));
-        let Placement { directory, on } = placed;
-        let base = on.as_ref().map(|start| start.branch.as_str());
-        match prepare(self.store.dir(), &directory, id, base).await {
-            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok((workspace, commit)) => {
-                let Launch {
-                    start,
-                    choice,
-                    offered,
-                    provider,
-                } = launch;
-                let created = EventKind::SessionCreated {
-                    instance: instance.clone(),
-                    provider,
-                    directory: directory.clone(),
-                    by: by.clone(),
-                    model: choice.model.clone(),
-                    effort: choice.effort,
-                };
-                self.log.append(id, created).await?;
-                self.attach(id, on.as_ref()).await?;
-                let workspace_event = self
-                    .log
-                    .record(id, EventKind::WorkspaceCreated { workspace })
-                    .await?;
-                let checkpoint = initial_checkpoint(commit);
-                let checkpoint_event = self
-                    .log
-                    .record(id, EventKind::CheckpointCreated { checkpoint })
-                    .await?;
-                let told = self.told(provider);
-                let session = Session::spawn(
+        branch: home::issue::Start,
+        next: StartSession<Starter, Session>,
+        reply: StartReply,
+    ) {
+        let home = self.home.clone();
+        self.branches.spawn(async move {
+            let report = home
+                .ready(branch)
+                .await
+                .map_or(StartReport::Stopped, StartReport::Branch);
+            BranchReady {
+                next,
+                report,
+                reply,
+            }
+        });
+    }
+
+    async fn run_start(
+        &mut self,
+        mut decision: StartDecision<Starter, Session>,
+        reply: StartReply,
+    ) -> Result<(), Stopped> {
+        loop {
+            let StartStep { effect, next } = match decision {
+                Continue(step) => step,
+                Break(StartEnd::Finished(outcome)) => {
+                    let _ = reply.send(outcome);
+                    return Ok(());
+                }
+                Break(StartEnd::Stopped) => return Err(Stopped {}),
+            };
+            let report = match effect {
+                StartEffect::ReadyBranch(branch) => {
+                    self.ready_branch(branch, next, reply);
+                    return Ok(());
+                }
+                StartEffect::CheckDirectory(path) => {
+                    StartReport::Directory(std::fs::read_dir(path.0).is_ok())
+                }
+                StartEffect::CreateWorkspace { directory, base } => {
+                    let id = SessionId(u128::from(ulid::Ulid::new()));
+                    let workspace = crate::workspace::create(
+                        self.store.dir(),
+                        &directory,
+                        id,
+                        base.as_deref(),
+                    )
+                    .await;
+                    StartReport::Workspace(id, workspace)
+                }
+                StartEffect::Snapshot {
+                    session,
+                    workspace,
                     id,
+                } => StartReport::Snapshot(
+                    crate::workspace::snapshot(&workspace, session, id, None)
+                        .await,
+                ),
+                StartEffect::Record {
+                    session,
+                    before,
+                    seed,
+                } => self
+                    .record_opening(session, before, *seed)
+                    .await
+                    .map_or(StartReport::Stopped, |events| {
+                        StartReport::Recorded(Box::new(events))
+                    }),
+                StartEffect::Spawn {
+                    session,
                     directory,
                     choice,
-                    told,
-                    (start.start(), offered),
-                    self.log.clone(),
-                    &[workspace_event, checkpoint_event],
-                );
-                brief((&session, &self.log, id), on, by);
-                self.core.admit(id, instance, session);
-                Ok(CommandResult::Started { session: id })
-            }
+                    provider,
+                    agent,
+                    history,
+                } => {
+                    let (starter, offered) = agent;
+                    StartReport::Spawned(Session::spawn(
+                        session,
+                        directory,
+                        choice,
+                        self.told(provider),
+                        (starter.start(), offered),
+                        self.log.clone(),
+                        history.as_ref(),
+                    ))
+                }
+                StartEffect::Brief {
+                    session,
+                    handle,
+                    text,
+                    by,
+                } => {
+                    brief_issue(handle, self.log.clone(), session, text, by);
+                    StartReport::BriefQueued
+                }
+            };
+            decision = next.report(&mut self.core, report);
         }
+    }
+
+    async fn record_opening(
+        &self,
+        id: SessionId,
+        before: Vec<EventKind>,
+        [workspace, checkpoint]: [EventKind; 2],
+    ) -> Result<[Event; 2], Stopped> {
+        for event in before {
+            self.log.append(id, event).await?;
+        }
+        let workspace_event = self.log.record(id, workspace).await?;
+        let checkpoint_event = self.log.record(id, checkpoint).await?;
+        Ok([workspace_event, checkpoint_event])
     }
 }
 
@@ -689,56 +735,20 @@ async fn listing(
 /// Sends a session on an issue the issue's brief, once its agent has
 /// started, in a task of its own so the registry doesn't wait for the
 /// agent.
-fn brief(
-    (session, log, id): (&Session, &Log, SessionId),
-    on: Option<home::issue::Start>,
+fn brief_issue(
+    session: Session,
+    log: Log,
+    id: SessionId,
+    text: String,
     by: ClientName,
 ) {
-    let Some(start) = on else {
-        return;
-    };
-    let (briefed, logged) = (session.clone(), log.clone());
-    let text = start.brief;
     tokio::spawn(async move {
-        let sent = briefed.order(Order::Send { text, by }).await;
-        if let Some(message) = host::registry::unbriefed(sent.ok().as_ref()) {
-            tracing::warn!(%message, "an issue's brief was not sent");
-            let _ = logged.append(id, EventKind::Error { message }).await;
+        let sent = session.order(Order::Send { text, by }).await;
+        if let Some(event) = brief_sent(sent.ok().as_ref()) {
+            tracing::warn!(?event, "an issue's brief was not sent");
+            let _ = log.append(id, event).await;
         }
     });
-}
-
-/// The session's workspace, on a branch cut from `base` or else the
-/// checkout's `HEAD`, and the commit of its first checkpoint.
-async fn prepare(
-    data_dir: &Path,
-    directory: &HostPath,
-    id: SessionId,
-    base: Option<&str>,
-) -> Result<(Workspace, String), Rejection> {
-    let workspace = crate::workspace::create(data_dir, directory, id, base)
-        .await
-        .map_err(host::registry::unprepared)?;
-    let commit =
-        crate::workspace::snapshot(&workspace, id, CheckpointId(0), None)
-            .await
-            .map_err(|err| Rejection::WorkspaceFailure {
-                reason: err.to_string(),
-            })?;
-    Ok((workspace, commit))
-}
-
-fn initial_checkpoint(commit: String) -> Checkpoint {
-    Checkpoint {
-        id: CheckpointId(0),
-        parent: None,
-        turn_start: None,
-        commit,
-        history: HistoryAnchor::Fresh,
-        undo: UndoAvailability::Unavailable {
-            reason: String::from("initial checkpoint has no turn"),
-        },
-    }
 }
 
 /// Performs what a restart does to the session.
