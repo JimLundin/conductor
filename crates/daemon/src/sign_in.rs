@@ -21,6 +21,7 @@ use install::process::{SignInRun, command, sign_in, write_line};
 use proto::{CommandResult, Instance, SignInCode};
 use tokio::process::ChildStdin;
 
+use crate::credentials::SigningLease;
 use crate::start::Providers;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
@@ -109,14 +110,22 @@ impl Runs {
         key: Key,
         providers: Providers,
         settings: Instance,
+        claimed: Option<SigningLease>,
     ) {
+        let Some(lease) = claimed else { return };
         while self.tasks.try_join_next().is_some() {}
         let other = |kept: &Key| kept.instance != key.instance;
         self.aborts.retain(|kept, _| other(kept));
         self.stdins.retain(|kept, _| other(kept));
         self.checks.retain(|kept, _| other(kept));
         let task = run(key.clone(), providers, settings, self.sender.clone());
-        self.aborts.insert(key, self.tasks.spawn(task));
+        self.aborts.insert(
+            key,
+            self.tasks.spawn(async move {
+                let _lease = lease;
+                task.await;
+            }),
+        );
     }
 
     /// Keeps what a run that started needs later, and hands back how to
@@ -155,9 +164,9 @@ impl Runs {
 
     /// Runs the CLI's sign-in check against the run's home, and reads
     /// the account it names.
-    pub fn check(&mut self, key: Key) {
+    pub fn check(&mut self, key: Key, claimed: Option<SigningLease>) {
         self.stdins.remove(&key);
-        if let Some(signing) = self.checks.remove(&key) {
+        if let Some((signing, lease)) = self.checks.remove(&key).zip(claimed) {
             let sender = self.sender.clone();
             self.tasks.spawn(async move {
                 let check = command(
@@ -171,6 +180,7 @@ impl Runs {
                     .ok()
                     .and_then(|(_, printed)| signing.account(printed));
                 let code = ran.map(|(code, _)| code);
+                drop(lease);
                 let _ = sender.send((key, Report::Checked(code, account)));
             });
         }

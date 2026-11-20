@@ -6,9 +6,11 @@
 //! keeps the store, the sessions' tasks, the instances' refreshes and
 //! starts and the sign-ins' runs, and performs what the cores decide.
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::ops::ControlFlow::{Break, Continue};
 
+use anyhow::Context;
 use host::registry::{
     Change, Job, Refreshed, StartDecision, StartEffect, StartEnd, StartOutcome,
     StartReport, StartRequest, StartSession, StartStep, Started, Starting,
@@ -19,15 +21,15 @@ use host::serve::{Configure, SignInOrder};
 use host::sign_in::{Effect as SignInEffect, Key, SignIns};
 use proto::{
     Catalog, ClientName, CommandResult, Effort, Event, EventKind, InstanceId,
-    Instances, ModelId, Models, Provider, Rejection, SessionId, SignIn,
-    StartAt,
+    Instances, ModelId, Models, Provider, Rejection, Roster, SessionId, SignIn,
+    SignInStep, StartAt,
 };
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use crate::Stopped;
-use crate::credentials::{Store, Stored};
+use crate::credentials::{RecoveredAdoption, SigningLease, Store, Stored};
 use crate::home::{HomeClone, Placement};
 use crate::log::Log;
 use crate::session::{Order, Session, Told};
@@ -106,6 +108,7 @@ struct RegistryActor {
     starts: JoinSet<Started<Instance>>,
     branches: JoinSet<BranchReady>,
     sign_ins: SignIns,
+    leases: BTreeMap<InstanceId, SigningLease>,
     runs: Runs,
     live: broadcast::Sender<SignIn>,
     offers: watch::Sender<Instances>,
@@ -272,6 +275,7 @@ impl RegistryActor {
             starts: JoinSet::new(),
             branches: JoinSet::new(),
             sign_ins: SignIns::default(),
+            leases: BTreeMap::new(),
             runs: Runs::default(),
             initialized: Some(initialized),
             live: broadcast::channel(SIGN_IN_BUFFER).0,
@@ -364,15 +368,77 @@ impl RegistryActor {
         order: SignInOrder,
     ) -> (CommandResult, Vec<SignInEffect>) {
         match order {
-            SignInOrder::Start(instance) => {
-                let settings = self.core.settings(&instance);
-                self.sign_ins.start(instance, settings)
-            }
+            SignInOrder::Start(instance) => self.start_sign_in(instance),
             SignInOrder::Submit(instance, code) => {
                 self.sign_ins.submit(instance, code)
             }
             SignInOrder::Cancel(instance) => self.sign_ins.cancel(instance),
         }
+    }
+
+    fn start_sign_in(
+        &mut self,
+        instance: InstanceId,
+    ) -> (CommandResult, Vec<SignInEffect>) {
+        match self.prepare_sign_in(&instance) {
+            Ok(Some(settings)) => self.sign_ins.start(instance, Some(settings)),
+            Ok(None) => (CommandResult::Accepted, Vec::new()),
+            Err(rejection) => (CommandResult::Rejected(rejection), Vec::new()),
+        }
+    }
+
+    fn prepare_sign_in(
+        &mut self,
+        instance: &InstanceId,
+    ) -> Result<Option<proto::Instance>, Rejection> {
+        if self.sign_ins.is_running(instance) {
+            return Err(Rejection::SignInRunning);
+        }
+        let recovered = self.store.resume_adoption().map_err(|err| {
+            Rejection::CredentialNotSaved {
+                reason: format!("{err:#}"),
+            }
+        })?;
+        if recovered.map_or(Ok(false), |adoption| {
+            self.resume_sign_in(instance, adoption)
+        })? {
+            return Ok(None);
+        }
+        let settings = self
+            .core
+            .settings(instance)
+            .ok_or(Rejection::UnknownInstance)?;
+        let lease = self.store.signing(instance).map_err(|err| {
+            Rejection::InstanceUnavailable {
+                reason: format!("{err:#}"),
+            }
+        })?;
+        self.leases.insert(instance.clone(), lease);
+        Ok(Some(settings))
+    }
+
+    fn resume_sign_in(
+        &mut self,
+        requested: &InstanceId,
+        adoption: RecoveredAdoption,
+    ) -> Result<bool, Rejection> {
+        let RecoveredAdoption { from, to, roster } = adoption;
+        let run = (from == *requested)
+            .then(|| self.sign_ins.resume(from.clone()))
+            .transpose()?;
+        let (reply, answer) = oneshot::channel();
+        let effects = self.core.saved(
+            roster,
+            Change::SignedIn { from, to },
+            reply,
+            Ok(()),
+        );
+        self.perform(effects);
+        let resumed = run.is_some();
+        if let Some(key) = run {
+            self.runs.listen(key, answer);
+        }
+        Ok(resumed)
     }
 
     /// Hands the sign-ins' core what a run reported.
@@ -403,13 +469,18 @@ impl RegistryActor {
     async fn sign_in(&mut self, effect: SignInEffect) {
         match effect {
             SignInEffect::Spawn { key, settings } => {
-                self.runs.spawn(key, self.providers.clone(), settings);
+                let lease = self.leases.get(&key.instance).cloned();
+                self.runs
+                    .spawn(key, self.providers.clone(), settings, lease);
             }
             SignInEffect::Write(key, code) => {
                 self.runs.write(&key, &code).await;
             }
             SignInEffect::Kill(key) => self.runs.kill(&key),
-            SignInEffect::Check(key) => self.runs.check(key),
+            SignInEffect::Check(key) => {
+                let lease = self.leases.get(&key.instance).cloned();
+                self.runs.check(key, lease);
+            }
             SignInEffect::Refresh(key, account) => {
                 let (reply, answer) = oneshot::channel();
                 let effects =
@@ -417,11 +488,21 @@ impl RegistryActor {
                 self.perform(effects);
                 self.runs.listen(key, answer);
             }
-            SignInEffect::Publish(step) => {
-                crate::log_note(&host::sign_in::note(&step));
-                let _ = self.live.send(step);
-            }
+            SignInEffect::Publish(step) => self.publish_sign_in(step),
         }
+    }
+
+    fn publish_sign_in(&mut self, step: SignIn) {
+        if matches!(
+            step.step,
+            SignInStep::SignedIn { .. }
+                | SignInStep::Failed { .. }
+                | SignInStep::Cancelled
+        ) {
+            self.leases.remove(&step.instance);
+        }
+        crate::log_note(&host::sign_in::note(&step));
+        let _ = self.live.send(step);
     }
 
     async fn configure(
@@ -485,20 +566,7 @@ impl RegistryActor {
                 roster,
                 change,
                 reply,
-            } => {
-                let moved = match &change {
-                    Change::SignedIn { from, to } => {
-                        crate::start::move_instance(self.store.dir(), from, to)
-                    }
-                    Change::Credential(_)
-                    | Change::Added(_)
-                    | Change::Removed(_) => Ok(()),
-                };
-                let saved = moved
-                    .and_then(|()| self.store.save(&roster))
-                    .map_err(|err| format!("{err:#}"));
-                self.core.saved(roster, change, reply, saved)
-            }
+            } => self.save(roster, change, reply),
             Effect::Refresh(job) => {
                 self.refreshes.spawn(refresh(job));
                 Vec::new()
@@ -512,6 +580,31 @@ impl RegistryActor {
             Effect::Log(note) => {
                 crate::log_note(&note);
                 Vec::new()
+            }
+        }
+    }
+
+    fn save(
+        &mut self,
+        roster: Roster,
+        change: Change,
+        reply: Reply,
+    ) -> Vec<Effect> {
+        let saved = match &change {
+            Change::SignedIn { from, to } => self
+                .leases
+                .get(from)
+                .context("the sign-in no longer has its private home")
+                .and_then(|lease| self.store.adopt(lease, to)),
+            Change::Credential(_) | Change::Added(_) | Change::Removed(_) => {
+                self.store.save_change(&roster, &change)
+            }
+        };
+        match saved {
+            Ok(current) => self.core.saved(current, change, reply, Ok(())),
+            Err(err) => {
+                self.core
+                    .saved(roster, change, reply, Err(format!("{err:#}")))
             }
         }
     }

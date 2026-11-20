@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::credentials::{Store, Stored};
+use crate::credentials::Store;
 use crate::home::{HomeClone, Homing};
 use crate::log::Log;
 use crate::registry::{Launcher, Registry};
@@ -303,7 +303,7 @@ async fn assemble(
         projects,
     } = options;
     let token = crate::load_or_create_token(&data_dir)?;
-    let (store, stored) = Store::open(&data_dir)?;
+    let (store, stored) = Store::open(&data_dir, plugins.catalog())?;
     let log = Log::open(name.clone(), &data_dir.join("conductor.redb"))?;
     let home = HomeClone::spawn(Homing {
         host: name,
@@ -446,14 +446,24 @@ pub async fn login(
     account: Option<String>,
 ) -> anyhow::Result<()> {
     let data_dir = data_dir_or_default(given)?;
-    let (store, stored) = Store::open(&data_dir)?;
-    let roster = stored.roster(&plugins.catalog());
+    let catalog = plugins.catalog();
+    let (store, stored) = Store::open(&data_dir, catalog.clone())?;
+    let requested = account.as_deref().map_or_else(
+        || InstanceId::own(provider),
+        |named| InstanceId::named(provider, named),
+    );
+    if let Some(to) = store.recovered_account(&requested) {
+        tracing::info!(target: "host", instance = %to, "signed in");
+        return Ok(());
+    }
+    let roster = stored.roster(&catalog);
     let instance =
         host::registry::picked(&roster, provider, account.as_deref())
             .map_err(anyhow::Error::msg)?;
     let settings = roster
         .of(&instance)
         .with_context(|| format!("this host has no instance {instance}"))?;
+    let lease = store.signing(&instance)?;
     let providers = Providers::new(plugins, data_dir);
     let signing = providers
         .signing(&instance, settings)
@@ -469,56 +479,12 @@ pub async fn login(
     let (_, printed) =
         sign_in_check(check).await.map_err(anyhow::Error::msg)?;
     let named = signing.account(&printed).map(Account::Named);
-    let Some((next, to)) =
-        host::registry::signed_in_as(&roster, &instance, named)
+    let Some((_, to)) = host::registry::signed_in_as(&roster, &instance, named)
     else {
         return Ok(());
     };
-    if let Stored::Unreadable(reason) = stored {
-        anyhow::bail!(
-            "signed in, but the store doesn't open to keep {to}: {reason}"
-        );
-    }
-    move_instance(&providers.data_dir, &instance, &to)?;
-    store.save(&next)?;
+    store.adopt(&lease, &to)?;
     tracing::info!(target: "host", instance = %to, "signed in");
-    Ok(())
-}
-
-/// Moves `from`'s private home and work dir to `to`'s, in place of any
-/// `to` had: a sign-in of `from` named `to`'s account.
-///
-/// # Errors
-///
-/// A directory couldn't be removed or moved.
-pub fn move_instance(
-    data_dir: &Path,
-    from: &InstanceId,
-    to: &InstanceId,
-) -> anyhow::Result<()> {
-    ["home", "work"].into_iter().try_for_each(|kind| {
-        let source = data_dir.join(kind).join(host::registry::dir(from));
-        let target = data_dir.join(kind).join(host::registry::dir(to));
-        clear(&target).and_then(|()| rename_existing(&source, &target))
-    })
-}
-
-/// Removes the directory at `target`, if there is one.
-fn clear(target: &Path) -> anyhow::Result<()> {
-    if target.exists() {
-        std::fs::remove_dir_all(target)
-            .with_context(|| format!("removing {}", target.display()))?;
-    }
-    Ok(())
-}
-
-/// Moves the directory at `source`, if there is one, to `target`.
-fn rename_existing(source: &Path, target: &Path) -> anyhow::Result<()> {
-    if source.exists() {
-        std::fs::rename(source, target).with_context(|| {
-            format!("moving {} to {}", source.display(), target.display())
-        })?;
-    }
     Ok(())
 }
 

@@ -317,13 +317,45 @@ pub struct Started<S> {
 pub enum Change {
     Credential(InstanceId),
     Added(InstanceId),
-    /// A sign-in of `from` named `to`'s account: the shell moves `from`'s
-    /// home and work dir to `to`'s before it saves.
+    /// A sign-in of `from` named `to`'s account. The shell commits
+    /// ownership of the private directories with the roster change.
     SignedIn {
         from: InstanceId,
         to: InstanceId,
     },
     Removed(InstanceId),
+}
+
+impl Change {
+    /// Applies a credential or removal to the current roster, using the
+    /// planned roster for the credential's form values.
+    #[must_use]
+    pub fn apply(&self, current: &mut Roster, planned: &Roster) -> bool {
+        match self {
+            Self::Credential(instance) => {
+                let Some(settings) = current.0.get_mut(instance) else {
+                    return false;
+                };
+                settings.credential =
+                    planned.of(instance).and_then(|s| s.credential.clone());
+            }
+            Self::Added(instance) => {
+                let Some(settings) = planned.of(instance) else {
+                    return false;
+                };
+                let entry = current
+                    .0
+                    .entry(instance.clone())
+                    .or_insert_with(|| settings.clone());
+                entry.credential.clone_from(&settings.credential);
+            }
+            Self::Removed(instance) => {
+                current.0.remove(instance);
+            }
+            Self::SignedIn { .. } => return false,
+        }
+        true
+    }
 }
 
 /// What the shell does next, in order.

@@ -87,6 +87,11 @@ struct Running {
 }
 
 impl SignIns {
+    #[must_use]
+    pub fn is_running(&self, instance: &InstanceId) -> bool {
+        self.running.contains_key(instance)
+    }
+
     /// Starts a sign-in on `instance`, whose settings are `known` if the
     /// host has it.
     pub fn start(
@@ -97,8 +102,34 @@ impl SignIns {
         let Some(settings) = known else {
             return (rejected(Rejection::UnknownInstance), Vec::new());
         };
-        if self.running.contains_key(&instance) {
+        let Ok(key) = self.begin(instance.clone(), SignInStep::Starting) else {
             return (rejected(Rejection::SignInRunning), Vec::new());
+        };
+        (
+            CommandResult::Accepted,
+            Vec::from([
+                Effect::Spawn { key, settings },
+                publish(instance, SignInStep::Starting),
+            ]),
+        )
+    }
+
+    /// Waits for the refresh after recovering a confirmed sign-in.
+    ///
+    /// # Errors
+    ///
+    /// The instance already has a sign-in running.
+    pub fn resume(&mut self, instance: InstanceId) -> Result<Key, Rejection> {
+        self.begin(instance, SignInStep::Finishing)
+    }
+
+    fn begin(
+        &mut self,
+        instance: InstanceId,
+        step: SignInStep,
+    ) -> Result<Key, Rejection> {
+        if self.running.contains_key(&instance) {
+            return Err(Rejection::SignInRunning);
         }
         self.runs = self.runs.saturating_add(1);
         let run = Run(self.runs);
@@ -108,21 +139,11 @@ impl SignIns {
                 run,
                 flow: None,
                 seen: Vec::new(),
-                step: SignInStep::Starting,
+                step,
                 failure: None,
             },
         );
-        let key = Key {
-            instance: instance.clone(),
-            run,
-        };
-        (
-            CommandResult::Accepted,
-            Vec::from([
-                Effect::Spawn { key, settings },
-                publish(instance, SignInStep::Starting),
-            ]),
-        )
+        Ok(Key { instance, run })
     }
 
     /// Sends the pasted code to a sign-in that waits for one.

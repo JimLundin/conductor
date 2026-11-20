@@ -5944,6 +5944,77 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
     assert_no_code_kept(&log_path, &data)
 }
 
+#[tokio::test]
+async fn app_retry_finishes_adoption_interrupted_before_the_roster_save()
+-> Fallible {
+    let data = data_dir("sign-in-adoption-retry")?;
+    let own = instance(Provider::Claude);
+    let account =
+        InstanceId::named(Provider::Claude, "conductor-test@example.invalid");
+    probe(&data, &own, PROBED)?;
+    let fx = plugin_host(&data).await?;
+    let (link, mut updates) = fx.connect().await?;
+    let start = || CommandBody::StartSignIn {
+        instance: own.clone(),
+    };
+    let blocked = data.join("credentials.new");
+    std::fs::create_dir(&blocked)?;
+
+    assert_eq!(send(&link, start()).await?, CommandResult::Accepted);
+    sign_in_until(&mut updates, &own, |step| {
+        matches!(step, proto::SignInStep::Open { .. })
+    })
+    .await?;
+    assert_eq!(
+        send(
+            &link,
+            CommandBody::SubmitSignInCode {
+                instance: own.clone(),
+                code: proto::SignInCode(String::from(SIGN_IN_CODE)),
+            },
+        )
+        .await?,
+        CommandResult::Accepted
+    );
+    sign_in_until(&mut updates, &own, |step| {
+        matches!(step, proto::SignInStep::Failed { .. })
+    })
+    .await?;
+    std::fs::remove_dir(blocked)?;
+    assert_eq!(
+        send(&link, codex_provider("unrelated-credential")).await?,
+        CommandResult::Rejected(Rejection::CredentialNotSaved {
+            reason: String::from(
+                "an earlier account adoption still needs recovery"
+            )
+        })
+    );
+    assert_eq!(send(&link, start()).await?, CommandResult::Accepted);
+    let done = sign_in_until(&mut updates, &own, |step| {
+        matches!(step, proto::SignInStep::SignedIn { .. })
+    })
+    .await?;
+    let proto::SignInStep::SignedIn { instances } = done else {
+        return Err("the recovered sign-in did not complete".into());
+    };
+    assert_eq!(
+        instances.availability(&account),
+        Some(&Availability::Available {
+            auth: Auth::SignedIn,
+            models: probed(),
+        })
+    );
+    assert!(instances.of(&own).is_some());
+    assert!(
+        dir_of(&data, "home", &account)
+            .join(".fake-signed-in")
+            .try_exists()?
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+    Ok(())
+}
+
 /// Neither sign-in code is in the log at `log_path` or a file under
 /// `data`, and the log has both submits, without their text, and one
 /// sign-in that took.
