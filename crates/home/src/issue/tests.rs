@@ -608,3 +608,179 @@ fn a_finished_issue_whose_branch_gained_commits_is_up_for_review() {
     );
     assert_eq!(branch(None, ID), format!("refs/heads/issue/{}", name(ID)));
 }
+
+/// A hand-written issue file with the front matter Conductor needs and
+/// `rest` after it.
+fn bare(rest: &str) -> String {
+    format!(
+        "+++\nid = \"{id}\"\ntitle = \"Sign in\"\nstatus = \"open\"\n+++\n{rest}",
+        id = name(ID)
+    )
+}
+
+#[test]
+fn a_new_body_replaces_only_the_body() -> Result<(), String> {
+    let new_body = || changing_to(IssueChange::Body(text("New why.")));
+    assert_eq!(
+        file_of(apply(Some(&written()), &new_body(), Mode::Record))?,
+        written().replace("What to build and why.", "New why."),
+        "the checklist and the notes stay, a blank line before them"
+    );
+    assert_eq!(
+        file_of(apply(Some(&bare("\nWhy.\n")), &new_body(), Mode::Record))?,
+        bare("\nNew why.\n"),
+        "a body with nothing after it ends the file"
+    );
+    Ok(())
+}
+
+#[test]
+fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
+-> Result<(), String> {
+    let current = issue();
+    for same in [
+        IssueChange::Title(current.title.clone()),
+        IssueChange::Body(current.body.clone()),
+        IssueChange::Labels(current.labels.clone()),
+        IssueChange::Priority(current.priority),
+        IssueChange::Status(current.status),
+    ] {
+        assert_eq!(
+            apply(Some(&written()), &changing_to(same.clone()), Mode::Record),
+            Applied::Unchanged,
+            "{same:?}"
+        );
+    }
+    for (change, from, to) in [
+        (
+            IssueChange::Title(text("Sign in")),
+            "title = \"Sign in to a subscription from the app\"",
+            "title = \"Sign in\"",
+        ),
+        (
+            IssueChange::Priority(Priority::Low),
+            "priority = \"high\"",
+            "priority = \"low\"",
+        ),
+        (
+            IssueChange::Body(text("Why.")),
+            "What to build and why.",
+            "Why.",
+        ),
+    ] {
+        assert_eq!(
+            file_of(apply(
+                Some(&written()),
+                &changing_to(change),
+                Mode::Record
+            ))?,
+            written().replace(from, to)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
+-> Result<(), String> {
+    let done = Edit {
+        was: Some(text("in-progress")),
+        ..changing_to(IssueChange::Status(IssueStatus::Done))
+    };
+    let reviewed = written().replace("in-progress", "review");
+    let replayed = file_of(apply(
+        Some(&reviewed),
+        &done,
+        Mode::Replay { changed: OPENED },
+    ))?;
+    assert_eq!(
+        parse(&name(ID), &replayed).map(|read| read.status),
+        Ok(IssueStatus::Done)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_item_added_again_is_kept_twice_and_a_new_note_replays_in()
+-> Result<(), String> {
+    let again = file_of(apply(
+        Some(&written()),
+        &changing_to(IssueChange::AddItem(text("the protocol"))),
+        Mode::Record,
+    ))?;
+    assert_eq!(
+        parse(&name(ID), &again).map(|read| read.checklist.len()),
+        Ok(3)
+    );
+    let noted = file_of(apply(
+        Some(&written()),
+        &changing_to(IssueChange::Note(text("later"))),
+        Mode::Replay {
+            changed: OPENED + 9,
+        },
+    ))?;
+    assert_eq!(
+        parse(&name(ID), &noted).map(|read| read.notes.len()),
+        Ok(2),
+        "a note the file doesn't have yet is added on a replay"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_last_item_before_the_next_heading_is_found() -> Result<(), String> {
+    let listed =
+        bare("\nWhy.\n\n## Checklist\n- [ ] a\n- [ ] b\n## Notes\n- n\n");
+    assert_eq!(
+        file_of(apply(
+            Some(&listed),
+            &changing_to(IssueChange::RemoveItem(text("b"))),
+            Mode::Record,
+        ))?,
+        listed.replace("- [ ] b\n", "")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_section_conductor_doesnt_know_is_left_out() {
+    let file = bare(
+        "\nWhy.\n\n## Checklist\n- [ ] one\n\n## Design\n- [ ] not an item\n\n\
+         ## Notes\n- a note\n\n## Later\n- not a note\n",
+    );
+    assert_eq!(
+        parse(&name(ID), &file).map(|read| (read.checklist.len(), read.notes)),
+        Ok((1, Vec::from([text("a note")])))
+    );
+}
+
+#[test]
+fn a_comment_is_a_hash_outside_a_string() {
+    assert_eq!(
+        super::comment(r#"title = "a \" # b"   # note"#),
+        "   # note"
+    );
+    assert_eq!(super::comment("title = 'x#y' # n"), " # n");
+    assert_eq!(super::comment(r#"title = "it's # not" # n"#), " # n");
+    assert_eq!(super::comment(r#"title = "a#b""#), "");
+}
+
+#[test]
+fn a_note_is_signed_by_the_host_and_the_client() {
+    assert_eq!(super::signer("laptop", "iPhone"), "laptop · iPhone");
+}
+
+#[test]
+fn an_issues_branch_is_the_one_the_home_lists_for_it() {
+    let other = Issue {
+        id: IssueId(1),
+        branch: text("issue/other"),
+        ..issue()
+    };
+    let mine = Issue {
+        branch: text("issue/mine"),
+        ..issue()
+    };
+    let listed = home(Vec::new(), Vec::from([other, mine]));
+    assert_eq!(branch(Some(&listed), ID), "refs/heads/issue/mine");
+}
