@@ -543,10 +543,7 @@ async fn feed_turn(
     session: SessionId,
     text: &str,
 ) -> Fallible<Vec<Event>> {
-    assert_eq!(
-        send(link, message(session, text)).await?,
-        CommandResult::Accepted
-    );
+    accepted(link, message(session, text)).await?;
     events_until(updates, Until::TurnEnd).await
 }
 
@@ -565,10 +562,7 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
         first.last().ok_or("missing first turn")?.seq,
     )
     .await?;
-    assert_eq!(
-        send(&writer, message(session, "two")).await?,
-        CommandResult::Accepted
-    );
+    accepted(&writer, message(session, "two")).await?;
     reader.reconnect().await;
     legacy_events_until(&mut written, Until::TurnEnd).await?;
     let third = feed_turn(&writer, &mut written, session, "three").await?;
@@ -884,6 +878,42 @@ fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
         .collect()
 }
 
+async fn assert_ping_turn(
+    link: &HostLink,
+    updates: &mut Updates,
+    session: SessionId,
+) -> Fallible {
+    let _ = send(link, message(session, "ping")).await?;
+    assert_eq!(
+        kinds_until(updates, Until::TurnEnd).await?,
+        [
+            user("ping"),
+            delta("pong"),
+            reply("pong"),
+            turn_end(TurnOutcome::Completed)
+        ]
+    );
+    Ok(())
+}
+
+async fn resume_to_ready(
+    link: &HostLink,
+    updates: &mut Updates,
+    session: SessionId,
+) -> Fallible {
+    accepted(link, continued(session)).await?;
+    assert_eq!(
+        kinds_until(updates, Until::Ready).await?,
+        [EventKind::SessionReady]
+    );
+    Ok(())
+}
+
+async fn accepted(link: &HostLink, body: CommandBody) -> Fallible {
+    assert_eq!(send(link, body).await?, CommandResult::Accepted);
+    Ok(())
+}
+
 async fn send(link: &HostLink, body: CommandBody) -> Fallible<CommandResult> {
     Ok(tokio::time::timeout(STEP, link.send(body))
         .await
@@ -1057,10 +1087,7 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
     let dir = scratch("approve", "claude-approve.jsonl")?;
     let (link, mut updates) = fx.connect().await?;
     let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    assert_eq!(
-        send(&link, message(session, "create a.txt")).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, message(session, "create a.txt")).await?;
     assert_eq!(
         send(&link, message(session, "and b.txt")).await?,
         CommandResult::Rejected(Rejection::TurnInProgress)
@@ -1134,10 +1161,7 @@ async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
         })
         .ok_or("the session made no workspace")?;
     assert!(worktree.is_dir());
-    assert_eq!(
-        send(&link, CommandBody::RemoveSession { session }).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, CommandBody::RemoveSession { session }).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::Removed).await?,
         [
@@ -1181,10 +1205,7 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() -> Fallible
         ]
         .concat()
     );
-    assert_eq!(
-        send(&link, resolve(session, 1, Decision::Deny)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, resolve(session, 1, Decision::Deny)).await?;
     let text = "The write to `b.txt` was denied (\"The user does not want b.txt.\"), so I did not retry and no file was created.";
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
@@ -1212,25 +1233,13 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() -> Fallible
         kinds_until(&mut updates, Until::Delta).await?,
         [user("count to 100"), delta("1")]
     );
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
         [reply("1"), turn_end(TurnOutcome::Interrupted)]
     );
 
-    let _ = send(&link, message(session, "ping")).await?;
-    assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
-        [
-            user("ping"),
-            delta("pong"),
-            reply("pong"),
-            turn_end(TurnOutcome::Completed)
-        ]
-    );
+    assert_ping_turn(&link, &mut updates, session).await?;
     link.stop().await?;
     fx.shutdown().await
 }
@@ -1246,10 +1255,7 @@ async fn held_interrupt(
     let (link, mut updates) = fx.connect().await?;
     let session = launch(&link, start(provider, &dir)).await?;
     let _ = send(&link, message(session, "count to 300")).await?;
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     std::fs::write(dir.join("release"), "")?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
@@ -1292,10 +1298,7 @@ async fn an_interrupt_withdraws_the_open_request() -> Fallible {
         ]
         .concat()
     );
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
         [
@@ -1505,10 +1508,7 @@ async fn a_codex_question_is_answered_by_its_question_id() -> Fallible {
         ]
         .concat()
     );
-    assert_eq!(
-        send(&link, answer(session, 1, &["Blue"])).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, answer(session, 1, &["Blue"])).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
         [
@@ -1557,10 +1557,7 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
         ]
         .concat()
     );
-    assert_eq!(
-        send(&link, resolve(session, 1, Decision::ApproveForSession)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, resolve(session, 1, Decision::ApproveForSession)).await?;
     let first_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
     let _ = send(&link, message(session, "again")).await?;
     let second_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
@@ -1618,10 +1615,7 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
     };
     let asked =
         calls_and_requests(kinds_until(&mut updates, Until::Request).await?);
-    assert_eq!(
-        send(&link, resolve(session, 1, Decision::ApproveForSession)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, resolve(session, 1, Decision::ApproveForSession)).await?;
     let first_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
     let _ = send(&link, message(session, "again")).await?;
     let second_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
@@ -1681,10 +1675,7 @@ async fn an_interrupt_withdraws_an_open_question() -> Fallible {
     let session = launch(&link, start(Provider::Claude, &dir)).await?;
     let _ = send(&link, message(session, "ask me")).await?;
     let mut events = legacy_events_until(&mut updates, Until::Question).await?;
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     events.extend(legacy_events_until(&mut updates, Until::TurnEnd).await?);
     assert_eq!(
         events
@@ -1745,10 +1736,7 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end()
     let session = launch(&link, start(Provider::Codex, &dir)).await?;
     let _ = send(&link, message(session, "ask me")).await?;
     let question = kinds_until(&mut updates, Until::Question).await?;
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     assert_eq!(
         (
             question.last().cloned(),
@@ -1787,10 +1775,7 @@ async fn a_message_the_agent_never_gets_fails_its_turn() -> Fallible {
     let dir = scratch("hang-up", "claude-hang-up.jsonl")?;
     let (link, mut updates) = fx.connect().await?;
     let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    assert_eq!(
-        send(&link, message(session, "hi")).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, message(session, "hi")).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
         [
@@ -1964,24 +1949,12 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs()
         ]
         .concat()
     );
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd).await?,
         [delta("\n"), turn_end(TurnOutcome::Interrupted)]
     );
-    let _ = send(&link, message(session, "ping")).await?;
-    assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
-        [
-            user("ping"),
-            delta("pong"),
-            reply("pong"),
-            turn_end(TurnOutcome::Completed)
-        ]
-    );
+    assert_ping_turn(&link, &mut updates, session).await?;
     link.stop().await?;
     fx.shutdown().await
 }
@@ -2025,10 +1998,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
         ]
         .concat()
     );
-    assert_eq!(
-        send(&link, interrupt(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, interrupt(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::Resolved).await?,
         [
@@ -2045,16 +2015,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
     );
     std::fs::write(dir.join("release"), "")?;
     // Codex's withdrawal plays before the next turn and is ignored.
-    let _ = send(&link, message(session, "ping")).await?;
-    assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
-        [
-            user("ping"),
-            delta("pong"),
-            reply("pong"),
-            turn_end(TurnOutcome::Completed)
-        ]
-    );
+    assert_ping_turn(&link, &mut updates, session).await?;
     assert_eq!(
         std::fs::read_to_string(dir.join("stdin.jsonl"))?
             .matches("\"decision\"")
@@ -3320,10 +3281,7 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
     )?;
     let _ = send(&link, message(session, "sheep?")).await?;
     let first = legacy_events_until(&mut updates, Until::TurnEnd).await?;
-    assert_eq!(
-        send(&link, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, continued(session)).await?;
     let _ = send(&link, message(session, "count")).await?;
     let killed = legacy_events_until(&mut updates, Until::Closed).await?;
     assert_eq!(
@@ -3344,10 +3302,7 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
         send(&link, message(session, "hello?")).await?,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    assert_eq!(
-        send(&link, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, continued(session)).await?;
     let ready = legacy_events_until(&mut updates, Until::Ready).await?;
     let _ = send(&link, message(session, "how many sheep?")).await?;
     let after = legacy_events_until(&mut updates, Until::TurnEnd).await?;
@@ -3414,10 +3369,7 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason()
     let _ = legacy_events_until(&mut updates, Until::TurnEnd).await?;
     let _ = send(&link, message(session, "count")).await?;
     let _ = legacy_events_until(&mut updates, Until::Closed).await?;
-    assert_eq!(
-        send(&link, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, continued(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await?,
         [EventKind::SessionClosed {
@@ -3486,14 +3438,7 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() -> Fallible {
             ])
         )
     );
-    assert_eq!(
-        send(&link, continued(session)).await?,
-        CommandResult::Accepted
-    );
-    assert_eq!(
-        kinds_until(&mut updates, Until::Ready).await?,
-        [EventKind::SessionReady]
-    );
+    resume_to_ready(&link, &mut updates, session).await?;
     let _ = send(&link, message(session, "codeword?")).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd)
@@ -3546,10 +3491,7 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
         Some(codex_gateway())
     );
     let _ = kinds_until(&mut updates, Until::Closed).await?;
-    assert_eq!(
-        send(&link, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, continued(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::Ready).await?,
         [
@@ -3652,14 +3594,7 @@ async fn a_killed_codex_server_continues_the_thread() -> Fallible {
             },
         ]
     );
-    assert_eq!(
-        send(&link, continued(session)).await?,
-        CommandResult::Accepted
-    );
-    assert_eq!(
-        kinds_until(&mut updates, Until::Ready).await?,
-        [EventKind::SessionReady]
-    );
+    resume_to_ready(&link, &mut updates, session).await?;
     let _ = send(&link, message(session, "codeword?")).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::TurnEnd)
@@ -3742,14 +3677,7 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
         send(&phone, resolve(session, 1, Decision::Approve)).await?,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    assert_eq!(
-        send(&phone, continued(session)).await?,
-        CommandResult::Accepted
-    );
-    assert_eq!(
-        kinds_until(&mut updates, Until::Ready).await?,
-        [EventKind::SessionReady]
-    );
+    resume_to_ready(&phone, &mut updates, session).await?;
     assert_eq!(
         send(&phone, resolve(session, 1, Decision::Approve)).await?,
         CommandResult::Rejected(Rejection::UnknownRequest)
@@ -4275,10 +4203,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
             reason: String::from(REFRESHING)
         })
     );
-    assert_eq!(
-        send(&phone, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, continued(session)).await?;
     events_until(&mut updates, Until::Ready).await?;
     let started = send(&phone, start_on(claude_api, &source)).await?;
     let _ = started_session(&started)?;
@@ -4755,10 +4680,7 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     let restarted_retry =
         authenticated(&restarted_retry_endpoint, &ticket).await?;
     assert_eq!(retry_command(&restarted_retry, &undo).await?, receipt);
-    assert_eq!(
-        send(&phone, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, continued(session)).await?;
     events_until(&mut updates, Until::Ready).await?;
     let _ = send(&phone, message(session, "remember retained prefix")).await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
@@ -4834,10 +4756,7 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo()
         .await?,
         CommandResult::Rejected(Rejection::CheckpointUnavailable)
     );
-    assert_eq!(
-        send(&phone, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, continued(session)).await?;
     let ready = events_until(&mut updates, Until::Ready).await?;
     assert_eq!(
         ready.iter().find(|event| matches!(
@@ -4928,17 +4847,14 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
     assert_undo_blocks(&phone, message(session, "blocked while recovering"))
         .await?;
     assert_undo_blocks(&phone, continued(session)).await?;
-    assert_eq!(
-        send(
-            &phone,
-            CommandBody::UndoTurn {
-                session,
-                checkpoint: discarded.id
-            }
-        )
-        .await?,
-        CommandResult::Accepted
-    );
+    accepted(
+        &phone,
+        CommandBody::UndoTurn {
+            session,
+            checkpoint: discarded.id,
+        },
+    )
+    .await?;
     events_until(&mut updates, Until::Undone).await?;
     let after = fold(second.history().await?);
     assert_eq!(user_items(&after, session), 1);
@@ -5030,7 +4946,7 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
     assert_undo_blocks(&phone, message(session, "blocked after restart"))
         .await?;
     std::fs::remove_file(&lock)?;
-    assert_eq!(send(&phone, undo).await?, CommandResult::Accepted);
+    accepted(&phone, undo).await?;
     let recovered = events_until(&mut updates, Until::Undone).await?;
     assert!(!any_event(&recovered, |kind| matches!(
         kind,
@@ -5039,11 +4955,8 @@ async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart(
     assert_restored_files(&worktree)?;
     let restored = fold(second.history().await?);
     assert_eq!(user_items(&restored, session), 1);
-    assert_eq!(
-        send(&phone, message(session, "retained prefix after recovery"))
-            .await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, message(session, "retained prefix after recovery"))
+        .await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
     assert_ne!(checkpoint(&after, proto::CheckpointId(3))?.id, retained.id);
     assert_eq!(
@@ -5126,17 +5039,11 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
         recording_file("claude-worktrees-fork-held.jsonl"),
         source.join("stdout.2.jsonl"),
     )?;
-    assert_eq!(
-        send(&phone, undo_turn(session, proto::CheckpointId(2))).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, undo_turn(session, proto::CheckpointId(2))).await?;
     let undone = events_until(&mut updates, Until::Undone).await?;
     let after_undo = undone.last().ok_or("expected a value")?.seq;
     let target = fork_target(&undone)?;
-    assert_eq!(
-        send(&phone, message(session, "first post undo input")).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, message(session, "first post undo input")).await?;
     tokio::time::timeout(
         STEP,
         drive_materialization(&source.join("fork-materialized")),
@@ -5164,10 +5071,7 @@ async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
         send(&phone, undo_turn(session, unknown.id)).await?,
         CommandResult::Rejected(Rejection::CheckpointUnavailable)
     );
-    assert_eq!(
-        send(&phone, continued(session)).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, continued(session)).await?;
     events_until(&mut updates, Until::Ready).await?;
     let runs = argv(&source)?;
     assert_eq!(
@@ -5255,10 +5159,7 @@ async fn a_failed_snapshot_is_retried_before_accepting_the_next_user_message()
             &format!("refs/heads/{}", managed.branch),
         ],
     )?;
-    assert_eq!(
-        send(&phone, message(session, "turn three")).await?,
-        CommandResult::Accepted
-    );
+    accepted(&phone, message(session, "turn three")).await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
     let checkpoints = after
         .iter()
@@ -5936,10 +5837,7 @@ async fn clones_beta(
     updates: &mut Updates,
     data: &Path,
 ) -> Fallible<proto::Home> {
-    assert_eq!(
-        send(link, clone_project("beta")).await?,
-        CommandResult::Accepted
-    );
+    accepted(link, clone_project("beta")).await?;
     let cloned =
         home_until(updates, |home| !checkouts_of(home, "beta").is_empty())
             .await?;
@@ -6048,10 +5946,7 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
     starts_in_alpha(&link, &mut updates, &land).await?;
 
     std::fs::rename(&land.home_bare, land.scratch.join("home.gone"))?;
-    assert_eq!(
-        send(&link, CommandBody::SyncHome).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, CommandBody::SyncHome).await?;
     let behind = home_until(&mut updates, |home| {
         matches!(home.sync, proto::HomeSync::Behind { .. })
     })
@@ -6159,14 +6054,11 @@ async fn lands_an_offline_note(
     issue: proto::IssueId,
 ) -> Fallible {
     std::fs::rename(&land.home_bare, land.scratch.join("home.gone"))?;
-    assert_eq!(
-        send(
-            link,
-            change(issue, IssueChange::Note(String::from("offline")))
-        )
-        .await?,
-        CommandResult::Accepted
-    );
+    accepted(
+        link,
+        change(issue, IssueChange::Note(String::from("offline"))),
+    )
+    .await?;
     let waiting = home_until(updates, |home| home.unpushed == 1).await?;
     let signed = format!("test-host · {}: offline", test_client().0);
     assert!(
@@ -6177,10 +6069,7 @@ async fn lands_an_offline_note(
         "the clone has the note, signed by the host and the client, before the remote does"
     );
     std::fs::rename(land.scratch.join("home.gone"), &land.home_bare)?;
-    assert_eq!(
-        send(link, CommandBody::SyncHome).await?,
-        CommandResult::Accepted
-    );
+    accepted(link, CommandBody::SyncHome).await?;
     let _ = home_until(updates, |home| home.unpushed == 0).await?;
     let landed = pushed_issue(land, issue)?;
     assert!(
@@ -6199,14 +6088,11 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
     let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
     noted_by_hand(&land, issue)?;
-    assert_eq!(
-        send(
-            &link,
-            change(issue, IssueChange::Status(IssueStatus::InProgress))
-        )
-        .await?,
-        CommandResult::Accepted
-    );
+    accepted(
+        &link,
+        change(issue, IssueChange::Status(IssueStatus::InProgress)),
+    )
+    .await?;
     let replayed = pushed_issue(&land, issue)?;
     assert!(
         replayed.contains("status = \"in-progress\"")
@@ -6383,10 +6269,7 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
     let session = launch(&link, on_issue(issue)).await?;
     let _ = events_until(&mut updates, Until::TurnEnd).await?;
-    assert_eq!(
-        send(&link, CommandBody::FinishSession { session }).await?,
-        CommandResult::Accepted
-    );
+    accepted(&link, CommandBody::FinishSession { session }).await?;
     let finishing =
         of(session, &events_until(&mut updates, Until::Finished).await?);
     let remote = git(&alpha, &["remote", "get-url", "origin"])?;
