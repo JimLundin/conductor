@@ -404,11 +404,12 @@ probes and installs as `host::start` decides, and sends the plugins'
 
 - `agents`: the provider-agnostic API: the runtime protocol, `Step`,
   `Reply`, the native request and turn ids, `PlanStep`, `Exit`, the
-  `Note`s a core logs through its shell, and a provider's `Profile`.
-  Pure `no_std`.
+  `Note`s a core logs through its shell, a provider's `Profile`, and
+  the command, input, effect and failure types for CLI drivers
+  (`agents::driver`). Pure `no_std`.
 - `claude` and `codex`: each provider's wire (stream-json, JSON-RPC), its
-  mapping into `agents`, and the state machines that drive it: the process
-  actor (`driver`), the runtime that turns commands into calls and events
+  mapping into `agents`, and the state machines that drive it: the protocol
+  driver, the runtime that turns commands into calls and events
   into steps (`runtime`), and Codex's `hub`. Each also holds its profile
   and its credential forms, and reads its credential from the generic
   values. Claude's resume fallbacks
@@ -416,9 +417,10 @@ probes and installs as `host::start` decides, and sends the plugins'
   starts fresh, and an undo's fork whose target exists resumes the target.
   Pure `no_std`; they log nothing themselves.
 - `runtime`: the shell's handle type, the starter, and `Plugin`.
-- `claude-cli` and `codex-cli`: run each CLI's process over tokio and each
-  agent's runtime task, with their replay tests, and build their plugins
-  (`claude_cli::plugin`, `codex_cli::plugin`). All logging happens here.
+- `claude-cli` and `codex-cli`: supply each CLI's handshake, driver and
+  stderr policy to the process runner, run each agent's runtime task,
+  and build their plugins (`claude_cli::plugin`, `codex_cli::plugin`).
+  Their replay tests exercise the driver with a fake process.
 - `daemon`: the host behind `conductord`, a library that takes the
   plugins and exposes its start, serve and login functions.
 - `conductord`: the binary, the one place that names the providers. It
@@ -434,8 +436,13 @@ probes and installs as `host::start` decides, and sends the plugins'
   Codex instance has its own hub, since the key is fixed in its server's
   environment. It is internal to the Codex runtime: a session never sees
   the shared server.
-- `install`: what both CLIs share: the pinned installs, each CLI's home and
-  process start and stop.
+- `install`: the shared pinned installs, CLI homes, sign-in over pipes
+  (`install::process`), and the line-JSON process runner
+  (`install::line_json`). The runner owns each child's pipes and executes
+  its driver's effects in order. Shutdown interrupts a blocked stdin
+  write and closes the pipe without writing any further frames. Claude's
+  handshake can read the last stderr line on failure. Codex's driver gets
+  the last nonempty stderr line with the exit status.
 
 **Claude Code:** one long-lived process per session, started as
 

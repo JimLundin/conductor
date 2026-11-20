@@ -3,6 +3,7 @@
 
 mod home;
 mod install;
+pub mod line_json;
 pub mod process;
 
 pub use home::Home;

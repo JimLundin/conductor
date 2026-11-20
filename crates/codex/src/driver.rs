@@ -3,13 +3,9 @@
 //! it, keeping Codex's open requests until they are answered or withdrawn,
 //! and failing what waits once the server exits.
 //!
-//! `codex-cli` owns the process: it turns each stdout line and each
-//! handle's command into an [`Input`], and performs each [`Effect`]. A
-//! reply's channel is the opaque `R` and a shutdown's the opaque `S`, which
-//! the machine hands back with the answer; `E` is why a write failed.
-
 use core::fmt;
 
+use agents::driver::{self, Command, FailureText};
 use agents::{Exit, Note};
 use proto::Provider;
 use serde_json::Value;
@@ -23,7 +19,7 @@ use crate::{
 
 /// What a handle asks of the server.
 #[derive(Debug, Clone)]
-pub enum Command<R, S> {
+pub enum CallRequest<R> {
     Request {
         call: Call,
         reply: R,
@@ -33,31 +29,6 @@ pub enum Command<R, S> {
         id: ApprovalId,
         decision: Decision,
         reply: R,
-    },
-    /// Closes stdin, waits briefly for a clean exit, then kills.
-    Shutdown(S),
-}
-
-/// What happened, as the shell saw it.
-#[derive(Debug)]
-pub enum Input<R, S, E> {
-    /// A stdout line, `Ok(None)` once stdout closes, or why reading it
-    /// failed.
-    Read(Result<Option<String>, String>),
-    Command(Command<R, S>),
-    /// Every handle is gone.
-    Closed,
-    /// How the [`Effect::Write`] for `then` went.
-    Wrote {
-        then: Then<R>,
-        outcome: Result<(), E>,
-    },
-    /// The process [`Effect::Stop`] stopped has exited, with its last
-    /// stderr line if it printed one.
-    Stopped {
-        exit: Exit,
-        refusal: Option<String>,
-        then: After<R, S, E>,
     },
 }
 
@@ -72,91 +43,23 @@ pub enum Then<R> {
     Logged(String),
 }
 
-/// What follows once the process has stopped.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum After<R, S, E> {
-    Nothing,
-    Shutdown(S),
-    /// The request whose write failed, with why.
-    Fail(R, E),
-    /// Every handle is gone, so the actor ends.
-    End,
-}
+type After<R, S, E> = driver::After<S, (R, E)>;
+type Completion<R, S, E> = Result<Option<Effect<R, S, E>>, (R, E)>;
+pub type Input<R, S, E> = driver::Input<CallRequest<R>, Then<R>, S, (R, E), E>;
+pub type Effect<R, S, E> =
+    driver::Effect<CodexEvent, R, S, Then<R>, (R, E), Failure<E>>;
+pub type Failure<E> = driver::Failure<E, Problem>;
 
-/// What the shell does next, in order.
-#[derive(Debug, PartialEq)]
-pub enum Effect<R, S, E> {
-    /// Write `line` to stdin, then report how it went as [`Input::Wrote`].
-    Write {
-        line: String,
-        then: Then<R>,
-    },
-    Emit(CodexEvent),
-    Log(Note),
-    /// Answer a handle's command; an answer to Codex answers `Null`.
-    Reply(R, Result<Value, Failure<E>>),
-    /// Answer a shutdown with how the process ended.
-    Report(S, Exit),
-    /// Stop the process, then report its exit as [`Input::Stopped`].
-    Stop(After<R, S, E>),
-    /// End the actor.
-    End,
-}
-
-/// Why a command failed.
-#[derive(Debug)]
-pub enum Failure<E> {
-    Exited,
-    /// The server exited, and its last stderr line says why.
-    Refused(String),
-    Io(E),
-    Json(serde_json::Error),
-    Rpc {
-        method: String,
-        message: String,
-    },
+#[derive(Debug, PartialEq, Eq)]
+pub enum Problem {
+    Rpc { method: String, message: String },
     UnknownApproval(ApprovalId),
     DecisionNotApplicable(ApprovalId),
 }
 
-/// An encoding failure equals another with the same description.
-impl<E: PartialEq> PartialEq for Failure<E> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Exited, Self::Exited) => true,
-            (Self::Refused(left), Self::Refused(right)) => left == right,
-            (Self::Io(left), Self::Io(right)) => left == right,
-            (Self::Json(left), Self::Json(right)) => {
-                left.to_string() == right.to_string()
-            }
-            (
-                Self::Rpc { method, message },
-                Self::Rpc {
-                    method: other_method,
-                    message: other_message,
-                },
-            ) => method == other_method && message == other_message,
-            (Self::UnknownApproval(left), Self::UnknownApproval(right))
-            | (
-                Self::DecisionNotApplicable(left),
-                Self::DecisionNotApplicable(right),
-            ) => left == right,
-            _ => false,
-        }
-    }
-}
-
-impl<E: fmt::Display> fmt::Display for Failure<E> {
+impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Exited => f.write_str("the codex app-server has exited"),
-            Self::Refused(reason) => {
-                write!(f, "the codex app-server has exited: {reason}")
-            }
-            Self::Io(error) => write!(f, "codex i/o: {error}"),
-            Self::Json(error) => {
-                write!(f, "could not encode or decode a codex message: {error}")
-            }
             Self::Rpc { method, message } => {
                 write!(f, "codex rejected {method}: {message}")
             }
@@ -171,6 +74,12 @@ impl<E: fmt::Display> fmt::Display for Failure<E> {
         }
     }
 }
+
+const FAILURE_TEXT: FailureText = FailureText {
+    exited: "the codex app-server has exited",
+    io: "codex i/o",
+    json: "could not encode or decode a codex message",
+};
 
 /// A Codex request we have not answered yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,14 +129,15 @@ impl<R> Server<R> {
                 },
                 self.stop(After::Nothing),
             ),
-            Input::Command(command) => self.command(command),
+            Input::Command(Command::Call(call)) => self.command(call),
+            Input::Command(Command::Shutdown(waiter)) => {
+                self.stop(After::Shutdown(waiter))
+            }
             Input::Closed => self.stop(After::End),
             Input::Wrote { then, outcome } => self.wrote(then, outcome),
-            Input::Stopped {
-                exit,
-                refusal,
-                then,
-            } => self.stopped(&exit, refusal, then),
+            Input::Stopped { exit, stderr, then } => {
+                self.stopped(&exit, stderr, then)
+            }
         }
     }
 
@@ -362,17 +272,19 @@ impl<R> Server<R> {
         };
         let replied = Effect::Reply(
             reply,
-            outcome.map_err(|message| Failure::Rpc { method, message }),
+            outcome.map_err(|message| {
+                Failure::Protocol(Problem::Rpc { method, message })
+            }),
         );
         initialized.into_iter().chain([replied]).collect()
     }
 
     fn command<S, E: fmt::Display>(
         &mut self,
-        command: Command<R, S>,
+        command: CallRequest<R>,
     ) -> Vec<Effect<R, S, E>> {
         match command {
-            Command::Request { call, reply } => {
+            CallRequest::Request { call, reply } => {
                 self.next_id = self.next_id.saturating_add(1);
                 let id = self.next_id;
                 let method = String::from(call.method());
@@ -381,21 +293,20 @@ impl<R> Server<R> {
                     Then::Request { id, method, reply },
                 )
             }
-            Command::Respond {
+            CallRequest::Respond {
                 id,
                 decision,
                 reply,
             } => match self.open.remove(&id) {
                 None => Vec::from([Effect::Reply(
                     reply,
-                    Err(Failure::UnknownApproval(id)),
+                    Err(Failure::Protocol(Problem::UnknownApproval(id))),
                 )]),
                 Some(open) => {
                     let answered = answer(&open.shape, decision);
                     self.settle(id, open, answered, reply)
                 }
             },
-            Command::Shutdown(waiter) => self.stop(After::Shutdown(waiter)),
         }
     }
 
@@ -427,7 +338,7 @@ impl<R> Server<R> {
                 self.open.insert(id.clone(), open);
                 Vec::from([Effect::Reply(
                     reply,
-                    Err(Failure::DecisionNotApplicable(id)),
+                    Err(Failure::Protocol(Problem::DecisionNotApplicable(id))),
                 )])
             }
             Err(AnswerError::Encode(error)) => {
@@ -443,10 +354,7 @@ impl<R> Server<R> {
     ) -> Vec<Effect<R, S, E>> {
         match (&self.exited, encode(msg)) {
             (Some(_), _) => failed(then, self.gone()),
-            (None, Ok(line)) => Vec::from([Effect::Write {
-                line: format!("{line}\n"),
-                then,
-            }]),
+            (None, Ok(line)) => Vec::from([Effect::Write { line, then }]),
             (None, Err(error)) => failed(then, Failure::Json(error)),
         }
     }
@@ -463,7 +371,7 @@ impl<R> Server<R> {
             }
             // The server can't take requests: stop it, and say why.
             (Then::Request { reply, .. }, Err(error)) => {
-                Vec::from([Effect::Stop(After::Fail(reply, error))])
+                Vec::from([Effect::Stop(After::Protocol((reply, error)))])
             }
             (Then::Answer(reply), Ok(())) => {
                 Vec::from([Effect::Reply(reply, Ok(Value::Null))])
@@ -481,10 +389,9 @@ impl<R> Server<R> {
     }
 
     fn stop<S, E>(&self, then: After<R, S, E>) -> Vec<Effect<R, S, E>> {
-        match &self.exited {
-            None => Vec::from([Effect::Stop(then)]),
-            Some(exit) => self.after(then, exit),
-        }
+        self.completed(then.stop(self.exited.as_ref()))
+            .into_iter()
+            .collect()
     }
 
     /// Fails everything still waiting on the process.
@@ -504,28 +411,23 @@ impl<R> Server<R> {
             .chain([Effect::Emit(CodexEvent::Exited {
                 status: exit.clone(),
             })])
-            .chain(self.after(then, exit))
+            .chain(self.completed(then.complete(exit)))
             .collect()
     }
 
-    fn after<S, E>(
+    fn completed<S, E>(
         &self,
-        then: After<R, S, E>,
-        exit: &Exit,
-    ) -> Vec<Effect<R, S, E>> {
-        match then {
-            After::Nothing => Vec::new(),
-            After::Shutdown(waiter) => {
-                Vec::from([Effect::Report(waiter, exit.clone())])
-            }
-            After::Fail(reply, error) => Vec::from([Effect::Reply(
+        completion: Completion<R, S, E>,
+    ) -> Option<Effect<R, S, E>> {
+        match completion {
+            Ok(effect) => effect,
+            Err((reply, error)) => Some(Effect::Reply(
                 reply,
                 Err(self
                     .refusal
                     .clone()
                     .map_or(Failure::Io(error), Failure::Refused)),
-            )]),
-            After::End => Vec::from([Effect::End]),
+            )),
         }
     }
 }
@@ -542,7 +444,7 @@ fn failed<R, S, E: fmt::Display>(
         Then::Logged(context) => Vec::from([Effect::Log(Note::Unwritten {
             provider: Provider::Codex,
             writing: context,
-            error: failure.to_string(),
+            error: failure.describe(&FAILURE_TEXT),
         })]),
     }
 }
@@ -563,7 +465,10 @@ mod tests {
     use proto::Provider;
     use serde_json::{Value, json};
 
-    use super::{After, Command, Effect, Failure, Input, Open, Server, Then};
+    use super::{
+        After, CallRequest, Command, Effect, FAILURE_TEXT, Failure, Input,
+        Open, Problem, Server, Then,
+    };
     use crate::{
         AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision,
         Outbound, RequestId, ThreadEvent, ThreadId, encode,
@@ -582,14 +487,13 @@ mod tests {
 
     fn written(msg: Outbound, then: Then<u8>) -> Step {
         Effect::Write {
-            line: encode(msg)
-                .map_or_else(|error| error.to_string(), |line| line + "\n"),
+            line: encode(msg).unwrap_or_else(|error| error.to_string()),
             then,
         }
     }
 
     fn request(call: Call, reply: u8) -> Seen {
-        Input::Command(Command::Request { call, reply })
+        Input::Command(Command::Call(CallRequest::Request { call, reply }))
     }
 
     fn sent(id: i64, method: &str, reply: u8) -> Then<u8> {
@@ -651,10 +555,10 @@ mod tests {
                 &[
                     Vec::from([Effect::Reply(
                         2,
-                        Err(Failure::Rpc {
+                        Err(Failure::Protocol(Problem::Rpc {
                             method: String::from("model/list"),
                             message: String::from("no"),
-                        })
+                        }))
                     )]),
                     Vec::from([
                         written(
@@ -680,11 +584,11 @@ mod tests {
     fn an_approval_is_answered_once_and_a_withdrawn_one_is_cancelled() {
         let mut server = Server::default();
         let respond = |id: &str, decision, reply| {
-            Input::Command(Command::Respond {
+            Input::Command(Command::Call(CallRequest::Respond {
                 id: ApprovalId(String::from(id)),
                 decision,
                 reply,
-            })
+            }))
         };
         let resolved = |id: i64| {
             line(&json!({
@@ -711,8 +615,8 @@ mod tests {
             [
                 Vec::from([Effect::Reply(
                     1,
-                    Err(Failure::DecisionNotApplicable(ApprovalId(
-                        String::from("7")
+                    Err(Failure::Protocol(Problem::DecisionNotApplicable(
+                        ApprovalId(String::from("7"))
                     )))
                 )]),
                 Vec::from([
@@ -731,9 +635,9 @@ mod tests {
                 ]),
                 Vec::from([Effect::Reply(
                     3,
-                    Err(Failure::UnknownApproval(ApprovalId(String::from(
-                        "7"
-                    ))))
+                    Err(Failure::Protocol(Problem::UnknownApproval(
+                        ApprovalId(String::from("7"))
+                    )))
                 )]),
                 Vec::new(),
                 Vec::from([Effect::Emit(CodexEvent::Thread {
@@ -744,9 +648,9 @@ mod tests {
                 })]),
                 Vec::from([Effect::Reply(
                     4,
-                    Err(Failure::UnknownApproval(ApprovalId(String::from(
-                        "8"
-                    ))))
+                    Err(Failure::Protocol(Problem::UnknownApproval(
+                        ApprovalId(String::from("8"))
+                    )))
                 )]),
             ]
         );
@@ -764,14 +668,15 @@ mod tests {
         let failure = serde_json::to_value(BTreeMap::from([((1, 2), 0)]))
             .map_or_else(AnswerError::Encode, |_| AnswerError::NotApplicable);
         let first: Vec<Step> = server.settle(id.clone(), open, Err(failure), 1);
-        let again: Vec<Step> = server.step(Input::Command(Command::Respond {
-            id,
-            decision: Decision::Accept,
-            reply: 2,
-        }));
+        let again: Vec<Step> =
+            server.step(Input::Command(Command::Call(CallRequest::Respond {
+                id,
+                decision: Decision::Accept,
+                reply: 2,
+            })));
         assert_eq!(
             [first, again].map(|effects| match effects.as_slice() {
-                [Effect::Reply(_, Err(failure))] => failure.to_string(),
+                [Effect::Reply(_, Err(failure))] => failure.describe(&FAILURE_TEXT),
                 _ => String::from("not one failed reply"),
             }),
             [
@@ -823,8 +728,8 @@ mod tests {
                 },
                 Input::Stopped {
                     exit: exit(),
-                    refusal: Some(String::from("bad config")),
-                    then: After::Fail(2, "broken pipe"),
+                    stderr: Some(String::from("bad config")),
+                    then: After::Protocol((2, "broken pipe")),
                 },
                 request(Call::ModelList, 3),
                 Input::Command(Command::Shutdown('a')),
@@ -835,7 +740,7 @@ mod tests {
         assert_eq!(
             &seen[1..],
             [
-                Vec::from([Effect::Stop(After::Fail(2, "broken pipe"))]),
+                Vec::from([Effect::Stop(After::Protocol((2, "broken pipe")))]),
                 Vec::from([
                     Effect::Reply(1, Err(refused())),
                     Effect::Emit(CodexEvent::Exited { status: exit() }),
@@ -853,8 +758,8 @@ mod tests {
         let mut server = Server::<u8>::default();
         let seen: Vec<Step> = server.step(Input::Stopped {
             exit: exit(),
-            refusal: None,
-            then: After::Fail(1, "broken pipe"),
+            stderr: None,
+            then: After::Protocol((1, "broken pipe")),
         });
         assert_eq!(
             seen,
@@ -912,10 +817,12 @@ mod tests {
             Failure::Exited,
             Failure::Refused(String::from("bad config")),
             Failure::Io("broken pipe"),
-            Failure::DecisionNotApplicable(ApprovalId(String::from("7"))),
+            Failure::Protocol(Problem::DecisionNotApplicable(ApprovalId(
+                String::from("7"),
+            ))),
         ];
         assert_eq!(
-            failures.map(|failure| failure.to_string()),
+            failures.map(|failure| failure.describe(&FAILURE_TEXT)),
             [
                 "the codex app-server has exited",
                 "the codex app-server has exited: bad config",
@@ -931,9 +838,11 @@ mod tests {
         let json = |text: &str| {
             serde_json::from_str::<Value>(text).err().map(Failed::Json)
         };
-        let rpc = |method: &str, message: &str| Failed::Rpc {
-            method: String::from(method),
-            message: String::from(message),
+        let rpc = |method: &str, message: &str| {
+            Failed::Protocol(Problem::Rpc {
+                method: String::from(method),
+                message: String::from(message),
+            })
         };
         assert_eq!(Failed::Exited, Failed::Exited);
         assert_ne!(Failed::Exited, Failed::Io("broken pipe"));
@@ -954,16 +863,16 @@ mod tests {
         assert_ne!(rpc("turn/start", "no"), rpc("turn/start", "busy"));
         let id = |text: &str| ApprovalId(String::from(text));
         assert_eq!(
-            Failed::UnknownApproval(id("a")),
-            Failed::UnknownApproval(id("a"))
+            Failed::Protocol(Problem::UnknownApproval(id("a"))),
+            Failed::Protocol(Problem::UnknownApproval(id("a")))
         );
         assert_ne!(
-            Failed::UnknownApproval(id("a")),
-            Failed::DecisionNotApplicable(id("a"))
+            Failed::Protocol(Problem::UnknownApproval(id("a"))),
+            Failed::Protocol(Problem::DecisionNotApplicable(id("a")))
         );
         assert_ne!(
-            Failed::DecisionNotApplicable(id("a")),
-            Failed::DecisionNotApplicable(id("b"))
+            Failed::Protocol(Problem::DecisionNotApplicable(id("a"))),
+            Failed::Protocol(Problem::DecisionNotApplicable(id("b")))
         );
     }
 }

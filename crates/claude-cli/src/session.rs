@@ -1,13 +1,6 @@
-//! One tokio task owns the `claude` child process. The handle talks to it over a
-//! command channel; the task alone owns stdin and the session's state
-//! machine ([`claude::Session`]), so no state is shared behind a lock. The
-//! task turns what happens into the machine's inputs and performs its
-//! effects.
+//! The Claude handle and handshake over the shared line-JSON process runner.
 
-use std::convert::Infallible;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 
 use claude::ClaudeCredential;
@@ -16,17 +9,15 @@ use serde_json::Value;
 
 use agents::Exit;
 use install::Home;
-use n0_future::StreamExt;
-use std::future::pending;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
-use tokio::sync::{mpsc, oneshot};
+use install::line_json::{self, Handle, Options, StderrPolicy};
+use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use claude::{
-    After, Applied, ClaudeEvent, ControlCall, Failure, Launch,
-    PermissionDecision, PermissionMode, PermissionRequestId, Resume, Sandbox,
-    Session, SessionId, SettingSource, Then, UnsupportedVersion, VersionPolicy,
-    applied, models,
+    Applied, CallRequest, ClaudeEvent, ControlCall, Failure, Launch,
+    PermissionDecision, PermissionMode, PermissionRequestId, Problem, Resume,
+    Sandbox, Session, SessionId, SettingSource, UnsupportedVersion,
+    VersionPolicy, applied, models,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -56,8 +47,6 @@ pub struct ClaudeOptions {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("could not build the claude command: {0}")]
-    Command(String),
     #[error("claude i/o: {0}")]
     Io(#[from] std::io::Error),
     #[error("could not encode a message for claude: {0}")]
@@ -90,12 +79,13 @@ impl From<Failure<std::io::Error>> for Error {
     fn from(failure: Failure<std::io::Error>) -> Self {
         match failure {
             Failure::Exited => Self::Exited,
+            Failure::Refused(reason) => Self::Refused(reason),
             Failure::Io(error) => Self::Io(error),
-            Failure::Encode(error) => Self::Encode(error),
-            Failure::Control { subtype, message } => {
+            Failure::Json(error) => Self::Encode(error),
+            Failure::Protocol(Problem::Control { subtype, message }) => {
                 Self::Control { subtype, message }
             }
-            Failure::UnknownPermissionRequest(id) => {
+            Failure::Protocol(Problem::UnknownPermissionRequest(id)) => {
                 Self::UnknownPermissionRequest(id)
             }
         }
@@ -113,16 +103,10 @@ impl From<UnsupportedVersion> for Error {
     }
 }
 
-/// Who waits for a command's answer.
-type Reply = oneshot::Sender<Result<Value, Error>>;
-/// Who waits for a shutdown's exit.
-type Waiter = oneshot::Sender<Exit>;
-type Input = claude::Input<Reply, Waiter, std::io::Error>;
-type Effect = claude::Effect<Reply, Waiter, std::io::Error>;
-type CommandMsg = claude::Command<Reply, Waiter>;
+type CommandMsg = CallRequest<line_json::Reply<Error>>;
 
 pub struct ClaudeSession {
-    commands: mpsc::Sender<CommandMsg>,
+    commands: Handle<CommandMsg>,
     id: SessionId,
     /// What the `initialize` response lists.
     models: Models,
@@ -133,7 +117,7 @@ pub struct ClaudeSession {
 struct Starting {
     session: ClaudeSession,
     events: mpsc::Receiver<ClaudeEvent>,
-    last_stderr: tokio::task::JoinHandle<Option<String>>,
+    last_stderr: line_json::Stderr,
 }
 
 impl ClaudeSession {
@@ -198,8 +182,10 @@ impl ClaudeSession {
     /// Fails when the CLI has exited or the message cannot be written.
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
         let _ = self
+            .commands
             .ask(|reply| CommandMsg::SendUser { text, reply })
-            .await??;
+            .await
+            .map_err(|_| Error::Exited)??;
         Ok(())
     }
 
@@ -233,12 +219,14 @@ impl ClaudeSession {
         decision: PermissionDecision,
     ) -> Result<(), Error> {
         let _ = self
+            .commands
             .ask(|reply| CommandMsg::Respond {
                 id,
                 decision,
                 reply,
             })
-            .await??;
+            .await
+            .map_err(|_| Error::Exited)??;
         Ok(())
     }
 
@@ -247,75 +235,46 @@ impl ClaudeSession {
     /// # Errors
     /// Fails when the session's actor has already stopped.
     pub async fn shutdown(self) -> Result<Exit, Error> {
-        self.ask(CommandMsg::Shutdown).await
+        self.commands.shutdown().await.map_err(|_| Error::Exited)
     }
 
     async fn control(&self, call: ControlCall) -> Result<Value, Error> {
         tokio::time::timeout(
             CONTROL_TIMEOUT,
-            self.ask(|reply| CommandMsg::Control { call, reply }),
+            self.commands
+                .ask(|reply| CommandMsg::Control { call, reply }),
         )
         .await
-        .map_err(|_| Error::Timeout(String::from(call.subtype())))??
-    }
-
-    async fn ask<T>(
-        &self,
-        build: impl FnOnce(oneshot::Sender<T>) -> CommandMsg,
-    ) -> Result<T, Error> {
-        let (reply, answer) = oneshot::channel();
-        self.commands
-            .send(build(reply))
-            .await
-            .map_err(|_| Error::Exited)?;
-        answer.await.map_err(|_| Error::Exited)
+        .map_err(|_| Error::Timeout(String::from(call.subtype())))?
+        .map_err(|_| Error::Exited)?
     }
 }
 
 /// Starts the process and its actor.
 fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
-    let stdout_log = opts
-        .stdout_log
-        .as_ref()
-        .map(|path| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-        })
-        .transpose()?;
-    let mut child = command(opts, &id).spawn()?;
-    let pid = child.id();
-    let ((stdin, stdout), stderr) = child
-        .stdin
-        .take()
-        .zip(child.stdout.take())
-        .zip(child.stderr.take())
-        .ok_or_else(|| {
-            Error::Command(String::from("claude stdio was not piped"))
-        })?;
-    let (events_tx, events) = mpsc::channel(1024);
-    let (commands_tx, commands) = mpsc::channel(32);
-    let actor = Actor {
-        session: Session::default(),
-        process: Some(Running {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout).lines(),
+    let stdout_log = line_json::stdout_log(opts.stdout_log.as_deref())?;
+    let mut driver = Session::default();
+    let started = line_json::start(
+        command(opts, &id),
+        Options {
             stdout_log,
-        }),
-        events: events_tx,
-    };
-    tokio::spawn(actor.run(commands));
+            stderr: StderrPolicy::Last,
+            log_stderr: |line| tracing::warn!(target: "claude::stderr", "{line}"),
+            log_note: runtime::log,
+            commands: 32,
+            events: 1024,
+        },
+        move |input| driver.step(input),
+    )?;
     Ok(Starting {
         session: ClaudeSession {
-            commands: commands_tx,
+            commands: started.handle,
             id,
             models: Models::none(),
-            pid,
+            pid: started.pid,
         },
-        events,
-        last_stderr: tokio::spawn(log_stderr(stderr)),
+        events: started.events,
+        last_stderr: started.stderr,
     })
 }
 
@@ -380,23 +339,15 @@ impl ClaudeSession {
 
 async fn reason(
     reported: Option<String>,
-    last_stderr: &mut tokio::task::JoinHandle<Option<String>>,
+    last_stderr: &mut line_json::Stderr,
 ) -> String {
     match reported {
         Some(reason) => reason,
-        None => stderr_reason(last_stderr).await,
+        None => last_stderr
+            .last(CONTROL_TIMEOUT)
+            .await
+            .unwrap_or_else(|| String::from("it printed no reason")),
     }
-}
-
-async fn stderr_reason(
-    last_stderr: &mut tokio::task::JoinHandle<Option<String>>,
-) -> String {
-    tokio::time::timeout(CONTROL_TIMEOUT, last_stderr)
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .flatten()
-        .unwrap_or_else(|| String::from("it printed no reason"))
 }
 
 /// Whether Claude's command sandbox can run here (`claude::sandbox`).
@@ -429,182 +380,8 @@ fn command(opts: &ClaudeOptions, id: &SessionId) -> Command {
         &opts.home,
         claude::session(&launch),
     );
-    cmd.current_dir(&opts.cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    install::process::no_window(cmd)
-}
-
-/// Logs each stderr line, and returns the last once stderr closes.
-async fn log_stderr(stderr: ChildStderr) -> Option<String> {
-    n0_future::stream::unfold(
-        BufReader::new(stderr).lines(),
-        |mut lines| async move {
-            lines
-                .next_line()
-                .await
-                .ok()
-                .flatten()
-                .map(|line| (line, lines))
-        },
-    )
-    .inspect(|line| tracing::warn!(target: "claude::stderr", "{line}"))
-    .last()
-    .await
-}
-
-struct Running {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: Lines<BufReader<ChildStdout>>,
-    /// Gets every raw stdout line.
-    stdout_log: Option<std::fs::File>,
-}
-
-impl Running {
-    async fn read(&mut self) -> Input {
-        let read = self.stdout.next_line().await;
-        record(self.stdout_log.as_mut(), &read);
-        Input::Read(read.map_err(|error| error.to_string()))
-    }
-}
-
-fn record(
-    stdout_log: Option<&mut std::fs::File>,
-    read: &std::io::Result<Option<String>>,
-) {
-    if let (Some(log), Ok(Some(line))) = (stdout_log, read)
-        && let Err(error) = writeln!(log, "{line}")
-    {
-        tracing::warn!("writing stdout log: {error}");
-    }
-}
-
-/// Every handle is gone, so the actor has stopped the process and ended.
-struct Stopped {}
-
-struct Actor {
-    session: Session<Reply>,
-    /// The process, until it is stopped.
-    process: Option<Running>,
-    events: mpsc::Sender<ClaudeEvent>,
-}
-
-impl Actor {
-    async fn run(
-        mut self,
-        mut commands: mpsc::Receiver<CommandMsg>,
-    ) -> Result<Infallible, Stopped> {
-        loop {
-            let input = self.next_input(&mut commands).await;
-            self.feed(input).await?;
-        }
-    }
-
-    /// The next stdout line or command, and only commands once the process
-    /// has stopped.
-    async fn next_input(
-        &mut self,
-        commands: &mut mpsc::Receiver<CommandMsg>,
-    ) -> Input {
-        tokio::select! {
-            biased;
-            read = read(self.process.as_mut()) => read,
-            command = commands.recv() => command.map_or(Input::Closed, Input::Command),
-        }
-    }
-
-    /// Steps the session and performs its effects in order, each effect's
-    /// own effects before the next.
-    async fn feed(&mut self, input: Input) -> Result<(), Stopped> {
-        let mut effects = self.session.step(input);
-        effects.reverse();
-        while let Some(effect) = effects.pop() {
-            let more = self.perform(effect).await?;
-            effects.extend(more.into_iter().rev());
-        }
-        Ok(())
-    }
-
-    async fn perform(
-        &mut self,
-        effect: Effect,
-    ) -> Result<Vec<Effect>, Stopped> {
-        match effect {
-            Effect::Write { line, then } => self.write(line, then).await,
-            Effect::Emit(event) => self.emit(event).await,
-            Effect::Log(note) => {
-                runtime::log(&note);
-                Ok(Vec::new())
-            }
-            Effect::Reply(reply, answer) => {
-                Ok(deliver(reply, answer.map_err(Error::from)))
-            }
-            Effect::Report(waiter, exit) => Ok(deliver(waiter, exit)),
-            Effect::Stop(then) => self.stop(then).await,
-            Effect::End => Err(Stopped {}),
-        }
-    }
-
-    async fn write(
-        &mut self,
-        line: String,
-        then: Then<Reply>,
-    ) -> Result<Vec<Effect>, Stopped> {
-        let outcome = put_line(self.process.as_mut(), &line).await;
-        Ok(self.session.step(Input::Wrote { then, outcome }))
-    }
-
-    async fn stop(
-        &mut self,
-        then: After<Waiter>,
-    ) -> Result<Vec<Effect>, Stopped> {
-        let exit = stop_process(self.process.take()).await;
-        Ok(self.session.step(Input::Stopped { exit, then }))
-    }
-
-    async fn emit(&self, event: ClaudeEvent) -> Result<Vec<Effect>, Stopped> {
-        // A dropped receiver only means nobody is listening any more.
-        let _ = self.events.send(event).await;
-        Ok(Vec::new())
-    }
-}
-
-/// The next stdout line; once the process has stopped, nothing.
-async fn read(running: Option<&mut Running>) -> Input {
-    match running {
-        Some(process) => process.read().await,
-        None => pending().await,
-    }
-}
-
-/// A dropped receiver only means nobody waits any more.
-fn deliver<T>(reply: oneshot::Sender<T>, answer: T) -> Vec<Effect> {
-    let _ = reply.send(answer);
-    Vec::new()
-}
-
-async fn put_line(
-    running: Option<&mut Running>,
-    line: &str,
-) -> std::io::Result<()> {
-    let stdin = &mut running
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?
-        .stdin;
-    stdin.write_all(line.as_bytes()).await?;
-    stdin.flush().await
-}
-
-/// The session only stops a running process.
-async fn stop_process(running: Option<Running>) -> Exit {
-    match running {
-        Some(Running { child, stdin, .. }) => {
-            install::process::stop(child, stdin).await
-        }
-        None => Exit::Unknown(String::from("already stopped")),
-    }
+    cmd.current_dir(&opts.cwd);
+    cmd
 }
 
 #[cfg(test)]
