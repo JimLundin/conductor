@@ -575,3 +575,40 @@ fn forgetting_a_host_releases_its_pending_start() {
         [Effect::Send { host: OTHER, .. }]
     ));
 }
+
+#[test]
+fn a_host_pick_arriving_after_unpairing_does_not_start_on_another_host() {
+    let (blocked, effects) = run(
+        two(LinkState::Live),
+        Vec::from([
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+            Intent::Forget(HOST),
+            Intent::Form(FormIntent::PickHost(HOST.key())),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Send { .. }))
+            .count(),
+        0
+    );
+    assert_eq!(
+        form(&blocked).map(|shown| (
+            shown.start_disabled,
+            shown.error.map(|hint| hint.text),
+            shown
+                .hosts
+                .into_iter()
+                .find(|choice| choice.selected)
+                .map(|choice| (choice.value, choice.disabled)),
+        )),
+        Some((
+            true,
+            Some(text("The selected host is no longer paired.")),
+            Some((HOST.key(), true))
+        ))
+    );
+}

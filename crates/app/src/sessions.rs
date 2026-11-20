@@ -200,6 +200,9 @@ pub fn NewSession(form: ui::NewSessionForm) -> Element {
                         }
                     }
                 }
+                if let Some(hint) = form.refusal {
+                    Hint { hint }
+                }
                 if let Some(hint) = form.error {
                     Hint { hint }
                 }

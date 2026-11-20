@@ -384,3 +384,139 @@ fn start_waits_when_the_selected_model_or_effort_is_no_longer_offered() {
         );
     }
 }
+
+#[test]
+fn a_model_pick_arriving_after_the_offer_changes_stays_selected() {
+    let (blocked, effects) = run(
+        paired(),
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            super::roster(two_claudes()),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+            super::roster(super::claude(Availability::Available {
+                auth: proto::Auth::SignedIn,
+                models: proto::Models::none(),
+            })),
+            Intent::Form(FormIntent::PickModel(text("opus"))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    assert_eq!(effects, []);
+    assert_eq!(
+        form(&blocked).map(|shown| (
+            shown.start_disabled,
+            shown.error.map(|hint| hint.text),
+            shown
+                .models
+                .into_iter()
+                .find(|choice| choice.selected)
+                .map(|choice| (choice.value, choice.disabled)),
+        )),
+        Some((
+            true,
+            Some(text("The selected model is no longer offered.")),
+            Some((text("opus"), true)),
+        ))
+    );
+}
+
+#[test]
+fn refusals_remain_visible_alongside_current_start_blocks() {
+    let (pending, sent) = run(
+        paired(),
+        Vec::from([
+            welcomed(HOST, "desk", two_claudes(), Some(desk_home())),
+            connection(HOST, LinkState::Live, None),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    let alerts = |state: &State| {
+        let Some(shown) = form(state) else {
+            return Vec::new();
+        };
+        let mut alerts = Vec::new();
+        if shown.directory_shown {
+            alerts.extend(shown.directory_error);
+        }
+        alerts.extend(shown.instance_hint);
+        alerts.extend(shown.refusal);
+        alerts.extend(shown.error);
+        alerts
+            .into_iter()
+            .filter(|hint| hint.role == Some("alert"))
+            .map(|hint| hint.text)
+            .collect::<Vec<_>>()
+    };
+
+    let (offline, _) = run(
+        pending.clone(),
+        Vec::from([
+            connection(HOST, LinkState::Disconnected, None),
+            super::answer(
+                &sent,
+                Ok(proto::CommandResult::Rejected(
+                    proto::Rejection::TurnInProgress,
+                )),
+            ),
+        ]),
+    );
+    assert_eq!(
+        alerts(&offline),
+        [
+            text("a turn is already running"),
+            text("The selected host is offline."),
+        ]
+    );
+
+    let (project, _) = run(
+        pending.clone(),
+        Vec::from([
+            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            super::answer(
+                &sent,
+                Ok(proto::CommandResult::Rejected(
+                    proto::Rejection::NoSuchDirectory,
+                )),
+            ),
+        ]),
+    );
+    assert_eq!(
+        alerts(&project),
+        [text("There is no directory at /src/test on desk."),]
+    );
+
+    for (current, expected) in [
+        (
+            "sign in again",
+            Vec::from([
+                text("Claude Code can't run on desk: sign in again"),
+                text("Claude Code can't run on desk: setup required"),
+            ]),
+        ),
+        (
+            "setup required",
+            Vec::from([text("Claude Code can't run on desk: setup required")]),
+        ),
+    ] {
+        let (unavailable, _) = run(
+            pending.clone(),
+            Vec::from([
+                super::roster(super::claude(Availability::Unavailable {
+                    reason: text(current),
+                })),
+                super::answer(
+                    &sent,
+                    Ok(proto::CommandResult::Rejected(
+                        proto::Rejection::InstanceUnavailable {
+                            reason: text("setup required"),
+                        },
+                    )),
+                ),
+            ]),
+        );
+        assert_eq!(alerts(&unavailable), expected);
+    }
+}

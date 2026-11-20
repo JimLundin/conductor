@@ -244,7 +244,7 @@ impl State {
                     forms.remove(&host);
                 }
                 ShownPlace::NewSession(form) => {
-                    if form.forgot(host) {
+                    if form.cancel_start_on(host) {
                         self.visit = self.visit.wrapping_add(1);
                     }
                 }
@@ -429,7 +429,7 @@ impl State {
                 if let Ok(CommandResult::Started { session }) = answer {
                     self = self.show(Place::Session(reply.host, session));
                 } else {
-                    *form = mem::take(form).answered(answer);
+                    form.answered(known, answer);
                 }
             }
             (ShownPlace::Projects(_), ReplyTo::Created) => {

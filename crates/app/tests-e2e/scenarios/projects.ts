@@ -128,7 +128,19 @@ const projectSession = async (run: Run): Promise<void> => {
 		`the form offers the host's projects (${choices.join(", ")})`,
 	);
 	await page.locator(".segment", { hasText: "Claude Code" }).click();
-	await page.locator('select[name="project"]').selectOption({ label: "alpha" });
+	const form = page.locator(".new-session");
+	const missing = `${dir}/missing-session-directory`;
+	await form.locator('input[name="directory"]').fill(missing);
+	await form.getByRole("button", { name: "Start session" }).click();
+	await form
+		.getByRole("alert")
+		.filter({ hasText: "There is no directory at that path on conductor." })
+		.waitFor({ timeout: patience });
+	await form.locator('select[name="project"]').selectOption({ label: "alpha" });
+	await form
+		.getByRole("alert")
+		.filter({ hasText: `There is no directory at ${missing} on conductor.` })
+		.waitFor({ timeout: patience });
 	check(
 		(await page.locator('input[name="directory"]').count()) === 0,
 		"a picked project hides the directory",

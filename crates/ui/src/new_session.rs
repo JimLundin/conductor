@@ -56,6 +56,7 @@ pub struct NewSessionForm {
     pub directory_error: Option<Hint>,
     /// The directories sessions ran in, the most recent first.
     pub suggestions: Option<Vec<Suggestion>>,
+    pub refusal: Option<Hint>,
     pub error: Option<Hint>,
     pub start_disabled: bool,
     pub start_label: &'static str,
@@ -152,10 +153,17 @@ impl Form {
             chosen.and_then(|(_, host)| host.fold.instances.as_ref());
         match intent {
             FormIntent::PickHost(key) => {
-                let picked = hosts.keys().find(|id| id.key() == key).copied();
+                let Some(picked) = data_encoding::HEXLOWER
+                    .decode(key.as_bytes())
+                    .ok()
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .map(HostId)
+                else {
+                    return (self, Vec::new());
+                };
                 (
                     Self {
-                        host: picked.or(self.host),
+                        host: Some(picked),
                         instance: None,
                         model: None,
                         effort: None,
@@ -176,8 +184,7 @@ impl Form {
             FormIntent::PickModel(id) => {
                 let offered = availability(instances, self.chosen(instances))
                     .map_or_else(Models::none, Availability::models);
-                let picked =
-                    offered.find(&ModelId(id)).map(|choice| choice.id.clone());
+                let picked = (!id.is_empty()).then_some(ModelId(id));
                 (
                     Self {
                         effort: offered
@@ -206,12 +213,26 @@ impl Form {
                 (Self { directory, ..self }, Vec::new())
             }
             FormIntent::Start => {
-                let Ok((host, body)) = self.start(chosen) else {
+                let Ok((host, instance, place)) = self.start(chosen) else {
                     return (self, Vec::new());
+                };
+                let submitted = Submission {
+                    host,
+                    instance: instance.clone(),
+                    directory: match place {
+                        Destination::Directory(path) => Some(path.to_owned()),
+                        Destination::Project(_) | Destination::Issue(_) => None,
+                    },
+                };
+                let body = CommandBody::StartSession {
+                    instance: instance.clone(),
+                    at: place.into(),
+                    model: self.model.clone(),
+                    effort: self.effort,
                 };
                 (
                     Self {
-                        attempt: Attempt::Starting(host),
+                        attempt: Attempt::Starting(submitted),
                         ..self
                     },
                     Vec::from([At { host, visit }.send(body, ReplyTo::Start)]),
@@ -220,10 +241,10 @@ impl Form {
         }
     }
 
-    fn start(
-        &self,
-        chosen: Option<(HostId, &Host)>,
-    ) -> Result<(HostId, CommandBody), StartBlocked> {
+    fn start<'a>(
+        &'a self,
+        chosen: Option<(HostId, &'a Host)>,
+    ) -> Result<(HostId, &'a InstanceId, Destination<'a>), StartBlocked> {
         if matches!(self.attempt, Attempt::Starting(_)) {
             return Err(StartBlocked::Pending);
         }
@@ -250,20 +271,12 @@ impl Form {
         if models.kept_effort(self.model.as_ref(), self.effort) != self.effort {
             return Err(StartBlocked::Effort);
         }
-        let at = self.place(known)?;
-        Ok((
-            host,
-            CommandBody::StartSession {
-                instance: instance.clone(),
-                at,
-                model: self.model.clone(),
-                effort: self.effort,
-            },
-        ))
+        Ok((host, instance, self.place(known)?))
     }
 
-    pub fn forgot(&mut self, host: HostId) -> bool {
-        if self.attempt == Attempt::Starting(host) {
+    pub fn cancel_start_on(&mut self, host: HostId) -> bool {
+        if matches!(&self.attempt, Attempt::Starting(start) if start.host == host)
+        {
             self.attempt = Attempt::Editing;
             true
         } else {
@@ -271,10 +284,13 @@ impl Form {
         }
     }
 
-    pub fn answered(self, answer: Result<CommandResult, String>) -> Self {
-        Self {
-            attempt: Attempt::answered(answer),
-            ..self
+    pub fn answered(
+        &mut self,
+        host: &Host,
+        answer: Result<CommandResult, String>,
+    ) {
+        if let Attempt::Starting(start) = &self.attempt {
+            self.attempt = start.answered(host, answer);
         }
     }
 
@@ -294,34 +310,44 @@ impl Form {
             .copied()
     }
 
-    fn place(&self, host: &Host) -> Result<StartAt, StartBlocked> {
-        let home = host.fold.home.as_ref();
-        if let Some(issue) = self.issue {
-            home.ok_or(StartBlocked::NoHome)?;
+    fn place(&self, host: &Host) -> Result<Destination<'_>, StartBlocked> {
+        if self.issue.is_none() && self.project.is_none() {
+            let directory = self.directory.trim();
+            return if directory.is_empty() {
+                Err(StartBlocked::Directory)
+            } else {
+                Ok(Destination::Directory(directory))
+            };
+        }
+        let home = host.fold.home.as_ref().ok_or(StartBlocked::NoHome)?;
+        let (project, destination, missing_checkout) = if let Some(issue) =
+            self.issue
+        {
             let (project, _) = crate::issues::find(host, issue)
                 .ok_or(StartBlocked::MissingIssue)?;
-            if project.checkouts.is_empty() {
-                return Err(StartBlocked::IssueCheckout);
-            }
-            return Ok(StartAt::Issue(issue));
-        }
-        if let Some(id) = &self.project {
-            let known = home.ok_or(StartBlocked::NoHome)?;
-            let project = known
+            (
+                project,
+                Destination::Issue(issue),
+                StartBlocked::IssueCheckout,
+            )
+        } else {
+            let id =
+                self.project.as_ref().ok_or(StartBlocked::MissingProject)?;
+            let project = home
                 .projects
                 .iter()
                 .find(|project| &project.id == id)
                 .ok_or(StartBlocked::MissingProject)?;
-            if project.checkouts.is_empty() {
-                return Err(StartBlocked::ProjectCheckout);
-            }
-            return Ok(StartAt::Project(id.clone()));
+            (
+                project,
+                Destination::Project(id),
+                StartBlocked::ProjectCheckout,
+            )
+        };
+        if project.checkouts.is_empty() {
+            return Err(missing_checkout);
         }
-        let directory = self.directory.trim();
-        if directory.is_empty() {
-            return Err(StartBlocked::Directory);
-        }
-        Ok(StartAt::Directory(HostPath(directory.to_owned())))
+        Ok(destination)
     }
 
     /// The default is the first available instance, or the first listed.
@@ -352,23 +378,20 @@ impl Form {
         let empty_catalog = proto::Catalog::default();
         let catalog =
             chosen.map_or(&empty_catalog, |(_, host)| &host.fold.catalog);
-        let (directory_error, instance_error, form_error) = match &self.attempt
-        {
-            Attempt::Refused(Refusal::Directory) => (
-                Some(format!("There is no directory at that path on {name}.")),
-                None,
-                None,
-            ),
-            Attempt::Refused(Refusal::Instance(reason)) => {
-                (None, Some(reason.clone()), None)
-            }
-            Attempt::Refused(Refusal::Other(message)) => {
-                (None, None, Some(message.clone()))
-            }
-            Attempt::Editing | Attempt::Starting(_) => (None, None, None),
-        };
         let picked = self.chosen(instances);
         let available = availability(instances, picked);
+        let label = picked.map_or_else(
+            || String::from("That instance"),
+            |id| crate::credentials::instance_name(id, catalog),
+        );
+        let directory_shown = self.project.is_none() && self.issue.is_none();
+        let current_instance = instance_hint(
+            Availability::note(
+                picked.and_then(|it| catalog.of(it.provider)),
+                available,
+            ),
+            (&label, &name),
+        );
         let offered = available.map_or_else(Models::none, Availability::models);
         let suggestions = chosen
             .map_or_default(|(_, host)| host.fold.view.directories())
@@ -386,6 +409,13 @@ impl Form {
         } else {
             "Start session"
         };
+        let reason = blocked.and_then(StartBlocked::reason);
+        let (instance_hint, directory_error, refusal) = self.start_hints(
+            chosen.map(|(id, _)| (id, name.as_str())),
+            picked,
+            current_instance,
+            reason,
+        );
         NewSessionForm {
             subtitle: String::from(if issue.is_some() {
                 "Runs on the host you choose, on the issue's branch in its project there."
@@ -405,39 +435,70 @@ impl Form {
                     })
                     .collect()
             }),
-            instance_hint: instance_hint(
-                instance_error,
-                Availability::note(
-                    picked.and_then(|it| catalog.of(it.provider)),
-                    available,
-                ),
-                (
-                    &picked.map_or_else(
-                        || String::from("That instance"),
-                        |it| crate::credentials::instance_name(it, catalog),
-                    ),
-                    &name,
-                ),
-            ),
+            instance_hint,
             efforts: self.effort_choices(&offered.efforts(self.model.as_ref())),
             models: self.model_choices(&offered),
             projects: (issue.is_none()
                 && (home.is_some() || self.project.is_some()))
             .then(|| project_choices(home, self.project.as_ref())),
-            directory_shown: self.project.is_none() && issue.is_none(),
+            directory_shown,
             issue,
             directory: self.directory.clone(),
             directory_invalid: directory_error.is_some(),
-            directory_error: directory_error.map(alert),
+            directory_error,
             suggestions: (!suggestions.is_empty()).then_some(suggestions),
-            error: form_error
-                .or_else(|| {
-                    blocked.and_then(StartBlocked::reason).map(String::from)
-                })
-                .map(alert),
+            refusal,
+            error: reason.map(|text| alert(text.into())),
             start_disabled: blocked.is_some(),
             start_label,
         }
+    }
+
+    fn start_hints(
+        &self,
+        selected_host: Option<(HostId, &str)>,
+        instance: Option<&InstanceId>,
+        current: Option<Hint>,
+        blocked: Option<&str>,
+    ) -> (Option<Hint>, Option<Hint>, Option<Hint>) {
+        let Attempt::Refused {
+            host,
+            target,
+            message,
+        } = &self.attempt
+        else {
+            return (current, None, None);
+        };
+        if let Some((id, name)) = selected_host
+            && *host == id
+        {
+            match target {
+                RefusalTarget::Directory(path)
+                    if self.project.is_none()
+                        && self.issue.is_none()
+                        && self.directory.trim() == path =>
+                {
+                    let hint = alert(format!(
+                        "There is no directory at that path on {name}."
+                    ));
+                    return (current, Some(hint), None);
+                }
+                RefusalTarget::Instance(id)
+                    if instance == Some(id)
+                        && current
+                            .as_ref()
+                            .is_none_or(|hint| hint.role.is_none()) =>
+                {
+                    return (Some(alert(message.clone())), None, None);
+                }
+                _ => {}
+            }
+        }
+        let duplicate = blocked == Some(message.as_str())
+            || current.as_ref().is_some_and(|hint| {
+                hint.role.is_some() && hint.text == *message
+            });
+        (current, None, (!duplicate).then(|| alert(message.clone())))
     }
 
     /// The default first, which sends no model, then each model the host
@@ -576,23 +637,20 @@ fn host_choice(
     }
 }
 
-/// A refusal of the instance, else why the host can't run it, else what
-/// its provider's plugin says of it.
 fn instance_hint(
-    refused: Option<String>,
     note: ProviderNote,
     (label, host): (&str, &str),
 ) -> Option<Hint> {
-    match (refused, note) {
-        (Some(reason), _) | (None, ProviderNote::Unavailable(reason)) => {
+    match note {
+        ProviderNote::Unavailable(reason) => {
             Some(alert(format!("{label} can't run on {host}: {reason}")))
         }
-        (None, ProviderNote::Says(text)) => Some(Hint {
+        ProviderNote::Says(text) => Some(Hint {
             class: "hint muted",
             role: None,
             text,
         }),
-        (None, ProviderNote::Nothing) => None,
+        ProviderNote::Nothing => None,
     }
 }
 
@@ -672,73 +730,94 @@ impl StartBlocked {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Attempt {
-    Editing,
-    Starting(HostId),
-    Refused(Refusal),
+enum Destination<'a> {
+    Directory(&'a str),
+    Project(&'a ProjectId),
+    Issue(IssueId),
 }
 
-/// Where the form shows a refusal: under the field it is about, or under
-/// the whole form.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Refusal {
-    Directory,
-    Instance(String),
-    Other(String),
-}
-
-impl Attempt {
-    /// The host's answer to `StartSession`, or the reason it never arrived.
-    fn answered(answer: Result<CommandResult, String>) -> Self {
-        match answer {
-            Ok(
-                CommandResult::Accepted
-                | CommandResult::Started { .. }
-                | CommandResult::Instances(_)
-                | CommandResult::Diff(_)
-                | CommandResult::IssueCreated { .. },
-            ) => Self::Editing,
-            Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
-                Self::Refused(Refusal::Directory)
+impl From<Destination<'_>> for StartAt {
+    fn from(destination: Destination<'_>) -> Self {
+        match destination {
+            Destination::Directory(path) => {
+                Self::Directory(HostPath(path.to_owned()))
             }
-            Ok(CommandResult::Rejected(Rejection::InstanceUnavailable {
-                reason,
-            })) => Self::Refused(Refusal::Instance(reason)),
-            Ok(CommandResult::Rejected(rejection)) => {
-                Self::Refused(Refusal::Other(rejection.label()))
-            }
-            Err(error) => Self::Refused(Refusal::Other(error)),
+            Destination::Project(id) => Self::Project(id.clone()),
+            Destination::Issue(id) => Self::Issue(id),
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use proto::{CommandResult, Rejection};
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Attempt {
+    Editing,
+    Starting(Submission),
+    Refused {
+        host: HostId,
+        target: RefusalTarget,
+        message: String,
+    },
+}
 
-    use super::{Attempt, Refusal};
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Submission {
+    host: HostId,
+    instance: InstanceId,
+    directory: Option<String>,
+}
 
-    #[test]
-    fn a_refusal_lands_under_its_field() {
-        assert_eq!(
-            [
-                Rejection::NoSuchDirectory,
-                Rejection::InstanceUnavailable {
-                    reason: String::from("no codex"),
-                },
-                Rejection::TurnInProgress,
-            ]
-            .map(|rejection| Attempt::answered(Ok(
-                CommandResult::Rejected(rejection)
-            ))),
-            [
-                Attempt::Refused(Refusal::Directory),
-                Attempt::Refused(Refusal::Instance(String::from("no codex"))),
-                Attempt::Refused(Refusal::Other(String::from(
-                    "a turn is already running"
-                ))),
-            ]
-        );
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RefusalTarget {
+    Directory(String),
+    Instance(InstanceId),
+    Form,
+}
+
+impl Submission {
+    fn answered(
+        &self,
+        host: &Host,
+        answer: Result<CommandResult, String>,
+    ) -> Attempt {
+        let (target, message) = match answer {
+            Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
+                let Some(path) = &self.directory else {
+                    return Attempt::Refused {
+                        host: self.host,
+                        target: RefusalTarget::Form,
+                        message: Rejection::NoSuchDirectory.label(),
+                    };
+                };
+                (
+                    RefusalTarget::Directory(path.clone()),
+                    format!(
+                        "There is no directory at {path} on {}.",
+                        host.name()
+                    ),
+                )
+            }
+            Ok(CommandResult::Rejected(Rejection::InstanceUnavailable {
+                reason,
+            })) => {
+                let label = crate::credentials::instance_name(
+                    &self.instance,
+                    &host.fold.catalog,
+                );
+                (
+                    RefusalTarget::Instance(self.instance.clone()),
+                    format!("{label} can't run on {}: {reason}", host.name()),
+                )
+            }
+            Ok(CommandResult::Rejected(rejection)) => {
+                (RefusalTarget::Form, rejection.label())
+            }
+            Err(error) => (RefusalTarget::Form, error),
+            Ok(_) => return Attempt::Editing,
+        };
+        Attempt::Refused {
+            host: self.host,
+            target,
+            message,
+        }
     }
 }
