@@ -3,6 +3,7 @@
 //! shell (`claude-cli`, `codex-cli`) runs a task on the other end, and
 //! hands the host a [`Plugin`] whose [`Starter`] starts its agents.
 
+pub mod agent;
 mod plugin;
 
 pub use plugin::{Launch, Plugin, Settings};
@@ -26,14 +27,14 @@ pub struct Runtime {
 
 /// The agent's end of a [`Runtime`].
 #[derive(Debug)]
-pub struct Plug {
-    pub commands: mpsc::Receiver<Command>,
-    pub events: mpsc::Sender<Event>,
+struct Plug {
+    commands: mpsc::Receiver<Command>,
+    events: mpsc::Sender<Event>,
 }
 
 /// A runtime and the plug its agent's task takes.
 #[must_use]
-pub fn pair() -> (Runtime, Plug) {
+fn pair() -> (Runtime, Plug) {
     let (commands, received) = mpsc::channel(16);
     let (reported, events) = mpsc::channel(1024);
     (

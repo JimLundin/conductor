@@ -6,6 +6,10 @@
 //! commands into its own wire and its wire into these events (`claude`,
 //! `codex`).
 
+mod lifecycle;
+
+pub use lifecycle::{Lifecycle, NOT_RUNNING, Report};
+
 use proto::{
     ClientName, Credential, Effort, HistoryAnchor, HostPath, ModelId, Models,
     SessionId,

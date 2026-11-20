@@ -36,10 +36,9 @@ pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
 #[must_use]
 pub fn codex_note(event: &CodexEvent) -> Option<Note> {
     match event {
-        CodexEvent::Unknown(frame) => Some(Note::Unmapped {
-            provider: Provider::Codex,
-            frame: frame.to_string(),
-        }),
+        CodexEvent::Unknown(frame) => {
+            Some(Note::unmapped(Provider::Codex, frame.to_string(), None))
+        }
         CodexEvent::Thread {
             thread,
             event: ThreadEvent::SettingsChanged(settings),
@@ -51,11 +50,11 @@ pub fn codex_note(event: &CodexEvent) -> Option<Note> {
         CodexEvent::Thread {
             thread,
             event: ThreadEvent::Unknown(frame),
-        } => Some(Note::UnmappedOnThread {
-            provider: Provider::Codex,
-            thread: thread.0.clone(),
-            frame: frame.to_string(),
-        }),
+        } => Some(Note::unmapped(
+            Provider::Codex,
+            frame.to_string(),
+            Some(thread.0.clone()),
+        )),
         CodexEvent::Thread { .. } | CodexEvent::Exited { .. } => None,
     }
 }

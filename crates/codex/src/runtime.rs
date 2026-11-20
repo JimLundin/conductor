@@ -8,16 +8,19 @@
 //! `codex-cli` runs it: it turns each command, request outcome and routed
 //! event into an [`Input`], and performs each [`Effect`] in order.
 
-use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
-use agents::{Note, Step};
+use agents::Step;
+use agents::runtime::{
+    Anchoring, Command, Event, Lifecycle, Outcome, Report, Start, Started,
+};
 use proto::{CloseReason, Effort, HistoryAnchor, ModelId, Models};
 
 use crate::hub::Routed;
+use crate::mapping::codex_note;
 use crate::prelude::*;
 use crate::{
-    ApprovalId, ApprovalPolicy, CodexCredential, CodexEvent, Decision, Sandbox,
-    ThreadId, ThreadOptions, TurnId, codex_answer, codex_note, codex_steps,
-    credential, default_model,
+    ApprovalId, ApprovalPolicy, CodexCredential, Decision, Sandbox, ThreadId,
+    ThreadOptions, TurnId, codex_answer, codex_steps, credential,
+    default_model,
 };
 
 /// The thread to open: resumed from Codex's own history, or a new one.
@@ -91,26 +94,27 @@ pub enum Effect {
     /// Run the hub's next app-server with this credential, and report
     /// [`Input::Configured`].
     Credential(Option<CodexCredential>),
-    /// Drop the thread: it has ended, or the session is done with it.
-    Release,
-    Emit(Event),
-    Log(Note),
+    Runtime(Report),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Runtime {
-    running: bool,
+    lifecycle: Lifecycle,
     /// The default model of the credential being set.
     configuring: Option<ModelId>,
 }
 
-const NOT_RUNNING: &str = "the agent is not running";
+impl From<Report> for Effect {
+    fn from(report: Report) -> Self {
+        Self::Runtime(report)
+    }
+}
 
 impl Runtime {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            running: false,
+            lifecycle: Lifecycle::new(),
             configuring: None,
         }
     }
@@ -118,115 +122,78 @@ impl Runtime {
     pub fn step(&mut self, input: Input) -> Vec<Effect> {
         match input {
             Input::Command(command) => self.command(command),
-            Input::Opened(Ok(thread)) => {
-                self.running = true;
-                emit(Outcome::Started(Ok(Started {
-                    conversation: thread.0,
-                    anchoring: Anchoring::Turns,
-                })))
+            Input::Opened(Ok(thread)) => self.lifecycle.started(Started {
+                conversation: thread.0,
+                anchoring: Anchoring::Turns,
+            }),
+            Input::Opened(Err(error)) => {
+                Report::emit(Outcome::Started(Err(error)))
             }
-            Input::Opened(Err(error)) => emit(Outcome::Started(Err(error))),
-            Input::Called { then, outcome } => emit(answered(then, outcome)),
+            Input::Called { then, outcome } => {
+                Report::emit(answered(then, outcome))
+            }
             Input::Listed(listed) => {
-                emit(Outcome::Turns(listed.map(|turns| {
+                Report::emit(Outcome::Turns(listed.map(|turns| {
                     turns.into_iter().map(|turn| turn.0).collect()
                 })))
             }
-            Input::Models(listed) => emit(Outcome::Models(listed)),
+            Input::Models(listed) => Report::emit(Outcome::Models(listed)),
             Input::Configured(taken) => {
                 let default = self.configuring.take();
-                emit(Outcome::Configured(taken.map(|()| default)))
+                Report::emit(Outcome::Configured(taken.map(|()| default)))
             }
             Input::Event(Some(routed)) => self.routed(routed),
-            Input::Event(None) => self.ended(),
+            Input::Event(None) => self.lifecycle.ended(),
         }
     }
 
     fn command(&mut self, command: Command) -> Vec<Effect> {
-        match (command, self.running) {
-            (Command::Start(start), _) => {
-                Vec::from([Effect::Open(open(start))])
-            }
-            (Command::Models, _) => Vec::from([Effect::Models]),
-            (Command::Credential(given), _) => {
+        if let Some(refused) = self.lifecycle.refusal(&command) {
+            return refused;
+        }
+        match command {
+            Command::Start(start) => Vec::from([Effect::Open(open(start))]),
+            Command::Models => Vec::from([Effect::Models]),
+            Command::Credential(given) => {
                 let codex = credential(given.as_ref());
                 self.configuring = codex.as_ref().map(default_model);
                 Vec::from([Effect::Credential(codex)])
             }
-            (Command::Shutdown, _) => {
-                self.running = false;
-                Vec::from([
-                    Effect::Release,
-                    Effect::Emit(Event::Outcome(Outcome::ShutDown(Ok(())))),
-                ])
-            }
-            (Command::Send { text, effort }, true) => {
+            Command::Shutdown => Vec::from([
+                self.lifecycle.release().into(),
+                Report::Emit(Event::Outcome(Outcome::ShutDown(Ok(())))).into(),
+            ]),
+            Command::Send { text, effort } => {
                 call(Call::SendTurn { text, effort }, Then::Sent)
             }
-            (Command::Interrupt(turn), true) => {
+            Command::Interrupt(turn) => {
                 call(Call::Interrupt(TurnId(turn.0)), Then::Interrupted)
             }
-            (Command::Reply { native, reply, .. }, true) => call(
+            Command::Reply { native, reply, .. } => call(
                 Call::Respond {
                     id: ApprovalId(native.0),
                     decision: codex_answer(reply),
                 },
                 Then::Replied,
             ),
-            (Command::Turns, true) => Vec::from([Effect::Turns]),
-            (Command::Revert(turn), true) => {
+            Command::Turns => Vec::from([Effect::Turns]),
+            Command::Revert(turn) => {
                 call(Call::Revert(TurnId(turn)), Then::Reverted)
             }
-            (
-                idle @ (Command::Send { .. }
-                | Command::Interrupt(_)
-                | Command::Reply { .. }
-                | Command::Turns
-                | Command::Revert(_)),
-                false,
-            ) => emit(idle.failed(NOT_RUNNING)),
         }
     }
 
-    /// Each event's steps. The server's exit, or the hub stopping it, ends
-    /// the thread.
     fn routed(&mut self, routed: Routed) -> Vec<Effect> {
         match routed {
             Routed::Codex(event) => {
-                let gone = matches!(event, CodexEvent::Exited { .. });
-                let note = codex_note(&event).map(Effect::Log);
-                let steps = codex_steps(event)
-                    .into_iter()
-                    .map(|step| Effect::Emit(Event::Step(step)));
-                let released = gone.then(|| self.release());
-                note.into_iter().chain(steps).chain(released).collect()
+                let note = codex_note(&event);
+                self.lifecycle.steps(codex_steps(event), note)
             }
-            Routed::Stopped { reason } => Vec::from([
-                Effect::Emit(Event::Step(Step::Closed(CloseReason::Stopped {
-                    reason,
-                }))),
-                self.release(),
-            ]),
+            Routed::Stopped { reason } => self.lifecycle.steps(
+                Vec::from([Step::Closed(CloseReason::Stopped { reason })]),
+                None,
+            ),
         }
-    }
-
-    /// Events that end without the server's exit end the thread too.
-    fn ended(&mut self) -> Vec<Effect> {
-        if self.running {
-            Vec::from([
-                Effect::Emit(Event::Step(Step::Closed(CloseReason::Exited {
-                    status: String::from("the agent's events ended"),
-                }))),
-                self.release(),
-            ])
-        } else {
-            Vec::new()
-        }
-    }
-
-    const fn release(&mut self) -> Effect {
-        self.running = false;
-        Effect::Release
     }
 }
 
@@ -277,14 +244,12 @@ fn call(call: Call, then: Then) -> Vec<Effect> {
     Vec::from([Effect::Call { call, then }])
 }
 
-fn emit(outcome: Outcome) -> Vec<Effect> {
-    Vec::from([Effect::Emit(Event::Outcome(outcome))])
-}
-
 #[cfg(test)]
 mod tests {
-    use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
-    use agents::{Exit, NativeRequest, NativeTurn, Note, Reply, Step};
+    use agents::runtime::{
+        Anchoring, Command, Event, Outcome, Report, Start, Started,
+    };
+    use agents::{NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
         ClientName, CloseReason, Credential, Decision as Chosen, Effort,
         HistoryAnchor, HostPath, ModelId, Provider, SessionId,
@@ -310,7 +275,7 @@ mod tests {
     }
 
     fn outcome(outcome: Outcome) -> Vec<Effect> {
-        Vec::from([Effect::Emit(Event::Outcome(outcome))])
+        Vec::from([Report::Emit(Event::Outcome(outcome)).into()])
     }
 
     fn running() -> Runtime {
@@ -442,84 +407,47 @@ mod tests {
     }
 
     #[test]
-    fn a_shut_down_thread_takes_no_more_calls() {
-        let mut runtime = running();
-        let seen = walk(
-            &mut runtime,
-            Vec::from([
-                Input::Command(Command::Shutdown),
-                Input::Command(Command::Turns),
-            ]),
-        );
+    fn shutdown_releases_the_thread_without_stopping_the_server() {
         assert_eq!(
-            seen,
+            running().step(Input::Command(Command::Shutdown)),
             [
-                Vec::from([
-                    Effect::Release,
-                    Effect::Emit(Event::Outcome(Outcome::ShutDown(Ok(())))),
-                ]),
-                outcome(Outcome::Turns(Err(text("the agent is not running")))),
-            ]
+                Report::Release.into(),
+                Report::Emit(Event::Outcome(Outcome::ShutDown(Ok(())))).into(),
+            ],
         );
     }
 
     #[test]
-    fn the_server_exiting_or_stopping_closes_the_thread() {
-        let closed = |reason: CloseReason| {
-            Effect::Emit(Event::Step(Step::Closed(reason)))
-        };
-        let mut exits = running();
-        let mut stops = running();
-        let mut ends = running();
-        let unknown = CodexEvent::Thread {
-            thread: ThreadId(text("th_1")),
-            event: ThreadEvent::Unknown(json!({ "method": "x" })),
-        };
+    fn stopping_releases_the_thread_and_reports_why() {
         assert_eq!(
-            (
-                walk(
-                    &mut exits,
-                    Vec::from([
-                        Input::Event(Some(Routed::Codex(unknown))),
-                        Input::Event(Some(Routed::Codex(CodexEvent::Exited {
-                            status: Exit::Status(text("exit status: 1")),
-                        }))),
-                        Input::Event(None),
-                    ])
-                ),
-                stops.step(Input::Event(Some(Routed::Stopped {
+            running().step(Input::Event(Some(Routed::Stopped {
+                reason: text("new Codex credential"),
+            }))),
+            [
+                Report::Emit(Event::Step(Step::Closed(CloseReason::Stopped {
                     reason: text("new Codex credential"),
-                }))),
-                ends.step(Input::Event(None)),
-            ),
-            (
-                Vec::from([
-                    Vec::from([Effect::Log(Note::UnmappedOnThread {
-                        provider: Provider::Codex,
-                        thread: text("th_1"),
-                        frame: text("{\"method\":\"x\"}"),
-                    })]),
-                    Vec::from([
-                        closed(CloseReason::Exited {
-                            status: text("exit status: 1"),
-                        }),
-                        Effect::Release,
-                    ]),
-                    Vec::new(),
-                ]),
-                Vec::from([
-                    closed(CloseReason::Stopped {
-                        reason: text("new Codex credential"),
-                    }),
-                    Effect::Release,
-                ]),
-                Vec::from([
-                    closed(CloseReason::Exited {
-                        status: text("the agent's events ended"),
-                    }),
-                    Effect::Release,
-                ]),
-            )
+                })))
+                .into(),
+                Report::Release.into(),
+            ],
+        );
+    }
+
+    #[test]
+    fn unknown_thread_frames_keep_the_thread_id() {
+        assert_eq!(
+            running().step(Input::Event(Some(Routed::Codex(
+                CodexEvent::Thread {
+                    thread: ThreadId(text("th_1")),
+                    event: ThreadEvent::Unknown(json!({ "method": "x" })),
+                }
+            )))),
+            [Report::Log(Note::UnmappedOnThread {
+                provider: Provider::Codex,
+                thread: text("th_1"),
+                frame: text("{\"method\":\"x\"}"),
+            })
+            .into()],
         );
     }
 

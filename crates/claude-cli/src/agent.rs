@@ -5,11 +5,10 @@
 //!
 //! [`Command::Credential`]: agents::runtime::Command::Credential
 
-use std::convert::Infallible;
-use std::future::pending;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agents::runtime::NOT_RUNNING;
 use claude::ClaudeCredential;
 use claude::runtime::{Call, Effect, Input, Refusal, Spawn};
 use claude::{
@@ -17,7 +16,8 @@ use claude::{
 };
 use install::Home;
 use proto::Models;
-use runtime::{Plug, Runtime, Starter};
+use runtime::agent::{self, Agent, Performed};
+use runtime::{Runtime, Starter};
 use tokio::sync::{mpsc, watch};
 
 use crate::{ClaudeOptions, ClaudeSession, Error, sandbox};
@@ -59,88 +59,59 @@ pub fn starter(launch: ClaudeLaunch) -> Starter {
 }
 
 fn start(shared: &Arc<Shared>) -> Runtime {
-    let (runtime, plug) = runtime::pair();
-    let task = Task {
-        machine: claude::runtime::Runtime::new(shared.sandbox),
-        shared: Arc::clone(shared),
-        agent: None,
-        plug,
-    };
-    tokio::spawn(task.run());
-    runtime
+    let mut machine = claude::runtime::Runtime::new(shared.sandbox);
+    agent::start(
+        Task {
+            shared: Arc::clone(shared),
+            agent: None,
+        },
+        move |input| machine.step(input),
+        Input::Command,
+        Input::Event,
+    )
 }
 
 /// The running CLI and its events.
-type Agent = (ClaudeSession, mpsc::Receiver<ClaudeEvent>);
+type Session = (ClaudeSession, mpsc::Receiver<ClaudeEvent>);
 
 struct Task {
-    machine: claude::runtime::Runtime,
     shared: Arc<Shared>,
-    agent: Option<Agent>,
-    plug: Plug,
+    agent: Option<Session>,
+}
+
+impl Agent<Input, Effect> for Task {
+    type Event = ClaudeEvent;
+
+    fn events(&mut self) -> Option<&mut mpsc::Receiver<Self::Event>> {
+        self.agent.as_mut().map(|(_, events)| events)
+    }
+
+    fn release(&mut self) {
+        self.agent = None;
+    }
+
+    async fn perform(&mut self, effect: Effect) -> Performed<Input> {
+        let feedback = match effect {
+            Effect::Spawn(spawn) => Input::Spawned(self.spawn(spawn).await),
+            Effect::Call { call, then } => Input::Called {
+                then,
+                outcome: self.call(call).await,
+            },
+            Effect::Shutdown => {
+                Input::ShutDown(shutdown(self.agent.take()).await)
+            }
+            Effect::Probe => Input::Probed(probe(&self.shared).await),
+            Effect::Credential(credential) => {
+                self.shared.credential.send_replace(credential);
+                return Performed::Done;
+            }
+            Effect::Runtime(report) => return Performed::Report(report),
+        };
+        Performed::Feedback(feedback)
+    }
 }
 
 impl Task {
-    /// Runs until the session drops its runtime, which drops the CLI.
-    async fn run(mut self) -> Option<Infallible> {
-        loop {
-            let input = tokio::select! {
-                command = self.plug.commands.recv() => Input::Command(command?),
-                event = next_event(self.agent.as_mut()) => Input::Event(event),
-            };
-            self.feed(input).await;
-        }
-    }
-
-    /// Steps the machine and performs its effects in order, each effect's
-    /// own effects before the next.
-    async fn feed(&mut self, input: Input) {
-        let mut effects = self.machine.step(input);
-        effects.reverse();
-        while let Some(effect) = effects.pop() {
-            let more = self.perform(effect).await;
-            effects.extend(more.into_iter().rev());
-        }
-    }
-
-    async fn perform(&mut self, effect: Effect) -> Vec<Effect> {
-        match effect {
-            Effect::Spawn(spawn) => {
-                let spawned = self.spawn(spawn).await;
-                self.machine.step(Input::Spawned(spawned))
-            }
-            Effect::Call { call, then } => {
-                let outcome = self.call(call).await;
-                self.machine.step(Input::Called { then, outcome })
-            }
-            Effect::Shutdown => {
-                let stopped = shutdown(self.agent.take()).await;
-                self.machine.step(Input::ShutDown(stopped))
-            }
-            Effect::Probe => {
-                let listed = probe(&self.shared).await;
-                self.machine.step(Input::Probed(listed))
-            }
-            Effect::Credential(credential) => {
-                self.shared.credential.send_replace(credential);
-                Vec::new()
-            }
-            Effect::Release => {
-                self.agent = None;
-                Vec::new()
-            }
-            Effect::Emit(event) => {
-                // A session that has gone takes no more events.
-                let _ = self.plug.events.send(event).await;
-                Vec::new()
-            }
-            Effect::Log(note) => {
-                runtime::log(&note);
-                Vec::new()
-            }
-        }
-    }
-
     /// Starts the CLI in place of the one running, if it starts.
     async fn spawn(
         &mut self,
@@ -157,7 +128,7 @@ impl Task {
 
     async fn call(&self, call: Call) -> Result<(), String> {
         let Some((session, _)) = &self.agent else {
-            return Err(String::from("the agent is not running"));
+            return Err(String::from(NOT_RUNNING));
         };
         match call {
             Call::SetEffort(effort) => session.set_effort(effort).await,
@@ -168,15 +139,6 @@ impl Task {
             }
         }
         .map_err(|error| error.to_string())
-    }
-}
-
-/// The running CLI's next event. With none running, it waits forever, so
-/// the task only takes commands.
-async fn next_event(agent: Option<&mut Agent>) -> Option<ClaudeEvent> {
-    match agent {
-        Some((_, events)) => events.recv().await,
-        None => pending().await,
     }
 }
 
@@ -217,7 +179,7 @@ fn refusal(error: &Error) -> Refusal {
     }
 }
 
-async fn shutdown(agent: Option<Agent>) -> Result<(), String> {
+async fn shutdown(agent: Option<Session>) -> Result<(), String> {
     match agent {
         Some((session, _)) => session
             .shutdown()
