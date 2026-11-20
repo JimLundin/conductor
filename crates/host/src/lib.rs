@@ -7,6 +7,7 @@
 //! disk. It is pure and `no_std`; `daemon` runs it.
 
 #![cfg_attr(not(test), no_std)]
+#![feature(context_ext, local_waker)]
 
 extern crate alloc;
 

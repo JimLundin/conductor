@@ -216,7 +216,7 @@ pub enum Call {
     /// This many new task ids.
     Mint(usize),
     Exists(HostPath),
-    /// Remove the workspace by [`crate::workspace::plan`], keeping its
+    /// Remove the workspace by [`crate::workspace::Plan::remove`], keeping its
     /// branch.
     Remove(Workspace),
     /// Send the agent this command; its outcome is [`Input::Agent`].

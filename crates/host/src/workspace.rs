@@ -2,8 +2,7 @@
 //!
 //! The names, branches and refs Conductor owns, what Git's output says, how
 //! a checkpoint's diff is bounded, and the steps that remove a workspace
-//! while keeping its branch. The shell runs `git` and touches the
-//! filesystem.
+//! while keeping its branch. The shell runs each requested step.
 
 use alloc::format;
 use alloc::string::ToString;
@@ -17,6 +16,9 @@ use crate::prelude::*;
 
 /// The most of Git's output the host reads, and the largest patch it sends.
 const PATCH_LIMIT: usize = 65536;
+
+mod plan;
+pub use plan::{Answer, Plan, Step};
 /// The most patch text one diff carries.
 const TOTAL_LIMIT: usize = 262_144;
 /// The most files one diff lists.
@@ -46,24 +48,20 @@ pub struct Output {
 
 /// A file a checkpoint diff lists, before its patch is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
-    pub path: String,
-    pub change: Change,
+struct Entry {
+    path: String,
+    change: Change,
 }
 
 #[must_use]
-pub fn failure(context: &str, error: &str) -> GitError {
+fn failure(context: &str, error: &str) -> GitError {
     GitError::Failed(format!("{context}: {error}"))
 }
 
 /// # Errors
 ///
 /// When `actual` isn't `expected`.
-pub fn same(
-    actual: &str,
-    expected: &str,
-    context: &str,
-) -> Result<(), GitError> {
+fn same(actual: &str, expected: &str, context: &str) -> Result<(), GitError> {
     (actual == expected)
         .then_some(())
         .ok_or_else(|| failure(context, "metadata differs"))
@@ -71,7 +69,7 @@ pub fn same(
 
 /// Whether Git wrote more than the host reads, so the shell stops it.
 #[must_use]
-pub const fn oversized(len: usize) -> bool {
+const fn oversized(len: usize) -> bool {
     len > PATCH_LIMIT
 }
 
@@ -80,7 +78,7 @@ pub const fn oversized(len: usize) -> bool {
 /// # Errors
 ///
 /// When the output was cut off or Git failed.
-pub fn checked(output: Output, context: &str) -> Result<Vec<u8>, GitError> {
+fn checked(output: Output, context: &str) -> Result<Vec<u8>, GitError> {
     match (oversized(output.bytes.len()), output.success) {
         (true, _) => {
             Err(failure(context, "Git output exceeded the capture limit"))
@@ -93,7 +91,7 @@ pub fn checked(output: Output, context: &str) -> Result<Vec<u8>, GitError> {
 /// # Errors
 ///
 /// When the bytes aren't UTF-8.
-pub fn utf8(bytes: Vec<u8>, context: &str) -> Result<String, GitError> {
+fn utf8(bytes: Vec<u8>, context: &str) -> Result<String, GitError> {
     String::from_utf8(bytes)
         .map_err(|error| failure(context, &error.to_string()))
 }
@@ -103,7 +101,7 @@ pub fn utf8(bytes: Vec<u8>, context: &str) -> Result<String, GitError> {
 /// # Errors
 ///
 /// When the run failed or printed something that isn't UTF-8.
-pub fn text(output: Output, context: &str) -> Result<String, GitError> {
+fn text(output: Output, context: &str) -> Result<String, GitError> {
     utf8(
         checked(output, context)?,
         "Git path or metadata is not UTF-8",
@@ -117,7 +115,7 @@ pub fn text(output: Output, context: &str) -> Result<String, GitError> {
 /// # Errors
 ///
 /// [`GitError::NotRepository`] when Git failed.
-pub fn probed(output: Output, context: &str) -> Result<String, GitError> {
+fn probed(output: Output, context: &str) -> Result<String, GitError> {
     if output.success {
         utf8(checked(output, context)?, context)
     } else {
@@ -131,7 +129,7 @@ pub fn probed(output: Output, context: &str) -> Result<String, GitError> {
 /// # Errors
 ///
 /// When the path is neither.
-pub fn host_path(path: Option<&str>) -> Result<HostPath, GitError> {
+fn host_path(path: Option<&str>) -> Result<HostPath, GitError> {
     let text = path.ok_or_else(|| {
         failure("Git workspace path", "non-UTF-8 paths are unsupported")
     })?;
@@ -147,13 +145,13 @@ pub fn host_path(path: Option<&str>) -> Result<HostPath, GitError> {
 
 /// The name of the session's worktree directory.
 #[must_use]
-pub fn worktree(session: SessionId) -> String {
+fn worktree(session: SessionId) -> String {
     ulid::Ulid::from(session.0).to_string()
 }
 
 /// The branch Conductor owns for the session.
 #[must_use]
-pub fn branch(session: SessionId) -> String {
+fn branch(session: SessionId) -> String {
     format!("{BRANCHES}{}", worktree(session))
 }
 
@@ -162,7 +160,7 @@ pub fn branch(session: SessionId) -> String {
 /// # Errors
 ///
 /// When Conductor doesn't own the branch.
-pub fn owner(workspace: &Workspace) -> Result<String, GitError> {
+fn owner(workspace: &Workspace) -> Result<String, GitError> {
     let session = workspace
         .branch
         .strip_prefix(BRANCHES)
@@ -176,7 +174,7 @@ pub fn owner(workspace: &Workspace) -> Result<String, GitError> {
 /// What the worktree's Git directory records about its owner, one field
 /// per line.
 #[must_use]
-pub fn marker(workspace: &Workspace) -> String {
+fn marker(workspace: &Workspace) -> String {
     format!(
         "{}\n{}\n{}\n{}\n{}\n",
         workspace.repository.0,
@@ -206,7 +204,7 @@ pub fn checkpoints(workspace: &Workspace) -> Result<String, GitError> {
 /// # Errors
 ///
 /// When Conductor doesn't own the branch.
-pub fn reference(
+fn reference(
     workspace: &Workspace,
     checkpoint: CheckpointId,
 ) -> Result<String, GitError> {
@@ -216,7 +214,7 @@ pub fn reference(
 /// The object a selected subdirectory must be a tree in, at `head`; `None`
 /// for the repository's root.
 #[must_use]
-pub fn subtree(head: &str, relative: &HostPath) -> Option<String> {
+fn subtree(head: &str, relative: &HostPath) -> Option<String> {
     (!relative.0.is_empty()).then(|| format!("{head}:{}", relative.0))
 }
 
@@ -226,7 +224,7 @@ pub fn subtree(head: &str, relative: &HostPath) -> Option<String> {
 /// # Errors
 ///
 /// When none is `commit`, so it isn't one of the workspace's checkpoints.
-pub fn owned(refs: &str, commit: &str) -> Result<(), GitError> {
+fn owned(refs: &str, commit: &str) -> Result<(), GitError> {
     refs.lines()
         .any(|oid| oid == commit)
         .then_some(())
@@ -244,7 +242,7 @@ pub fn owned(refs: &str, commit: &str) -> Result<(), GitError> {
 /// # Errors
 ///
 /// When Git's answer can't be read.
-pub fn existing(output: Output) -> Result<Option<String>, GitError> {
+fn existing(output: Output) -> Result<Option<String>, GitError> {
     if output.success {
         utf8(
             checked(output, "existing checkpoint")?,
@@ -263,7 +261,7 @@ pub fn existing(output: Output) -> Result<Option<String>, GitError> {
 /// # Errors
 ///
 /// When the recorded tree differs.
-pub fn reuse(recorded_tree: &str, tree: &str) -> Result<(), GitError> {
+fn reuse(recorded_tree: &str, tree: &str) -> Result<(), GitError> {
     same(
         recorded_tree,
         tree,
@@ -274,7 +272,7 @@ pub fn reuse(recorded_tree: &str, tree: &str) -> Result<(), GitError> {
 /// A turn's checkpoint is a commit on the session's branch: a new one on
 /// its tip, or the tip itself when the turn changed no file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Turn {
+enum Turn {
     Tip,
     Commit,
 }
@@ -282,7 +280,7 @@ pub enum Turn {
 /// Whether a turn whose worktree holds `tree` makes a commit on a branch
 /// whose tip holds `tip_tree`.
 #[must_use]
-pub fn turn(tip_tree: &str, tree: &str) -> Turn {
+fn turn(tip_tree: &str, tree: &str) -> Turn {
     if tip_tree == tree {
         Turn::Tip
     } else {
@@ -298,7 +296,7 @@ pub fn turn(tip_tree: &str, tree: &str) -> Turn {
 ///
 /// When the branch moved elsewhere since, so moving it would drop
 /// commits.
-pub fn settle(
+fn settle(
     tip: &str,
     commit: &str,
     parent: Option<&str>,
@@ -317,7 +315,7 @@ pub fn settle(
 
 /// The message of a turn's commit on the session's branch.
 #[must_use]
-pub fn message(checkpoint: CheckpointId) -> String {
+fn message(checkpoint: CheckpointId) -> String {
     format!("Conductor: checkpoint {} of the session", checkpoint.0)
 }
 
@@ -327,7 +325,7 @@ pub fn message(checkpoint: CheckpointId) -> String {
 /// # Errors
 ///
 /// When Git failed, a path isn't UTF-8, or a record is cut short.
-pub fn listing(output: Output) -> Result<(Vec<Entry>, DiffExtent), GitError> {
+fn listing(output: Output) -> Result<(Vec<Entry>, DiffExtent), GitError> {
     if oversized(output.bytes.len()) {
         Ok((Vec::new(), DiffExtent::Truncated))
     } else {
@@ -382,7 +380,7 @@ fn entry(parts: &[&str]) -> Result<Entry, GitError> {
 /// # Errors
 ///
 /// When Git failed.
-pub fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
+fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
     let patch = if oversized(output.bytes.len()) {
         FilePatch::TooLarge
     } else {
@@ -404,7 +402,7 @@ pub fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
 /// Keeps the patches within the total patch budget, in order: a patch past it is
 /// sent as too large, and the diff as truncated.
 #[must_use]
-pub fn budget(
+fn budget(
     files: Vec<CheckpointFile>,
     counted: DiffExtent,
 ) -> (Vec<CheckpointFile>, DiffExtent) {
@@ -432,87 +430,15 @@ pub fn budget(
     (kept, extent)
 }
 
-/// The message of the commit that keeps what a workspace had not
-/// committed, when its session is finished or removed.
-pub const KEPT: &str = "Conductor: the session's uncommitted changes";
-
 /// The workspace's branch as a full ref.
 #[must_use]
 pub fn head(workspace: &Workspace) -> String {
     format!("refs/heads/{}", workspace.branch)
 }
 
-/// What the shell knows of a workspace before removing it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Facts {
-    pub head_tree: String,
-    /// The tree of everything in the worktree that Git doesn't ignore;
-    /// `None` when its directory is gone. Ignored files are not kept.
-    pub tree: Option<String>,
-    pub origin: Option<String>,
-}
-
-/// One step of removing a workspace, in order. A failed `Commit` or
-/// `Remove` stops the removal, so nothing is lost; a failed `Push` keeps
-/// the branch locally and goes on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Step {
-    /// Commit `tree` on the branch, after its head, with [`KEPT`].
-    Commit {
-        tree: String,
-    },
-    /// Run `git` with these arguments in the checkout.
-    Push {
-        remote: String,
-        args: Vec<String>,
-    },
-    Remove,
-    /// Forget the worktree whose directory is gone already.
-    Prune,
-    /// Delete every ref under this prefix: the session's checkpoints.
-    Forget(String),
-}
-
-/// The steps that remove `workspace` and keep its branch. Only a branch of
-/// Conductor's own is pushed, only to `origin`, and never forced.
-///
-/// # Errors
-///
-/// When Conductor doesn't own the workspace's branch.
-pub fn plan(
-    workspace: &Workspace,
-    facts: &Facts,
-) -> Result<Vec<Step>, GitError> {
-    let _ = owner(workspace)?;
-    let branch = head(workspace);
-    let commit = facts
-        .tree
-        .clone()
-        .filter(|tree| *tree != facts.head_tree)
-        .map(|tree| Step::Commit { tree });
-    let push = facts.origin.clone().map(|remote| Step::Push {
-        remote,
-        args: Vec::from([
-            String::from("push"),
-            String::from("--quiet"),
-            String::from("origin"),
-            format!("{branch}:{branch}"),
-        ]),
-    });
-    let remove = match facts.tree {
-        Some(_) => Step::Remove,
-        None => Step::Prune,
-    };
-    Ok(commit
-        .into_iter()
-        .chain(push)
-        .chain([remove, Step::Forget(checkpoints(workspace)?)])
-        .collect())
-}
-
 /// Where the branch was kept, from the push the plan ran, if it had one.
 #[must_use]
-pub fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
+pub(crate) fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
     match pushed {
         None => Kept::Local,
         Some((remote, Ok(()))) => Kept::Pushed { remote },
@@ -529,11 +455,7 @@ mod tests;
 /// # Errors
 ///
 /// The files that conflict, or what Git said when it failed otherwise.
-pub fn merged(
-    success: bool,
-    output: &str,
-    error: &str,
-) -> Result<String, String> {
+fn merged(success: bool, output: &str, error: &str) -> Result<String, String> {
     let mut lines = output.lines();
     let tree = lines.next().unwrap_or_default();
     match (success, error.trim()) {
@@ -548,47 +470,10 @@ pub fn merged(
     }
 }
 
-/// What the shell found of the session's and the issue's branches in the
-/// checkout.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Branches {
-    /// The commits on the session's branch the issue's lacks.
-    pub ahead: u64,
-    /// The issue's branch is an ancestor of the session's.
-    pub fast_forward: bool,
-    /// Where the issue's branch is checked out, if it is.
-    pub checked_out: Option<String>,
-}
-
-/// How the session's branch lands on the issue's.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Landing {
-    /// The issue's branch has it all already.
-    Nothing,
-    FastForward,
-    /// A merge commit of both, made without a worktree.
-    Merge,
-    Refuse(String),
-}
-
-impl Branches {
-    #[must_use]
-    pub fn landing(self) -> Landing {
-        match (self.checked_out, self.ahead, self.fast_forward) {
-            (Some(path), _, _) => Landing::Refuse(format!(
-                "the issue's branch is checked out at {path}, so it can't move under it; land the session's branch there"
-            )),
-            (None, 0, _) => Landing::Nothing,
-            (None, _, true) => Landing::FastForward,
-            (None, _, false) => Landing::Merge,
-        }
-    }
-}
-
 /// Where `branch`, a full ref, is checked out, from `git worktree list
 /// --porcelain`.
 #[must_use]
-pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
+fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
     let wanted = format!("branch {branch}");
     porcelain.split("\n\n").find_map(|record| {
         let mut lines = record.lines();
@@ -599,6 +484,6 @@ pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
 
 /// The message of the merge commit that lands `session` on `issue`.
 #[must_use]
-pub fn merge_message(issue: &str, session: &str) -> String {
+fn merge_message(issue: &str, session: &str) -> String {
     format!("Land {session} on {issue}")
 }
