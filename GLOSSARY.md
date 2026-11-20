@@ -10,3 +10,5 @@
 - **Summary turn** asks a running session's agent to describe its work
   before closing the session and landing its branch. The reply becomes
   a note on the issue.
+- **Workspace plan** decides the Git and filesystem steps for a session's
+  worktree. Each result determines the next step or completes the plan.

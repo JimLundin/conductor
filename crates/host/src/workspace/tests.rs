@@ -1,431 +1,738 @@
+use core::ops::ControlFlow;
+
 use proto::{
-    Change, CheckpointFile, CheckpointId, DiffExtent, FilePatch, HostPath,
-    Kept, SessionId, Workspace,
+    Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor, HostPath,
+    Kept, SessionId, UndoAvailability, Workspace,
 };
 
-use super::{
-    Entry, Facts, GitError, Output, PATCH_LIMIT, Step, branch, budget, checked,
-    checkpoints, existing, host_path, kept, listing, owned, owner, patch, plan,
-    probed, reference, reuse, subtree, text, worktree,
-};
-
-fn output(bytes: &[u8]) -> Output {
-    Output {
-        bytes: Vec::from(bytes),
-        success: true,
-        error: String::new(),
-    }
-}
-
-fn failed(error: &str) -> Output {
-    Output {
-        bytes: Vec::new(),
-        success: false,
-        error: String::from(error),
-    }
-}
-
-fn failure(text: &str) -> Result<(), GitError> {
-    Err(GitError::Failed(String::from(text)))
-}
-
-fn too_much() -> Vec<u8> {
-    "a".repeat(PATCH_LIMIT + 1).into_bytes()
-}
+use super::{Answer, GitError, Output, Plan, Step, checkpoints, head};
 
 const SESSION: SessionId = SessionId(1);
+const WORKTREE: &str = "/data/worktrees/00000000000000000000000001";
+const BRANCH: &str = "conductor/00000000000000000000000001";
+const HEAD: &str = "refs/heads/conductor/00000000000000000000000001";
+const DIRECTORY: &str = "/repo/.git/worktrees/00000000000000000000000001";
+const CHECKPOINT: &str = "refs/conductor/00000000000000000000000001/7";
+const PREFIX: &str = "refs/conductor/00000000000000000000000001/";
 
 fn workspace() -> Workspace {
     let path = |text: &str| HostPath(String::from(text));
     Workspace {
         repository: path("/repo"),
         original: path("/repo/sub"),
-        worktree: path("/data/worktrees/00000000000000000000000001"),
-        directory: path("/data/worktrees/00000000000000000000000001/sub"),
-        branch: branch(SESSION),
+        worktree: path(WORKTREE),
+        directory: path(&format!("{WORKTREE}/sub")),
+        branch: String::from(BRANCH),
     }
 }
 
-fn entry(path: &str, change: Change) -> Entry {
-    Entry {
-        path: String::from(path),
-        change,
-    }
+fn output(bytes: impl AsRef<[u8]>) -> Answer {
+    Answer::Git(Output {
+        bytes: bytes.as_ref().to_vec(),
+        success: true,
+        error: String::new(),
+    })
 }
 
-fn file(name: &str, patch: FilePatch) -> CheckpointFile {
-    CheckpointFile {
-        path: String::from(name),
-        change: Change::Edit,
-        patch,
-    }
+fn failed(error: &str) -> Answer {
+    Answer::Git(Output {
+        bytes: Vec::new(),
+        success: false,
+        error: String::from(error),
+    })
 }
 
-#[test]
-fn a_sessions_worktree_and_branch_are_named_by_its_ulid() {
-    assert_eq!(worktree(SESSION), "00000000000000000000000001");
-    assert_eq!(branch(SESSION), "conductor/00000000000000000000000001");
-    assert_eq!(owner(&workspace()), Ok(worktree(SESSION)));
-    assert_eq!(
-        reference(&workspace(), CheckpointId(4)),
-        Ok(String::from("refs/conductor/00000000000000000000000001/4"))
-    );
-    assert_eq!(
-        checkpoints(&workspace()),
-        Ok(String::from("refs/conductor/00000000000000000000000001/"))
-    );
+fn path(text: &str) -> Answer {
+    Answer::Path(Some(String::from(text)))
 }
 
-#[test]
-fn a_branch_conductor_does_not_own_is_refused() {
-    let mut foreign = workspace();
-    foreign.branch = String::from("main");
-    assert_eq!(
-        owner(&foreign).map(drop),
-        failure("workspace branch: not owned by Conductor")
-    );
-    assert_eq!(
-        reference(&foreign, CheckpointId(1)).map(drop),
-        failure("checkpoint: not an owned branch")
-    );
-    foreign.branch = String::from("conductor/not-a-ulid");
-    assert!(owner(&foreign).is_err());
-}
-
-#[test]
-fn paths_must_be_utf8_without_newlines() {
-    assert_eq!(host_path(Some("/a b")), Ok(HostPath(String::from("/a b"))));
-    assert_eq!(
-        host_path(Some("/a\nb")).map(drop),
-        failure("Git workspace path: newline paths are unsupported")
-    );
-    assert_eq!(
-        host_path(None).map(drop),
-        failure("Git workspace path: non-UTF-8 paths are unsupported")
-    );
-}
-
-#[test]
-fn git_output_is_checked_for_success_and_size() {
-    assert_eq!(text(output(b"/repo\n\n"), "top"), Ok(String::from("/repo")));
-    assert_eq!(
-        checked(failed("fatal: no"), "top").map(drop),
-        failure("top: fatal: no")
-    );
-    let oversized = too_much();
-    assert_eq!(
-        checked(output(&oversized), "top").map(drop),
-        failure("top: Git output exceeded the capture limit")
-    );
-    assert_eq!(
-        text(output(&[255]), "top").map(drop),
-        Err(GitError::Failed(String::from(
-            "Git path or metadata is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0"
-        )))
-    );
-}
-
-#[test]
-fn a_failed_probe_means_no_committed_repository() {
-    assert_eq!(
-        probed(failed("fatal"), "root"),
-        Err(GitError::NotRepository)
-    );
-    assert_eq!(probed(output(b"abc\n"), "root"), Ok(String::from("abc\n")));
-}
-
-#[test]
-fn only_a_subdirectory_is_checked_for_a_tree() {
-    assert_eq!(subtree("abc", &HostPath(String::new())), None);
-    assert_eq!(
-        subtree("abc", &HostPath(String::from("sub dir"))),
-        Some(String::from("abc:sub dir"))
-    );
-}
-
-#[test]
-fn a_commit_is_owned_when_a_checkpoint_ref_names_it() {
-    assert_eq!(owned("abc\ndef", "def"), Ok(()));
-    assert_eq!(owned("def", "def"), Ok(()));
-    assert_eq!(
-        owned("abc", "def"),
-        failure(
-            "checkpoint: commit is not an immutable checkpoint of this workspace"
-        )
-    );
-    assert_eq!(
-        owned("", "def"),
-        failure(
-            "checkpoint: commit is not an immutable checkpoint of this workspace"
-        )
-    );
-}
-
-#[test]
-fn a_checkpoint_id_taken_again_must_record_the_same_tree() {
-    assert_eq!(existing(failed("")), Ok(None));
-    assert_eq!(existing(output(b"abc\n")), Ok(Some(String::from("abc"))));
-    assert_eq!(reuse("t", "t"), Ok(()));
-    assert_eq!(
-        reuse("t", "u"),
-        failure(
-            "checkpoint id already records a different tree: metadata differs"
-        )
-    );
-}
-
-#[test]
-fn a_turn_that_changed_no_file_makes_no_commit() {
-    assert_eq!(super::turn("t", "t"), super::Turn::Tip);
-    assert_eq!(super::turn("t", "u"), super::Turn::Commit);
-}
-
-#[test]
-fn the_name_status_listing_is_parsed() {
-    assert_eq!(listing(output(b"")), Ok((Vec::new(), DiffExtent::Complete)));
-    assert_eq!(
-        listing(output(b"A\0new \xe9\x9b\xaa.txt\0D\0gone\0M\0kept\0")),
-        Ok((
-            Vec::from([
-                entry("new 雪.txt", Change::Write),
-                entry("gone", Change::Delete),
-                entry("kept", Change::Edit),
-            ]),
-            DiffExtent::Complete
-        ))
-    );
-    assert_eq!(
-        listing(output(b"A\0")).map(drop),
-        failure("diff metadata: missing path")
-    );
-    assert_eq!(
-        listing(output(&too_much())),
-        Ok((Vec::new(), DiffExtent::Truncated))
-    );
-}
-
-#[test]
-fn a_listing_past_the_file_limit_is_truncated() {
-    let many = (0..=100).fold(Vec::new(), |mut bytes, number| {
-        bytes.extend_from_slice(format!("M\0file-{number:03}\0").as_bytes());
-        bytes
-    });
-    assert_eq!(
-        listing(output(&many)).map(|(entries, extent)| (entries.len(), extent)),
-        Ok((100, DiffExtent::Truncated))
-    );
-}
-
-#[test]
-fn a_patch_is_text_binary_too_large_or_unsupported() {
-    let edit = || entry("f", Change::Edit);
-    let classified =
-        |bytes: &[u8]| patch(output(bytes), edit()).map(|file| file.patch);
-    assert_eq!(
-        classified(b"+a\n"),
-        Ok(FilePatch::Text(String::from("+a\n")))
-    );
-    assert_eq!(
-        classified(b"diff\nBinary files a and b differ\n"),
-        Ok(FilePatch::Binary)
-    );
-    assert_eq!(classified(&too_much()), Ok(FilePatch::TooLarge));
-    assert_eq!(
-        classified(&[255]),
-        Ok(FilePatch::Unsupported {
-            reason: String::from(
-                "patch is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0"
-            ),
-        })
-    );
-}
-
-#[test]
-fn patches_past_the_total_budget_are_sent_as_too_large() {
-    let big = || FilePatch::Text("a".repeat(PATCH_LIMIT));
-    let files = Vec::from([
-        file("1", big()),
-        file("2", big()),
-        file("3", big()),
-        file("4", big()),
-        file("5", big()),
-        file("6", FilePatch::Binary),
-    ]);
-    let (kept, extent) = budget(files, DiffExtent::Complete);
-    assert_eq!(extent, DiffExtent::Truncated);
-    assert_eq!(
-        kept.iter()
-            .map(|file| file.patch.clone())
-            .collect::<Vec<_>>(),
-        [
-            big(),
-            big(),
-            big(),
-            big(),
-            FilePatch::TooLarge,
-            FilePatch::Binary
-        ]
-    );
-    assert_eq!(
-        budget(Vec::from([file("1", big())]), DiffExtent::Complete).1,
-        DiffExtent::Complete
-    );
-}
-
-fn facts(tree: Option<&str>, origin: Option<&str>) -> Facts {
-    Facts {
-        head_tree: String::from("head"),
-        tree: tree.map(String::from),
-        origin: origin.map(String::from),
-    }
-}
-
-fn push() -> Step {
-    let name = branch(SESSION);
-    Step::Push {
-        remote: String::from("file:///remote.git"),
-        args: Vec::from([
-            String::from("push"),
-            String::from("--quiet"),
-            String::from("origin"),
-            format!("refs/heads/{name}:refs/heads/{name}"),
-        ]),
-    }
-}
-
-fn forget() -> Step {
-    Step::Forget(String::from("refs/conductor/00000000000000000000000001/"))
-}
-
-#[test]
-fn a_dirty_workspace_is_committed_pushed_then_removed_with_its_refs() {
-    assert_eq!(
-        plan(
-            &workspace(),
-            &facts(Some("dirty"), Some("file:///remote.git"))
-        ),
-        Ok(Vec::from([
-            Step::Commit {
-                tree: String::from("dirty")
-            },
-            push(),
-            Step::Remove,
-            forget(),
-        ]))
-    );
-}
-
-#[test]
-fn a_clean_workspace_without_a_remote_keeps_its_branch_locally() {
-    assert_eq!(
-        plan(&workspace(), &facts(Some("head"), None)),
-        Ok(Vec::from([Step::Remove, forget()]))
-    );
-    assert_eq!(kept(None), Kept::Local);
-}
-
-#[test]
-fn a_workspace_whose_directory_is_gone_is_pruned() {
-    assert_eq!(
-        plan(&workspace(), &facts(None, Some("file:///remote.git"))),
-        Ok(Vec::from([push(), Step::Prune, forget()]))
-    );
-}
-
-#[test]
-fn a_failed_push_keeps_the_branch_locally_and_a_pushed_one_names_the_remote() {
-    assert_eq!(
-        kept(Some((
-            String::from("file:///remote.git"),
-            Err(String::from("rejected"))
-        ))),
-        Kept::PushFailed {
-            reason: String::from("rejected")
+fn run<T>(
+    mut plan: Plan<'_, T>,
+    mut perform: impl FnMut(Step) -> Answer,
+) -> Result<T, GitError> {
+    let mut answer = None;
+    loop {
+        match plan.advance(answer) {
+            ControlFlow::Continue((step, remaining)) => {
+                plan = remaining;
+                answer = Some(Ok(perform(step)));
+            }
+            ControlFlow::Break(result) => return result,
         }
-    );
-    assert_eq!(
-        kept(Some((String::from("file:///remote.git"), Ok(())))),
-        Kept::Pushed {
-            remote: String::from("file:///remote.git")
+    }
+}
+
+fn ownership() -> String {
+    format!("/repo\n/repo/sub\n{WORKTREE}\n{WORKTREE}/sub\n{BRANCH}\n")
+}
+
+fn valid(step: Step) -> Answer {
+    match step {
+        Step::Canonicalize(ref value) => path(value),
+        Step::Relative {
+            path: original,
+            root,
+            ..
+        } => {
+            assert_eq!(
+                (original.as_str(), root.as_str()),
+                ("/repo/sub", "/repo")
+            );
+            path("sub")
         }
-    );
+        Step::Join { root, suffix } => path(&format!("{root}/{suffix}")),
+        Step::Parent(root) => {
+            assert_eq!(root, WORKTREE);
+            path("/data/worktrees")
+        }
+        Step::Within { path, root } => {
+            assert_eq!(
+                (path.as_str(), root.as_str()),
+                (DIRECTORY, "/repo/.git/worktrees")
+            );
+            Answer::Found(true)
+        }
+        Step::ReadOwner(directory) => {
+            assert_eq!(directory, DIRECTORY);
+            Answer::Text(ownership())
+        }
+        Step::CloseIndex => Answer::Done,
+        Step::OpenIndex(directory) => {
+            assert_eq!(directory, DIRECTORY);
+            Answer::Done
+        }
+        Step::Git {
+            path,
+            args,
+            index: false,
+            identity: false,
+        } => {
+            let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+            match words.as_slice() {
+                ["rev-parse", "--show-toplevel"] if path == WORKTREE => {
+                    output(WORKTREE)
+                }
+                ["symbolic-ref", "HEAD"] => output(HEAD),
+                ["rev-parse", "--path-format=absolute", "--git-common-dir"] => {
+                    output("/repo/.git")
+                }
+                ["rev-parse", "--absolute-git-dir"] => output(DIRECTORY),
+                _ => failed(&format!("unexpected Git step {args:?} in {path}")),
+            }
+        }
+        other => failed(&format!("unexpected step {other:?}")),
+    }
 }
 
 #[test]
-fn only_a_branch_of_conductors_own_is_ever_pushed_and_never_forced() {
-    let foreign = Workspace {
-        branch: String::from("main"),
-        ..workspace()
-    };
-    assert_eq!(
-        plan(&foreign, &facts(Some("dirty"), Some("origin"))),
-        Err(GitError::Failed(String::from(
-            "workspace branch: not owned by Conductor"
-        )))
-    );
-    let pushes = plan(&workspace(), &facts(Some("dirty"), Some("origin")))
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|step| match step {
-            Step::Push { args, .. } => Some(args),
-            _ => None,
-        })
-        .collect::<Vec<Vec<String>>>();
-    assert_eq!(pushes.len(), 1);
-    assert!(
-        pushes.iter().flatten().all(|arg| !arg.starts_with('+')
-            && arg != "--force"
-            && arg != "-f")
-    );
-}
-
-#[test]
-fn a_checkpoint_moves_the_branch_on_from_its_parent_and_never_drops_commits() {
-    assert_eq!(super::settle("c", "c", Some("p")), Ok(false));
-    assert_eq!(super::settle("p", "c", Some("p")), Ok(true));
-    assert_eq!(
-        super::settle("x", "c", Some("p")),
-        Err(GitError::Failed(String::from(
-            "checkpoint: the session's branch moved on since the checkpoint was taken"
-        )))
-    );
-}
-
-#[test]
-fn a_listing_of_exactly_the_file_limit_is_complete() {
-    let all = (0..super::FILE_LIMIT).fold(Vec::new(), |mut bytes, number| {
-        bytes.extend_from_slice(format!("M\0file-{number:03}\0").as_bytes());
-        bytes
-    });
-    assert_eq!(
-        listing(output(&all)).map(|(entries, extent)| (entries.len(), extent)),
-        Ok((super::FILE_LIMIT, DiffExtent::Complete))
-    );
-}
-
-#[test]
-fn output_is_oversized_only_past_the_patch_limit() {
-    assert!(!super::oversized(PATCH_LIMIT));
-    assert!(super::oversized(PATCH_LIMIT + 1));
-}
-
-#[test]
-fn the_marker_records_the_workspace_one_field_per_line() {
+fn create_probes_the_selected_base_and_writes_ownership_only_for_a_new_worktree()
+ {
     let workspace = workspace();
+    assert_eq!(head(&workspace), HEAD);
+    assert_eq!(checkpoints(&workspace).as_deref(), Ok(PREFIX));
+    for exists in [false, true] {
+        let mut created = Vec::new();
+        let result = run(
+            Plan::create(&workspace.original, SESSION, Some("issue")),
+            |step| match step {
+                Step::WorktreeParent => path("/data/worktrees"),
+                Step::Exists(ref value) if value == WORKTREE => {
+                    Answer::Found(exists)
+                }
+                Step::WriteOwner { directory, marker } => {
+                    assert_eq!(directory, DIRECTORY);
+                    assert_eq!(marker, ownership());
+                    created.push("marker");
+                    Answer::Done
+                }
+                Step::Git {
+                    path,
+                    ref args,
+                    index: false,
+                    identity: false,
+                } if path != WORKTREE => {
+                    let words =
+                        args.iter().map(String::as_str).collect::<Vec<_>>();
+                    match words.as_slice() {
+                        ["rev-parse", "--show-toplevel"]
+                            if path == "/repo/sub" =>
+                        {
+                            output("/repo\n")
+                        }
+                        ["rev-parse", "--verify", "issue^{commit}"] => {
+                            output("start\n")
+                        }
+                        ["cat-file", "-t", "start:sub"] => output("tree\n"),
+                        [
+                            "worktree",
+                            "add",
+                            "-b",
+                            BRANCH,
+                            WORKTREE,
+                            "start",
+                        ] => {
+                            created.push("worktree");
+                            output("")
+                        }
+                        _ => valid(Step::Git {
+                            path,
+                            args: args.clone(),
+                            index: false,
+                            identity: false,
+                        }),
+                    }
+                }
+                other => valid(other),
+            },
+        );
+        assert_eq!(result, Ok(workspace.clone()));
+        assert_eq!(
+            created.as_slice(),
+            if exists {
+                &[][..]
+            } else {
+                &["worktree", "marker"][..]
+            }
+        );
+    }
+}
+
+#[test]
+fn an_unborn_head_and_a_missing_subdirectory_stop_create_before_any_write() {
+    let workspace = workspace();
+    for unborn in [true, false] {
+        let result =
+            run(Plan::create(&workspace.original, SESSION, None), |step| {
+                match step {
+                    Step::Git { ref args, .. } => {
+                        let words =
+                            args.iter().map(String::as_str).collect::<Vec<_>>();
+                        match words.as_slice() {
+                            ["rev-parse", "--show-toplevel"] => {
+                                output("/repo\n")
+                            }
+                            ["rev-parse", "--verify", "HEAD^{commit}"]
+                                if unborn =>
+                            {
+                                failed("unborn")
+                            }
+                            ["rev-parse", "--verify", "HEAD^{commit}"] => {
+                                output("tip\n")
+                            }
+                            ["cat-file", "-t", "tip:sub"] => output("blob\n"),
+                            _ => valid(step),
+                        }
+                    }
+                    other => valid(other),
+                }
+            });
+        assert_eq!(
+            result,
+            if unborn {
+                Err(GitError::NotRepository)
+            } else {
+                Err(GitError::Failed(String::from(
+                    "selected subdirectory must exist in committed HEAD: metadata differs",
+                )))
+            }
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Snapshot {
+    New,
+    NoChanges,
+    Retried,
+    DifferentTree,
+    Moved,
+}
+
+fn snapshot_step(
+    step: Step,
+    scenario: Snapshot,
+    mutations: &mut Vec<Vec<String>>,
+) -> Answer {
+    let Step::Git {
+        path,
+        ref args,
+        index,
+        identity,
+    } = step
+    else {
+        return valid(step);
+    };
+    let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+    assert_eq!(identity, words.first() == Some(&"commit-tree"));
     assert_eq!(
-        super::marker(&workspace),
-        format!(
-            "/repo\n/repo/sub\n/data/worktrees/00000000000000000000000001\n\
-             /data/worktrees/00000000000000000000000001/sub\n{}\n",
-            workspace.branch
-        )
+        index,
+        matches!(words.first(), Some(&("read-tree" | "add" | "write-tree")))
+    );
+    match words.as_slice() {
+        ["rev-parse", HEAD] => output("tip\n"),
+        [
+            "for-each-ref",
+            "--format=%(objectname)",
+            "--count=1",
+            "--points-at=previous",
+            PREFIX,
+        ] => output("previous\n"),
+        ["write-tree"] => output("tree\n"),
+        ["rev-parse", "--verify", CHECKPOINT] => match scenario {
+            Snapshot::New | Snapshot::NoChanges => failed("missing"),
+            _ => output("new\n"),
+        },
+        ["rev-parse", "tip^{tree}"] => match scenario {
+            Snapshot::NoChanges => output("tree\n"),
+            _ => output("oldtree\n"),
+        },
+        ["rev-parse", "new^{tree}"] => match scenario {
+            Snapshot::DifferentTree => output("wrongtree\n"),
+            _ => output("tree\n"),
+        },
+        [
+            "commit-tree",
+            "tree",
+            "-p",
+            "tip",
+            "-m",
+            "Conductor: checkpoint 7 of the session",
+        ] => {
+            mutations.push(Vec::from([String::from("commit-tree")]));
+            output("new\n")
+        }
+        ["rev-parse", "--verify", "--quiet", "new^"] => match scenario {
+            Snapshot::Moved => output("elsewhere\n"),
+            _ => output("tip\n"),
+        },
+        ["rev-parse", "--verify", "--quiet", "tip^"] => failed("root commit"),
+        ["read-tree", "tip"]
+        | ["add", "-A", "--", "."]
+        | ["update-ref", CHECKPOINT, "new" | "tip", ""]
+        | ["update-ref", HEAD, "new", "tip"]
+        | ["reset", "--quiet"] => {
+            mutations.push(args.clone());
+            output("")
+        }
+        _ => valid(Step::Git {
+            path,
+            args: args.clone(),
+            index,
+            identity,
+        }),
+    }
+}
+
+#[test]
+fn snapshot_branches_on_git_results_without_dropping_commits_or_rewriting_checkpoints()
+ {
+    let workspace = workspace();
+    for (scenario, expected, writes) in [
+        (
+            Snapshot::New,
+            Ok("new"),
+            &[
+                "read-tree",
+                "add",
+                "commit-tree",
+                "update-ref",
+                "update-ref",
+                "reset",
+            ][..],
+        ),
+        (
+            Snapshot::NoChanges,
+            Ok("tip"),
+            &["read-tree", "add", "update-ref"][..],
+        ),
+        (
+            Snapshot::Retried,
+            Ok("new"),
+            &["read-tree", "add", "update-ref", "reset"][..],
+        ),
+        (
+            Snapshot::DifferentTree,
+            Err(
+                "checkpoint id already records a different tree: metadata differs",
+            ),
+            &["read-tree", "add"][..],
+        ),
+        (
+            Snapshot::Moved,
+            Err(
+                "checkpoint: the session's branch moved on since the checkpoint was taken",
+            ),
+            &["read-tree", "add"][..],
+        ),
+    ] {
+        let mut mutations = Vec::new();
+        let result = run(
+            Plan::snapshot(
+                &workspace,
+                SESSION,
+                CheckpointId(7),
+                Some("previous"),
+            ),
+            |step| snapshot_step(step, scenario, &mut mutations),
+        );
+        assert_eq!(
+            result,
+            expected
+                .map(String::from)
+                .map_err(|text| GitError::Failed(String::from(text)))
+        );
+        assert_eq!(
+            mutations
+                .iter()
+                .map(|args| args[0].as_str())
+                .collect::<Vec<_>>(),
+            writes
+        );
+    }
+}
+
+#[test]
+fn restore_validates_the_commit_before_changing_the_index_or_worktree() {
+    let workspace = workspace();
+    for owned in [true, false] {
+        let mut writes = Vec::new();
+        let result = run(Plan::restore(&workspace, "target"), |step| {
+            if let Step::Git {
+                ref args,
+                index: false,
+                identity: false,
+                ..
+            } = step
+            {
+                let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+                match words.as_slice() {
+                    [
+                        "for-each-ref",
+                        "--format=%(objectname)",
+                        "--count=1",
+                        "--points-at=target",
+                        PREFIX,
+                    ] => return output(if owned { "target\n" } else { "" }),
+                    ["rev-parse", HEAD] => return output("tip\n"),
+                    [
+                        "restore",
+                        "--source=target",
+                        "--staged",
+                        "--worktree",
+                        "--",
+                        ".",
+                    ]
+                    | ["clean", "-q", "-f", "-d", "--", "."]
+                    | ["update-ref", HEAD, "target", "tip"]
+                    | ["reset", "--quiet"] => {
+                        writes.extend(words.first().copied().map(String::from));
+                        return output("");
+                    }
+                    _ => {}
+                }
+            }
+            valid(step)
+        });
+        if owned {
+            assert_eq!(result, Ok(()));
+            assert_eq!(writes, ["restore", "clean", "update-ref", "reset"]);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(writes, [] as [String; 0]);
+        }
+    }
+}
+
+#[test]
+fn a_foreign_ownership_marker_stops_restore_before_checkpoint_lookup() {
+    let workspace = workspace();
+    let result = run(Plan::restore(&workspace, "target"), |step| match step {
+        Step::ReadOwner(_) => Answer::Text(String::from("foreign")),
+        other => valid(other),
+    });
+    assert_eq!(
+        result,
+        Err(GitError::Failed(String::from(
+            "ownership metadata: metadata differs"
+        )))
     );
 }
 
 #[test]
-fn a_turns_commit_names_its_checkpoint() {
+fn removal_prunes_a_missing_worktree_even_when_the_push_fails() {
+    let workspace = workspace();
+    let mut writes = Vec::new();
+    let result = run(Plan::remove(&workspace), |step| {
+        if let Step::Git { ref args, .. } = step {
+            let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+            return match words.as_slice() {
+                [
+                    "rev-parse",
+                    "refs/heads/conductor/00000000000000000000000001^{tree}",
+                ] => output("tree\n"),
+                ["remote", "get-url", "origin"] => output("remote\n"),
+                ["push", "--quiet", "origin", refspec]
+                    if *refspec == format!("{HEAD}:{HEAD}") =>
+                {
+                    writes.push("push");
+                    failed("rejected")
+                }
+                ["worktree", "prune"] => {
+                    writes.push("prune");
+                    output("")
+                }
+                [
+                    "for-each-ref",
+                    "--count=500",
+                    "--format=%(refname)",
+                    PREFIX,
+                ] if writes.last() == Some(&"prune") => output(CHECKPOINT),
+                ["update-ref", "-d", CHECKPOINT] => {
+                    writes.push("delete");
+                    output("")
+                }
+                [
+                    "for-each-ref",
+                    "--count=500",
+                    "--format=%(refname)",
+                    PREFIX,
+                ] => output(""),
+                _ => valid(step),
+            };
+        }
+        match step {
+            Step::IsDirectory(ref path) if path == WORKTREE => {
+                Answer::Found(false)
+            }
+            other => valid(other),
+        }
+    });
+    assert_eq!(writes, ["push", "prune", "delete"]);
     assert_eq!(
-        super::message(CheckpointId(3)),
-        "Conductor: checkpoint 3 of the session"
+        result,
+        Ok(Kept::PushFailed {
+            reason: String::from("push: rejected")
+        })
     );
+}
+
+fn checkpoint(id: u64, commit: &str) -> Checkpoint {
+    Checkpoint {
+        id: CheckpointId(id),
+        parent: None,
+        turn_start: None,
+        commit: String::from(commit),
+        history: HistoryAnchor::Fresh,
+        undo: UndoAvailability::Unavailable {
+            reason: String::new(),
+        },
+    }
+}
+
+#[test]
+fn diff_checks_immutable_refs_and_applies_the_patch_budget()
+-> Result<(), GitError> {
+    let workspace = workspace();
+    let child = checkpoint(7, "current");
+    let parent = checkpoint(6, "previous");
+    let patch = "a".repeat(Output::CAPTURE - 1);
+    let result = run(Plan::diff(&workspace, &child, &parent), |step| {
+        if let Step::Git { ref args, .. } = step {
+            let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+            match words.as_slice() {
+                ["rev-parse", "--verify", CHECKPOINT] => {
+                    return output("current\n");
+                }
+                ["rev-parse", "--verify", reference]
+                    if *reference == format!("{PREFIX}6") =>
+                {
+                    return output("previous\n");
+                }
+                [
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-renames",
+                    "--name-status",
+                    "-z",
+                    previous,
+                    CHECKPOINT,
+                    "--",
+                ] => {
+                    assert_eq!(*previous, format!("{PREFIX}6"));
+                    return output(b"M\0a\0A\0b\0D\0c\0M\0d\0M\0e\0M\0f\0");
+                }
+                [
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-renames",
+                    "--no-color",
+                    "previous",
+                    "current",
+                    "--",
+                    name,
+                ] => {
+                    return if *name == ":(literal)f" {
+                        output(b"diff\nBinary files a and b differ\n")
+                    } else {
+                        assert!(name.starts_with(":(literal)"));
+                        output(&patch)
+                    };
+                }
+                _ => {}
+            }
+        }
+        valid(step)
+    });
+    let diff = result?;
+    assert_eq!(diff.extent, DiffExtent::Truncated);
+    assert_eq!(diff.files.len(), 6);
+    assert_eq!(diff.files[3].patch, FilePatch::Text(patch));
+    assert_eq!(diff.files[4].patch, FilePatch::TooLarge);
+    assert_eq!(diff.files[5].patch, FilePatch::Binary);
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Landing {
+    AlreadyLanded,
+    FastForward,
+    Merge,
+    CheckedOut,
+    Conflict,
+    GitError,
+}
+
+const ISSUE: &str = "refs/heads/issue/x";
+
+fn landing_step(
+    step: Step,
+    scenario: Landing,
+    writes: &mut Vec<String>,
+) -> Answer {
+    let Step::Git {
+        ref path,
+        ref args,
+        identity,
+        ..
+    } = step
+    else {
+        return match step {
+            Step::IsDirectory(ref value) if value == WORKTREE => {
+                Answer::Found(false)
+            }
+            other => valid(other),
+        };
+    };
+    assert_eq!(path, "/repo");
+    let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+    match words.as_slice() {
+        ["rev-parse", reference]
+            if *reference == format!("{HEAD}^{{tree}}") =>
+        {
+            output("tree\n")
+        }
+        ["remote", "get-url", "origin"] => failed("no origin"),
+        ["rev-list", "--count", range]
+            if *range == format!("{ISSUE}..{HEAD}") =>
+        {
+            output(if matches!(scenario, Landing::AlreadyLanded) {
+                "0\n"
+            } else {
+                "2\n"
+            })
+        }
+        ["merge-base", "--is-ancestor", ISSUE, HEAD] => match scenario {
+            Landing::Merge | Landing::Conflict | Landing::GitError => {
+                failed("not an ancestor")
+            }
+            _ => output(""),
+        },
+        ["worktree", "list", "--porcelain"] => match scenario {
+            Landing::CheckedOut => output(format!(
+                "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo-issue\nHEAD def\nbranch {ISSUE}\n"
+            )),
+            _ => output(""),
+        },
+        [
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            ISSUE,
+            HEAD,
+        ] => match scenario {
+            Landing::Conflict => Answer::Git(Output {
+                bytes: b"tree\na.txt\nb.txt\n".to_vec(),
+                success: false,
+                error: String::new(),
+            }),
+            Landing::GitError => failed("fatal: bad revision"),
+            _ => output("merged-tree\n"),
+        },
+        ["rev-parse", ISSUE] => output("old\n"),
+        ["rev-parse", HEAD] => output("new\n"),
+        [
+            "commit-tree",
+            "merged-tree",
+            "-p",
+            "old",
+            "-p",
+            "new",
+            "-m",
+            message,
+        ] => {
+            assert!(identity);
+            assert_eq!(*message, format!("Land {HEAD} on {ISSUE}"));
+            writes.push(String::from("commit-tree"));
+            output("merge\n")
+        }
+        ["update-ref", ISSUE, commit @ ("new" | "merge"), "old"] => {
+            writes.push(String::from(*commit));
+            output("")
+        }
+        _ => valid(step),
+    }
+}
+
+#[test]
+fn landing_fast_forwards_or_merges_and_refuses_to_move_a_checked_out_branch() {
+    let workspace = workspace();
+    for (scenario, expected, expected_writes) in [
+        (Landing::AlreadyLanded, Ok(0), &[][..]),
+        (Landing::FastForward, Ok(2), &["new"][..]),
+        (Landing::Merge, Ok(2), &["commit-tree", "merge"][..]),
+        (
+            Landing::CheckedOut,
+            Err(
+                "the issue's branch is checked out at /repo-issue, so it can't move under it; land the session's branch there",
+            ),
+            &[][..],
+        ),
+        (
+            Landing::Conflict,
+            Err(
+                "landing: the session's branch conflicts with the issue's in a.txt, b.txt; merge them by hand",
+            ),
+            &[][..],
+        ),
+        (
+            Landing::GitError,
+            Err(
+                "landing: the branches couldn't be merged: fatal: bad revision",
+            ),
+            &[][..],
+        ),
+    ] {
+        let mut writes = Vec::new();
+        let result = run(Plan::land(&workspace, ISSUE), |step| {
+            landing_step(step, scenario, &mut writes)
+        });
+        assert_eq!(
+            result,
+            expected.map_err(|reason| GitError::Failed(String::from(reason)))
+        );
+        assert_eq!(writes, expected_writes);
+    }
 }

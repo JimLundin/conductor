@@ -10,7 +10,6 @@ use super::{
 };
 use crate::assignment::Assignment;
 use crate::session::Order;
-use crate::workspace::{Branches, Landing, checked_out, merge_message, merged};
 
 const SESSION: SessionId = SessionId(1);
 const ISSUE: IssueId = IssueId(9);
@@ -192,28 +191,6 @@ fn the_summary_is_the_last_reply_of_the_summary_turn() {
 }
 
 #[test]
-fn the_branch_lands_by_fast_forward_or_merge_and_never_under_a_checkout() {
-    let branches = |ahead, fast_forward, checked_out: Option<&str>| Branches {
-        ahead,
-        fast_forward,
-        checked_out: checked_out.map(text),
-    };
-    assert_eq!(
-        [
-            branches(0, true, None),
-            branches(2, true, None),
-            branches(2, false, None),
-        ]
-        .map(Branches::landing),
-        [Landing::Nothing, Landing::FastForward, Landing::Merge]
-    );
-    assert!(matches!(
-        branches(2, true, Some("/src")).landing(),
-        Landing::Refuse(reason) if reason.contains("/src")
-    ));
-}
-
-#[test]
 fn finishing_says_what_landed_and_where_the_branch_went() {
     let pushed = finished(Ok(2), Some((text("file:///remote.git"), Ok(()))));
     assert_eq!(
@@ -234,18 +211,6 @@ fn finishing_says_what_landed_and_where_the_branch_went() {
         }
     );
     assert_eq!(landed(&failed), 0);
-}
-
-#[test]
-fn a_branch_is_checked_out_where_a_worktree_has_it() {
-    let listed = "worktree /src\nHEAD abc\nbranch refs/heads/main\n\n\
-                  worktree /src-issue\nHEAD def\nbranch refs/heads/issue/x\n\n\
-                  worktree /data/worktrees/1\nHEAD 123\ndetached\n";
-    assert_eq!(
-        checked_out(listed, "refs/heads/issue/x"),
-        Some(text("/src-issue"))
-    );
-    assert_eq!(checked_out(listed, "refs/heads/issue/y"), None);
 }
 
 #[test]
@@ -292,18 +257,7 @@ fn a_session_finishes_once_until_it_does_more() {
 }
 
 #[test]
-fn a_merge_gives_its_tree_or_names_the_conflicts() {
-    assert_eq!(merged(true, "abc\n", ""), Ok(text("abc")));
-    assert_eq!(
-        merged(false, "abc\na.txt\nb.txt\n", ""),
-        Err(text(
-            "the session's branch conflicts with the issue's in a.txt, b.txt; merge them by hand"
-        ))
-    );
-    assert_eq!(
-        merged(false, "", "fatal: bad revision"),
-        Err(text("the branches couldn't be merged: fatal: bad revision"))
-    );
+fn rejected_summary_order_explains_what_was_interrupted() {
     assert_eq!(
         super::interrupted(
             "asking for a summary",
@@ -317,14 +271,6 @@ fn a_merge_gives_its_tree_or_names_the_conflicts() {
             Some(&proto::CommandResult::Rejected(Rejection::TurnInProgress))
         )
         .is_some_and(|reason| reason.starts_with("asking for a summary: "))
-    );
-}
-
-#[test]
-fn the_merge_commit_says_which_session_lands_on_which_issue() {
-    assert_eq!(
-        merge_message("issue/01JD", "conductor/01JE"),
-        "Land conductor/01JE on issue/01JD"
     );
 }
 

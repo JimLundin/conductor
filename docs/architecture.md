@@ -553,7 +553,10 @@ until someone re-records them by hand (§6.2).
   `<data>/home.state` (postcard), outside the log (§5.4).
 - **Worktrees and checkpoints (built):** new sessions require a committed
   Git repository and get `<data>/worktrees/<ulid>` on `conductor/<ulid>`,
-  initially from committed HEAD. The original working tree and index stay
+  initially from committed HEAD. `host::workspace::Plan` decides the whole
+  workflow for creation, snapshots, restore, diffs, removal and landing.
+  The daemon executes each Git or filesystem step and passes the result
+  back before the plan issues the next step. The original working tree and index stay
   untouched. The selected subdirectory is resolved within the managed tree.
   An initial snapshot and each actual finished, failed or interrupted turn
   is a commit on the session's branch (home §2.3): a temporary index reads
@@ -565,7 +568,7 @@ until someone re-records them by hand (§6.2).
   pinned by `refs/conductor/<ulid>/<checkpoint>`, which diffs and undo
   check it against; a checkpoint taken again must record the same tree,
   and moves the branch only from the checkpoint's parent, so a retry after
-  a crash never drops a commit made since (`host::workspace::settle`). The
+  a crash never drops a commit made since (the snapshot plan). The
   tip is read from the branch, which the workspace's checks hold `HEAD`
   to. The index follows the branch, so what the agent staged apart from
   its files, such as a file `.gitignore` names but it added, isn't kept. Durable reservations prevent
@@ -575,7 +578,7 @@ until someone re-records them by hand (§6.2).
   another turn can change the files. This preserves per-turn diff parents.
 - **Removal (built):** `RemoveSession` is refused while a turn runs. It
   stops a running agent (`SessionClosed`), then follows
-  `host::workspace::plan`: commit the worktree's untracked and changed
+  the workspace removal plan: commit the worktree's untracked and changed
   files onto `conductor/<ulid>` with `commit-tree` and `update-ref` (files
   Git ignores, such as build output, go with the worktree), push
   only that branch to `origin` (never forced; a failed push keeps it
@@ -738,9 +741,9 @@ standards and issues, cloned on every host. Built so far are home steps
   branch up to `origin`'s first, as a start does, refusing when both have
   moved on; commits what the worktree holds onto the session's branch;
   then lands it on the issue's in the checkout
-  (`host::workspace::Branches`): nothing when the issue's has it all, a
+  according to the workspace landing plan: nothing when the issue's has it all, a
   fast-forward, or a merge commit made with `git merge-tree` without a
-  worktree, whose answer `host::workspace::merged` reads; a conflict, named
+  worktree, whose answer the plan reads; a conflict, named
   by its files, lands nothing, and neither does an issue branch
   checked out somewhere, which can't move under its worktree. It pushes
   the issue's branch to `origin`, never forced, which lets another host
