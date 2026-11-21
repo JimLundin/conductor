@@ -53,6 +53,24 @@ mermaid.initialize({startOnLoad:true,theme:"base",securityLevel:"strict",themeVa
 <ul class="wins"><li>Locality: one acceptance decision</li><li>Leverage: truthful results across hosts</li><li>Depth: callers omit write ordering</li></ul>
 <details open><summary>Deletion test, seam and verification</summary><dl><dt>Deletion test</dt><dd>Deleting today’s forwarding configure module leaves the same two-write obligation with its caller. A deep workflow must absorb that obligation.</dd><dt>Adapters</dt><dd>Signed membership, local credential storage and provider plugins already vary at real seams. Reuse those adapters.</dd><dt>Test surface</dt><dd>Drive a busy-instance removal through the command interface and compare its outcome with signed state. Inject local-save failure; reopen and verify retry agrees with durable intent. Distinguish scheduled provider refresh from successful application.</dd><dt>Existing evidence</dt><dd><a href="https://github.com/JimLundin/conductor/blob/22a49a42bb53405159890a9a8974ae5299fe33ea/crates/daemon/src/fleet/tests.rs#L339">Fleet replication tests:339</a> cover signed data; <a href="https://github.com/JimLundin/conductor/blob/22a49a42bb53405159890a9a8974ae5299fe33ea/crates/daemon/src/fleet/credentials.rs#L167">revision application:167</a> currently records scheduling separately from provider outcomes.</dd></dl></details>
 <p class="decision">Preserves F1–F4: one root writer, shared keys and selected Claude token, local Codex login. This does not require an atomic transaction across hosts.</p>
+<details open id="selected-configuration-design">
+<summary>Selected direction — agreed behavior and proposed seams</summary>
+<p style="margin-top:12px">Design discussion of 21 November 2026. The owner selected this candidate and agreed the behavior below. The proposed ownership is ready for final design confirmation; runtime implementation has not begun.</p>
+<dl>
+<dt>Acceptance</dt><dd>The root durably records the intended shared configuration. A known rejection leaves that configuration unchanged. Host application and instance availability are reported independently.</dd>
+<dt>Retirement</dt><dd>Stop admitting new work once the host receives removal. Allow a brief graceful finish, then interrupt and force-stop owned processes if necessary. Aim for roughly 60 seconds from root acceptance through propagation and stopping on reachable hosts. Unreachable hosts remain visibly pending.</dd>
+<dt>Recovery</dt><dd>Temporary failures retry automatically with capped backoff. Credential refusals wait for correction or an explicit retry. Provider adapters report generic failure categories; the pure core owns retry decisions. A faulty accepted configuration remains visible with unavailable affected instances.</dd>
+<dt>Shared core</dt><dd>Deepen <code>host::fleet</code> to own admission, desired configuration changes and acceptance outcomes. It consumes generic credential data, provider-declared facts and the sharing policy supplied by composition. Provider names and credential-kind interpretation stay outside this core.</dd>
+<dt>Local core</dt><dd>Extend <code>host::registry</code> to own local application, instance retirement, deadlines, retry state and availability. It receives observed time and effect outcomes as data. Existing session ownership remains in the session core.</dd>
+<dt>Thin shell</dt><dd>The daemon executes persistence, signing, transport, timer and provider effects and returns their outcomes. It does not decide acceptance by chaining independent writes or reinterpret whether a provider failure means a shared change was rejected.</dd>
+<dt>Instance seam</dt><dd>Add acknowledged instance-wide termination to the existing provider adapter seam. Its enforcement path must remain usable while an ordinary provider call is stuck. The existing process module owns platform process containment; each provider adapter owns all runtimes and command processes of its instance.</dd>
+<dt>Durability</dt><dd>Persist a root acceptance record with its signed configuration in the root’s private sealed state. It records the change identity and outcome, not secret values, in receipts. An ambiguous write outcome must be resolved using that same identity before a definitive result or a competing write; successful local application is not required for acceptance.</dd>
+<dt>Sign-in</dt><dd>App submission and a credential produced by sign-in reach the same generic shared-change workflow. Links, pasted codes, raw sign-in output and sign-in commands remain live-only. The completed shared mutation has its own identity, separate from the ephemeral sign-in exchange.</dd>
+<dt>Freshness</dt><dd>Keep the existing newest-configuration rule and coalescing. Old asynchronous results cannot make an instance ready under newer settings. Unrelated roster changes do not restart unaffected instances. Reopen reconstructs pending application before admitting affected work.</dd>
+<dt>Test surface</dt><dd>Drive the pure core through production inputs and effects with a supplied clock. Cover acceptance/retry, busy retirement, delayed or stale outcomes, changed settings and interrupted persistence. Keep focused shell tests for durable reopening, two-host application and forced termination of a provider-owned long-running child.</dd>
+</dl>
+<p class="decision">This direction reuses the existing core/shell split and real provider adapters. Fleet key custody, Git import and the broader UI redesign remain separate review candidates.</p>
+</details>
 </article>
 <article id="key-custody" class="candidate">
 <div class="card-top"><h2><span class="number">03</span>Give local and fleet secrets one key-custody module</h2></div>
@@ -115,7 +133,7 @@ flowchart TD
 <div class="eyebrow">Top recommendation</div>
 <h2>02 · Shared configuration acceptance and application</h2>
 <p>A command reported as rejected can already change credentials on other hosts. Owning that decision and its durable follow-through fixes a current correctness problem and gives the planned UI trustworthy progress and failure states. <a href="#shared-configuration">Explore candidate 02 →</a></p>
-<div class="next">Which of these would you like to explore?</div>
+<div class="next">Selected: candidate 02. <a href="#selected-configuration-design">Review the agreed behavior and proposed seams →</a></div>
 </section>
 </main>
 </body>
