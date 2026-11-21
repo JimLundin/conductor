@@ -6609,14 +6609,8 @@ fn noted_by_hand(land: &Homeland, issue: proto::IssueId) -> Fallible {
     Ok(())
 }
 
-/// An issue without a title is refused, and one with one is opened in
-/// alpha and pushed.
-async fn opens_an_issue(
-    link: &HostLink,
-    updates: &mut Updates,
-    land: &Homeland,
-) -> Fallible<proto::IssueId> {
-    let create = |title: &str| CommandBody::CreateIssue {
+fn create_issue(title: &str) -> CommandBody {
+    CommandBody::CreateIssue {
         project: ProjectId(String::from("alpha")),
         fields: IssueFields {
             title: String::from(title),
@@ -6624,14 +6618,23 @@ async fn opens_an_issue(
             priority: Priority::High,
             labels: Vec::from([String::from("app")]),
         },
-    };
+    }
+}
+
+/// An issue without a title is refused, and one with one is opened in
+/// alpha and pushed.
+async fn opens_an_issue(
+    link: &HostLink,
+    updates: &mut Updates,
+    land: &Homeland,
+) -> Fallible<proto::IssueId> {
     assert_eq!(
-        send(link, create(" ")).await?,
+        send(link, create_issue(" ")).await?,
         CommandResult::Rejected(Rejection::IssueNotSaved {
             reason: String::from("an issue needs a title")
         })
     );
-    let issue = match send(link, create("Sign in")).await? {
+    let issue = match send(link, create_issue("Sign in")).await? {
         CommandResult::IssueCreated { issue } => issue,
         other => return Err(format!("expected an issue, not {other:?}").into()),
     };
@@ -6681,6 +6684,164 @@ async fn lands_an_offline_note(
         landed.contains(&signed) && landed.contains("- by hand"),
         "{landed}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
+-> Fallible {
+    let land = homeland("issue-queue-write-failure")?;
+    let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = fx.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let unavailable = land.scratch.join("home.gone");
+    std::fs::rename(&land.home_bare, &unavailable)?;
+    let blocked = data.join("home-edits.new");
+    std::fs::create_dir(&blocked)?;
+    let note = || change(issue, IssueChange::Note(String::from("retry me")));
+    let before = git(&data.join("home-repo"), &["rev-parse", "HEAD"])?;
+    let refused = send(&link, note()).await?;
+    assert!(matches!(
+        refused,
+        CommandResult::Rejected(Rejection::IssueNotSaved { .. })
+    ));
+    accepted(&link, CommandBody::SyncHome).await?;
+    let still_open = home_until(&mut updates, |home| {
+        matches!(home.sync, proto::HomeSync::Behind { .. })
+    })
+    .await?;
+    assert_eq!(still_open.unpushed, 0);
+    assert!(
+        alpha_issues(&still_open)
+            .iter()
+            .all(|it| it.notes.is_empty())
+    );
+    assert_eq!(
+        git(&data.join("home-repo"), &["rev-parse", "HEAD"])?,
+        before
+    );
+
+    std::fs::remove_dir(&blocked)?;
+    accepted(&link, note()).await?;
+    let kept = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    assert_eq!(
+        alpha_issues(&kept)
+            .iter()
+            .map(|it| (it.id, it.notes.len()))
+            .collect::<Vec<_>>(),
+        [(issue, 1)]
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+
+    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
+    let (link, mut updates) = reopened.connect().await?;
+    let kept = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    assert_eq!(
+        alpha_issues(&kept)
+            .iter()
+            .map(|it| (it.id, it.notes.len()))
+            .collect::<Vec<_>>(),
+        [(issue, 1)]
+    );
+    std::fs::rename(&unavailable, &land.home_bare)?;
+    accepted(&link, CommandBody::SyncHome).await?;
+    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    assert_eq!(pushed_issue(&land, issue)?.matches(": retry me").count(), 1);
+    assert_eq!(
+        git(
+            &land.home_bare,
+            &["rev-list", "--count", &format!("{}..HEAD", before.trim())]
+        )?
+        .trim(),
+        "1"
+    );
+    link.stop().await?;
+    reopened.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
+-> Fallible {
+    let land = homeland("issue-commit-write-failure")?;
+    let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = fx.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let unavailable = land.scratch.join("home.gone");
+    std::fs::rename(&land.home_bare, &unavailable)?;
+    let lock = data.join("home-repo/.git/index.lock");
+    std::fs::write(&lock, "")?;
+    let issue = match send(&link, create_issue("Commit after restart")).await? {
+        CommandResult::IssueCreated { issue } => issue,
+        other => {
+            return Err(format!("expected a saved issue, got {other:?}").into());
+        }
+    };
+    let queued = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    assert_eq!(
+        alpha_issues(&queued).first().map(|shown| shown.id),
+        Some(issue)
+    );
+    let checkout = data.join("home-repo");
+    assert_eq!(
+        git(&checkout, &["ls-files", "--", "projects/alpha/issues"])?,
+        ""
+    );
+    link.stop().await?;
+    fx.shutdown().await?;
+    std::fs::remove_file(&lock)?;
+
+    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
+    let (link, mut updates) = reopened.connect().await?;
+    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    std::fs::rename(&unavailable, &land.home_bare)?;
+    accepted(&link, CommandBody::SyncHome).await?;
+    let landed = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    assert_eq!(
+        alpha_issues(&landed).first().map(|shown| shown.id),
+        Some(issue)
+    );
+    assert!(
+        pushed_issue(&land, issue)?
+            .contains("title = \"Commit after restart\"")
+    );
+    link.stop().await?;
+    reopened.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
+    let land = homeland("legacy-issue-queue")?;
+    let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = fx.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    link.stop().await?;
+    fx.shutdown().await?;
+
+    let unavailable = land.scratch.join("home.gone");
+    std::fs::rename(&land.home_bare, &unavailable)?;
+    // Postcard Vec<Edit> from before the queue had edit identities.
+    let original =
+        b"\x01\x05alpha\x2a\x01\x06legacy\x00\x09Old queue\x00\x02\x00\x00";
+    std::fs::write(data.join("home-edits.state"), original)?;
+    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
+    let (link, mut updates) = reopened.connect().await?;
+    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    std::fs::rename(&unavailable, &land.home_bare)?;
+    accepted(&link, CommandBody::SyncHome).await?;
+    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    assert!(
+        pushed_issue(&land, proto::IssueId(42))?
+            .contains("title = \"Old queue\"")
+    );
+    link.stop().await?;
+    reopened.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
 }
 

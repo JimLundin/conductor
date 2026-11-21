@@ -16,8 +16,8 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use proto::{
-    ChecklistItem, Home, HostPath, Issue, IssueChange, IssueFields, IssueId,
-    IssueStatus, Priority, ProjectId, Rejection,
+    ChecklistItem, CommandId, Home, HostPath, Issue, IssueChange, IssueFields,
+    IssueId, IssueStatus, Priority, ProjectId, Rejection,
 };
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
@@ -372,7 +372,7 @@ fn labels_value(labels: &[String]) -> String {
 
 /// A new issue's file.
 #[must_use]
-fn render(issue: &Issue) -> String {
+fn render(issue: &Issue) -> Lines {
     let created = issue
         .created
         .parse::<toml::value::Datetime>()
@@ -398,7 +398,7 @@ fn render(issue: &Issue) -> String {
     for note in &issue.notes {
         lines.append(NOTES, None, note_lines(note));
     }
-    lines.text()
+    lines
 }
 
 /// The issues of `project` in its folder's files, each `.md` file by its
@@ -508,7 +508,7 @@ fn needs(text: &str, what: &str) -> Result<String, String> {
 
 /// The message of the commit an edit makes in the home.
 #[must_use]
-fn message(edit: &Edit) -> String {
+fn message(edit: &LegacyEdit) -> String {
     let id = name(edit.issue);
     match &edit.change {
         Change::Create(fields) => {
@@ -550,6 +550,13 @@ fn signer(host: &str, client: &str) -> String {
 /// A change a host made to an issue, kept until the remote has it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
+    id: Option<CommandId>,
+    data: LegacyEdit,
+}
+
+/// The issue queue's original disk representation, without edit identities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyEdit {
     project: ProjectId,
     issue: IssueId,
     /// When the host took it, in seconds since the Unix epoch.
@@ -560,6 +567,12 @@ pub struct Edit {
     /// The value the field it sets had when it was made, as [`was`] gives
     /// it, so a replay can tell whether someone else changed it since.
     was: Option<String>,
+}
+
+impl From<LegacyEdit> for Edit {
+    fn from(data: LegacyEdit) -> Self {
+        Self { id: None, data }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -620,27 +633,47 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
 /// none.
 #[must_use]
 fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
-    match (&edit.change, current) {
-        (Change::Create(_), Some(_)) => Applied::Unchanged,
+    let data = &edit.data;
+    let marker = edit.id.map(edit_marker);
+    match (&data.change, current) {
+        (Change::Create(_), Some(text)) => {
+            match parse(&name(data.issue), text) {
+                Ok(_) => Applied::Unchanged,
+                Err(reason) => Applied::Unreadable(reason),
+            }
+        }
         (Change::Create(wanted), None) => fields(wanted)
             .map_or(Applied::Unchanged, |made| {
-                Applied::Write(render(&opened(edit, made)))
+                marked(render(&opened(data, made)), marker)
             }),
         (Change::Issue(_), None) => Applied::Gone,
         (Change::Issue(change), Some(text)) => {
-            let read = parse(&name(edit.issue), text)
+            let read = parse(&name(data.issue), text)
                 .and_then(|issue| Lines::of(text).map(|lines| (issue, lines)));
             match read {
                 Err(reason) => Applied::Unreadable(reason),
                 Ok((issue, lines)) => {
+                    if marker
+                        .as_ref()
+                        .is_some_and(|id| lines.front.contains(id))
+                    {
+                        return Applied::Unchanged;
+                    }
                     changed(lines, &issue, change, (edit, mode))
-                        .map_or(Applied::Unchanged, |next| {
-                            Applied::Write(next.text())
-                        })
+                        .map_or(Applied::Unchanged, |next| marked(next, marker))
                 }
             }
         }
     }
+}
+
+fn edit_marker(id: CommandId) -> String {
+    format!("# conductor-edit: {:032x}", id.0)
+}
+
+fn marked(mut lines: Lines, marker: Option<String>) -> Applied {
+    lines.front.extend(marker);
+    Applied::Write(lines.text())
 }
 
 /// The file's lines with the change, or `None` when it changes nothing: it
@@ -651,24 +684,25 @@ fn changed(
     change: &IssueChange,
     (edit, mode): (&Edit, Mode),
 ) -> Option<Lines> {
-    let replaying = match mode {
+    let data = &edit.data;
+    let legacy_replay = match mode {
         Mode::Record => false,
         Mode::Replay { changed } => {
-            if edit.was != field(issue, change) && edit.at < changed {
+            if data.was != field(issue, change) && data.at < changed {
                 return None;
             }
-            true
+            edit.id.is_none()
         }
     };
     match change {
         IssueChange::Note(text) => {
             let note =
-                format!("{} {}: {}", date(edit.at), edit.by, text.trim());
-            noting(lines, issue, &note, replaying)
+                format!("{} {}: {}", date(data.at), data.by, text.trim());
+            noting(lines, issue, &note, legacy_replay)
         }
         IssueChange::Check { .. }
         | IssueChange::AddItem(_)
-        | IssueChange::RemoveItem(_) => checking(lines, change, replaying),
+        | IssueChange::RemoveItem(_) => checking(lines, change, legacy_replay),
         IssueChange::Title(_)
         | IssueChange::Body(_)
         | IssueChange::Labels(_)
@@ -754,7 +788,7 @@ fn noting(
     Some(lines)
 }
 
-fn opened(edit: &Edit, made: IssueFields) -> Issue {
+fn opened(edit: &LegacyEdit, made: IssueFields) -> Issue {
     Issue {
         id: edit.issue,
         title: made.title,

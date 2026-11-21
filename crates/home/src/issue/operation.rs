@@ -1,12 +1,14 @@
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::{boxed::Box, collections::BTreeMap};
 
 use proto::{
-    Issue, IssueChange, IssueFields, IssueId, IssueStatus, ProjectId, Rejection,
+    CommandId, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
+    ProjectId, Rejection,
 };
 
 use super::{
-    Applied, Change, Edit, Mode, apply, changing, file, finished, folder,
-    listed, message, opening, signer, started, was,
+    Applied, Change, Edit, LegacyEdit, Lines, Mode, apply, changing,
+    edit_marker, file, finished, folder, listed, message, opening, parse,
+    signer, started, was,
 };
 use crate::prelude::*;
 
@@ -19,7 +21,10 @@ pub struct Read {
 
 /// A local edit ready to read its file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Record(Edit);
+pub struct Record {
+    command: CommandId,
+    data: LegacyEdit,
+}
 
 /// The files and commit a home mutation requires.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,43 +48,59 @@ pub enum Write {
 /// The actions that record an edit locally and attempt to deliver it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordEffect {
+    Persist(Edit),
     Commit(Commit),
-    Enqueue(Edit),
-    Persist,
-    Deliver(Delivery),
+    Deliver { delivery: Delivery, id: CommandId },
     Scan,
 }
 
 /// An edit ready to record in the clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recorded {
-    effects: VecDeque<RecordEffect>,
-    committing: bool,
+pub struct Recorded(Recording);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Recording {
+    Keep(Box<Edit>, Commit, CommandId),
+    Write(CommandId, Commit),
+    Push(CommandId),
+    Scan,
+    Done,
 }
 
 impl Recorded {
-    /// The first call passes success. Later calls report the outcome of
-    /// the previous effect. A failed write rejects the edit before it
-    /// enters the queue. A failed delivery leaves the queued edit and
-    /// still refreshes the issue view.
+    /// The queue must be saved before writing the clone. A failed commit
+    /// can be retried from the saved edit, so only persistence can reject
+    /// the operation at this point.
     ///
     /// # Errors
     ///
-    /// The local commit errored.
+    /// The edit could not be saved to the queue.
     pub fn next(
         &mut self,
         outcome: Result<(), String>,
     ) -> Result<Option<RecordEffect>, Rejection> {
-        if self.committing
-            && let Err(reason) = outcome
-        {
-            self.effects.clear();
-            self.committing = false;
-            return Err(Rejection::IssueNotSaved { reason });
-        }
-        let effect = self.effects.pop_front();
-        self.committing = matches!(effect, Some(RecordEffect::Commit(_)));
-        Ok(effect)
+        let effect = match core::mem::replace(&mut self.0, Recording::Done) {
+            Recording::Keep(edit, commit, id) => {
+                self.0 = Recording::Write(id, commit);
+                RecordEffect::Persist(*edit)
+            }
+            Recording::Write(id, commit) => {
+                outcome
+                    .map_err(|reason| Rejection::IssueNotSaved { reason })?;
+                self.0 = Recording::Push(id);
+                RecordEffect::Commit(commit)
+            }
+            Recording::Push(id) if outcome.is_ok() => {
+                self.0 = Recording::Scan;
+                RecordEffect::Deliver {
+                    delivery: Delivery::Push { retry: true },
+                    id,
+                }
+            }
+            Recording::Push(_) | Recording::Scan => RecordEffect::Scan,
+            Recording::Done => return Ok(None),
+        };
+        Ok(Some(effect))
     }
 }
 
@@ -124,6 +145,7 @@ pub struct Context<'a> {
     pub issues: &'a BTreeMap<ProjectId, Vec<Issue>>,
     pub host: &'a str,
     pub at: u64,
+    pub command: CommandId,
 }
 
 impl Context<'_> {
@@ -140,14 +162,17 @@ impl Context<'_> {
         wanted: &IssueFields,
     ) -> Result<Record, Rejection> {
         let fields = opening(self.remote, projects, &project, wanted)?;
-        Ok(Record(Edit {
-            project,
-            issue,
-            at: self.at,
-            by: String::from(self.host),
-            change: Change::Create(fields),
-            was: None,
-        }))
+        Ok(Record {
+            command: self.command,
+            data: LegacyEdit {
+                project,
+                issue,
+                at: self.at,
+                by: String::from(self.host),
+                change: Change::Create(fields),
+                was: None,
+            },
+        })
     }
 
     /// Edits a field, moves the issue, changes its checklist or adds a note.
@@ -163,21 +188,24 @@ impl Context<'_> {
     ) -> Result<Record, Rejection> {
         let (project, change) =
             changing(self.remote, self.issues, issue, wanted)?;
-        Ok(Record(Edit {
-            project,
-            issue,
-            at: self.at,
-            by: signer(self.host, client),
-            change: Change::Issue(change),
-            was: None,
-        }))
+        Ok(Record {
+            command: self.command,
+            data: LegacyEdit {
+                project,
+                issue,
+                at: self.at,
+                by: signer(self.host, client),
+                change: Change::Issue(change),
+                was: None,
+            },
+        })
     }
 }
 
 impl Record {
     #[must_use]
     pub fn read(&self) -> Read {
-        self.0.read()
+        self.data.read()
     }
 
     /// Decides the commit and what to keep and deliver.
@@ -189,45 +217,55 @@ impl Record {
         mut self,
         current: Option<&str>,
     ) -> Result<Recorded, Rejection> {
-        let edit = &mut self.0;
-        edit.was = was(current, edit.issue, &edit.change);
-        let write = match edit.write(current, Mode::Record) {
-            Write::Commit(commit) => Some(commit),
-            Write::Unchanged => None,
-            Write::Dropped => return Err(Rejection::UnknownIssue),
-            Write::Waiting(reason) => {
-                return Err(Rejection::IssueNotSaved { reason });
-            }
+        self.data.was = was(current, self.data.issue, &self.data.change);
+        let edit = Edit {
+            id: Some(self.command),
+            data: self.data,
         };
-        let mut effects = VecDeque::from([
-            RecordEffect::Enqueue(self.0),
-            RecordEffect::Persist,
-            RecordEffect::Deliver(Delivery::Push { retry: true }),
-            RecordEffect::Scan,
-        ]);
-        if let Some(commit) = write {
-            effects.push_front(RecordEffect::Commit(commit));
+        match edit.write(current, Mode::Record) {
+            Write::Commit(commit) => Ok(Recorded(Recording::Keep(
+                Box::new(edit),
+                commit,
+                self.command,
+            ))),
+            Write::Unchanged => Ok(Recorded(Recording::Done)),
+            Write::Dropped => Err(Rejection::UnknownIssue),
+            Write::Waiting(reason) => Err(Rejection::IssueNotSaved { reason }),
         }
-        Ok(Recorded {
-            effects,
-            committing: false,
-        })
     }
 }
 
-impl Edit {
-    #[must_use]
-    pub fn read(&self) -> Read {
+impl LegacyEdit {
+    fn read(&self) -> Read {
         Read {
             issue: self.issue,
             path: file(&self.project, self.issue),
         }
     }
+}
+
+impl Edit {
+    #[must_use]
+    pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
+        (self.id == Some(id)).then_some(self.data.issue)
+    }
+
+    #[must_use]
+    pub fn read(&self) -> Read {
+        self.data.read()
+    }
 
     /// Decides whether the edit still applies to the upstream file.
     #[must_use]
-    pub fn replay(&self, current: Option<&str>, changed: u64) -> Write {
-        self.write(current, Mode::Replay { changed })
+    pub fn replay(
+        &self,
+        current: Result<Option<&str>, String>,
+        changed: u64,
+    ) -> Write {
+        match current {
+            Ok(contents) => self.write(contents, Mode::Replay { changed }),
+            Err(reason) => Write::Waiting(reason),
+        }
     }
 
     fn write(&self, current: Option<&str>, mode: Mode) -> Write {
@@ -235,7 +273,7 @@ impl Edit {
             Applied::Write(text) => Write::Commit(Commit {
                 target: self.read(),
                 text,
-                message: message(self),
+                message: message(&self.data),
                 author: "Conductor",
                 email: "conductor@localhost",
             }),
@@ -366,6 +404,20 @@ impl<'a> Listing<'a> {
             project,
             path: folder(project),
         }
+    }
+
+    #[must_use]
+    pub fn opened_by(
+        id: CommandId,
+        files: Vec<(String, Result<String, String>)>,
+    ) -> Option<IssueId> {
+        let marker = edit_marker(id);
+        files.into_iter().find_map(|(stem, current)| {
+            let text = current.ok()?;
+            let lines = Lines::of(&text).ok()?;
+            lines.front.contains(&marker).then_some(())?;
+            parse(&stem, &text).ok().map(|issue| issue.id)
+        })
     }
 
     #[must_use]

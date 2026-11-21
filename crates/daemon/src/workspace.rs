@@ -102,6 +102,15 @@ pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
     run(Plan::git_text("", args), Some(path)).await
 }
 
+pub async fn bytes(path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    let output = execute(&mut git(path, args)).await?;
+    if output.success {
+        Ok(output.bytes)
+    } else {
+        Err(failure("reading git output", &output.error))
+    }
+}
+
 fn canonical(path: &Path) -> Result<PathBuf, GitError> {
     std::fs::canonicalize(path).map_err(|error| {
         failure(

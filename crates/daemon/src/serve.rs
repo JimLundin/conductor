@@ -210,21 +210,25 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         let route = serve::route(command.body, client);
         let begun = match route.ledger() {
-            Ledger::Unrecorded => return self.command(route).await,
+            Ledger::Unrecorded => return self.command(route, command.id).await,
             Ledger::Session => self.log.begin(command.id).await?,
             Ledger::Receipt => self.log.begin_receipt(command.id).await?,
         };
         match begun {
             BeginCommand::Cached(result) => Ok(result),
             BeginCommand::Execute(lease) => {
-                let result = self.command(route).await?;
+                let result = self.command(route, command.id).await?;
                 lease.finish(result.clone()).await?;
                 Ok(result)
             }
         }
     }
 
-    async fn command(&self, route: Route) -> Result<CommandResult, Stopped> {
+    async fn command(
+        &self,
+        route: Route,
+        id: proto::CommandId,
+    ) -> Result<CommandResult, Stopped> {
         match route {
             Route::Order(session, order) => self.order(session, order).await,
             Route::Relaunch(session, relaunch) => {
@@ -240,7 +244,7 @@ impl Conductor {
                 self.registry.configure(configure).await
             }
             Route::SignIn(order) => self.registry.sign_in(order).await,
-            Route::Home(order) => self.home.order(order).await,
+            Route::Home(order) => self.home.order(order, id).await,
             Route::Finish(session, by) => {
                 match self.registry.find(session).await? {
                     Some(handle) => handle.finish(by).await,

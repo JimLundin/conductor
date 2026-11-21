@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use home::checkout::{Probe, Root};
 use home::instructions::{Own, Sources};
 use home::issue::{
-    Commit, Context, Delivery, Edit, Listing, Record, RecordEffect,
+    Commit, Context, Delivery, Edit, LegacyEdit, Listing, Record, RecordEffect,
     RemoteProbe, SessionUpdate, Write,
 };
 use home::project::Project;
@@ -34,15 +34,15 @@ use home::sync::{Git, Sync};
 use home::{Found, Stored};
 use host::serve::HomeOrder;
 use proto::{
-    Checkout, ClientName, Cloning, CommandResult, Home, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, ProjectId, Rejection, StartAt,
+    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HostPath,
+    Issue, IssueChange, IssueFields, IssueId, ProjectId, Rejection, StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::Stopped;
-use crate::workspace::text;
+use crate::workspace::{bytes, text};
 
 /// How often the host pulls the home on its own.
 const EVERY: Duration = Duration::from_secs(300);
@@ -79,6 +79,7 @@ enum Msg {
     Tick,
     Order {
         order: HomeOrder,
+        id: CommandId,
         reply: oneshot::Sender<CommandResult>,
     },
     Place {
@@ -168,8 +169,9 @@ impl HomeClone {
     pub async fn order(
         &self,
         order: HomeOrder,
+        id: CommandId,
     ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| Msg::Order { order, reply }).await
+        self.ask(|reply| Msg::Order { order, id, reply }).await
     }
 
     /// Where a session starts: a directory as it is, or a project's or an
@@ -342,26 +344,37 @@ impl Actor {
             Msg::Order {
                 order: HomeOrder::Sync,
                 reply,
+                ..
             } => {
                 let _ = reply.send(self.pull_now().await);
             }
             Msg::Order {
                 order: HomeOrder::Clone(project),
                 reply,
+                ..
             } => {
                 let _ = reply.send(self.clone_project(project).await);
             }
             Msg::Order {
                 order: HomeOrder::Create(project, fields),
+                id,
                 reply,
             } => {
-                let _ = reply.send(self.create(project, fields).await);
+                let answer = self
+                    .create(project, fields, id)
+                    .await
+                    .map_or_else(CommandResult::Rejected, |issue| {
+                        CommandResult::IssueCreated { issue }
+                    });
+                let _ = reply.send(answer);
             }
             Msg::Order {
                 order: HomeOrder::Change(issue, change, client),
+                id,
                 reply,
             } => {
-                let _ = reply.send(self.change(issue, change, &client).await);
+                let _ =
+                    reply.send(self.change(issue, change, &client, id).await);
             }
             Msg::Place { at, reply } => {
                 self.fresh().await;
@@ -408,7 +421,8 @@ impl Actor {
         mut update: SessionUpdate,
     ) {
         while let Some(change) = update.next(&self.issues, issue) {
-            let answer = self.change(issue, change, client).await;
+            let id = CommandId(ulid::Ulid::new().0);
+            let answer = self.change(issue, change, client, id).await;
             if answer != CommandResult::Accepted {
                 tracing::warn!(target: "home", ?answer, "a session's issue update was rejected");
             }
@@ -471,21 +485,29 @@ impl Actor {
         &mut self,
         project: ProjectId,
         wanted: IssueFields,
-    ) -> CommandResult {
+        command: CommandId,
+    ) -> Result<IssueId, Rejection> {
+        if let Some(kept) = self.kept_issue(command) {
+            return kept;
+        }
         self.fresh().await;
         let projects = self
             .projects
             .iter()
             .map(|known| known.id.clone())
             .collect::<Vec<ProjectId>>();
+        let issue_dir = self.clone.join(Listing::for_project(&project).path);
         let issue = IssueId(ulid::Ulid::new().0);
         let request = self
-            .issue_context()
-            .open(&projects, project, issue, &wanted);
-        match self.record(request).await {
-            Ok(()) => CommandResult::IssueCreated { issue },
-            Err(rejection) => CommandResult::Rejected(rejection),
+            .issue_context(command)
+            .open(&projects, project, issue, &wanted)?;
+        if let Some(opened) =
+            Listing::opened_by(command, issue_files(&issue_dir))
+        {
+            return Ok(opened);
         }
+        self.record(Ok(request)).await?;
+        Ok(issue)
     }
 
     async fn change(
@@ -493,18 +515,36 @@ impl Actor {
         issue: IssueId,
         change: IssueChange,
         client: &ClientName,
+        command: CommandId,
     ) -> CommandResult {
+        if let Some(kept) = self.kept_issue(command) {
+            return home::answer(kept.map(drop));
+        }
         self.fresh().await;
-        let request = self.issue_context().edit(issue, change, &client.0);
+        let request =
+            self.issue_context(command).edit(issue, change, &client.0);
         home::answer(self.record(request).await)
     }
 
-    fn issue_context(&self) -> Context<'_> {
+    fn kept_issue(&self, id: CommandId) -> Option<Result<IssueId, Rejection>> {
+        let issue = self
+            .edits
+            .iter()
+            .find_map(|pending| pending.edit.issue_for(id))?;
+        Some(
+            self.sync_edits()
+                .map(|()| issue)
+                .map_err(|reason| Rejection::IssueNotSaved { reason }),
+        )
+    }
+
+    fn issue_context(&self, command: CommandId) -> Context<'_> {
         Context {
             remote: self.remote.as_deref(),
             issues: &self.issues,
             host: &self.host,
             at: now(),
+            command,
         }
     }
 
@@ -513,25 +553,22 @@ impl Actor {
         decision: Result<Record, Rejection>,
     ) -> Result<(), Rejection> {
         let request = decision?;
-        let current =
-            std::fs::read_to_string(self.clone.join(request.read().path)).ok();
+        let path = self.clone.join(request.read().path);
+        let current = crate::read_if_exists(&path).map_err(|err| {
+            Rejection::IssueNotSaved {
+                reason: format!("could not read {}: {err}", path.display()),
+            }
+        })?;
         let mut recorded = request.decide(current.as_deref())?;
         let mut outcome = Ok(());
         while let Some(effect) = recorded.next(outcome)? {
             outcome = match effect {
+                RecordEffect::Persist(edit) => self.persist(edit),
                 RecordEffect::Commit(commit) => self.commit(commit).await,
-                RecordEffect::Enqueue(edit) => {
-                    self.edits.push(Pending {
-                        edit,
-                        written: true,
-                    });
-                    Ok(())
+                RecordEffect::Deliver { delivery, id } => {
+                    self.mark_written(id);
+                    self.deliver(delivery).await
                 }
-                RecordEffect::Persist => {
-                    self.keep();
-                    Ok(())
-                }
-                RecordEffect::Deliver(delivery) => self.deliver(delivery).await,
                 RecordEffect::Scan => {
                     self.scan().await;
                     Ok(())
@@ -539,6 +576,16 @@ impl Actor {
             };
         }
         Ok(())
+    }
+
+    fn mark_written(&mut self, id: CommandId) {
+        if let Some(pending) = self
+            .edits
+            .last_mut()
+            .filter(|pending| pending.edit.issue_for(id).is_some())
+        {
+            pending.written = true;
+        }
     }
 
     async fn deliver(&mut self, mut step: Delivery) -> Result<(), String> {
@@ -551,10 +598,7 @@ impl Actor {
                     self.rewrite_all().await;
                     Ok(())
                 }
-                Delivery::Persist => {
-                    self.keep();
-                    Ok(())
-                }
+                Delivery::Persist => self.keep(),
                 Delivery::Landed => {
                     self.landed();
                     Ok(())
@@ -581,8 +625,14 @@ impl Actor {
     async fn rewrite(&self, edit: Edit) -> Option<Pending> {
         let read = edit.read();
         let changed = changed_at(&self.clone, &read.path).await;
-        let current = std::fs::read_to_string(self.clone.join(&read.path)).ok();
-        let outcome = match edit.replay(current.as_deref(), changed) {
+        let current = committed_issue(&self.clone, &read.path).await;
+        let outcome = match edit.replay(
+            current
+                .as_ref()
+                .map(Option::as_deref)
+                .map_err(String::clone),
+            changed,
+        ) {
             Write::Unchanged => Ok(()),
             Write::Dropped => {
                 tracing::warn!(target: "home", issue = ?read.issue, "dropped a change to an issue the home no longer has");
@@ -603,16 +653,44 @@ impl Actor {
     /// The remote has every change written in the clone.
     fn landed(&mut self) {
         self.edits.retain(|pending| !pending.written);
-        self.keep();
+        let _ = self.keep();
     }
 
-    fn keep(&self) {
+    fn persist(&mut self, edit: Edit) -> Result<(), String> {
+        self.edits.push(Pending {
+            edit,
+            written: false,
+        });
+        let installed = self.save_edits();
+        if installed.is_err() {
+            self.edits.pop();
+        }
+        installed?;
+        self.sync_edits()
+    }
+
+    fn sync_edits(&self) -> Result<(), String> {
+        crate::sync_dir(&self.data_dir)
+            .map_err(|err| format!("could not sync the issue queue: {err}"))
+    }
+
+    fn keep(&self) -> Result<(), String> {
+        self.save_edits()?;
+        self.sync_edits()
+    }
+
+    fn save_edits(&self) -> Result<(), String> {
         let edits = self
             .edits
             .iter()
             .map(|pending| pending.edit.clone())
             .collect::<Vec<Edit>>();
-        save(&self.edits_at, &edits, "the unpushed issue changes");
+        save(
+            &self.edits_at,
+            EDITS_VERSION,
+            &edits,
+            "the unpushed issue changes",
+        )
     }
 
     async fn commit(&self, commit: Commit) -> Result<(), String> {
@@ -676,7 +754,7 @@ impl Actor {
         );
         let stored = Stored::kept(self.remote.clone(), &self.found);
         self.known = stored.known();
-        save(&self.stored, &stored, "the home's checkouts");
+        let _ = save(&self.stored, &[], &stored, "the home's checkouts");
         self.publish();
     }
 
@@ -1023,18 +1101,36 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+// The original format starts with a canonical postcard vector length.
+const EDITS_VERSION: &[u8] = b"\x80\x00\x01";
+
 /// The unpushed issue changes the host kept. A store that no longer reads
 /// is moved aside, so its changes are not lost unseen.
 fn load_edits(path: &Path) -> Vec<Edit> {
     let Ok(bytes) = std::fs::read(path) else {
         return Vec::new();
     };
-    postcard::from_bytes(&bytes).unwrap_or_else(|err| {
+    decode_edits(&bytes).unwrap_or_else(|err| {
         let aside = path.with_extension("unreadable");
         let moved = std::fs::rename(path, &aside);
         tracing::warn!(target: "home", %err, aside = %aside.display(), ?moved, "could not read the unpushed issue changes");
         Vec::new()
     })
+}
+
+fn decode_edits(bytes: &[u8]) -> Result<Vec<Edit>, postcard::Error> {
+    let (edits, rest) = bytes.strip_prefix(EDITS_VERSION).map_or_else(
+        || {
+            let (legacy, rest) =
+                postcard::take_from_bytes::<Vec<LegacyEdit>>(bytes)?;
+            Ok((legacy.into_iter().map(Edit::from).collect(), rest))
+        },
+        postcard::take_from_bytes,
+    )?;
+    if !rest.is_empty() {
+        return Err(postcard::Error::DeserializeBadEncoding);
+    }
+    Ok(edits)
 }
 
 /// What the host stored at `path`, or nothing if it can't be read.
@@ -1047,20 +1143,49 @@ fn load<T: DeserializeOwned + Default>(path: &Path) -> T {
 
 /// Writes the store beside its file, then renames it over, so a crash
 /// leaves either.
-fn save<T: Serialize + ?Sized>(path: &Path, stored: &T, what: &str) {
-    let written = postcard::to_stdvec(stored)
+fn save<T: Serialize + ?Sized>(
+    path: &Path,
+    prefix: &[u8],
+    stored: &T,
+    what: &str,
+) -> Result<(), String> {
+    let written = postcard::to_extend(stored, prefix.to_vec())
         .map_err(anyhow::Error::from)
         .and_then(|bytes| replace(path, &bytes));
-    if let Err(err) = written {
+    if let Err(err) = &written {
         tracing::warn!(target: "home", %err, "could not store {what}");
     }
+    written.map_err(|err| format!("could not store {what}: {err}"))
 }
 
 fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
     let next = path.with_extension("new");
-    std::fs::write(&next, bytes)?;
+    let mut file = std::fs::File::create(&next)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&next, path)?;
     Ok(())
+}
+
+async fn committed_issue(
+    clone: &Path,
+    path: &str,
+) -> Result<Option<String>, String> {
+    let tracked = text(clone, &["ls-tree", "--name-only", "HEAD", "--", path])
+        .await
+        .map_err(|err| err.to_string())?;
+    if tracked.is_empty() {
+        return Ok(None);
+    }
+    let blob = bytes(clone, &["show", &format!("HEAD:{path}")])
+        .await
+        .map_err(|err| err.to_string())?;
+    String::from_utf8(blob)
+        .map(Some)
+        .map_err(|err| err.to_string())
 }
 
 fn now() -> u64 {
