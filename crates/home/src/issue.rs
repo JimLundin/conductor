@@ -9,8 +9,8 @@
 //! The host keeps each change as an [`Edit`] until the remote has it, and
 //! when the remote moved on it applies the edit again on top
 //! ([`Edit::replay`]). Then a field someone else changed since stays theirs
-//! unless the edit is newer, and a note or an item the file already has
-//! isn't added twice.
+//! unless the edit is newer. Replay recognizes edits it already applied,
+//! even when a separately submitted note has the same text.
 
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
@@ -595,6 +595,7 @@ enum Mode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Applied {
     Write(String),
+    AlreadyRecorded,
     /// The file has it already, or a newer change replaced it.
     Unchanged,
     /// The issue it changes is gone, so it is dropped.
@@ -638,7 +639,7 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     match (&data.change, current) {
         (Change::Create(_), Some(text)) => {
             match parse(&name(data.issue), text) {
-                Ok(_) => Applied::Unchanged,
+                Ok(_) => Applied::AlreadyRecorded,
                 Err(reason) => Applied::Unreadable(reason),
             }
         }
@@ -657,7 +658,7 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
                         .as_ref()
                         .is_some_and(|id| lines.front.contains(id))
                     {
-                        return Applied::Unchanged;
+                        return Applied::AlreadyRecorded;
                     }
                     changed(lines, &issue, change, (edit, mode))
                         .map_or(Applied::Unchanged, |next| marked(next, marker))

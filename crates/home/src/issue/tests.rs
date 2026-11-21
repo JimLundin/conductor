@@ -290,7 +290,7 @@ fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
     );
     assert_eq!(
         apply(Some(&opened), &create, Mode::Replay { changed: 0 }),
-        Applied::Unchanged
+        Applied::AlreadyRecorded
     );
     Ok(())
 }
@@ -847,7 +847,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         recorded.next(Ok(()))?,
         Some(RecordEffect::Deliver {
             delivery: Delivery::Push { retry: true },
-            id: context.command,
+            id: Some(context.command),
         })
     );
     assert_eq!(

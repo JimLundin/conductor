@@ -578,7 +578,8 @@ impl Actor {
         Ok(())
     }
 
-    fn mark_written(&mut self, id: CommandId) {
+    fn mark_written(&mut self, written: Option<CommandId>) {
+        let Some(id) = written else { return };
         if let Some(pending) = self
             .edits
             .last_mut()

@@ -50,7 +50,10 @@ pub enum Write {
 pub enum RecordEffect {
     Persist(Edit),
     Commit(Commit),
-    Deliver { delivery: Delivery, id: CommandId },
+    Deliver {
+        delivery: Delivery,
+        id: Option<CommandId>,
+    },
     Scan,
 }
 
@@ -60,8 +63,8 @@ pub struct Recorded(Recording);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Recording {
-    Keep(Box<Edit>, Commit, CommandId),
-    Write(CommandId, Commit),
+    Keep(Box<Edit>, Option<Commit>, CommandId),
+    Write(CommandId, Option<Commit>),
     Push(CommandId),
     Scan,
     Done,
@@ -87,14 +90,24 @@ impl Recorded {
             Recording::Write(id, commit) => {
                 outcome
                     .map_err(|reason| Rejection::IssueNotSaved { reason })?;
-                self.0 = Recording::Push(id);
-                RecordEffect::Commit(commit)
+                let (next, effect) = commit.map_or(
+                    (
+                        Recording::Scan,
+                        RecordEffect::Deliver {
+                            delivery: Delivery::Fetch,
+                            id: None,
+                        },
+                    ),
+                    |write| (Recording::Push(id), RecordEffect::Commit(write)),
+                );
+                self.0 = next;
+                effect
             }
             Recording::Push(id) if outcome.is_ok() => {
                 self.0 = Recording::Scan;
                 RecordEffect::Deliver {
                     delivery: Delivery::Push { retry: true },
-                    id,
+                    id: Some(id),
                 }
             }
             Recording::Push(_) | Recording::Scan => RecordEffect::Scan,
@@ -222,16 +235,20 @@ impl Record {
             id: Some(self.command),
             data: self.data,
         };
-        match edit.write(current, Mode::Record) {
-            Write::Commit(commit) => Ok(Recorded(Recording::Keep(
-                Box::new(edit),
-                commit,
-                self.command,
-            ))),
-            Write::Unchanged => Ok(Recorded(Recording::Done)),
-            Write::Dropped => Err(Rejection::UnknownIssue),
-            Write::Waiting(reason) => Err(Rejection::IssueNotSaved { reason }),
-        }
+        let commit = match apply(current, &edit, Mode::Record) {
+            Applied::Write(text) => Some(edit.commit(text)),
+            Applied::AlreadyRecorded => return Ok(Recorded(Recording::Done)),
+            Applied::Unchanged => None,
+            Applied::Gone => return Err(Rejection::UnknownIssue),
+            Applied::Unreadable(reason) => {
+                return Err(Rejection::IssueNotSaved { reason });
+            }
+        };
+        Ok(Recorded(Recording::Keep(
+            Box::new(edit),
+            commit,
+            self.command,
+        )))
     }
 }
 
@@ -262,24 +279,25 @@ impl Edit {
         current: Result<Option<&str>, String>,
         changed: u64,
     ) -> Write {
-        match current {
-            Ok(contents) => self.write(contents, Mode::Replay { changed }),
-            Err(reason) => Write::Waiting(reason),
+        let contents = match current {
+            Ok(contents) => contents,
+            Err(reason) => return Write::Waiting(reason),
+        };
+        match apply(contents, self, Mode::Replay { changed }) {
+            Applied::Write(text) => Write::Commit(self.commit(text)),
+            Applied::Unchanged | Applied::AlreadyRecorded => Write::Unchanged,
+            Applied::Gone => Write::Dropped,
+            Applied::Unreadable(reason) => Write::Waiting(reason),
         }
     }
 
-    fn write(&self, current: Option<&str>, mode: Mode) -> Write {
-        match apply(current, self, mode) {
-            Applied::Write(text) => Write::Commit(Commit {
-                target: self.read(),
-                text,
-                message: message(&self.data),
-                author: "Conductor",
-                email: "conductor@localhost",
-            }),
-            Applied::Unchanged => Write::Unchanged,
-            Applied::Gone => Write::Dropped,
-            Applied::Unreadable(reason) => Write::Waiting(reason),
+    fn commit(&self, text: String) -> Commit {
+        Commit {
+            target: self.read(),
+            text,
+            message: message(&self.data),
+            author: "Conductor",
+            email: "conductor@localhost",
         }
     }
 }

@@ -6846,6 +6846,77 @@ async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
 }
 
 #[tokio::test]
+async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
+-> Fallible {
+    let land = homeland("matching-offline-issue-change")?;
+    let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = fx.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+
+    let (second, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (writer, mut writer_updates) = second.connect().await?;
+    let _ =
+        home_until(&mut writer_updates, |home| !alpha_issues(home).is_empty())
+            .await?;
+    accepted(
+        &writer,
+        change(issue, IssueChange::Title(String::from("Upstream title"))),
+    )
+    .await?;
+    writer.stop().await?;
+    second.shutdown().await?;
+    assert!(pushed_issue(&land, issue)?.contains("title = \"Upstream title\""));
+
+    let unavailable = land.scratch.join("home.gone");
+    std::fs::rename(&land.home_bare, &unavailable)?;
+    let phone = endpoint().await?;
+    let conn = authenticated(&phone, &fx.target).await?;
+    let matching = proto::Command {
+        id: proto::CommandId(80),
+        body: change(issue, IssueChange::Title(String::from("Sign in"))),
+    };
+    assert_eq!(
+        retry_command(&conn, &matching).await?,
+        CommandResult::Accepted
+    );
+    accepted(&link, CommandBody::SyncHome).await?;
+    let waiting = home_until(&mut updates, |home| {
+        matches!(home.sync, proto::HomeSync::Behind { .. })
+    })
+    .await?;
+    assert_eq!(waiting.unpushed, 1);
+    link.stop().await?;
+    phone.close().await;
+    fx.shutdown().await?;
+
+    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
+    let (link, mut updates) = reopened.connect().await?;
+    let waiting = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    assert_eq!(
+        alpha_issues(&waiting)
+            .first()
+            .map(|shown| shown.title.as_str()),
+        Some("Sign in")
+    );
+    let retry = endpoint().await?;
+    let conn = authenticated(&retry, &reopened.target).await?;
+    assert_eq!(
+        retry_command(&conn, &matching).await?,
+        CommandResult::Accepted
+    );
+    std::fs::rename(&unavailable, &land.home_bare)?;
+    accepted(&link, CommandBody::SyncHome).await?;
+    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    assert!(pushed_issue(&land, issue)?.contains("title = \"Sign in\""));
+    retry.close().await;
+    link.stop().await?;
+    reopened.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+#[tokio::test]
 async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
 -> Fallible {
     let land = homeland("issues")?;
