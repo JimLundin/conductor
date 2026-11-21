@@ -68,7 +68,10 @@ async fn write(home: &HomeClone, progress: Progress) -> Result<(), Stopped> {
     let signer = assignment.signer();
     let issue = assignment.issue;
     let answer = home
-        .order(HomeOrder::Change(issue, IssueChange::Note(text), signer))
+        .order(
+            HomeOrder::Change(issue, IssueChange::Note(text), signer),
+            proto::CommandId(ulid::Ulid::new().0),
+        )
         .await?;
     tracing::info!(target: "home", ?issue, ?answer, "noted a turn's progress");
     Ok(())

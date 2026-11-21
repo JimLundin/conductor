@@ -52,6 +52,27 @@ pub enum Kind {
     Receipt,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Completion {
+    Final(CommandResult),
+    Retryable(CommandResult),
+}
+
+impl Completion {
+    #[must_use]
+    pub fn into_result(self) -> CommandResult {
+        match self {
+            Self::Final(result) | Self::Retryable(result) => result,
+        }
+    }
+}
+
+impl From<CommandResult> for Completion {
+    fn from(result: CommandResult) -> Self {
+        Self::Final(result)
+    }
+}
+
 /// One write into the open transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
@@ -100,6 +121,7 @@ struct Start {
 struct Finish {
     ticket: Ticket,
     key: CommandId,
+    keep_receipt: bool,
     result: CommandResult,
 }
 
@@ -311,17 +333,19 @@ impl Log {
         effects
     }
 
-    /// A command finished with `result`: its receipt commits with its
-    /// events, and the next waiting command starts.
+    /// A command finished. A final result's receipt commits with its
+    /// events. A retryable result answers only the current callers.
     pub fn finish(
         &mut self,
         key: CommandId,
-        result: CommandResult,
+        completion: impl Into<Completion>,
     ) -> (Ticket, Vec<Effect>) {
+        let outcome = completion.into();
         let finish = Finish {
             ticket: self.ticket(),
             key,
-            result,
+            keep_receipt: matches!(outcome, Completion::Final(_)),
+            result: outcome.into_result(),
         };
         let ticket = finish.ticket;
         let effects = match (self.receipts.contains_key(&key), self.active) {
@@ -346,7 +370,7 @@ impl Log {
 
     fn close(&mut self, finish: Finish) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if self.active.is_some() {
+        if self.active.is_some() && finish.keep_receipt {
             effects
                 .push(Effect::Store(Write::Receipt(finish.key, finish.result)));
         }
@@ -361,8 +385,13 @@ impl Log {
     }
 
     fn settle(&mut self, finish: &Finish) -> Vec<Effect> {
-        let mut effects =
-            alone(Write::Receipt(finish.key, finish.result.clone()));
+        let mut effects = Vec::new();
+        if finish.keep_receipt {
+            effects.extend(alone(Write::Receipt(
+                finish.key,
+                finish.result.clone(),
+            )));
+        }
         let waiters = self.receipts.remove(&finish.key).unwrap_or_default();
         effects.extend(waiters.into_iter().map(|waiter| {
             Effect::Begun(waiter, Begun::Cached(finish.result.clone()))

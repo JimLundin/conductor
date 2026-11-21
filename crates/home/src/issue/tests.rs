@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    ChecklistItem, Checkout, Cloning, Home, HomeSync, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, IssueStatus, Origin, Priority,
+    ChecklistItem, Checkout, Cloning, CommandId, Home, HomeSync, HostPath,
+    Issue, IssueChange, IssueFields, IssueId, IssueStatus, Origin, Priority,
     ProjectId, Rejection,
 };
 
 use super::{
-    Applied, Branch, Change, Edit, Mode, Move, Remote, apply, branch, changing,
-    fields, file, finished, listed, message, name, opening, parse, render,
-    start, started, was,
+    Applied, Branch, Change, Edit, EditData, Mode, Move, PendingEdits, Remote,
+    apply, branch, changing, fields, file, finished, listed, message, name,
+    opening, parse, render, start, started, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -107,7 +107,7 @@ fn hand_edited() -> String {
 }
 
 fn edit(change: Change) -> Edit {
-    Edit {
+    EditData {
         project: project(),
         issue: ID,
         at: OPENED,
@@ -115,6 +115,7 @@ fn edit(change: Change) -> Edit {
         change,
         was: None,
     }
+    .into()
 }
 
 fn changing_to(change: IssueChange) -> Edit {
@@ -132,7 +133,7 @@ fn file_of(applied: Applied) -> Result<String, String> {
 #[test]
 fn an_issue_file_reads_and_a_new_one_writes_in_the_same_form() {
     assert_eq!(parse(&name(ID), &written()), Ok(issue()));
-    assert_eq!(render(&issue()), written());
+    assert_eq!(render(&issue()).text(), written());
 }
 
 #[test]
@@ -289,7 +290,7 @@ fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
     );
     assert_eq!(
         apply(Some(&opened), &create, Mode::Replay { changed: 0 }),
-        Applied::Unchanged
+        Applied::AlreadyRecorded
     );
     Ok(())
 }
@@ -324,15 +325,16 @@ fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
 
 #[test]
 fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
-    let done = Edit {
+    let done: Edit = EditData {
         was: was(
             Some(&written()),
             ID,
             &Change::Issue(IssueChange::Status(IssueStatus::Done)),
         ),
-        ..changing_to(IssueChange::Status(IssueStatus::Done))
-    };
-    assert_eq!(done.was, Some(text("in-progress")));
+        ..changing_to(IssueChange::Status(IssueStatus::Done)).data
+    }
+    .into();
+    assert_eq!(done.data.was, Some(text("in-progress")));
     let reviewed = written().replace("in-progress", "review");
     let after = Mode::Replay {
         changed: OPENED + 60,
@@ -439,9 +441,11 @@ fn a_change_finds_its_issues_project_and_is_kept_as_the_issue_keeps_it() {
 fn each_change_is_its_own_commit() {
     assert_eq!(
         [
-            message(&edit(Change::Create(wanted()))),
-            message(&changing_to(IssueChange::Status(IssueStatus::Review))),
-            message(&changing_to(IssueChange::Note(text("x")))),
+            message(&edit(Change::Create(wanted())).data),
+            message(
+                &changing_to(IssueChange::Status(IssueStatus::Review)).data
+            ),
+            message(&changing_to(IssueChange::Note(text("x"))).data),
         ],
         [
             format!("Open issue {}: Sign in", name(ID)),
@@ -683,10 +687,11 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
 #[test]
 fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
 -> Result<(), String> {
-    let done = Edit {
+    let done: Edit = EditData {
         was: Some(text("in-progress")),
-        ..changing_to(IssueChange::Status(IssueStatus::Done))
-    };
+        ..changing_to(IssueChange::Status(IssueStatus::Done)).data
+    }
+    .into();
     let reviewed = written().replace("in-progress", "review");
     let replayed = file_of(apply(
         Some(&reviewed),
@@ -792,7 +797,8 @@ fn unexpected_effect() -> Rejection {
 }
 
 #[test]
-fn opening_decides_the_file_commit_and_delivery() -> Result<(), Rejection> {
+fn an_opening_is_rejected_until_its_edit_can_be_recovered()
+-> Result<(), Rejection> {
     use super::{Context, Delivery, RecordEffect, Write};
 
     let issues = BTreeMap::new();
@@ -801,21 +807,33 @@ fn opening_decides_the_file_commit_and_delivery() -> Result<(), Rejection> {
         issues: &issues,
         host: "stone",
         at: OPENED,
+        command: CommandId(1),
     };
     let request = context.open(&[project()], project(), ID, &wanted())?;
     let target = request.read();
     assert_eq!(target.path, file(&project(), ID));
-    let mut recorded = request.decide(None)?;
-    let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
+    let mut recorded = request.decide(None, &PendingEdits::default())?;
+    let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
         return Err(unexpected_effect());
     };
     let mut failed = recorded.clone();
-    let reason = text("commit failed");
+    let reason = text("queue write failed");
     assert_eq!(
         failed.next(Err(reason.clone())),
         Err(Rejection::IssueNotSaved { reason })
     );
     assert_eq!(failed.next(Ok(()))?, None);
+
+    let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
+        return Err(unexpected_effect());
+    };
+    let mut kept = recorded.clone();
+    assert_eq!(
+        kept.next(Err(text("commit failed")))?,
+        Some(RecordEffect::Scan)
+    );
+    assert_eq!(kept.next(Ok(()))?, None);
+    assert_eq!(edit.replay(Ok(None), None), Write::Commit(commit.clone()));
     assert_eq!(commit.target, target);
     assert!(
         commit
@@ -825,26 +843,36 @@ fn opening_decides_the_file_commit_and_delivery() -> Result<(), Rejection> {
     assert!(commit.message.starts_with("Open issue "));
     assert_eq!(commit.author, "Conductor");
     assert_eq!(commit.email, "conductor@localhost");
-    let Some(RecordEffect::Enqueue(edit)) = recorded.next(Ok(()))? else {
-        return Err(unexpected_effect());
-    };
-    assert_eq!(recorded.next(Ok(()))?, Some(RecordEffect::Persist));
     assert_eq!(
         recorded.next(Ok(()))?,
-        Some(RecordEffect::Deliver(Delivery::Push { retry: true }))
+        Some(RecordEffect::Deliver {
+            delivery: Delivery::Push { retry: true },
+            id: Some(context.command),
+        })
     );
     assert_eq!(
         recorded.next(Err(text("offline")))?,
         Some(RecordEffect::Scan)
     );
     assert_eq!(recorded.next(Ok(()))?, None);
-    assert_eq!(edit.replay(Some(&commit.text), OPENED), Write::Unchanged);
+    assert_eq!(
+        edit.replay(Ok(Some(&commit.text)), Some(OPENED)),
+        Write::Unchanged
+    );
+    assert_eq!(
+        super::Listing::opened_by(
+            context.command,
+            vec![(name(ID), Ok(commit.text.clone()))],
+        ),
+        Some(ID)
+    );
     let existing = context.open(&[project()], project(), ID, &wanted())?;
-    let mut unchanged = existing.decide(Some(&commit.text))?;
-    assert!(matches!(
-        unchanged.next(Ok(()))?,
-        Some(RecordEffect::Enqueue(_))
-    ));
+    assert_eq!(
+        existing
+            .decide(Some(&commit.text), &PendingEdits::default())?
+            .next(Ok(()))?,
+        None
+    );
     Ok(())
 }
 
@@ -859,6 +887,7 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
         issues: &issues,
         host: "stone",
         at: OPENED,
+        command: CommandId(1),
     };
     let changes = [
         (IssueChange::Title(text("New title")), "Retitle issue"),
@@ -881,44 +910,122 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
         (IssueChange::Note(text("Summary")), "Note on issue"),
     ];
     let mut current = written();
-    for (change, message) in changes {
-        let request = context.edit(ID, change, "laptop")?;
-        let mut recorded = request.decide(Some(&current))?;
-        let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
+    for (index, (change, message)) in changes.into_iter().enumerate() {
+        let each = Context {
+            command: CommandId(index as u128),
+            ..context
+        };
+        let request = each.edit(ID, change, "laptop")?;
+        let mut recorded =
+            request.decide(Some(&current), &PendingEdits::default())?;
+        let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
             return Err(unexpected_effect());
         };
-        let Some(RecordEffect::Enqueue(edit)) = recorded.next(Ok(()))? else {
+        let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
             return Err(unexpected_effect());
         };
         assert!(commit.message.starts_with(message));
         assert_eq!(
-            edit.replay(Some(&current), OPENED),
+            edit.replay(Ok(Some(&current)), Some(OPENED)),
             Write::Commit(commit.clone())
         );
-        assert_eq!(edit.replay(Some(&commit.text), OPENED), Write::Unchanged);
-        assert_eq!(edit.replay(None, OPENED), Write::Dropped);
+        assert_eq!(
+            edit.replay(Ok(Some(&commit.text)), Some(OPENED)),
+            Write::Unchanged
+        );
+        assert_eq!(edit.replay(Ok(None), None), Write::Dropped);
         assert!(matches!(
-            edit.replay(Some("malformed"), OPENED),
+            edit.replay(Ok(Some("malformed")), Some(OPENED)),
             Write::Waiting(_)
         ));
         current = commit.text;
     }
     assert!(current.contains("stone \u{b7} laptop: Summary"));
+    let fresh = Context {
+        command: CommandId(100),
+        ..context
+    };
     let request =
-        context.edit(ID, IssueChange::Title(text("Older edit")), "laptop")?;
-    let mut recorded = request.decide(Some(&written()))?;
-    assert!(matches!(
-        recorded.next(Ok(()))?,
-        Some(RecordEffect::Commit(_))
-    ));
-    let Some(RecordEffect::Enqueue(edit)) = recorded.next(Ok(()))? else {
+        fresh.edit(ID, IssueChange::Title(text("Older edit")), "laptop")?;
+    let mut recorded =
+        request.decide(Some(&written()), &PendingEdits::default())?;
+    let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
         return Err(unexpected_effect());
     };
-    assert_eq!(edit.replay(Some(&current), OPENED + 1), Write::Unchanged);
+    let Write::Commit(resolved) =
+        edit.replay(Ok(Some(&current)), Some(OPENED + 1))
+    else {
+        return Err(unexpected_effect());
+    };
+    assert!(resolved.text.contains("title = \"New title\""));
+    assert!(!resolved.text.contains("Older edit"));
+    let reverted = resolved.text.replace("New title", &issue().title);
+    assert_eq!(
+        edit.replay(Ok(Some(&reverted)), Some(OPENED + 2)),
+        Write::Unchanged
+    );
     assert!(matches!(
-        edit.replay(Some(&current), OPENED),
+        edit.replay(Ok(Some(&current)), Some(OPENED)),
         Write::Commit(_)
     ));
+    Ok(())
+}
+
+#[test]
+fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection>
+{
+    use super::{Context, RecordEffect, Write};
+
+    let issues = BTreeMap::from([(project(), vec![issue()])]);
+    let context = Context {
+        remote: Some("origin"),
+        issues: &issues,
+        host: "stone",
+        at: OPENED,
+        command: CommandId(1),
+    };
+    let note = || IssueChange::Note(text("Same note"));
+    let record = |command, current: &str| -> Result<Edit, Rejection> {
+        let request_context = Context { command, ..context };
+        let mut recorded = request_context
+            .edit(ID, note(), "laptop")?
+            .decide(Some(current), &PendingEdits::default())?;
+        while let Some(effect) = recorded.next(Ok(()))? {
+            if let RecordEffect::Persist(edit) = effect {
+                return Ok(edit);
+            }
+        }
+        Err(unexpected_effect())
+    };
+    let original = written();
+    let first = record(CommandId(1), &original)?;
+    let Write::Commit(first_commit) =
+        first.replay(Ok(Some(&original)), Some(OPENED))
+    else {
+        return Err(unexpected_effect());
+    };
+    assert_eq!(
+        context
+            .edit(ID, note(), "laptop")?
+            .decide(Some(&first_commit.text), &PendingEdits::default())?
+            .next(Ok(()))?,
+        None
+    );
+    let second = record(CommandId(2), &first_commit.text)?;
+    let Write::Commit(second_commit) =
+        second.replay(Ok(Some(&first_commit.text)), Some(OPENED))
+    else {
+        return Err(unexpected_effect());
+    };
+    assert_eq!(second_commit.text.matches(": Same note").count(), 2);
+    assert_eq!(
+        first.replay(Ok(Some(&second_commit.text)), Some(OPENED)),
+        Write::Unchanged
+    );
+    assert_eq!(
+        second.replay(Ok(Some(&second_commit.text)), Some(OPENED)),
+        Write::Unchanged
+    );
     Ok(())
 }
 
@@ -957,29 +1064,6 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
         Some(IssueChange::Status(IssueStatus::Review))
     );
     assert_eq!(finish.next(&open, ID), None);
-}
-
-#[test]
-fn a_failed_push_fetches_and_replays_before_acknowledging_edits() {
-    use super::Delivery::{
-        self, Done, Fetch, Landed, Persist, Push, Reset, Rewrite,
-    };
-
-    let push = Push { retry: true };
-    let retry = Push { retry: false };
-    assert_eq!(push.after(true), Landed);
-    assert_eq!(push.after(false), Fetch);
-    assert_eq!(Fetch.after(false), Done);
-    assert_eq!(Fetch.after(true), Reset);
-    assert_eq!(Delivery::replay(true), Reset);
-    assert_eq!(Delivery::replay(false), Done);
-    assert_eq!(Reset.after(false), Done);
-    assert_eq!(Reset.after(true), Rewrite);
-    assert_eq!(Rewrite.after(true), Persist);
-    assert_eq!(Persist.after(true), retry);
-    assert_eq!(retry.after(false), Done);
-    assert_eq!(retry.after(true), Landed);
-    assert_eq!(Landed.after(true), Done);
 }
 
 #[test]
