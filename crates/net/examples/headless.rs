@@ -321,7 +321,10 @@ impl Session {
 
     async fn on_event(&mut self, event: Event) -> anyhow::Result<Flow> {
         let ours = self.ours == Some(event.session);
-        if let EventKind::SessionCreated { instance, .. } = &event.kind {
+        if let EventKind::SessionCreated {
+            instance, model, ..
+        } = &event.kind
+        {
             if ours {
                 anyhow::ensure!(
                     self.instance.as_ref() == Some(instance),
@@ -335,6 +338,9 @@ impl Session {
                     "own"
                 };
                 self.log(&format!("confirmed session instance {selected}"))?;
+                let model_name =
+                    model.as_ref().map_or("CLI default", |id| id.0.as_str());
+                self.log(&format!("session model {model_name}"))?;
             }
         } else if let Some(line) = transcript_line(self.ours, &event) {
             self.log(&line)?;

@@ -11,8 +11,8 @@
 # credential or a sign-in there. --register sends the credentials this
 # shell uses with SetCredential, before the first turn: Claude's gateway
 # from ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN, or the Codex provider
-# that ~/.codex/config.toml selects, with its key from the variable its
-# env_key names. Nothing of them is printed. Otherwise run `conductord
+# selected in the client CODEX_HOME/config.toml (default ~/.codex), with
+# its key from the configured env_key. Otherwise run `conductord
 # login claude|codex --data-dir DIR` once and pass the same --data-dir,
 # which is kept. Without --data-dir, a scratch dir under the target dir is
 # used and removed; not under /tmp, where Codex refuses to create its
@@ -81,7 +81,44 @@ else
   host_models=(--model claude=haiku --model codex=gpt-6-luna)
   [ "$register" = keep ] || host_models=(--model claude=haiku)
 fi
-"$target"/debug/conductord host --data-dir "$data_dir" "${host_models[@]}" \
+# Keep the registration key in the client environment when spawning the host.
+codex_provider() {
+  python3 -I - <<'EOF'
+import os, shlex, tomllib
+from pathlib import Path
+
+config_dir = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+with (config_dir / "config.toml").open("rb") as config_file:
+    config = tomllib.load(config_file)
+provider = config["model_providers"][config["model_provider"]]
+assert provider.get("wire_api", "responses") == "responses", "only the responses wire API"
+values = {
+    "ENV_KEY": provider["env_key"],
+    "NAME": provider.get("name", config["model_provider"]),
+    "BASE_URL": provider["base_url"],
+    "MODEL": config["model"],
+    "KEY": os.environ[provider["env_key"]],
+}
+for name, value in values.items():
+    print(f"export CONDUCTOR_CODEX_{name}={shlex.quote(value)}")
+EOF
+}
+account_args=()
+host_env=()
+case $provider$register in
+  claudeenv)
+    account_args=(--account "$ANTHROPIC_BASE_URL")
+    host_env=(-u ANTHROPIC_AUTH_TOKEN)
+    ;;
+  codexenv)
+    registration=$(codex_provider)
+    eval "$registration"
+    unset registration
+    host_env=(-u "$CONDUCTOR_CODEX_ENV_KEY" -u CONDUCTOR_CODEX_KEY)
+    account_args=(--account "$CONDUCTOR_CODEX_BASE_URL")
+    ;;
+esac
+env "${host_env[@]}" "$target"/debug/conductord host --data-dir "$data_dir" "${host_models[@]}" \
   >"$logs/host.out" 2>"$logs/host.log" &
 host_pid=$!
 # SIGINT lets the host stop its CLIs, which keep writing in the data dir.
@@ -94,31 +131,6 @@ for _ in $(seq 600); do
 done
 ticket=$(sed -n 's/^ticket: *//p' "$logs/host.out")
 
-# Only the headless runs see the Codex provider's values, never the host.
-codex_provider() {
-  python3 -I - <<'EOF'
-import os, shlex, tomllib
-config = tomllib.load(open(os.path.expanduser("~/.codex/config.toml"), "rb"))
-provider = config["model_providers"][config["model_provider"]]
-assert provider.get("wire_api", "responses") == "responses", "only the responses wire API"
-values = {
-    "NAME": provider.get("name", config["model_provider"]),
-    "BASE_URL": provider["base_url"],
-    "MODEL": config["model"],
-    "KEY": os.environ[provider["env_key"]],
-}
-for name, value in values.items():
-    print(f"export CONDUCTOR_CODEX_{name}={shlex.quote(value)}")
-EOF
-}
-account_args=()
-case $provider$register in
-  claudeenv) account_args=(--account "$ANTHROPIC_BASE_URL") ;;
-  codexenv)
-    eval "$(codex_provider)"
-    account_args=(--account "$CONDUCTOR_CODEX_BASE_URL")
-    ;;
-esac
 headless_args=("$ticket" --provider "$provider" --directory "$scratch" "${account_args[@]}" "${session_model_args[@]}")
 
 selected=own
@@ -177,7 +189,7 @@ done
 crash=fail
 if grep -q 'waiting for the agent to exit' "$continue_out" &&
   grep -q "^.*] confirmed session instance $selected$" "$continue_out" &&
-  python3 tools/live-host-child.py "$host_pid" "$data_dir" "$provider" "$(workspace "$continue_out")"; then
+  python3 tools/live-host-child.py "$host_pid" "$data_dir" "$provider" "$(workspace "$continue_out")" "${account_args[1]-}"; then
   crash=pass
 else
   kill "$continue_pid" 2>/dev/null || true

@@ -103,6 +103,17 @@ class ToolingTests(unittest.TestCase):
         opened.assert_called_once_with(101)
         sent.assert_called_once_with(fd, signal.SIGKILL)
 
+    def test_crash_check_selects_the_registered_codex_server_work_directory(self):
+        cli = self.scratch / "cli" / "codex"
+        work = self.scratch / "work" / "codex-8c2a47d3bdb8d309"
+        workspace = self.scratch / "session"
+        for directory in (cli, work, workspace):
+            directory.mkdir(parents=True)
+        args = ["check", "70", str(self.scratch), "codex", str(workspace), "me@example.com"]
+        with patch.object(sys, "argv", args), patch.object(child, "interrupt") as interrupt:
+            child.main()
+        interrupt.assert_called_once_with(Path("/proc"), 70, cli, work)
+
     def use_scratch_pins(self):
         path = self.scratch / pin.PINS_RS.name
         path.write_bytes(pin.PINS_RS.read_bytes())

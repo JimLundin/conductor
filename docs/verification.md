@@ -36,6 +36,29 @@ With Codex registration, the stored provider credential names the default
 model and takes precedence over the host setting. The real-device smoke
 check also uses the host setting to select a cheap model from the browser.
 
+## Registered-provider run on WSL2, 21 November 2026
+
+The live-host driver started five sessions for each registered gateway in
+isolated provider homes. Each session's creation event identified the expected
+account. Both providers passed file approval, interruption on first output,
+interruption at send, the subprocess credential check, and crash followed by
+Continue with the original codeword. The source checkouts stayed clean.
+One additional session per gateway exercised the optional undo scenario.
+Both restored the retained file and conversation history and removed the
+discarded file.
+
+| Pinned CLI | Session model recorded by Conductor | Model in the provider's own session record |
+| --- | --- | --- |
+| Claude Code 2.1.316 | `haiku` | `claude-haiku-5-5` in assistant messages |
+| Codex 0.166.0 | `gpt-6-luna` | `gpt-6-luna` in turn contexts |
+
+The Claude gateway rejected the experimental `context_management` field with
+HTTP 400. The passing run used its documented
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` setting. Both credential checks
+observed the control variable in the tool subprocess and zero copies of the
+provider key. Codex resumed after the test interrupted the registered account's
+app-server in its own work directory. [Claude gateway behavior](../crates/claude/PROTOCOL.md)
+
 ## Checkpoint preview allocations
 
 A draft edit rebuilt a native session pane with 60 transcript rows, 12

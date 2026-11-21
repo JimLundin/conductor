@@ -1,5 +1,6 @@
 """Interrupt only the provider for this live check's continuation session."""
 
+import hashlib
 import os
 import signal
 import sys
@@ -34,15 +35,20 @@ def interrupt(proc, host, cli_root, workspace):
 
 
 def main():
-    host, data_dir, provider, workspace = sys.argv[1:]
+    host, data_dir, provider, workspace, account = sys.argv[1:]
     if not workspace:
         sys.exit("continuation did not report its workspace")
+    cwd = Path(workspace)
+    if provider == "codex":
+        # Codex owns one app-server per instance. host::registry::dir names its work directory.
+        suffix = "-" + hashlib.sha256(account.strip().encode()).hexdigest()[:16] if account else ""
+        cwd = Path(data_dir) / "work" / ("codex" + suffix)
     try:
         interrupt(
             Path("/proc"),
             int(host),
             (Path(data_dir) / "cli" / provider).resolve(strict=True),
-            Path(workspace).resolve(strict=True),
+            cwd.resolve(strict=True),
         )
     except (OSError, RuntimeError) as error:
         sys.exit(f"live host crash check: {error}")
